@@ -764,7 +764,7 @@ static void displayCallAlertFullScreen(void)
 
 	strncpy(buffer, notificationData.message, (SCREEN_LINE_BUFFER_SIZE - 1));
 	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
-	displayPrintCentered(44, buffer, FONT_SIZE_4);
+	displayPrintCentered(44, buffer, FONT_SIZE_3); /* FONT_SIZE_3: довгі імена (напр. "UW5ELK Богдан") влазять у рядок (rev2 polish) */
 
 	displayPrintCentered((int16_t)(DISPLAY_SIZE_Y - FONT_SIZE_1_HEIGHT - 4), RCTL_CALL_ALERT_HINT, FONT_SIZE_1);
 }

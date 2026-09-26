@@ -24,6 +24,7 @@
 #include "crypto/dmr_rctl_stock.h"   // стоковий формат команд (сумісність із заводською TYT)
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"   // contactIDLookup/dmrIDLookup -- ім'я викликача Call Alert
+#include "functions/sound.h"              // soundSetMelody() -- звук банера Call Alert
 #include <string.h>
 #include <stdio.h>
 
@@ -538,6 +539,8 @@ static void dmrRctlStockProcessPending(void)
 					callAlertWhoStr(requester, who, sizeof who);
 					uiNotificationShow(NOTIFICATION_TYPE_CALL_ALERT, NOTIFICATION_ID_CALL_ALERT,
 							60000, who, true);
+					/* Звуковий сигнал -- той самий патерн, що dmr_sms.c:1335. */
+					soundSetMelody(MELODY_SMS_RECEIVED_BEEP);
 				}
 				break;
 		}
