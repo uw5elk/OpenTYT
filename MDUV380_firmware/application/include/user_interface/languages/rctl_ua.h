@@ -29,6 +29,7 @@
 #define RCFG_ITEM_MONITOR        "Моніторинг"
 #define RCFG_ITEM_STUN           "Вимкнення"
 #define RCFG_ITEM_REVIVE         "Ввімкнення"
+#define RCFG_ITEM_CALL_ALERT    "Виклик"
 /* Пункт тривалості моніторингу (сек). Значення коротке ("30с"), тож підпис вміщається. */
 #define RCFG_ITEM_MONSECS        "Час моніт."
 
@@ -65,5 +66,12 @@
  * "Надсилання не вдалос". */
 #define RCTL_SEND_FAILED         "Помилка надсилання"
 #define RCTL_FAIL_FMT            "%s (код %d)"
+
+/* Повноекранний банер вхідного Call Alert (uiNotification.c), той самий патерн,
+ * що SMS: тримається до RED. Заголовок -- як у стоковій TYT ("Private Alert"),
+ * лише українською; ім'я/ID того, хто дзвонить, підставляється окремим рядком
+ * (dmr_rctl_tx.c, callAlertWhoStr()). */
+#define RCTL_CALL_ALERT_TITLE    "Персональний виклик"
+#define RCTL_CALL_ALERT_HINT     "RED: закрити"
 
 #endif

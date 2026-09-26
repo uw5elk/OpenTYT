@@ -1438,10 +1438,15 @@ void applicationMainTask(void)
 		ev.time = ticksGetMillis();
 
 
-		// Форк: банер вхідного SMS показано на весь екран і сам він не гасне -- закриває його
-		// оператор червоною кнопкою. Клавішу тут же "з'їдаємо", щоб те саме натискання не
-		// пішло далі в меню (інакше RED заразом вийшов би з поточного екрана).
-		if (uiNotificationIsSms() && KEYCHECK_SHORTUP(ev.keys, KEY_RED))
+		// Форк: банер вхідного SMS (і, за тим самим патерном, Call Alert -- 2026-09-26)
+		// показано на весь екран і сам він не гасне -- закриває його оператор червоною
+		// кнопкою. Клавішу тут же "з'їдаємо", щоб те саме натискання не пішло далі в меню
+		// (інакше RED заразом вийшов би з поточного екрана).
+		if ((uiNotificationIsSms()
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				|| uiNotificationIsCallAlert()
+#endif
+			) && KEYCHECK_SHORTUP(ev.keys, KEY_RED))
 		{
 			uiNotificationHide(true);
 			ev.keys.key = 0;

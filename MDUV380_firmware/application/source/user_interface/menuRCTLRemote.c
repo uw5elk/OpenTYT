@@ -58,6 +58,7 @@
 #define RCFG_ITEM_MONITOR        "Monitor"
 #define RCFG_ITEM_STUN           "Disable"
 #define RCFG_ITEM_REVIVE         "Enable"
+#define RCFG_ITEM_CALL_ALERT     "Call Alert"
 #endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
@@ -101,17 +102,18 @@ static struct
 	ticksTimer_t holdTimer; // показ результату / очікування -- реальний час, не тіки
 } s_rc DMR_AES_CCM;
 
-// Пункти екрана вибору команди -- у ПОРЯДКУ dmr_rctl_stock_cmd_t (Check,Monitor,Enable,Disable),
-// щоб індекс пункту == коду команди. Мітки спільні з екраном дозволів (rctl_ua.h).
+// Пункти екрана вибору команди -- у ПОРЯДКУ dmr_rctl_stock_cmd_t (Check,Monitor,Enable,Disable,
+// Call Alert), щоб індекс пункту == коду команди. Мітки спільні з екраном дозволів (rctl_ua.h).
 static const char *cmdName(int i)
 {
 	switch (i)
 	{
-		case DMR_RCTL_STOCK_CHECK:   return RCFG_ITEM_CHECK;    // Перевірка
-		case DMR_RCTL_STOCK_MONITOR: return RCFG_ITEM_MONITOR;  // Моніторинг
-		case DMR_RCTL_STOCK_ENABLE:  return RCFG_ITEM_REVIVE;   // Ввімкнення
-		case DMR_RCTL_STOCK_DISABLE: return RCFG_ITEM_STUN;     // Вимкнення
-		default:                     return "?";
+		case DMR_RCTL_STOCK_CHECK:       return RCFG_ITEM_CHECK;       // Перевірка
+		case DMR_RCTL_STOCK_MONITOR:     return RCFG_ITEM_MONITOR;     // Моніторинг
+		case DMR_RCTL_STOCK_ENABLE:      return RCFG_ITEM_REVIVE;      // Ввімкнення
+		case DMR_RCTL_STOCK_DISABLE:     return RCFG_ITEM_STUN;        // Вимкнення
+		case DMR_RCTL_STOCK_CALL_ALERT:  return RCFG_ITEM_CALL_ALERT;  // Виклик
+		default:                         return "?";
 	}
 }
 
@@ -296,13 +298,16 @@ static void doSend(void)
 	s_rc.gotAck = 0;
 
 	// Квитанцію шле ціль на Radio Check, Enable й Disable (формат знято з ефіру,
-	// RCTL_COMPAT.md §5a/§6: та сама команда зі старшим бітом керуючого байта). Monitor
-	// квитанції не має. Запам'ятовуємо ПОКОЛІННЯ ACK до очікування, щоб стара
-	// відповідь не зійшла за нову.
+	// RCTL_COMPAT.md §5a/§6: та сама команда зі старшим бітом керуючого байта), а також
+	// на Call Alert (окремий формат опкоду a0 10 9f 00, claude/call-alert-reverse.md,
+	// BBD_0009 -- парситься тим самим dmr_rctl_stock_parse_ack_for(), тож "підтвердження
+	// доставки" на екрані відправника дістається безкоштовно). Monitor квитанції не має.
+	// Запам'ятовуємо ПОКОЛІННЯ ACK до очікування, щоб стара відповідь не зійшла за нову.
 	if ((s_rc.sendResult == 0) &&
 	    ((s_rc.cmd == DMR_RCTL_STOCK_CHECK) ||
 	     (s_rc.cmd == DMR_RCTL_STOCK_ENABLE) ||
-	     (s_rc.cmd == DMR_RCTL_STOCK_DISABLE)))
+	     (s_rc.cmd == DMR_RCTL_STOCK_DISABLE) ||
+	     (s_rc.cmd == DMR_RCTL_STOCK_CALL_ALERT)))
 	{
 		s_rc.waitedAck = 1;
 		s_rc.ackGenAtSend = dmrRctlAckGeneration();

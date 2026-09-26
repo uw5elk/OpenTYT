@@ -177,6 +177,48 @@ int main(void)
 		      rq == FORK && rp == STOCKID, "розбір квитанції Monitor");
 	}
 
+	/* Call Alert -- байти з реального ефіру (claude/call-alert-reverse.md, BBD_0009,
+	 * тестові DMR ID 1/2: src=2 (запитувач), dst=1 (ціль)). Запит -- звичайна команда
+	 * (CMD_B0/CMD_ARG таблиця, як і решта); квитанція -- ОСОБЛИВИЙ формат опкоду, як
+	 * Monitor, АЛЕ з полями адрес ДЗЕРКАЛЬНО поміняними місцями (вивірено з ефіру, .h
+	 * dmr_rctl_stock_ack_for()). */
+	{
+		const uint32_t REQ_SRC = 2u, REQ_DST = 1u;
+
+		dmr_rctl_stock_command(DMR_RCTL_STOCK_CALL_ALERT, REQ_SRC, REQ_DST, b);
+		CHECK(eqhex(b, "9f 10 00 00 00 00 02 00 00 01 d2 fe"), "Call Alert запит байт-у-байт (BBD_0009)");
+
+		dmr_rctl_stock_cmd_t pc; uint32_t ps, pd;
+		int ok = dmr_rctl_stock_parse(b, &pc, &ps, &pd);
+		CHECK(ok && pc == DMR_RCTL_STOCK_CALL_ALERT && ps == REQ_SRC && pd == REQ_DST,
+		      "розбір запиту Call Alert (src/dst)");
+
+		/* Квитанція: requester = REQ_SRC (хто питав), responder = REQ_DST (ми, ціль) --
+		 * з ефіру: поле1 = 1 (=запит.dst), поле2 = 2 (=запит.src), тобто НАВПАКИ від Monitor. */
+		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_CALL_ALERT, REQ_SRC, REQ_DST, b);
+		CHECK(eqhex(b, "a0 10 9f 00 00 00 01 00 00 02 9b 9c"), "квитанція Call Alert байт-у-байт (BBD_0009)");
+
+		dmr_rctl_stock_cmd_t c; uint32_t rq = 0, rp = 0;
+		ok = dmr_rctl_stock_parse_ack_for(b, &c, &rq, &rp);
+		CHECK(ok && c == DMR_RCTL_STOCK_CALL_ALERT && rq == REQ_SRC && rp == REQ_DST,
+		      "розбір квитанції Call Alert (requester/responder, з урахуванням свопу)");
+
+		/* квитанція Call Alert НЕ приймається за команду, і навпаки */
+		CHECK(dmr_rctl_stock_parse(b, NULL, NULL, NULL) == 0, "квитанція Call Alert не -- команда");
+		dmr_rctl_stock_command(DMR_RCTL_STOCK_CALL_ALERT, REQ_SRC, REQ_DST, b);
+		CHECK(dmr_rctl_stock_parse_ack_for(b, NULL, NULL, NULL) == 0, "команда Call Alert не -- квитанція");
+
+		/* битий CRC відкидається й тут */
+		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_CALL_ALERT, REQ_SRC, REQ_DST, b); b[11] ^= 0x77;
+		CHECK(dmr_rctl_stock_parse_ack_for(b, NULL, NULL, NULL) == 0, "битий CRC квитанції Call Alert відкинуто");
+
+		/* дозвіл -- окремий біт ALLOW_CALL_ALERT, як і решта команд (fail-closed) */
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CALL_ALERT, REQ_DST, REQ_DST, DMR_RCTL_ALLOW_CALL_ALERT) == 1,
+		      "Call Alert з ALLOW_CALL_ALERT -> діяти");
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CALL_ALERT, REQ_DST, REQ_DST, DMR_RCTL_ALLOW_CHECK) == 0,
+		      "Call Alert лише з ALLOW_CHECK -> ігнор");
+	}
+
 	printf(fails ? "\nПРОВАЛЕНО: %d\n" : "\nУсі тести пройдено\n", fails);
 	return fails ? 1 : 0;
 }

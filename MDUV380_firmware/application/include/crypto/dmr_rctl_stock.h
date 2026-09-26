@@ -25,10 +25,14 @@
 
 typedef enum
 {
-	DMR_RCTL_STOCK_CHECK   = 0,   /* Radio Check   */
-	DMR_RCTL_STOCK_MONITOR = 1,   /* Remote Monitor */
-	DMR_RCTL_STOCK_ENABLE  = 2,   /* Radio Enable  (revive) */
-	DMR_RCTL_STOCK_DISABLE = 3,   /* Radio Disable (stun)   */
+	DMR_RCTL_STOCK_CHECK      = 0,   /* Radio Check   */
+	DMR_RCTL_STOCK_MONITOR    = 1,   /* Remote Monitor */
+	DMR_RCTL_STOCK_ENABLE     = 2,   /* Radio Enable  (revive) */
+	DMR_RCTL_STOCK_DISABLE    = 3,   /* Radio Disable (stun)   */
+	/* Форк (2026-09-26): Call Alert -- реверс з ефіру, claude/call-alert-reverse.md
+	 * (BBD_0009). ДОДАНО В КІНЕЦЬ навмисно -- Check/Monitor/Enable/Disable уже в масках
+	 * дозволів на польових раціях, зсув їхніх номерів зламав би сумісність. */
+	DMR_RCTL_STOCK_CALL_ALERT = 4,
 	DMR_RCTL_STOCK_NUM_CMDS
 } dmr_rctl_stock_cmd_t;
 
@@ -80,6 +84,14 @@ int dmr_rctl_stock_parse(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd, uint
  *     Disable 0x7F -> 0xFF     a4 10 00 ff ...
  * Байт b0 й адреси лишаються такими самими, як у команді. */
 #define DMR_RCTL_STOCK_ACK_BIT      0x80
+
+/* Квитанція Call Alert (задача 2026-09-26, claude/call-alert-reverse.md, BBD_0009) --
+ * ТОЙ САМИЙ особливий формат опкоду, що й Monitor (a0 10 <CMD_B0> 00 ...), АЛЕ поля
+ * адрес усередині ДЗЕРКАЛЬНО поміняні місцями відносно Monitor/generic: підтверджено
+ * байтами з ефіру (запит src=2/dst=1 -> квитанція field1=1(=запит.dst)/field2=2(=запит.src)),
+ * тобто тут field1=responder(ми, хто відповідає), field2=requester(хто питав) -- НАВПАКИ
+ * від Monitor (field1=requester, field2=responder). Єдиний зразок в ефірі -- не
+ * перевірено повторно (call-alert-reverse.md, "Що ще НЕ перевірено"). */
 
 /* Зібрати один 12-байтний CSBK квитанції. */
 void dmr_rctl_stock_ack_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32_t responder, uint8_t out12[12]);

@@ -59,8 +59,15 @@ typedef enum
 #define DMR_RCTL_ALLOW_MONITOR  (1u << 1)   /* віддалене прослуховування -- НЕ реалізовано */
 #define DMR_RCTL_ALLOW_STUN     (1u << 2)   /* блокування рації -- НЕ реалізовано */
 #define DMR_RCTL_ALLOW_REVIVE   (1u << 3)   /* розблокування рації -- НЕ реалізовано */
+/* УВАГА: (1u<<4)=0x10 ЗАЙНЯТИЙ -- DMR_RCTL_UI_HIDE_ACCESS_MENU (dmr_rctl_cfg.h), верхня
+ * половина того самого байта allow у флеші. Дійсно вільні для нових команд лише
+ * 0x20/0x40/0x80 (dmr_rctl_cfg.h, коментар над DMR_RCTL_UI_HIDE_ACCESS_MENU) -- тож
+ * Call Alert бере (1u<<5), а не (1u<<4) (спіймано T19 у test_dmr_rctl_cfg.c: перше
+ * трактування зачепило 0x10 і зламало узгодженість enabled/UI-прапорця). */
+#define DMR_RCTL_ALLOW_CALL_ALERT (1u << 5) /* персональний виклик (Call Alert), стоковий CSBK FID=0x10 */
 #define DMR_RCTL_ALLOW_ALL      (DMR_RCTL_ALLOW_CHECK | DMR_RCTL_ALLOW_MONITOR | \
-                                 DMR_RCTL_ALLOW_STUN | DMR_RCTL_ALLOW_REVIVE)
+                                 DMR_RCTL_ALLOW_STUN | DMR_RCTL_ALLOW_REVIVE | \
+                                 DMR_RCTL_ALLOW_CALL_ALERT)
 
 typedef struct
 {

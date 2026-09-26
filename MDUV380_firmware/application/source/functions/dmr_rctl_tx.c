@@ -23,6 +23,7 @@
 #include "crypto/dmr_rctl_frame.h"
 #include "crypto/dmr_rctl_stock.h"   // стоковий формат команд (сумісність із заводською TYT)
 #include "user_interface/menuSystem.h"
+#include "user_interface/uiUtilities.h"   // contactIDLookup/dmrIDLookup -- ім'я викликача Call Alert
 #include <string.h>
 #include <stdio.h>
 
@@ -427,6 +428,26 @@ static void sendStockAck(dmr_rctl_stock_cmd_t cmd, uint32_t requester)
 	if (n > 0) { dmrDataTxLoad(q, (uint8_t)n); }
 }
 
+/* Ім'я/номер того, хто дзвонить (Call Alert) -- контакт кодплагу, інакше глобальна
+ * DMR ID база, інакше сам номер. Той самий патерн, що smsWhoStr() у menuMessages.c /
+ * контакт+dmrIDLookup у uiPrivateCall.c -- тут окрема (третя) копія, за усталеним у
+ * цій кодовій базі підходом (невеликий локальний дубль замість спільного хелпера). */
+static void callAlertWhoStr(uint32_t id, char *out, int outsz)
+{
+	if (contactIDLookup(id, CONTACT_CALLTYPE_PC, out))
+	{
+		return;
+	}
+	dmrIdDataStruct_t rec;
+	if (dmrIDLookup(id, &rec) && rec.text[0] != 0)
+	{
+		strncpy(out, rec.text, (size_t)(outsz - 1));
+		out[outsz - 1] = 0;
+		return;
+	}
+	snprintf(out, (size_t)outsz, "%lu", (unsigned long)id);
+}
+
 static void dmrRctlStockProcessPending(void)
 {
 	/* Квитанція на наш запит -- окремо від команд: вона нічого не виконує, лише оновлює
@@ -504,6 +525,20 @@ static void dmrRctlStockProcessPending(void)
 				s_monReq = requester;
 				s_monKeyTries = 0;
 				addTimerCallback(monitorKeyVoice, 100, MENU_ANY, false);
+				break;
+			case DMR_RCTL_STOCK_CALL_ALERT:
+				/* Квитанція -- БЕЗУМОВНО й одразу, як і решта команд: з ефіру вона йде
+				 * ~120 мс після запиту (claude/call-alert-reverse.md, BBD_0009), набагато
+				 * швидше за людську реакцію на банер, тож це протокольне підтвердження
+				 * прийому кадру, а не "оператор натиснув Ignore". Банер (нижче) -- окремо,
+				 * саме показ НЕ впливає на те, чи й коли пішла квитанція. */
+				sendStockAck(DMR_RCTL_STOCK_CALL_ALERT, requester);
+				{
+					char who[SCREEN_LINE_BUFFER_SIZE];
+					callAlertWhoStr(requester, who, sizeof who);
+					uiNotificationShow(NOTIFICATION_TYPE_CALL_ALERT, NOTIFICATION_ID_CALL_ALERT,
+							60000, who, true);
+				}
 				break;
 		}
 	}

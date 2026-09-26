@@ -46,6 +46,7 @@
 #define RCFG_ITEM_MONITOR   "Monitor"
 #define RCFG_ITEM_STUN      "Disable"
 #define RCFG_ITEM_REVIVE    "Enable"
+#define RCFG_ITEM_CALL_ALERT "Call Alert"
 #define RCFG_ITEM_MONSECS   "Mon. time"
 #endif
 
@@ -54,7 +55,7 @@
 // «Доступ» (головний перемикач) прибрано 2026-09-05 на прохання користувача: він плутав
 // (5-й перемикач, що перекриває решту 4). Тепер RCTL «увімкнено» = дозволена хоч одна
 // команда; enabled у флеші виводиться з маски при збереженні (див. нижче).
-enum { RCFG_CHECK = 0, RCFG_MONITOR, RCFG_STUN, RCFG_REVIVE, RCFG_MONSECS, RCFG_NUM_ITEMS };
+enum { RCFG_CHECK = 0, RCFG_MONITOR, RCFG_STUN, RCFG_REVIVE, RCFG_CALL_ALERT, RCFG_MONSECS, RCFG_NUM_ITEMS };
 
 // Персистентно між тіками, в CCM -- той самий idiom, що й menuAESKeys.c/menuMessages.c
 // (CCM НЕ обнуляється при старті, тож усе ініціалізується на isFirstRun перед читанням;
@@ -93,6 +94,7 @@ static uint8_t itemBit(int item)
 		case RCFG_MONITOR: return DMR_RCTL_ALLOW_MONITOR;
 		case RCFG_STUN:    return DMR_RCTL_ALLOW_STUN;
 		case RCFG_REVIVE:  return DMR_RCTL_ALLOW_REVIVE;
+		case RCFG_CALL_ALERT: return DMR_RCTL_ALLOW_CALL_ALERT;
 		default:           return 0;
 	}
 }
@@ -177,7 +179,7 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 static void updateScreen(void)
 {
 	static const char *names[RCFG_NUM_ITEMS] = {
-		RCFG_ITEM_CHECK, RCFG_ITEM_MONITOR, RCFG_ITEM_STUN, RCFG_ITEM_REVIVE, RCFG_ITEM_MONSECS
+		RCFG_ITEM_CHECK, RCFG_ITEM_MONITOR, RCFG_ITEM_STUN, RCFG_ITEM_REVIVE, RCFG_ITEM_CALL_ALERT, RCFG_ITEM_MONSECS
 	};
 	char buf[SCREEN_LINE_BUFFER_SIZE];
 
@@ -206,9 +208,11 @@ static void updateScreen(void)
 				THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
 
-	// П'ять пунктів у семи слотах списку займають y=32..112 (menuGetMenuOffset віддає
-	// loopOffset -2..+2, MENU_ENTRY_HEIGHT=16, база 64), тож два рядки підказки нижче
-	// нічого не перекривають: 112..120 і 120..128 при висоті екрана 128.
+	// Шість пунктів (додано Call Alert, 2026-09-26) у скролюючому вікні списку --
+	// menuGetMenuOffset завжди віддає loopOffset -2..+2 (5 видимих рядків, MENU_ENTRY_HEIGHT=16,
+	// база 64), тобто вікно y=32..112 не залежить від RCFG_NUM_ITEMS, а зайвий пункт лише
+	// додає прокрутку. Два рядки підказки нижче нічого не перекривають: 112..120 і 120..128
+	// при висоті екрана 128.
 	displayPrintCentered(112, RCFG_HINT, FONT_SIZE_1);
 	displayPrintCentered(120, RCFG_HINT2, FONT_SIZE_1);
 	displayRender();

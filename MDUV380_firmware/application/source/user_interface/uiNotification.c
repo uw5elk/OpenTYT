@@ -145,6 +145,14 @@ static uiNotificationData_t notificationData =
 #else
 #define MSGS_MORE_UNREAD_FMT     "+%d unread"
 #endif
+/* Банер Call Alert (форк, 2026-09-26) -- заголовок і підказка закриття; сам текст
+ * абонента (ім'я/ID) приходить готовим у notificationData.message, як SMS/MESSAGE. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/rctl_ua.h"
+#else
+#define RCTL_CALL_ALERT_TITLE    "Private Alert"
+#define RCTL_CALL_ALERT_HINT     "RED: close"
+#endif
 #endif
 
 #if defined(ENABLE_CALL_REPLAY)
@@ -154,6 +162,9 @@ static uiNotificationData_t notificationData =
 static void displayMessage(void);
 static void displaySmsFullScreen(void);
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+static void displayCallAlertFullScreen(void);
+#endif
 
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t msTimeout, const char *message, bool immediateRender)
 {
@@ -194,6 +205,9 @@ void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32
 
 		case NOTIFICATION_TYPE_MESSAGE:
 		case NOTIFICATION_TYPE_SMS:
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+		case NOTIFICATION_TYPE_CALL_ALERT:
+#endif
 			if (message)
 			{
 				snprintf(&notificationData.message[0], sizeof(notificationData.message), "%s", message);
@@ -363,6 +377,12 @@ void uiNotificationRefresh(void)
 				displaySmsFullScreen();
 				break;
 
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+			case NOTIFICATION_TYPE_CALL_ALERT:
+				displayCallAlertFullScreen();
+				break;
+#endif
+
 			case NOTIFICATION_TYPE_BEARING:
 			{
 				char buffer[SCREEN_LINE_BUFFER_SIZE];
@@ -480,6 +500,14 @@ bool uiNotificationHasTimedOut(void)
 		return false;
 	}
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	/* Банер Call Alert (2026-09-26) -- той самий патерн, що SMS: міг прийти, коли рації
+	 * не було в руках, тож сам не зникає -- лише оператор через RED (applicationMain.c). */
+	if (notificationData.visible && (notificationData.type == NOTIFICATION_TYPE_CALL_ALERT))
+	{
+		return false;
+	}
+#endif
 	return (notificationData.visible && ticksTimerHasExpired(&notificationData.hideTimer));
 }
 
@@ -488,6 +516,14 @@ bool uiNotificationIsSms(void)
 {
 	return (notificationData.visible && (notificationData.type == NOTIFICATION_TYPE_SMS));
 }
+
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+/* Чи показано саме банер Call Alert -- щоб головний цикл знав, що RED має його закрити. */
+bool uiNotificationIsCallAlert(void)
+{
+	return (notificationData.visible && (notificationData.type == NOTIFICATION_TYPE_CALL_ALERT));
+}
+#endif
 
 bool uiNotificationIsVisible(void)
 {
@@ -708,6 +744,31 @@ static void displaySmsFullScreen(void)
 	}
 #endif
 }
+
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+/* Форк (2026-09-26): вхідний Call Alert (RCTL, claude/call-alert-reverse.md) -- на весь
+ * екран, тримається до RED, той самий фон/рамка, що й displaySmsFullScreen() вище. Вміст
+ * короткий (заголовок + ім'я/ID абонента), тож, на відміну від SMS, є місце й для
+ * підказки закриття внизу. */
+static void displayCallAlertFullScreen(void)
+{
+	char buffer[SCREEN_LINE_BUFFER_SIZE];
+
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+	displayDrawRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+
+	displayPrintCentered(16, RCTL_CALL_ALERT_TITLE, FONT_SIZE_3);
+
+	strncpy(buffer, notificationData.message, (SCREEN_LINE_BUFFER_SIZE - 1));
+	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
+	displayPrintCentered(44, buffer, FONT_SIZE_4);
+
+	displayPrintCentered((int16_t)(DISPLAY_SIZE_Y - FONT_SIZE_1_HEIGHT - 4), RCTL_CALL_ALERT_HINT, FONT_SIZE_1);
+}
+#endif
 
 static void displayMessage(void)
 {

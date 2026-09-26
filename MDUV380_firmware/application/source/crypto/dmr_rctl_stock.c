@@ -30,11 +30,12 @@ static void csbk_crc(uint8_t out12[12])
 }
 
 /* Кодування кожної команди: (b0, керуючий байт). З реального ефіру:
- *   Check A4/00, Monitor 9D/01, Enable A4/7E, Disable A4/7F.
- * b0 несе опкод CSBK у молодших 6 бітах (0x24 для Check/Enable/Disable, 0x1D для Monitor)
- * і Last-Block у старшому. FID=0x10 (Motorola). */
-static const uint8_t CMD_B0[DMR_RCTL_STOCK_NUM_CMDS]  = { 0xA4, 0x9D, 0xA4, 0xA4 };
-static const uint8_t CMD_ARG[DMR_RCTL_STOCK_NUM_CMDS] = { 0x00, 0x01, 0x7E, 0x7F };
+ *   Check A4/00, Monitor 9D/01, Enable A4/7E, Disable A4/7F, Call Alert 9F/00
+ *   (Call Alert -- claude/call-alert-reverse.md, BBD_0009, задача 2026-09-26).
+ * b0 несе опкод CSBK у молодших 6 бітах (0x24 для Check/Enable/Disable, 0x1D для Monitor,
+ * 0x1F для Call Alert) і Last-Block у старшому. FID=0x10 (Motorola). */
+static const uint8_t CMD_B0[DMR_RCTL_STOCK_NUM_CMDS]  = { 0xA4, 0x9D, 0xA4, 0xA4, 0x9F };
+static const uint8_t CMD_ARG[DMR_RCTL_STOCK_NUM_CMDS] = { 0x00, 0x01, 0x7E, 0x7F, 0x00 };
 #define STOCK_FID  0x10
 
 void dmr_rctl_stock_command(dmr_rctl_stock_cmd_t cmd, uint32_t src, uint32_t dst, uint8_t out12[12])
@@ -82,17 +83,31 @@ void dmr_rctl_stock_ack_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32
 {
 	if ((int)cmd < 0 || (int)cmd >= DMR_RCTL_STOCK_NUM_CMDS) { memset(out12, 0, 12); return; }
 
-	if (cmd == DMR_RCTL_STOCK_MONITOR)
+	if ((cmd == DMR_RCTL_STOCK_MONITOR) || (cmd == DMR_RCTL_STOCK_CALL_ALERT))
 	{
-		/* Квитанція монітора має ВЛАСНИЙ формат (знято з ефіру, BBD_0003, RCTL_COMPAT.md §8e):
-		 * a0 10 9d 00 <requester> <responder> <crc> -- опкод 0xA0, а b2 несе опкод команди
-		 * монітора (0x9d). НЕ правило біта (воно чинне лише для Check/Enable/Disable). */
+		/* Особливий формат квитанції (НЕ правило старшого біта нижче, чинне лише для
+		 * Check/Enable/Disable): опкод 0xA0, а b2 несе опкод самої команди (CMD_B0[cmd]).
+		 * Monitor -- a0 10 9d 00 <requester> <responder> <crc> (ефір, BBD_0003,
+		 * RCTL_COMPAT.md §8e). Call Alert -- a0 10 9f 00 ... (ефір, BBD_0009,
+		 * claude/call-alert-reverse.md, задача 2026-09-26) -- АЛЕ з полями адрес
+		 * ДЗЕРКАЛЬНО поміняними місцями відносно Monitor: підтверджено байтами з ефіру
+		 * (запит src=2/dst=1 -> квитанція field1=1=запит.dst/field2=2=запит.src), тобто
+		 * тут field1=responder(ми), field2=requester(хто питав) -- див. .h. Єдиний зразок
+		 * в ефірі -- якщо польова перевірка покаже інакше, виправити саме тут. */
 		out12[0] = 0xA0;
 		out12[1] = STOCK_FID;
-		out12[2] = CMD_B0[DMR_RCTL_STOCK_MONITOR];   /* 0x9d */
+		out12[2] = CMD_B0[cmd];
 		out12[3] = 0x00;
-		out12[4] = (uint8_t)(requester >> 16); out12[5] = (uint8_t)(requester >> 8); out12[6] = (uint8_t)requester;
-		out12[7] = (uint8_t)(responder >> 16); out12[8] = (uint8_t)(responder >> 8); out12[9] = (uint8_t)responder;
+		if (cmd == DMR_RCTL_STOCK_CALL_ALERT)
+		{
+			out12[4] = (uint8_t)(responder >> 16); out12[5] = (uint8_t)(responder >> 8); out12[6] = (uint8_t)responder;
+			out12[7] = (uint8_t)(requester >> 16); out12[8] = (uint8_t)(requester >> 8); out12[9] = (uint8_t)requester;
+		}
+		else
+		{
+			out12[4] = (uint8_t)(requester >> 16); out12[5] = (uint8_t)(requester >> 8); out12[6] = (uint8_t)requester;
+			out12[7] = (uint8_t)(responder >> 16); out12[8] = (uint8_t)(responder >> 8); out12[9] = (uint8_t)responder;
+		}
 		csbk_crc(out12);
 		return;
 	}
@@ -135,12 +150,28 @@ int dmr_rctl_stock_parse_ack_for(const uint8_t in12[12], dmr_rctl_stock_cmd_t *c
 	uint16_t want = (uint16_t)((in12[10] << 8) | in12[11]);
 	if ((uint16_t)(crc16d(in12, 10) ^ 0xA5A5) != want) { return 0; }
 
-	/* Квитанція монітора -- окремий формат a0 10 9d 00 (BBD_0003). */
-	if (in12[0] == 0xA0 && in12[2] == CMD_B0[DMR_RCTL_STOCK_MONITOR] && in12[3] == 0x00)
+	/* Особливий формат квитанції a0 10 <CMD_B0> 00 -- Monitor (9d, BBD_0003) і Call Alert
+	 * (9f, BBD_0009). Поля адрес: у Monitor field1=requester/field2=responder (як прийшло
+	 * з ефіру); у Call Alert -- ДЗЕРКАЛЬНО, field1=responder/field2=requester (див. коментар
+	 * у dmr_rctl_stock_ack_for() і .h) -- тож тут інвертуємо назад саме для Call Alert. */
+	if (in12[0] == 0xA0 && in12[3] == 0x00 &&
+	    (in12[2] == CMD_B0[DMR_RCTL_STOCK_MONITOR] || in12[2] == CMD_B0[DMR_RCTL_STOCK_CALL_ALERT]))
 	{
-		if (cmd) { *cmd = DMR_RCTL_STOCK_MONITOR; }
-		if (requester) { *requester = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6]; }
-		if (responder) { *responder = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9]; }
+		dmr_rctl_stock_cmd_t c = (in12[2] == CMD_B0[DMR_RCTL_STOCK_CALL_ALERT]) ?
+				DMR_RCTL_STOCK_CALL_ALERT : DMR_RCTL_STOCK_MONITOR;
+		uint32_t field1 = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6];
+		uint32_t field2 = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9];
+		if (cmd) { *cmd = c; }
+		if (c == DMR_RCTL_STOCK_CALL_ALERT)
+		{
+			if (responder) { *responder = field1; }
+			if (requester) { *requester = field2; }
+		}
+		else
+		{
+			if (requester) { *requester = field1; }
+			if (responder) { *responder = field2; }
+		}
 		return 1;
 	}
 
@@ -202,6 +233,7 @@ static uint8_t allowBitFor(dmr_rctl_stock_cmd_t cmd)
 		case DMR_RCTL_STOCK_MONITOR: return DMR_RCTL_ALLOW_MONITOR;
 		case DMR_RCTL_STOCK_ENABLE:  return DMR_RCTL_ALLOW_REVIVE;
 		case DMR_RCTL_STOCK_DISABLE: return DMR_RCTL_ALLOW_STUN;
+		case DMR_RCTL_STOCK_CALL_ALERT: return DMR_RCTL_ALLOW_CALL_ALERT;
 		default:                     return 0;   /* невідома -> fail-closed */
 	}
 }
