@@ -178,30 +178,35 @@ int main(void)
 	}
 
 	/* Call Alert -- байти з реального ефіру (claude/call-alert-reverse.md, BBD_0009,
-	 * тестові DMR ID 1/2: src=2 (запитувач), dst=1 (ціль)). Запит -- звичайна команда
-	 * (CMD_B0/CMD_ARG таблиця, як і решта); квитанція -- ОСОБЛИВИЙ формат опкоду, як
-	 * Monitor, АЛЕ з полями адрес ДЗЕРКАЛЬНО поміняними місцями (вивірено з ефіру, .h
-	 * dmr_rctl_stock_ack_for()). */
+	 * тестові DMR ID 1/2: src=2 (запитувач), dst=1 (ціль)). Літерали нижче -- САМЕ байти
+	 * ефіру (перераховано вручну crc16d за алгоритмом .h, НЕ виходом власного білдера --
+	 * rev1 звірявся сам із собою й тому не спіймав баг порядку адрес; rev2, 2026-09-26).
+	 *
+	 * Запит -- ВИНЯТКОВИЙ порядок адрес dst,src (як преамбула), НЕ src,dst, як решта
+	 * команд: 9f 10 00 00 <dst=1:3> <src=2:3> <crc> (rev1 помилково писав src,dst і не
+	 * працював у жоден бік). Квитанція -- той самий особливий формат опкоду, що Monitor,
+	 * БЕЗ жодної перестановки полів: a0 10 9f 00 <requester=2:3> <responder=1:3> <crc>. */
 	{
 		const uint32_t REQ_SRC = 2u, REQ_DST = 1u;
 
 		dmr_rctl_stock_command(DMR_RCTL_STOCK_CALL_ALERT, REQ_SRC, REQ_DST, b);
-		CHECK(eqhex(b, "9f 10 00 00 00 00 02 00 00 01 d2 fe"), "Call Alert запит байт-у-байт (BBD_0009)");
+		CHECK(eqhex(b, "9f 10 00 00 00 00 01 00 00 02 79 41"), "Call Alert запит байт-у-байт (BBD_0009, dst,src-порядок)");
 
 		dmr_rctl_stock_cmd_t pc; uint32_t ps, pd;
 		int ok = dmr_rctl_stock_parse(b, &pc, &ps, &pd);
 		CHECK(ok && pc == DMR_RCTL_STOCK_CALL_ALERT && ps == REQ_SRC && pd == REQ_DST,
-		      "розбір запиту Call Alert (src/dst)");
+		      "розбір запиту Call Alert (src/dst, з урахуванням виняткового порядку)");
 
 		/* Квитанція: requester = REQ_SRC (хто питав), responder = REQ_DST (ми, ціль) --
-		 * з ефіру: поле1 = 1 (=запит.dst), поле2 = 2 (=запит.src), тобто НАВПАКИ від Monitor. */
+		 * поле1=requester, поле2=responder, ТОЙ САМИЙ порядок, що Monitor (без перестановки:
+		 * rev1 мав тут хибний свіп, що компенсував баг у розборі запиту вище). */
 		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_CALL_ALERT, REQ_SRC, REQ_DST, b);
-		CHECK(eqhex(b, "a0 10 9f 00 00 00 01 00 00 02 9b 9c"), "квитанція Call Alert байт-у-байт (BBD_0009)");
+		CHECK(eqhex(b, "a0 10 9f 00 00 00 02 00 00 01 30 23"), "квитанція Call Alert байт-у-байт (BBD_0009, без свопу)");
 
 		dmr_rctl_stock_cmd_t c; uint32_t rq = 0, rp = 0;
 		ok = dmr_rctl_stock_parse_ack_for(b, &c, &rq, &rp);
 		CHECK(ok && c == DMR_RCTL_STOCK_CALL_ALERT && rq == REQ_SRC && rp == REQ_DST,
-		      "розбір квитанції Call Alert (requester/responder, з урахуванням свопу)");
+		      "розбір квитанції Call Alert (requester/responder, без свопу)");
 
 		/* квитанція Call Alert НЕ приймається за команду, і навпаки */
 		CHECK(dmr_rctl_stock_parse(b, NULL, NULL, NULL) == 0, "квитанція Call Alert не -- команда");

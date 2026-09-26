@@ -45,8 +45,18 @@ void dmr_rctl_stock_command(dmr_rctl_stock_cmd_t cmd, uint32_t src, uint32_t dst
 	out12[1] = STOCK_FID;
 	out12[2] = 0x00;
 	out12[3] = CMD_ARG[cmd];
-	out12[4] = (uint8_t)(src >> 16); out12[5] = (uint8_t)(src >> 8); out12[6] = (uint8_t)src;
-	out12[7] = (uint8_t)(dst >> 16); out12[8] = (uint8_t)(dst >> 8); out12[9] = (uint8_t)dst;
+	if (cmd == DMR_RCTL_STOCK_CALL_ALERT)
+	{
+		/* Call Alert -- ВИНЯТОК: адреси йдуть dst,src, ЯК ПРЕАМБУЛА, а не src,dst, як
+		 * решта команд нижче (rev2, 2026-09-26 -- rev1 тут помилявся, .h). */
+		out12[4] = (uint8_t)(dst >> 16); out12[5] = (uint8_t)(dst >> 8); out12[6] = (uint8_t)dst;
+		out12[7] = (uint8_t)(src >> 16); out12[8] = (uint8_t)(src >> 8); out12[9] = (uint8_t)src;
+	}
+	else
+	{
+		out12[4] = (uint8_t)(src >> 16); out12[5] = (uint8_t)(src >> 8); out12[6] = (uint8_t)src;
+		out12[7] = (uint8_t)(dst >> 16); out12[8] = (uint8_t)(dst >> 8); out12[9] = (uint8_t)dst;
+	}
 	csbk_crc(out12);
 }
 
@@ -88,26 +98,17 @@ void dmr_rctl_stock_ack_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32
 		/* Особливий формат квитанції (НЕ правило старшого біта нижче, чинне лише для
 		 * Check/Enable/Disable): опкод 0xA0, а b2 несе опкод самої команди (CMD_B0[cmd]).
 		 * Monitor -- a0 10 9d 00 <requester> <responder> <crc> (ефір, BBD_0003,
-		 * RCTL_COMPAT.md §8e). Call Alert -- a0 10 9f 00 ... (ефір, BBD_0009,
-		 * claude/call-alert-reverse.md, задача 2026-09-26) -- АЛЕ з полями адрес
-		 * ДЗЕРКАЛЬНО поміняними місцями відносно Monitor: підтверджено байтами з ефіру
-		 * (запит src=2/dst=1 -> квитанція field1=1=запит.dst/field2=2=запит.src), тобто
-		 * тут field1=responder(ми), field2=requester(хто питав) -- див. .h. Єдиний зразок
-		 * в ефірі -- якщо польова перевірка покаже інакше, виправити саме тут. */
+		 * RCTL_COMPAT.md §8e). Call Alert -- a0 10 9f 00 <requester> <responder> <crc>
+		 * (ефір, BBD_0009, claude/call-alert-reverse.md) -- ТОЙ САМИЙ порядок полів, що
+		 * Monitor, без жодної перестановки (rev2, 2026-09-26; .h пояснює, чому rev1 тут
+		 * мав хибний свіп -- то була компенсація помилки в розборі ЗАПИТУ, не в самій
+		 * квитанції). */
 		out12[0] = 0xA0;
 		out12[1] = STOCK_FID;
 		out12[2] = CMD_B0[cmd];
 		out12[3] = 0x00;
-		if (cmd == DMR_RCTL_STOCK_CALL_ALERT)
-		{
-			out12[4] = (uint8_t)(responder >> 16); out12[5] = (uint8_t)(responder >> 8); out12[6] = (uint8_t)responder;
-			out12[7] = (uint8_t)(requester >> 16); out12[8] = (uint8_t)(requester >> 8); out12[9] = (uint8_t)requester;
-		}
-		else
-		{
-			out12[4] = (uint8_t)(requester >> 16); out12[5] = (uint8_t)(requester >> 8); out12[6] = (uint8_t)requester;
-			out12[7] = (uint8_t)(responder >> 16); out12[8] = (uint8_t)(responder >> 8); out12[9] = (uint8_t)responder;
-		}
+		out12[4] = (uint8_t)(requester >> 16); out12[5] = (uint8_t)(requester >> 8); out12[6] = (uint8_t)requester;
+		out12[7] = (uint8_t)(responder >> 16); out12[8] = (uint8_t)(responder >> 8); out12[9] = (uint8_t)responder;
 		csbk_crc(out12);
 		return;
 	}
@@ -151,27 +152,18 @@ int dmr_rctl_stock_parse_ack_for(const uint8_t in12[12], dmr_rctl_stock_cmd_t *c
 	if ((uint16_t)(crc16d(in12, 10) ^ 0xA5A5) != want) { return 0; }
 
 	/* Особливий формат квитанції a0 10 <CMD_B0> 00 -- Monitor (9d, BBD_0003) і Call Alert
-	 * (9f, BBD_0009). Поля адрес: у Monitor field1=requester/field2=responder (як прийшло
-	 * з ефіру); у Call Alert -- ДЗЕРКАЛЬНО, field1=responder/field2=requester (див. коментар
-	 * у dmr_rctl_stock_ack_for() і .h) -- тож тут інвертуємо назад саме для Call Alert. */
+	 * (9f, BBD_0009). Поля адрес -- ОДНАКОВІ для обох: field1=requester, field2=responder,
+	 * без жодної перестановки (rev2, 2026-09-26 -- дзеркальний свіп у rev1 був хибним, .h). */
 	if (in12[0] == 0xA0 && in12[3] == 0x00 &&
 	    (in12[2] == CMD_B0[DMR_RCTL_STOCK_MONITOR] || in12[2] == CMD_B0[DMR_RCTL_STOCK_CALL_ALERT]))
 	{
-		dmr_rctl_stock_cmd_t c = (in12[2] == CMD_B0[DMR_RCTL_STOCK_CALL_ALERT]) ?
-				DMR_RCTL_STOCK_CALL_ALERT : DMR_RCTL_STOCK_MONITOR;
-		uint32_t field1 = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6];
-		uint32_t field2 = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9];
-		if (cmd) { *cmd = c; }
-		if (c == DMR_RCTL_STOCK_CALL_ALERT)
+		if (cmd)
 		{
-			if (responder) { *responder = field1; }
-			if (requester) { *requester = field2; }
+			*cmd = (in12[2] == CMD_B0[DMR_RCTL_STOCK_CALL_ALERT]) ?
+					DMR_RCTL_STOCK_CALL_ALERT : DMR_RCTL_STOCK_MONITOR;
 		}
-		else
-		{
-			if (requester) { *requester = field1; }
-			if (responder) { *responder = field2; }
-		}
+		if (requester) { *requester = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6]; }
+		if (responder) { *responder = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9]; }
 		return 1;
 	}
 
@@ -215,8 +207,19 @@ int dmr_rctl_stock_parse(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd, uint
 		if (in12[0] == CMD_B0[c] && in12[3] == CMD_ARG[c])
 		{
 			if (cmd) { *cmd = (dmr_rctl_stock_cmd_t)c; }
-			if (src) { *src = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6]; }
-			if (dst) { *dst = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9]; }
+			uint32_t field1 = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6];
+			uint32_t field2 = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9];
+			if ((dmr_rctl_stock_cmd_t)c == DMR_RCTL_STOCK_CALL_ALERT)
+			{
+				/* Call Alert -- ВИНЯТОК: dst,src, як преамбула (rev2, .h). */
+				if (dst) { *dst = field1; }
+				if (src) { *src = field2; }
+			}
+			else
+			{
+				if (src) { *src = field1; }
+				if (dst) { *dst = field2; }
+			}
 			return 1;
 		}
 	}
