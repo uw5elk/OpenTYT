@@ -1461,6 +1461,11 @@ void applicationMainTask(void)
 		if (uiNotificationIsCallAlert() && KEYCHECK_SHORTUP(ev.keys, KEY_GREEN))
 		{
 			acceptPrivateCall(dmrRctlLastCallAlertFrom(), -1);
+			/* acceptPrivateCall() оновлює nonVolatileSettings.overrideTG, але trxTalkGroupOrPcId
+			 * (реальна ціль PTT) оновлює updateTrxID() у uiChannelMode.c (static -- звідси
+			 * недосяжна). Без цього рядка перший PTT після GREEN іде на стару ціль.
+			 * Той самий патерн: applicationMain.c:1394-1398 для QUICKKEY_CONTACT. */
+			trxTalkGroupOrPcId = (dmrRctlLastCallAlertFrom() & 0xffffff) | ((uint32_t)PC_CALL_FLAG << 24);
 			uiNotificationHide(true);
 			ev.keys.key = 0;
 			ev.keys.event = KEY_MOD_UP;
