@@ -124,7 +124,8 @@ static uint32_t s_lastAckFromId;
 static uint32_t s_lastAckMillis;
 static uint8_t  s_haveAck;
 static uint8_t  s_lastAckCmd;   /* ака команда квитанції: Check/Enable/Disable */
-static uint32_t s_ackGen;   /* зростає на 1 при кожному прийнятому CHECK_ACK (dmrRctlTick()) */
+static uint32_t s_ackGen;             /* зростає на 1 при кожному прийнятому CHECK_ACK (dmrRctlTick()) */
+static uint32_t s_lastCallAlertFrom;  /* ID останнього Call Alert (для GREEN -> acceptPrivateCall) */
 
 int dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs)
 {
@@ -247,7 +248,6 @@ static volatile uint8_t  s_stockAckCmd;   /* яку команду підтве�
 
 /* Коварт-монітор (форк як ціль) -- стан; логіка нижче, біля dmrRctlTick(). */
 static volatile uint32_t s_monReq;       /* кому шлемо голос (той, хто запитав) */
-static uint32_t          s_lastCallAlertFrom; /* ID останнього Call Alert (для GREEN -> acceptPrivateCall) */
 static volatile uint8_t  s_monKeyTries;  /* лічильник спроб ключування (чекаємо кінця квитанції) */
 static void monitorKeyVoice(void);   /* нижче: відкладене ключування голосу */
 static void callAlertRingAgain(void); /* нижче: повторний дзвінок Call Alert кожні 5 с */
