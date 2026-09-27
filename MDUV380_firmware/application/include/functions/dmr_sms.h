@@ -35,6 +35,9 @@
                                        * увімкнено монітор (BIT_SMS_MONITOR_ALL). У списку
                                        * позначається окремо, щоб оператор не сплутав чужий
                                        * наказ зі своїм. */
+#define DMR_SMS_FLAG_DELIVERED 0x20   /* Надіслані: отримали link-layer квитанцію (Response DPF=1)
+                                       * від адресата на наш CONFIRMED SMS. Записується у теку
+                                       * «Надіслані» dmrSmsRxTick()-ом (не ISR). */
 
 typedef struct
 {
@@ -131,6 +134,11 @@ int  dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId);
  * flash write, to isolate bug #3 (menu sends after the first fail; USB harness sends don't).
  * The menu path never sets this; it is toggled only around the 0x97 handler call. */
 void dmrSmsDiagSetSkipStore(int skip);
+
+/* One-shot: повертає 1 якщо отримали Response-header (link-layer ACK, DPF=1) від адресата
+ * нашого останнього CONFIRMED SMS, і скидає прапорець. 0 -- ще не отримали або нічого
+ * не відправляли. Безпечно викликати з основного циклу кожен тік. */
+int dmrSmsTxAcked(void);
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_SMS_H_ */
