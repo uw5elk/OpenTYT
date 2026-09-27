@@ -24,7 +24,8 @@
 #include "crypto/dmr_rctl_stock.h"   // стоковий формат команд (сумісність із заводською TYT)
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"   // contactIDLookup/dmrIDLookup -- ім'я викликача Call Alert
-#include "functions/sound.h"              // soundSetMelody() -- звук банера Call Alert
+#include "functions/sound.h"              // soundSetMelody()/melody_play/audioAmpGetStatus() -- звук Call Alert
+#include "functions/voicePrompts.h"       // voicePromptsIsPlaying() -- guard повторного дзвінка
 #include <string.h>
 #include <stdio.h>
 
@@ -243,6 +244,7 @@ static volatile uint8_t  s_stockAckCmd;   /* яку команду підтве�
 static volatile uint32_t s_monReq;       /* кому шлемо голос (той, хто запитав) */
 static volatile uint8_t  s_monKeyTries;  /* лічильник спроб ключування (чекаємо кінця квитанції) */
 static void monitorKeyVoice(void);   /* нижче: відкладене ключування голосу */
+static void callAlertRingAgain(void); /* нижче: повторний дзвінок Call Alert кожні 5 с */
 static uint8_t   s_monActive;
 static uint32_t  s_monSavedTgOrPc;
 static ticksTimer_t s_monTimer = { 0, 0 };
@@ -539,8 +541,13 @@ static void dmrRctlStockProcessPending(void)
 					callAlertWhoStr(requester, who, sizeof who);
 					uiNotificationShow(NOTIFICATION_TYPE_CALL_ALERT, NOTIFICATION_ID_CALL_ALERT,
 							60000, who, true);
-					/* Звуковий сигнал -- той самий патерн, що dmr_sms.c:1335. */
-					soundSetMelody(MELODY_SMS_RECEIVED_BEEP);
+					/* MELODY_PRIVATE_CALL (а не SMS-біп): Call Alert семантично "зверни
+					 * увагу НЕГАЙНО" -- той самий сигнал вхідного приватного виклику,
+					 * що вже знайомий оператору. Повторюється кожні 5 с через
+					 * callAlertRingAgain() поки банер відкритий; без явного cancel --
+					 * самозавершення через uiNotificationIsCallAlert()==false (RED/timeout). */
+					soundSetMelody(MELODY_PRIVATE_CALL);
+					addTimerCallback(callAlertRingAgain, 5000, MENU_ANY, false);
 				}
 				break;
 		}
@@ -626,6 +633,22 @@ static void monitorKeyVoice(void)
 
 	uint32_t secs = dmrRctlMonitorSecs();
 	ticksTimerStart(&s_monTimer, secs * 1000u);
+}
+
+/* Повторний дзвінок Call Alert кожні 5 с, поки банер відкритий.
+ * Guard (voicePromptsIsPlaying / melody_play / audioAmpGetStatus) скопійовано з
+ * privateCallPostponedAlarm() (uiPrivateCall.c) -- перевірена на залізі умова.
+ * Без явного cancelTimerCallback: самозавершення через uiNotificationIsCallAlert()==false
+ * (RED закриває банер -- той шлях і таймаут 60 с -- обидва зупиняють цикл). */
+static void callAlertRingAgain(void)
+{
+	if (!uiNotificationIsCallAlert()) { return; }   /* банер уже закрито -- не перепланувати */
+	if ((voicePromptsIsPlaying() == false) && (melody_play == NULL) &&
+		(audioAmpGetStatus() == AUDIO_AMP_CHANNEL_NONE))
+	{
+		soundSetMelody(MELODY_PRIVATE_CALL);
+	}
+	addTimerCallback(callAlertRingAgain, 5000, MENU_ANY, false);
 }
 
 /* Обробка з tick (головний цикл): лише авто-зняття за таймером тривалості. */
