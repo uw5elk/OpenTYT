@@ -151,7 +151,7 @@ static uiNotificationData_t notificationData =
 #include "user_interface/languages/rctl_ua.h"
 #else
 #define RCTL_CALL_ALERT_TITLE    "Private Alert"
-#define RCTL_CALL_ALERT_HINT     "RED: close"
+#define RCTL_CALL_ALERT_HINT     "GRN:call RED:close"
 #endif
 #endif
 

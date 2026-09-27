@@ -144,6 +144,11 @@ uint32_t dmrRctlAckGeneration(void)
 	return s_ackGen;
 }
 
+uint32_t dmrRctlLastCallAlertFrom(void)
+{
+	return s_lastCallAlertFrom;
+}
+
 /* ============================ RX (ISR) ==================================== */
 /* Дзеркалить структуру ISR-стану dmrSmsRxBurst() -- окремий namespace, той самий буфер
  * бургста, що вже прочитала HR-C6000.c для SMS, повторний SPI-запит не потрібен. */
@@ -242,6 +247,7 @@ static volatile uint8_t  s_stockAckCmd;   /* яку команду підтве�
 
 /* Коварт-монітор (форк як ціль) -- стан; логіка нижче, біля dmrRctlTick(). */
 static volatile uint32_t s_monReq;       /* кому шлемо голос (той, хто запитав) */
+static uint32_t          s_lastCallAlertFrom; /* ID останнього Call Alert (для GREEN -> acceptPrivateCall) */
 static volatile uint8_t  s_monKeyTries;  /* лічильник спроб ключування (чекаємо кінця квитанції) */
 static void monitorKeyVoice(void);   /* нижче: відкладене ключування голосу */
 static void callAlertRingAgain(void); /* нижче: повторний дзвінок Call Alert кожні 5 с */
@@ -536,6 +542,7 @@ static void dmrRctlStockProcessPending(void)
 				 * прийому кадру, а не "оператор натиснув Ignore". Банер (нижче) -- окремо,
 				 * саме показ НЕ впливає на те, чи й коли пішла квитанція. */
 				sendStockAck(DMR_RCTL_STOCK_CALL_ALERT, requester);
+				s_lastCallAlertFrom = requester;   /* зберігаємо для GREEN -> acceptPrivateCall */
 				{
 					char who[SCREEN_LINE_BUFFER_SIZE];
 					callAlertWhoStr(requester, who, sizeof who);

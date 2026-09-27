@@ -1453,6 +1453,20 @@ void applicationMainTask(void)
 			ev.keys.event = KEY_MOD_UP;
 			ev.hasEvent = false;
 		}
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+		// Форк: GREEN на банері Call Alert -- перемикає поточний TG/PC-override на того,
+		// хто дзвонив, щоб PTT одразу пішов йому. Той самий виклик, що uiChannelMode.c:3921
+		// для "подзвонити контакту" (дія оператора, timeslot=-1 -- не вхідний голосовий
+		// виклик зі своїм timeslot). SMS не чіпаємо -- тільки Call Alert.
+		if (uiNotificationIsCallAlert() && KEYCHECK_SHORTUP(ev.keys, KEY_GREEN))
+		{
+			acceptPrivateCall(dmrRctlLastCallAlertFrom(), -1);
+			uiNotificationHide(true);
+			ev.keys.key = 0;
+			ev.keys.event = KEY_MOD_UP;
+			ev.hasEvent = false;
+		}
+#endif
 
 		// Clear the Quickkey slot on SK2 + longdown 0..9 KEY
 		if (KEYCHECK_LONGDOWN_NUMBER(ev.keys) && BUTTONCHECK_DOWN(&ev, BUTTON_SK2))

@@ -72,6 +72,6 @@
  * лише українською; ім'я/ID того, хто дзвонить, підставляється окремим рядком
  * (dmr_rctl_tx.c, callAlertWhoStr()). */
 #define RCTL_CALL_ALERT_TITLE    "Персональний виклик"
-#define RCTL_CALL_ALERT_HINT     "RED: закрити"
+#define RCTL_CALL_ALERT_HINT     "GRN:виклик RED:закр"
 
 #endif
