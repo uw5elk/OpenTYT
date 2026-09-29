@@ -89,19 +89,27 @@ jobs:
           # має бути >= зміщення запису кодека (0x6937C) + розмір кодека (0x48BB0) = 728876
           test "$sz" -ge 728876 || { echo "ERROR: .bin too small to receive the AMBE codec merge (FM-only)"; exit 1; }
           echo "OK: reserved codec region present, ready for flash-time merge."
+      # .bin і .hex вивантажуємо завжди (потрібні для прошивки); .elf і .map --
+      # лише при ручному запуску (workflow_dispatch), бо вони великі (~10 МБ кожен)
+      # і потрібні лише для детального розбору пам'яті поза CI-логом.
+      # Всі артефакти живуть 7 днів -- після цього GitHub видаляє їх автоматично.
       - uses: actions/upload-artifact@v4
         with:
           name: openuv380-10w-aes${{ matrix.aes }}
+          retention-days: 7
           path: |
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
-            MDUV380_firmware/build/*.elf
-      # .map -- щоб можна було завантажити й подивитись поелементно (лінкерна карта
-      # секцій/символів), а не лише топ-20 із кроку вище.
+      # .elf + .map (налагоджувальні символи і лінкерна карта) -- лише вручну.
+      # Запуск: GitHub → Actions → "Build MD-UV390 10W firmware" → Run workflow.
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
-          name: openuv380-10w-aes${{ matrix.aes }}-map
-          path: MDUV380_firmware/build/*.map
+          name: openuv380-10w-aes${{ matrix.aes }}-debug
+          retention-days: 7
+          path: |
+            MDUV380_firmware/build/*.elf
+            MDUV380_firmware/build/*.map
 
   # Українська збірка: окрема робота, а не ще один пункт матриці вище, щоб не чіпати
   # наявні перевірки. Дає готовий .bin, який можна прошити з будь-якої ОС -- локальний
@@ -127,17 +135,22 @@ jobs:
         run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
       # Артефакт вивантажуємо ДО перевірок: якщо якась із них колись спрацює хибно,
       # зібраний .bin все одно має лишитись доступним для завантаження.
+      # .bin і .hex -- завжди; .elf і .map -- лише при ручному запуску (workflow_dispatch).
       - uses: actions/upload-artifact@v4
         with:
           name: openuv380-10w-ukrainian
+          retention-days: 7
           path: |
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
-            MDUV380_firmware/build/*.elf
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
-          name: openuv380-10w-ukrainian-map
-          path: MDUV380_firmware/build/*.map
+          name: openuv380-10w-ukrainian-debug
+          retention-days: 7
+          path: |
+            MDUV380_firmware/build/*.elf
+            MDUV380_firmware/build/*.map
       - name: Assert codec-merge-capable size
         working-directory: MDUV380_firmware
         run: |
@@ -215,4 +228,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: openuv380-flasher-windows
+          retention-days: 7
           path: MDUV380_firmware/tools/dist/TYT MD-UV390UKR.exe
