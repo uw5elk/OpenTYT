@@ -70,6 +70,16 @@ done:
 	return ((crc & 0xFF) << 24) | ((crc & 0xFF00) << 8) | ((crc >> 8) & 0xFF00) | ((crc >> 24) & 0xFF);
 }
 
+/* Програмна перевірка CRC заголовка (див. dmr_sms_pdu.h). Навіщо: апаратний прапорець CRC
+ * HR-C6000 для відповіді, що приходить одразу після нашої передачі, буває хибно «невалідним»
+ * (так було з квитанцією RCTL-CSBK); тоді рішення приймаємо самі, за тими самими байтами. */
+int dmrSmsPduHdrCrcOk(const uint8_t p12[12], uint16_t mask)
+{
+	uint8_t c[2];
+	dmrSmsPduHdrCrc(p12, 10, mask, c);
+	return (c[0] == p12[10]) && (c[1] == p12[11]);
+}
+
 /* ============================ відкритий текст ============================ */
 /* IPv4/UDP/TMS відкритий текст у out (>=160 Б). Повертає довжину. */
 int dmrSmsPduBuildPlaintext(const char *text, int tlen, uint32_t src, uint32_t dst,

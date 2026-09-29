@@ -78,6 +78,21 @@ for src in "$TESTS_DIR"/test_*.c; do
 	fi
 done
 
+# Python-самоперевірка декодера ефірних записів (tools/dmr_data_rx.py). Потрібні numpy+scipy;
+# якщо їх немає (напр. мінімальний CI) -- пропускаємо з попередженням, а не валимо прогін.
+if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
+	if python3 -c "import numpy, scipy" 2>/dev/null; then
+		if out="$(python3 "$TESTS_DIR/../tools/test_dmr_data_rx.py" 2>&1)"; then
+			pass=$((pass + 1)); echo "ok            test_dmr_data_rx (python)"
+		else
+			fail=$((fail + 1)); echo "ПРОВАЛ        test_dmr_data_rx (python)"
+			printf '%s\n' "$out" | tail -20
+		fi
+	else
+		echo "ПРОПУЩЕНО     test_dmr_data_rx (python) -- немає numpy/scipy"
+	fi
+fi
+
 echo
 echo "Тестів пройдено: $pass, провалено: $fail"
 [ "$fail" -eq 0 ] || exit 1

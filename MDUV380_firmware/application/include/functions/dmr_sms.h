@@ -51,6 +51,9 @@ typedef struct
 /* ---- lifecycle --------------------------------------------------------- */
 /* Load the message store from flash into the CCM working copy. Call once at boot. */
 void dmrSmsInit(void);
+/* Лише перечитати сховище й MSGC-конфіг (вхід у меню «Повідомлення»). НЕ скидає стан
+ * прийому, відкладену квитанцію, N(S) і лічильники -- на відміну від dmrSmsInit(). */
+void dmrSmsReloadStore(void);
 
 /* ---- store query (UI) -------------------------------------------------- */
 /* Count of messages for a folder: outgoing!=0 -> Sent, ==0 -> Inbox. */
@@ -148,6 +151,30 @@ int dmrSmsTxAcked(void);
  * Зберігається у CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE (1 байт, SPI flash). */
 int  dmrSmsTxMode(void);
 void dmrSmsTxModeSet(uint8_t mode);
+
+/* ---- Прийом data-заголовка (HR-C6000 ISR) ------------------------------ *
+ * Чи пускати data-заголовок (тип 6) далі у dmrSmsRxBurst/dmrRctlRxBurst: апаратний CRC ok,
+ * АБО програмно CRC16 ^ 0xCCCC сходиться. Рахує обидва випадки для екрана діагностики. */
+int  dmrSmsRxHdrAccept(int hwCrcOk, const uint8_t *p12);
+
+/* ---- Екран «Діагностика» (меню Повідомлення) --------------------------- */
+typedef struct
+{
+	/* Квитанція на ВХІДНЕ CONFIRMED (ми квитуємо) */
+	uint16_t ackSeen, ackQueued, ackSent, ackStale, ackDelayMs;
+	/* dmr_data.c: черга відхилена (передача активна) / перший burst пішов у чип /
+	 * вихід по таймауту / таймаут без жодного burst-а */
+	uint16_t dataRejected, dataStarted, dataTimeout, dataNoStart;
+	/* Наше CONFIRMED (нас квитують) */
+	uint16_t txConf, respAll, respForUs, respMatch;
+	/* data-заголовки (тип 6): HW CRC ok / HW bad але SW ok / відкинуто */
+	uint16_t hdrHwOk, hdrSwOk, hdrBad;
+} dmrSmsDiagScreen_t;
+void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
+void dmrSmsDiagScreenReset(void);
+/* Експеримент: наше CONFIRMED без термінатора (dmrDataTxLoadFast). Типово вимк, не зберігається. */
+int  dmrSmsDiagFastEnd(void);
+void dmrSmsDiagFastEndToggle(void);
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_SMS_H_ */

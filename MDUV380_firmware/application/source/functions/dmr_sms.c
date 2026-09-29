@@ -57,6 +57,7 @@ static uint8_t         s_loaded  DMR_AES_CCM;  /* CCM is not zeroed at boot -> g
 static dmrSmsMessage_t s_scratch;                /* copy-out buffer for dmrSmsGet (main RAM, not CCM) */
 
 static void runtimeReset(void);
+static void cfg_invalidate(void);
 
 static int entry_size(int off) { return SMS_ENTRY_HDR + s_store.data[off + 1]; }
 static uint16_t entry_seq(int off) { return (uint16_t)(s_store.data[off + 2] | (s_store.data[off + 3] << 8)); }
@@ -96,8 +97,18 @@ static int store_chain_valid(void)
 
 void dmrSmsInit(void)
 {
-	uint8_t *blk = (uint8_t *)&s_store;
 	runtimeReset();     /* clear CCM runtime state (counters, flags) before first use */
+	dmrSmsReloadStore();
+}
+
+/* Перечитати сховище повідомлень і MSGC-конфіг із флеша, НЕ чіпаючи стан прийому/квитанції.
+ * Меню «Повідомлення» раніше кликало на кожному вході dmrSmsInit(), а той робив
+ * runtimeReset(): скидав відкладену квитанцію (s_ackPending), адресата очікуваного ACK
+ * (s_txPendingDst), лічильник N(S), дедуп, незібраний PDU і всі лічильники діагностики. */
+void dmrSmsReloadStore(void)
+{
+	uint8_t *blk = (uint8_t *)&s_store;
+	cfg_invalidate();   /* пресети/отримувач із CPS -- перечитати, як і раніше при вході в меню */
 	s_loaded = 1;
 	dmrAesLoadKeys();   /* ensure the key store is populated for RX decrypt */
 	// Обмежене читання. Довжина блока береться з ЗАГОЛОВКА У ФЛЕШІ (blockHeader.dataLength),
@@ -347,6 +358,7 @@ static void cfg_load(void)
 }
 
 static void cfg_ensure(void) { if (!s_cfgLoaded) { cfg_load(); } }
+static void cfg_invalidate(void) { s_cfgLoaded = 0; }
 
 int dmrSmsPresetCount(void)
 {
@@ -658,6 +670,70 @@ static volatile uint8_t  s_ackLastHdr1;  /* p[1] -- SAP/блоки */
 static volatile uint8_t  s_ackLastGroup; /* останнє повідомлення було груповим? */
 static volatile uint8_t  s_ackLastForUs; /* останнє повідомлення адресоване нам? */
 static volatile uint32_t s_ackLastDelayMs;/* мс від ост. прийнятого burst-а до віддачі квитанції */
+/* Екран «Діагностика» (меню Повідомлення, 2026-09-30) -- де рветься ланцюг квитанції, без ПК.
+ * У CCM (main RAM на межі); CCM не обнуляється стартапом -> скидаються в runtimeReset().
+ * uint16: переповнення за польовий тест не буде, а CCM економимо. */
+static volatile uint16_t s_dgHdrHwOk    DMR_AES_CCM;  /* data-заголовків (тип 6) з апаратним CRC ok */
+static volatile uint16_t s_dgHdrSwOk    DMR_AES_CCM;  /* апаратний CRC «bad», програмний ok -> прийнято */
+static volatile uint16_t s_dgHdrBad     DMR_AES_CCM;  /* обидва CRC погані -> відкинуто */
+static volatile uint16_t s_dgRespAll    DMR_AES_CCM;  /* Response-заголовків (DPF=1) прийнято усього */
+static volatile uint16_t s_dgRespForUs  DMR_AES_CCM;  /* ... з них адресованих нам (to == наш ID) */
+static volatile uint16_t s_dgRespMatch  DMR_AES_CCM;  /* ... і від адресата нашого CONFIRMED -> «доставлено» */
+static volatile uint16_t s_dgTxConf     DMR_AES_CCM;  /* наших CONFIRMED SMS поставлено в ефір */
+/* Експеримент з екрана «Діагностика» (типово 0, НЕ зберігається): слати наше CONFIRMED через
+ * dmrDataTxLoadFast() -- без термінатора й довгого TX_END. Звичайний хвіст триває ~120 мс
+ * (RCTL_COMPAT.md §5h), а квитанція стокової в BBD_0000 прийшла саме через ~120 мс після
+ * нашого останнього блока -- можливо, ми ще передаємо або перелаштовуємось і не чуємо її. */
+static uint8_t s_dgFastEnd DMR_AES_CCM;
+
+int  dmrSmsDiagFastEnd(void)       { return s_dgFastEnd; }
+void dmrSmsDiagFastEndToggle(void) { s_dgFastEnd = s_dgFastEnd ? 0 : 1; }
+
+/* Рішення для data-заголовка (тип 6) з HR-C6000 ISR. Раніше брали лише з апаратним crcOk --
+ * а запис BBD_0000 (2026-09-30) показав: стокова ШЛЕ квитанцію `01 40 ...` з валідним CRC через
+ * ~120 мс після нашого останнього блока, а банера немає. Гіпотеза: відповідь одразу після
+ * нашої передачі HW позначає CRC-невалідною (як уже було з CSBK-квитанцією RCTL). Тому:
+ * апаратно валідний -- як і раніше; апаратно «поганий» -- приймаємо, якщо CRC16 ^ 0xCCCC
+ * сходиться програмно (ті самі байти сторінки 0x02). Лічильники доводять або спростовують. */
+int dmrSmsRxHdrAccept(int hwCrcOk, const uint8_t *p12)
+{
+	if (hwCrcOk) { s_dgHdrHwOk++; return 1; }
+	if (dmrSmsPduHdrCrcOk(p12, 0xCCCC)) { s_dgHdrSwOk++; return 1; }
+	s_dgHdrBad++;
+	return 0;
+}
+
+void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
+{
+	d->ackSeen      = (uint16_t)s_ackSeen;
+	d->ackQueued    = (uint16_t)s_ackQueued;
+	d->ackSent      = (uint16_t)s_ackSent;
+	d->ackStale     = (uint16_t)s_ackStale;
+	d->ackDelayMs   = (uint16_t)((s_ackLastDelayMs > 65535u) ? 65535u : s_ackLastDelayMs);
+	d->txConf       = s_dgTxConf;
+	d->respAll      = s_dgRespAll;
+	d->respForUs    = s_dgRespForUs;
+	d->respMatch    = s_dgRespMatch;
+	d->hdrHwOk      = s_dgHdrHwOk;
+	d->hdrSwOk      = s_dgHdrSwOk;
+	d->hdrBad       = s_dgHdrBad;
+	uint16_t dd[4];
+	dmrDataTxDiag(dd);
+	d->dataRejected = dd[0];
+	d->dataStarted  = dd[1];
+	d->dataTimeout  = dd[2];
+	d->dataNoStart  = dd[3];
+}
+
+void dmrSmsDiagScreenReset(void)
+{
+	s_ackSeen = s_ackQueued = s_ackSent = s_ackStale = 0;
+	s_ackLastDelayMs = 0;
+	s_dgHdrHwOk = s_dgHdrSwOk = s_dgHdrBad = 0;
+	s_dgRespAll = s_dgRespForUs = s_dgRespMatch = 0;
+	s_dgTxConf = 0;
+	dmrDataTxDiagReset();
+}
 
 /* Flush the deferred Sent-folder entry if one is queued and the radio has finished transmitting.
  * Called from the main loop (dmrSmsRxTick). Safe to call every tick; a no-op when idle. */
@@ -769,9 +845,11 @@ static void buildAndLoadSmsAck(uint32_t dst)
 		n = dmrSmsPduAppendBurst(q, n, DTB_DATA_HEADER, p12, 12);
 	}
 	/* Коротка затримка ключування замість типових 100 мс: відправник слухає вузьке вікно. */
-	dmrDataTxLoadDelayed(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS);
+	/* s_ackSent -- лише якщо dmr_data прийняв чергу. Раніше рахувався й тоді, коли
+	 * dmrDataTxLoadDelayed мовчки відкидав її (активна передача) -- «в ефір» брехав.
+	 * Відмови видно окремо (екран «Діагностика», рядок «Дані»). */
+	if (dmrDataTxLoadDelayed(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS)) { s_ackSent++; }
 	s_ackPending = 0;
-	s_ackSent++;
 }
 
 /* Черга CONFIRMED-повідомлення (режими 1 = rate-1/2 і 2 = rate-3/4). Повертає к-сть burst-ів
@@ -971,7 +1049,9 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	 * не просить -- 0 не збігається з жодним реальним ID, хибного «доставлено» не буде. */
 	s_txPendingDst = (txMode != 0) ? dst : 0;
 	s_txAcked = 0;
-	dmrDataTxLoad(q, (uint8_t)n);
+	if (txMode != 0) { s_dgTxConf++; }
+	if ((txMode != 0) && s_dgFastEnd) { dmrDataTxLoadFast(q, (uint8_t)n); }   /* експеримент, див. s_dgFastEnd */
+	else                              { dmrDataTxLoad(q, (uint8_t)n); }
 	return 0;
 }
 
@@ -1073,6 +1153,7 @@ void dmrSmsRxDiagReset(void)
 	s_ackLastHdr0 = s_ackLastHdr1 = s_ackLastGroup = s_ackLastForUs = 0;
 	s_ackLastDelayMs = 0;
 	s_rawBlkCount = 0;
+	dmrSmsDiagScreenReset();
 }
 
 /* Дамп сирих блоків: [count, (len, bytes...) x count]. Повертає довжину. */
@@ -1141,8 +1222,11 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 		{
 			uint32_t to   = ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 8) | p[4];
 			uint32_t from = ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 8) | p[7];
+			s_dgRespAll++;
+			if (to == trxDMRID) { s_dgRespForUs++; }
 			if (to == trxDMRID && s_txPendingDst != 0 && from == s_txPendingDst)
 			{
+				s_dgRespMatch++;
 				s_txAcked = 1;
 			}
 			return;
@@ -1489,6 +1573,8 @@ static void runtimeReset(void)
 	s_txNS = 0; s_txNSSent = 0;     /* N(S) лічильник TX (Task #32) */
 	s_rxLastNS = 0;                  /* N(S) з останнього вхідного CONFIRMED (Task #33) */
 	s_dedupPeer = 0; s_dedupIpId = 0; s_dedupTmsSeq = 0; s_dedupTs = 0;  /* деdup (Task #34) */
+	dmrSmsDiagScreenReset();         /* лічильники екрана «Діагностика» (CCM, не .bss) */
+	s_dgFastEnd = 0;                 /* експеримент «швидкий кінець» -- після ввімкнення вимкнено */
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
 

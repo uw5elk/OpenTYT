@@ -91,6 +91,18 @@
 #define MSGS_TX_MODE_UNCONF      "Unconfirmed"
 #define MSGS_TX_MODE_R12         "Confirmed 1/2"
 #define MSGS_TX_MODE_R34         "Confirmed 3/4"
+/* Екран «Діагностика» (2026-09-30): лічильники ланцюга квитанції. */
+#define MSGS_DIAG                "Diagnostics"
+#define MSGS_DG_ACK1_FMT         "Ack RX: seen %u q %u"
+#define MSGS_DG_ACK2_FMT         "  sent %u stale %u"
+#define MSGS_DG_ACK3_FMT         "  delay %u ms"
+#define MSGS_DG_DATA1_FMT        "Data: rej %u start %u"
+#define MSGS_DG_DATA2_FMT        "  tmo %u nostart %u"
+#define MSGS_DG_CONF_FMT         "Our CONF: %u"
+#define MSGS_DG_RESP_FMT         "Resp %u tous %u match %u"
+#define MSGS_DG_HDR_FMT          "Hdr6 HW %u SW %u bad %u"
+#define MSGS_DG_FAST_FMT         "Fast end: %s"
+#define MSGS_DG_HINT             "GRN:fast long:reset RED"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -116,7 +128,7 @@ static void smsWhoStr(uint32_t id, char *out, int outsz)
 	snprintf(out, outsz, "%lu", (unsigned long)id);
 }
 
-enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT };
+enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG };
 
 static struct
 {
@@ -149,9 +161,12 @@ static void readEvent(uiEvent_t *ev);
 static void composeEvent(uiEvent_t *ev);
 static void recipientEvent(uiEvent_t *ev);
 static void pickContactEvent(uiEvent_t *ev);
+static void diagUpdate(void);
+static void diagEvent(uiEvent_t *ev);
 
-/* Вхідні / Надіслані / Нове / Монітор / TX режим */
-#define MSGS_HOME_ITEMS   5
+/* Вхідні / Надіслані / Нове / Монітор / TX режим / Діагностика */
+#define MSGS_HOME_ITEMS   6
+#define MSGS_DIAG_REFRESH_MS 500   /* екран діагностики оновлюється сам -- лічильники живі */
 
 static void gotoHome(void)
 {
@@ -167,7 +182,9 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 	if (isFirstRun)
 	{
 		memset(&s_msg, 0, sizeof s_msg);
-		dmrSmsInit();
+		/* Лише перечитати сховище. НЕ dmrSmsInit(): той скидав стан прийому, відкладену
+		 * квитанцію, адресата очікуваного ACK, N(S) і всі лічильники діагностики. */
+		dmrSmsReloadStore();
 		gotoHome();
 		return (MENU_STATUS_LIST_TYPE | MENU_STATUS_SUCCESS);
 	}
@@ -187,6 +204,17 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 		{
 			gotoHome();
 			return (MENU_STATUS_LIST_TYPE | MENU_STATUS_SUCCESS);
+		}
+		return exitCode;
+	}
+
+	if (s_msg.view == MSG_DIAG)
+	{
+		if (ev->hasEvent) { diagEvent(ev); }
+		// Живе оновлення: лічильники міняються в ISR, поки оператор дивиться на екран.
+		if ((s_msg.view == MSG_DIAG) && ticksTimerHasExpired(&s_msg.resultTimer))
+		{
+			diagUpdate();
 		}
 		return exitCode;
 	}
@@ -229,13 +257,15 @@ static void homeUpdate(void)
 			case 3:  snprintf(buf, sizeof buf, MSGS_MONITOR_FMT,
 					settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? MSGS_MON_ON : MSGS_MON_OFF); break;
 			// Режим TX SMS: Без підтв. / Підтв. rate-1/2 / Підтв. rate-3/4 (Task #31).
-			default:
+			case 4:
 			{
 				static const char * const modes[] = { MSGS_TX_MODE_UNCONF, MSGS_TX_MODE_R12, MSGS_TX_MODE_R34 };
 				int m = dmrSmsTxMode();
 				snprintf(buf, sizeof buf, MSGS_TX_MODE_FMT, (m >= 0 && m <= 2) ? modes[m] : modes[0]);
 				break;
 			}
+			// Лічильники ланцюга квитанції -- окремий екран (2026-09-30).
+			default: snprintf(buf, sizeof buf, MSGS_DIAG); break;
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
@@ -323,8 +353,73 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 				dmrSmsTxModeSet((uint8_t)((dmrSmsTxMode() + 1) % 3));
 				homeUpdate();
 				break;
+			case 5:
+				s_msg.view = MSG_DIAG;
+				diagUpdate();
+				break;
 		}
 		return;
+	}
+}
+
+/* ============================ DIAG ===================================== */
+/* Лічильники ланцюга квитанції одним поглядом, без USB-ПК (2026-09-30). Розшифровка
+ * скорочень -- TESTING.md, блок M. FONT_SIZE_1: 26 символів у рядок. */
+static void diagUpdate(void)
+{
+	dmrSmsDiagScreen_t d;
+	char buf[40];
+	dmrSmsDiagScreenGet(&d);
+
+	displayClearBuf();
+	menuDisplayTitle(MSGS_DIAG);
+	int y = 16;
+	snprintf(buf, sizeof buf, MSGS_DG_ACK1_FMT, (unsigned)d.ackSeen, (unsigned)d.ackQueued);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_ACK2_FMT, (unsigned)d.ackSent, (unsigned)d.ackStale);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_ACK3_FMT, (unsigned)d.ackDelayMs);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_DATA1_FMT, (unsigned)d.dataRejected, (unsigned)d.dataStarted);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_DATA2_FMT, (unsigned)d.dataTimeout, (unsigned)d.dataNoStart);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_CONF_FMT, (unsigned)d.txConf);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_RESP_FMT, (unsigned)d.respAll, (unsigned)d.respForUs, (unsigned)d.respMatch);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_HDR_FMT, (unsigned)d.hdrHwOk, (unsigned)d.hdrSwOk, (unsigned)d.hdrBad);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	/* Експеримент (типово вимк): наше CONFIRMED без термінатора -- щоб встигнути почути
+	 * квитанцію, як це вже зроблено для RCTL (RCTL_COMPAT.md §5h). Не зберігається. */
+	snprintf(buf, sizeof buf, MSGS_DG_FAST_FMT, dmrSmsDiagFastEnd() ? MSGS_MON_ON : MSGS_MON_OFF);
+	displayPrintAt(2, y, buf, FONT_SIZE_1);
+	displayPrintCentered(112, MSGS_DG_HINT, FONT_SIZE_1);
+	displayRender();
+
+	ticksTimerStart(&s_msg.resultTimer, MSGS_DIAG_REFRESH_MS);
+}
+
+static void diagEvent(uiEvent_t *ev)
+{
+	if ((ev->events & KEY_EVENT) == 0) { return; }
+	if (KEYCHECK_LONGDOWN(ev->keys, KEY_GREEN))
+	{
+		dmrSmsDiagScreenReset();
+		diagUpdate();
+		return;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		dmrSmsDiagFastEndToggle();
+		diagUpdate();
+		return;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		gotoHome();
+		menuDataGlobal.currentItemIndex = 5;   // повернутись на рядок «Діагностика»
+		homeUpdate();
 	}
 }
 

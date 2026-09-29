@@ -47,6 +47,10 @@ int      dmrSmsPduAppendBurst(uint8_t *q, int n, uint8_t typeByte, const uint8_t
 int      dmrSmsPduBuildUnconf(uint8_t *q, int maxBursts, const uint8_t *ct, int ctLen,
                               uint32_t src, uint32_t dst, int group, int encrypt, uint8_t keyId);
 
+/* Програмна перевірка CRC16 12-байтного заголовка/CSBK: crc16(p[0..9]) ^ mask == p[10..11]
+ * (big-endian). mask: 0xCCCC -- data header, 0xA5A5 -- CSBK. 1 = валідний. */
+int      dmrSmsPduHdrCrcOk(const uint8_t p12[12], uint16_t mask);
+
 /* Response data header (link-layer ACK) на CONFIRMED-повідомлення, 12 Б з CRC.
  * o9 = Class(7-6)=00 | Type(5-3)=001 | Status(2-0)=N(S) відправника. */
 void     dmrSmsPduAckHeader(uint32_t to, uint32_t from, uint8_t ns, uint8_t out12[12]);

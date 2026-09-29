@@ -1121,7 +1121,13 @@ static inline void hrc6000SysReceivedDataInt(void)
 		// з ПК увімкнено захоплення (dmrRctlCapArmed): стокова TYT шле Radio Check/Stun як CSBK
 		// (тип 3), якого шлях 6/7 не бачить. У звичайній роботі capArmed=0 -> зайвого SPI-читання
 		// в ISR немає. Сторінку читаємо ОДИН раз на обидві потреби.
-		bool wantBurst  = (crcOk && ((rxDataType == 6) || (rxDataType == 7)));
+		bool wantBurst  = (crcOk && (rxDataType == 7));
+		// Data header (тип 6) читаємо НЕЗАЛЕЖНО від апаратного crcOk (2026-09-30, запис BBD_0000):
+		// стокова шле квитанцію `01 40 ...` з валідним CRC ~120 мс після нашого останнього блока,
+		// а банера «доставлено» немає. Та сама картина, що й з CSBK нижче: відповідь одразу після
+		// нашої передачі HW позначає CRC-невалідною. Рішення -- dmrSmsRxHdrAccept(): HW ok, або
+		// програмний CRC16 ^ 0xCCCC сходиться; інакше відкинути. Тип 7 не чіпаємо.
+		bool wantHdr    = (rxDataType == 6);
 		// rate-3/4 (тип 8): стокова шле SMS саме так, 18 інфо-байтів/burst. НЕ гейтуємо на
 		// crcOk (per-burst CRC для rate-3/4 недостовірний) -- цілісність гарантує CRC32 усього
 		// PDU у збирачі, а зіпсовані блоки просто не дадуть валідний PDU (стокова ретранслює).
@@ -1135,12 +1141,17 @@ static inline void hrc6000SysReceivedDataInt(void)
 		// Під час реверсу ловимо ВСЕ, навіть CRC-невалідне: квитанція-відповідь цілі могла
 		// приходити з CRC, який HW відкидає, тож у звичайному (crcOk) захопленні її не видно.
 		bool wantCap    = dmrRctlCapArmed();
-		if (wantBurst || want34 || wantStock || wantCap)
+		if (wantBurst || wantHdr || want34 || wantStock || wantCap)
 		{
 			// 18 байтів: вистачає і для rate-3/4 (18), і для rate-1/2/CSBK (12 -- зайве ігнорується).
 			uint8_t dataBurst[18];
 			if (SPI0ReadPageRegByteArray(0x02, 0x00, dataBurst, 18) == kStatus_Success)
 			{
+				if (wantHdr && dmrSmsRxHdrAccept(crcOk, dataBurst))
+				{
+					dmrSmsRxBurst(rxDataType, dataBurst);
+					dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
+				}
 				if (wantBurst)
 				{
 					dmrSmsRxBurst(rxDataType, dataBurst);
