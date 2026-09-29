@@ -371,6 +371,9 @@ typedef enum
 	                                        * а CPS-запис "EEPROM" (усб-команда 4) -- no-op на STM32-
 	                                        * платформах. Див. callReplayConfigLoad()/Save() у
 	                                        * callReplayPlayback.c. */
+	CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE, /* Режим TX SMS: 0=Без підтвердження (типово),
+	                                        * 1=Підтв. rate-1/2, 2=Підтв. rate-3/4.
+	                                        * Малий блок (1 байт), пишеться прямо з рації. */
 } CodeplugCustomDataType_t;
 
 

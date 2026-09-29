@@ -140,5 +140,13 @@ void dmrSmsDiagSetSkipStore(int skip);
  * не відправляли. Безпечно викликати з основного циклу кожен тік. */
 int dmrSmsTxAcked(void);
 
+/* ---- Режим TX SMS (Task #31) ------------------------------------------- *
+ * 0 = Без підтвердження (типово, Unconfirmed rate-3/4)
+ * 1 = Підтв. rate-1/2 (Confirmed, rate-1/2 блоки)
+ * 2 = Підтв. rate-3/4 (Confirmed, rate-3/4 -- як стокова TYT, типовий)
+ * Зберігається у CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE (1 байт, SPI flash). */
+int  dmrSmsTxMode(void);
+void dmrSmsTxModeSet(uint8_t mode);
+
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_SMS_H_ */

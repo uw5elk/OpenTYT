@@ -8,7 +8,7 @@
  *
  * ⚠ КРИТИЧНО: ці вектори ще НЕ звірені з реальним зразком з ефіру або ok-dmrlib Python.
  * Вони гарантують: правильний поліном (0x059), правильний ініціалізатор (0), правильна
- * фінальна маска (0x0F0), правильне кодування DBSN. Звірка з ефіром (dmrSmsRxRawBlocks
+ * фінальна маска rate-1/2=0x0F0 / rate-3/4=0x1FF, правильне кодування DBSN. Звірка з ефіром (dmrSmsRxRawBlocks
  * USB 0xB3) — крок 2 з TESTING.md; до нього вважати «CRC9 ймовірно правильний, але
  * не підтверджено на живих даних».
  *
@@ -97,7 +97,7 @@ static uint16_t crc9_r34_ref(const uint8_t *payload16, uint8_t dbsn)
 		reg = (uint16_t)((reg << 1) & 0x1FF);
 		if (msb ^ ((dbsn >> b) & 1)) { reg ^= 0x059; }
 	}
-	return (uint16_t)((~reg & 0x1FF) ^ 0x0F0);
+	return (uint16_t)((~reg & 0x1FF) ^ 0x1FF);  /* §B.3.12: маска 0x1FF (не 0x0F0 як у rate-1/2) */
 }
 
 /* ---- копія confirmed_block_fill_r34() з dmr_sms.c -----------------------
@@ -125,7 +125,7 @@ int main(void)
 	/* === CRC9 =================================================================
 	 * Вектори 1-3: all-zero payload → регістр 0 протягом усіх 80 бітів навантаження;
 	 *   єдина різниця — останні 7 бітів DBSN (MSB-first, одиниця тільки в LSB).
-	 *   DBSN=0: рег лишається 0 → (~0 & 0x1FF)^0x0F0 = 0x1FF^0x0F0 = 0x10F.
+	 *   DBSN=0: рег лишається 0 → (~0 & 0x1FF)^0x0F0 = 0x1FF^0x0F0 = 0x10F. (rate-1/2, маска 0x0F0)
 	 *   DBSN=1: останній (LSB) біт = 1 → одне XOR: рег = 0x059 →
 	 *     (~0x059 & 0x1FF) = 0x1A6 → ^0x0F0 = 0x156.
 	 *   DBSN=2: передостанній біт = 1 → 2 зсуви з 0 потім XOR: рег = 0x0B2 →
@@ -204,12 +204,17 @@ int main(void)
 	}
 
 	/* === CRC9 RATE-3/4 (16-байтний payload) =====================================
-	 * Алгоритм ідентичний rate-1/2, але обробляє 16 байт payload замість 10.
-	 * Вектори 1-3: all-zero → рег = 0 → CRC9 визначається тільки DBSN.
-	 *   Результати тотожні rate-1/2 для all-zeros (payload нульовий — XOR не спрацьовує).
-	 * Вектор 4: {1..16}, DBSN=0 → 0x19D (обраховано crc9r34.c на ПК).
-	 * Вектор 5: 0xFF*16, DBSN=0 → 0x133.
-	 * Вектор 6: 0xFF*16, DBSN=3 → 0x1D8.
+	 * Алгоритм ідентичний rate-1/2, але обробляє 16 байт payload замість 10,
+	 * і фінальна маска §B.3.12 = 0x1FF (не 0x0F0 як у rate-1/2 §B.3.10).
+	 * Формула перерахунку від старих векторів (маска 0x0F0): new = old ^ 0x10F.
+	 *
+	 * Вектори 1-3: all-zero, рег = 0 після payload; результат = DBSN-маска^0x1FF:
+	 *   DBSN=0: рег=0 → (~0 & 0x1FF)^0x1FF = 0x000.
+	 *   DBSN=1: рег=0x059 → (~0x059 & 0x1FF)^0x1FF = 0x059.
+	 *   DBSN=2: рег=0x0B2 → (~0x0B2 & 0x1FF)^0x1FF = 0x0B2.
+	 * Вектор 4: {1..16}, DBSN=0 → 0x092 (= 0x19D ^ 0x10F).
+	 * Вектор 5: 0xFF*16, DBSN=0 → 0x03C (= 0x133 ^ 0x10F).
+	 * Вектор 6: 0xFF*16, DBSN=3 → 0x0D7 (= 0x1D8 ^ 0x10F).
 	 * ⚠ Ці вектори ще НЕ звірені з ефіром — звірка через dmrSmsRxRawBlocks USB 0xB3. */
 	printf("  [rate-3/4 CRC9]\n");
 	{
@@ -218,12 +223,12 @@ int main(void)
 		uint8_t ffs16[16];
 		memset(ffs16, 0xFF, 16);
 
-		expect_u16("CRC9_r34(zeros,0)",  crc9_r34_ref(zeros16, 0), 0x10F);
-		expect_u16("CRC9_r34(zeros,1)",  crc9_r34_ref(zeros16, 1), 0x156);
-		expect_u16("CRC9_r34(zeros,2)",  crc9_r34_ref(zeros16, 2), 0x1BD);
-		expect_u16("CRC9_r34({1..16},0)", crc9_r34_ref(seq16, 0),  0x19D);
-		expect_u16("CRC9_r34(0xFF*16,0)", crc9_r34_ref(ffs16, 0),  0x133);
-		expect_u16("CRC9_r34(0xFF*16,3)", crc9_r34_ref(ffs16, 3),  0x1D8);
+		expect_u16("CRC9_r34(zeros,0)",  crc9_r34_ref(zeros16, 0), 0x000);
+		expect_u16("CRC9_r34(zeros,1)",  crc9_r34_ref(zeros16, 1), 0x059);
+		expect_u16("CRC9_r34(zeros,2)",  crc9_r34_ref(zeros16, 2), 0x0B2);
+		expect_u16("CRC9_r34({1..16},0)", crc9_r34_ref(seq16, 0),  0x092);
+		expect_u16("CRC9_r34(0xFF*16,0)", crc9_r34_ref(ffs16, 0),  0x03C);
+		expect_u16("CRC9_r34(0xFF*16,3)", crc9_r34_ref(ffs16, 3),  0x0D7);
 
 		/* Санітарні: різний payload та DBSN → різний CRC9. */
 		if (crc9_r34_ref(zeros16, 0) == crc9_r34_ref(zeros16, 1)) {
@@ -247,20 +252,20 @@ int main(void)
 		uint8_t zeros16[16] = {0};
 		uint8_t seq16[16]   = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
 
-		/* zeros,0: c9=0x10F → byte0=(0<<1)|1=0x01, byte1=0xE1 */
+		/* zeros,0: c9=0x000 (маска 0x1FF) → byte0=(0<<1)|0=0x00, byte1=0x00 */
 		block_fill_r34_ref(p18, zeros16, 0);
-		expect_byte("block_r34(zeros,0) byte0", p18[0], 0x01);
-		expect_byte("block_r34(zeros,0) byte1", p18[1], 0xE1);
+		expect_byte("block_r34(zeros,0) byte0", p18[0], 0x00);
+		expect_byte("block_r34(zeros,0) byte1", p18[1], 0x00);
 		if (memcmp(p18 + 2, zeros16, 16) != 0) {
 			fails++; printf("  FAIL block_r34 payload corrupted\n");
 		} else {
 			printf("  ok   payload passthrough (16B)\n");
 		}
 
-		/* {1..16},0: c9=0x19D → byte0=0x01, byte1=0x73 */
+		/* {1..16},0: c9=0x092 (маска 0x1FF) → byte0=0x00, byte1=0x92 */
 		block_fill_r34_ref(p18, seq16, 0);
-		expect_byte("block_r34({1..16},0) byte0", p18[0], 0x01);
-		expect_byte("block_r34({1..16},0) byte1", p18[1], 0x73);
+		expect_byte("block_r34({1..16},0) byte0", p18[0], 0x00);
+		expect_byte("block_r34({1..16},0) byte1", p18[1], 0x92);
 		if (memcmp(p18 + 2, seq16, 16) != 0) {
 			fails++; printf("  FAIL block_r34 payload corrupted\n");
 		} else {
