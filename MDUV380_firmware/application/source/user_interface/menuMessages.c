@@ -87,6 +87,10 @@
 #define MSGS_MON_ON              "on"
 #define MSGS_MON_OFF             "off"
 #define MSGS_FOREIGN             " (not yours)"
+#define MSGS_TX_MODE_FMT         "TX: %s"
+#define MSGS_TX_MODE_UNCONF      "Unconfirmed"
+#define MSGS_TX_MODE_R12         "Confirmed 1/2"
+#define MSGS_TX_MODE_R34         "Confirmed 3/4"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -146,8 +150,8 @@ static void composeEvent(uiEvent_t *ev);
 static void recipientEvent(uiEvent_t *ev);
 static void pickContactEvent(uiEvent_t *ev);
 
-/* Вхідні / Надіслані / Нове / Монітор */
-#define MSGS_HOME_ITEMS   4
+/* Вхідні / Надіслані / Нове / Монітор / TX режим */
+#define MSGS_HOME_ITEMS   5
 
 static void gotoHome(void)
 {
@@ -222,8 +226,16 @@ static void homeUpdate(void)
 			case 2:  snprintf(buf, sizeof buf, MSGS_NEW);                       break;
 			// Монітор: приймати чужі повідомлення (ті, де адресат -- не ми). Вимкнено за
 			// замовчуванням; докладніше -- у smsIsForUs() в dmr_sms.c.
-			default: snprintf(buf, sizeof buf, MSGS_MONITOR_FMT,
+			case 3:  snprintf(buf, sizeof buf, MSGS_MONITOR_FMT,
 					settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? MSGS_MON_ON : MSGS_MON_OFF); break;
+			// Режим TX SMS: Без підтв. / Підтв. rate-1/2 / Підтв. rate-3/4 (Task #31).
+			default:
+			{
+				static const char * const modes[] = { MSGS_TX_MODE_UNCONF, MSGS_TX_MODE_R12, MSGS_TX_MODE_R34 };
+				int m = dmrSmsTxMode();
+				snprintf(buf, sizeof buf, MSGS_TX_MODE_FMT, (m >= 0 && m <= 2) ? modes[m] : modes[0]);
+				break;
+			}
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
@@ -304,6 +316,11 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 			case 3:
 				settingsSetOptionBit(BIT_SMS_MONITOR_ALL,
 						(settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false));
+				homeUpdate();
+				break;
+			case 4:
+				/* Цикл режимів TX SMS: Без підтв. → Підтв.½ → Підтв.¾ → Без підтв. */
+				dmrSmsTxModeSet((uint8_t)((dmrSmsTxMode() + 1) % 3));
 				homeUpdate();
 				break;
 		}

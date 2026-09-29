@@ -393,6 +393,20 @@ int dmrSmsEncryptEnabled(void)
 	return (s_cfg.smsEncrypt == 1) ? 0 : 1;   /* 1 = force clear; 0(default)/2 = encrypt */
 }
 
+/* ---- Режим TX SMS (Task #31): 0=Без підтв. 1=Підтв.½ 2=Підтв.¾ ------------------- */
+int dmrSmsTxMode(void)
+{
+	uint8_t buf = 0;
+	codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE, &buf, 1);
+	return (buf <= 2) ? (int)buf : 0;   /* 0=Unconf(типово) якщо блок порожній або неправильний */
+}
+
+void dmrSmsTxModeSet(uint8_t mode)
+{
+	if (mode > 2) { mode = 0; }
+	codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE, &mode, 1);
+}
+
 /* AES TX key for the current channel — a mirror of hrc6000ResolveAesTxKeyId (HR-C6000.c) so
  * SMS encryption follows the exact same per-channel logic as voice: the global TX selector,
  * overridden by the channel encrypt byte (0xFF -> clear, 1..15 -> key slot, 0 -> inherit).
@@ -579,8 +593,9 @@ static void confirmed_block_fill(uint8_t *p12, const uint8_t *payload10, uint8_t
 	memcpy(p12 + 2, payload10, 10);
 }
 
-/* CRC-9 для Rate-3/4 CONFIRMED data blocks. Той самий poly=0x059, init=0, маска 0x0F0 --
- * лише payload 16 байт замість 10.  ETSI TS 102 361-1 §B.3.10. */
+/* CRC-9 для Rate-3/4 CONFIRMED data blocks. Той самий poly=0x059, init=0, маска 0x1FF --
+ * payload 16 байт.  ETSI TS 102 361-1 §B.3.12 (Rate34DataContinuation).
+ * Примітка: Rate-1/2 (§B.3.10) використовує маску 0x0F0 -- вони різні. */
 static uint16_t crc9_r34(const uint8_t *payload16, uint8_t dbsn)
 {
 	uint16_t reg = 0;
@@ -599,7 +614,7 @@ static uint16_t crc9_r34(const uint8_t *payload16, uint8_t dbsn)
 		reg = (uint16_t)((reg << 1) & 0x1FF);
 		if (msb ^ ((dbsn >> b) & 1)) { reg ^= 0x059; }
 	}
-	return (uint16_t)((~reg & 0x1FF) ^ 0x0F0);
+	return (uint16_t)((~reg & 0x1FF) ^ 0x1FF);   /* §B.3.12: маска 0x1FF (не 0x0F0 як у rate-1/2) */
 }
 
 /* Заповнити 18-байтний Rate-3/4 CONFIRMED data block.
@@ -655,6 +670,14 @@ static uint8_t  s_txMsgSeeded;
  * Не в .bss -- CCM; скидаємо в runtimeReset(). */
 static volatile uint8_t  s_txAcked     DMR_AES_CCM;
 static volatile uint32_t s_txPendingDst DMR_AES_CCM;
+/* N(S) -- 3-бітний лічильник відправлених CONFIRMED SMS (Task #32).
+ * s_txNS: поточне значення 0..7; збільшується на 1 щоразу після відправки.
+ * s_txNSSent: 0 до першого відправлення (S=1 у першому кадрі), після -- 1. */
+static uint8_t s_txNS     DMR_AES_CCM;
+static uint8_t s_txNSSent DMR_AES_CCM;
+/* N(S) з останнього отриманого CONFIRMED data-заголовка (Task #33).
+ * ISR пише, buildAndLoadSmsAck() читає (обидва -- основний потік або ISR-захищені). */
+static volatile uint8_t s_rxLastNS DMR_AES_CCM;
 
 /* One-shot: повертає 1 і скидає прапорець, якщо отримали link-layer ACK (Response DPF=1)
  * від адресата нашого останнього CONFIRMED SMS. Безпечно викликати щоразу у головному циклі. */
@@ -708,11 +731,10 @@ static volatile uint32_t s_lastRxBurstMs;
  * «правильні», але саме ЦИМ від стокової й відрізнялись: три Response header підряд вона
  * цілком могла зарахувати як дублікати/сміття, а 30 мс -- влучити в її перехід
  * передача->прийом. */
-/* 0 = КВИТАНЦІЙ НЕ ШЛЕМО ВЗАГАЛІ (типово). До цієї сесії форк їх не слав, і саме цей стан
- * тут відновлено: жодна нова поведінка не має права ламати те, що працювало. Гілку «щоб
- * стокова зарахувала нашу квитанцію» закрито як безрезультатну (STATUS.md), тож типово
- * вона нікому й не потрібна. Вмикається на льоту: sms_diag.py --ack <повторів> ... */
-static uint8_t  s_ackRepeats = 0;
+/* 1 = квитанція ON за замовчуванням: один Response-заголовок після отримання CONFIRMED SMS.
+ * Стокова (BBD_0005) чекає квитанції; без неї вона ретрансмітить.
+ * N(S) з вхідного CONFIRMED-заголовка відлунюється в o9 квитанції (Task #33). */
+static uint8_t  s_ackRepeats = 1;
 static uint16_t s_ackTargetMs = 80;    /* цільова пауза після тиші в каналі, мс */
 /* CSBK-преамбули перед квитанцією. ТИПОВО 6 -- і ось чому.
  * Еталоном я довго вважав те, що стокова НАДСИЛАЄ (її квитанція йде без преамбул). Але
@@ -856,7 +878,7 @@ static void buildAndLoadSmsAck(uint32_t dst)
 	h[2] = (uint8_t)(dst >> 16); h[3] = (uint8_t)(dst >> 8); h[4] = (uint8_t)dst;
 	h[5] = (uint8_t)(src >> 16); h[6] = (uint8_t)(src >> 8); h[7] = (uint8_t)src;
 	h[8] = 0x00;                                       /* Blocks-to-Follow = 0 (гола квитанція) */
-	h[9] = 0x08;                                       /* Class=00 ACK, Type=001, Status=000 */
+	h[9] = (uint8_t)(0x08 | ((s_rxLastNS & 7) << 4)); /* Class=00 ACK, Type=001, N(S) відлунений */
 	uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 
 	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * BURST_STRIDE] DMR_AES_CCM;
@@ -919,31 +941,38 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	if (encrypt) { for (int i = 0; i + 16 <= ptLen; i += 16) { aes256_ecb_encrypt(key, pt + i); } }
 	int ctLen = ptLen;                       /* ct = whole enc blocks + clear tail (or all clear) */
 
-	/* 2) Rate-3/4 CONFIRMED block layout: nNormal повних блоків по 16 байт + 1 останній блок.
-	 * Нормальний блок: 16 Б навантаження.
-	 * Останній блок: до 12 Б навантаження + нульовий pad + 4 Б CRC32 (разом 16 Б у CRC9-зоні).
-	 * poc = кількість нульових байтів, доданих для вирівнювання ПЕРЕД CRC32.
-	 * Стокова TYT шле саме rate-3/4 і відповідає на нас «01 40» лише на rate-3/4. */
-	int nNormal    = (ctLen > 12) ? ((ctLen - 12 + 15) / 16) : 0;
+	/* 2) Розкладка PDU і побудова черги burst-ів залежить від режиму TX SMS (Task #31).
+	 * txMode: 0=Без підтвердження (Unconf, rate-3/4 блоки, без A-bit),
+	 *         1=CONFIRMED rate-1/2 (10 Б/блок), 2=CONFIRMED rate-3/4 (16 Б/блок, типово).
+	 * Стокова TYT відповідає «01 40» лише на mode 0 або mode 2 (rate-3/4). */
+	int txMode = dmrSmsTxMode();
+
+	/* --- Загальні параметри блочного розкладу --- */
+	/* Розмір корисного навантаження в ОСТАННЬОМУ блоці: rate-1/2 -> 6 Б, rate-3/4 -> 12 Б. */
+	int lastPayload = (txMode == 1) ? 6 : 12;   /* місце під payload у фінальному блоці */
+	int blkSize     = (txMode == 1) ? 10 : 16;  /* корисне навантаження «нормального» блоку */
+	int nNormal    = (ctLen > lastPayload) ? ((ctLen - lastPayload + blkSize - 1) / blkSize) : 0;
 	int nDataBlocks = nNormal + 1;
-	int ctPad      = nNormal * 16 + 12;             /* загальна ємність навантаження (без CRC32) */
-	int poc        = ctPad - ctLen;                  /* нульовий хвіст */
-	uint8_t pdu[400];                                /* 390 Б -- більш ніж достатньо для 144-симв */
-	if (ctPad > (int)sizeof pdu) { return -4; }
+	int ctPad      = nNormal * blkSize + lastPayload;  /* ємність навантаження (без 4 Б CRC32) */
+	int poc        = ctPad - ctLen;                    /* нульовий хвіст перед CRC32 */
+	uint8_t pdu[400];                                  /* ~390 Б для 144-симв. повідомлення */
+	if (ctPad + 4 > (int)sizeof pdu) { return -4; }
 	memcpy(pdu, pt, ctLen);
 	if (poc > 0) { memset(pdu + ctLen, 0, poc); }
-	/* CRC32 покриває ctPad байт навантаження (без самого поля CRC32 -- воно в останньому блоці) */
-	uint32_t crc = crc32_dmr(pdu, ctPad);
-	int nblocks = (encrypt ? 1 : 0) + nDataBlocks;
+	/* CRC32: нулі на місці поля, потім crc32_dmr() обробляє ctPad+4 байти.
+	 * (crc32_dmr обробляє len*8-32 бітів -- ETSI CRC поле включено в довжину.) */
+	memset(pdu + ctPad, 0, 4);
+	uint32_t crc = crc32_dmr(pdu, ctPad + 4);
+	int nblocks = (encrypt ? 1 : 0) + nDataBlocks;  /* кількість блоків після заголовка CONFIRMED */
 
-	/* 3) build the burst queue: CSBK preamble + 2 headers + rate-3/4 blocks.
-	 * q -- у CCM: 40×19 = 760 байт, замість 520 у main RAM. */
+	/* --- Будуємо чергу burst-ів --- */
 	static uint8_t q[DMR_DATA_MAX_BURSTS * BURST_STRIDE] DMR_AES_CCM;
 	int n = 0;
 	int preamble = 6;
-	int tail = (encrypt ? 2 : 1) + nDataBlocks;  /* headers (CONFIRMED [+ ENC]) + data blocks after CSBKs */
+	int tail = (encrypt ? 2 : 1) + nDataBlocks;
 	uint8_t g = group ? 0x80 : 0x00;
 	uint8_t gc = group ? 0xC0 : 0x80;
+	/* CSBK-преамбули (6 шт.), як у стоковому TYT SMS. */
 	for (int i = 0; i < preamble; i++)
 	{
 		uint8_t body[10];
@@ -954,23 +983,33 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
 		n = append_burst(q, n, DTB_CSBK, p12, 12);
 	}
-	/* CONFIRMED data header (DPF=3, A-bit=0x40 -- запит link-layer квитанції).
-	 * SAP 09 [EXTD HDR] when encrypting (the ENC ext header is
-	 * the extended header that follows); SAP 04 [IP Based] for cleartext (no extended
-	 * header) — a stock TYT rejects SAP09-with-no-extended-header, decoded from a real
-	 * stock cleartext SMS capture (2026-07-04).
-	 * o9=0x08 hardcoded з ефірного зразку 2026-09-27 (stock↔stock, обидва напрямки). */
+	/* Заголовок SMS: CONFIRMED (DPF=3, A-bit=0x40) або Unconfirmed (DPF=2, без A-bit).
+	 * SAP 09 [EXTD HDR] якщо шифруємо (за ним іде ENC ext header); SAP 04 [IP] для cleartext.
+	 * o9: N(S) 3-бітний лічильник (Task #32): S=1 якщо перше відправлення після ввімкнення.
+	 * Для Unconfirmed: A-bit=0, DPF=2; N(S) лічильник оновлюємо лише для CONFIRMED. */
 	{
+		uint8_t ns = 0, sbit = 0;
+		if (txMode != 0)
+		{
+			/* CONFIRMED: оновлюємо N(S). */
+			ns   = s_txNS & 7;
+			sbit = s_txNSSent ? 0 : 1;
+			s_txNS     = (uint8_t)((ns + 1) & 7);
+			s_txNSSent = 1;
+		}
+		uint8_t dpf_abit = (txMode == 0) ? 0x02u : (uint8_t)(0x40u | 0x03u);  /* Unconf=0x02, Conf=0x43 */
 		uint8_t h[10];
-		h[0] = (uint8_t)(g | 0x40 | 0x03); h[1] = (uint8_t)(((encrypt ? 9 : 4) << 4) | (poc & 0x0F));
+		h[0] = (uint8_t)(g | dpf_abit);
+		h[1] = (uint8_t)(((encrypt ? 9 : 4) << 4) | (poc & 0x0F));
 		h[2] = (uint8_t)(dst >> 16); h[3] = (uint8_t)(dst >> 8); h[4] = (uint8_t)dst;
 		h[5] = (uint8_t)(src >> 16); h[6] = (uint8_t)(src >> 8); h[7] = (uint8_t)src;
-		h[8] = (uint8_t)(0x80 | (nblocks & 0x7F)); h[9] = 0x08;
+		h[8] = (uint8_t)(0x80 | (nblocks & 0x7F));
+		h[9] = (txMode != 0) ? (uint8_t)(0x08 | (ns << 4) | (sbit << 7)) : 0x08u;
 		uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
 		n = append_burst(q, n, DTB_DATA_HEADER, p12, 12);
 	}
-	/* ENC extended header (SAP04 IP, MFID Moto, ALG05 AES256, key id, MI=0) — encrypted SMS only */
+	/* ENC extended header (ALG05 AES256, key id) -- лише при шифруванні. */
 	if (encrypt)
 	{
 		uint8_t e[10] = { 0x4F, 0x10, 0x51, keyId, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
@@ -978,26 +1017,52 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
 		n = append_burst(q, n, DTB_DATA_HEADER, p12, 12);
 	}
-	/* Rate-3/4 CONFIRMED data blocks: [7b DBSN][9b CRC9 bit-rev][16B payload].
-	 * Нормальні блоки: 16 Б навантаження кожен.
-	 * Стокова TYT шле саме rate-3/4 і квитує (01 40) лише rate-3/4 SMS. */
-	for (int b = 0; b < nNormal; b++)
+	/* Data blocks: rate-1/2 (10 Б payload, DTB_RATE12_DATA) або rate-3/4 (16 Б, DTB_RATE34_DATA). */
+	if (txMode == 1)
 	{
-		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
-		uint8_t p18[18];
-		confirmed_block_fill_r34(p18, pdu + b * 16, (uint8_t)b);
-		n = append_burst(q, n, DTB_RATE34_DATA, p18, 18);
+		/* Rate-1/2 CONFIRMED data blocks (ETSI §B.3.10): 12 Б = 2 Б hdr + 10 Б payload.
+		 * Нормальні блоки: 10 Б навантаження кожен.
+		 * Останній блок: 6 Б навантаження + 4 Б CRC32 = 10 Б у CRC9-зоні. */
+		for (int b = 0; b < nNormal; b++)
+		{
+			if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
+			uint8_t p12[12];
+			confirmed_block_fill(p12, pdu + b * 10, (uint8_t)b);
+			n = append_burst(q, n, DTB_RATE12_DATA, p12, 12);
+		}
+		{
+			if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
+			uint8_t last10[10];
+			memcpy(last10, pdu + nNormal * 10, 6);
+			last10[6] = (uint8_t)(crc >> 24); last10[7] = (uint8_t)(crc >> 16);
+			last10[8] = (uint8_t)(crc >> 8);  last10[9] = (uint8_t)crc;
+			uint8_t p12[12];
+			confirmed_block_fill(p12, last10, (uint8_t)nNormal);
+			n = append_burst(q, n, DTB_RATE12_DATA, p12, 12);
+		}
 	}
-	/* Останній блок: до 12 Б навантаження + 4 Б CRC32 (разом 16 Б у CRC9-зоні). */
+	else
 	{
-		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
-		uint8_t last16[16];
-		memcpy(last16, pdu + nNormal * 16, 12);  /* ctPad - nNormal*16 = 12 */
-		last16[12] = (uint8_t)(crc >> 24); last16[13] = (uint8_t)(crc >> 16);
-		last16[14] = (uint8_t)(crc >> 8);  last16[15] = (uint8_t)crc;
-		uint8_t p18[18];
-		confirmed_block_fill_r34(p18, last16, (uint8_t)nNormal);
-		n = append_burst(q, n, DTB_RATE34_DATA, p18, 18);
+		/* Rate-3/4 блоки (mode 0 Unconf або mode 2 ConfR34): DTB_RATE34_DATA, 18 Б = 2 hdr + 16 payload.
+		 * Нормальні блоки: 16 Б навантаження кожен.
+		 * Останній блок: 12 Б + 4 Б CRC32. */
+		for (int b = 0; b < nNormal; b++)
+		{
+			if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
+			uint8_t p18[18];
+			confirmed_block_fill_r34(p18, pdu + b * 16, (uint8_t)b);
+			n = append_burst(q, n, DTB_RATE34_DATA, p18, 18);
+		}
+		{
+			if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
+			uint8_t last16[16];
+			memcpy(last16, pdu + nNormal * 16, 12);
+			last16[12] = (uint8_t)(crc >> 24); last16[13] = (uint8_t)(crc >> 16);
+			last16[14] = (uint8_t)(crc >> 8);  last16[15] = (uint8_t)crc;
+			uint8_t p18[18];
+			confirmed_block_fill_r34(p18, last16, (uint8_t)nNormal);
+			n = append_burst(q, n, DTB_RATE34_DATA, p18, 18);
+		}
 	}
 
 	/* Queue the Sent-folder write for AFTER the TX finishes (see s_pendSent / dmrSmsTxPersistTick)
@@ -1052,6 +1117,13 @@ static volatile uint8_t  s_rxPeerKeyId DMR_AES_CCM;
 static volatile uint8_t  s_rxPeerEnc DMR_AES_CCM;   /* 1 = PDU carried the ENC header (decrypt); 0 = cleartext */
 static volatile uint8_t  s_rxAckReq DMR_AES_CCM;    /* вхідний data-заголовок = CONFIRMED + прохання квитанції */
 static volatile uint8_t  s_rxPeerAckReq DMR_AES_CCM;/* знімок s_rxAckReq на момент готового PDU */
+/* Дедуплікація вхідних SMS (Task #34).
+ * Те ж саме повідомлення (той самий відправник + IP-ID + TMS-seq) в межах ~30 с відкидається:
+ * не зберігається і не показується (але квитанцію відправляємо завжди). */
+static volatile uint32_t s_dedupPeer   DMR_AES_CCM;   /* відправник */
+static volatile uint16_t s_dedupIpId   DMR_AES_CCM;   /* IPv4 IP-ID pdu[4..5] */
+static volatile uint8_t  s_dedupTmsSeq DMR_AES_CCM;   /* TMS-seq pdu[32] */
+static volatile uint32_t s_dedupTs     DMR_AES_CCM;   /* tick часу останнього прийнятого (мс) */
 /* diagnostic counters (visible on the Messages home screen) to localise RX failures */
 static volatile uint32_t s_diagData   DMR_AES_CCM; /* ALL data-sync-class bursts the chip delivered */
 static volatile uint32_t s_diagHdrOk  DMR_AES_CCM; /* type-6 data-header, CRC OK   */
@@ -1221,6 +1293,8 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			 * нікому не шкодить, а її брак дає ретрансміти). Unconfirmed (DPF=2) і UDT -- ні.
 			 * Реальний байт видно в діагностиці (s_ackLastHdr0). */
 			s_rxAckReq = (((p[0] & 0x0F) == 0x03) ? 1 : 0);
+			/* N(S) з CONFIRMED-заголовка: відлунюємо в ACK (Task #33). */
+			if (s_rxAckReq) { s_rxLastNS = (p[9] >> 4) & 7; }
 			/* Діагностика: що НАСПРАВДІ прислала стокова (перші два байти заголовка). */
 			s_ackLastHdr0 = p[0];
 			s_ackLastHdr1 = p[1];
@@ -1396,6 +1470,29 @@ void dmrSmsRxTick(void)
 		if (crc32_dmr(pdu, pduLen) != want) { return; }   /* corrupted reassembly -> drop */
 	}
 
+	/* Дедуплікація (Task #34): той самий PDU (відправник + IP-ID + TMS-seq) в межах 30 с -> пропустити.
+	 * IP-ID: pdu[4..5] (IPv4 Identification); TMS-seq: pdu[32] (20B IPv4 + 8B UDP + 4B TMS prefix).
+	 * Квитанцію шлемо НЕЗАЛЕЖНО від дублікату -- відправник чекає. */
+	int isDuplicate = 0;
+	if (pduLen >= 33)
+	{
+		uint16_t ipId   = (uint16_t)((pdu[4] << 8) | pdu[5]);
+		uint8_t  tmsSeq = pdu[32];
+		uint32_t now32  = (uint32_t)ticksGetMillis();
+		if (peer == s_dedupPeer && ipId == s_dedupIpId && tmsSeq == s_dedupTmsSeq &&
+		    (now32 - s_dedupTs) < 30000U)
+		{
+			isDuplicate = 1;
+		}
+		else
+		{
+			s_dedupPeer   = peer;
+			s_dedupIpId   = ipId;
+			s_dedupTmsSeq = tmsSeq;
+			s_dedupTs     = now32;
+		}
+	}
+
 	/* Link-layer квитанція: блоки прийнято цілими (CRC32 зійшовся) і повідомлення адресоване
 	 * саме нам приватно, а відправник просив підтвердити (CONFIRMED+A) -> шлемо Response header.
 	 * Робимо це ДО розшифровки: квитанція -- про доставку кадрів, а не про те, чи ми прочитали
@@ -1444,6 +1541,9 @@ void dmrSmsRxTick(void)
 		got = dmr_sms_text_from_plaintext(pdu, pduLen, text, sizeof text);
 	}
 	if (got <= 0) { return; }   /* wrong/no key, not IPv4/UDP, or not an SMS */
+
+	/* Дублікат (Task #34): той самий PDU вже збережений і показаний -- не турбуємо ще раз. */
+	if (isDuplicate) { return; }
 
 	{
 		uint8_t flags = (uint8_t)(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0) |
@@ -1503,6 +1603,9 @@ static void runtimeReset(void)
 	s_pendInbox = 0;                 /* і відкладений запис вхідного теж */
 	s_txAcked = 0;                   /* скидаємо TX-ACK стан (CCM -- не .bss, не auto-zero) */
 	s_txPendingDst = 0;
+	s_txNS = 0; s_txNSSent = 0;     /* N(S) лічильник TX (Task #32) */
+	s_rxLastNS = 0;                  /* N(S) з останнього вхідного CONFIRMED (Task #33) */
+	s_dedupPeer = 0; s_dedupIpId = 0; s_dedupTmsSeq = 0; s_dedupTs = 0;  /* деdup (Task #34) */
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
 

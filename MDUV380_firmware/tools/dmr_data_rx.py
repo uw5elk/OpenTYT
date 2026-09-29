@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Декодер DMR data-burst-ів із .C16 (реверс SMS-квитанції, баг #11).
+"""Декодер DMR data-burst-ів із .C16.
 
-Ланцюг DSP спільний із dmr_csbk_rx.py (перевірений на ефірі). Тут інше:
-замість самих CSBK витягуємо КОЖЕН data-sync burst, женемо через BPTC(196,96)
-(rate-1/2) і показуємо 12 байтів + CRC для кількох масок:
+Декодує:
+  * Rate-1/2 (BPTC 196,96): data-header (ACK, CONFIRMED header), CSBK
+  * Rate-3/4 (треліс ETSI B.3.7 Table B.9): CONFIRMED data-блоки (18 байт)
+    + CRC9 валідація (маска 0x1FF, §B.3.12)
+
+CRC масок у decode_hdr:
   * 0x5A5A -- CSBK/preamble;
   * 0x3333 -- data header (ETSI: crc ^0xCCCC над 80 бітами; наша crc без фін.-XOR -> 0x3333).
-Data header відповіді (ACK/квитанція) кодується саме rate-1/2, тож має тут проявитись.
-Rate-3/4 (payload confirmed) BPTC-ом не декодується -- його поки лишаємо (треба треліс).
 
-Мета: знайти байти квитанції, яку стокова TYT шле у відповідь на Confirmed SMS.
+Мета: діагностика SMS-квитанцій і CONFIRMED data-блоків (форк OpenTYT).
+
+ЛІЦЕНЗІЯ: написано з нуля за ETSI TS 102 361-1. НЕ базується на ok-dmrlib (AGPL).
 """
 import argparse, sys
 import numpy as np
@@ -65,6 +68,105 @@ def bptc_196_96(info196, fec=True):
             col = _fix([M[r][c] for r in range(13)], 13, 9, _h13)
             for r in range(13): M[r][c] = col[r]
     return [M[r][c] for r in range(9) for c in range(11)][3:99]
+
+# ---------------------------------------------------------------------------
+# Треліс rate-3/4 (ETSI TS 102 361-1 §B.3.7, Table B.9)
+# ---------------------------------------------------------------------------
+# Таблиця виходів кодера: _TR[state][dibit_input] = 3-бітний символ (0..7).
+# Наступний стан завжди = dibit_input.
+_TR = [
+    [0, 1, 3, 2],   # стан 0
+    [7, 6, 4, 5],   # стан 1
+    [4, 5, 7, 6],   # стан 2
+    [3, 2, 0, 1],   # стан 3
+]
+
+def trellis_decode(bits196):
+    """Жорстке (hard-decision) декодування треліс rate-3/4 (ETSI §B.3.7, Table B.9).
+
+    Вхід: список/масив з 196 бітів (info-поле burst після деперемеження).
+    Зчитує кожні 3 біти як символ (0..7), знаходить найближчий dibit (0..3)
+    за мінімальною відстанню Хемінга до таблиці _TR[state][dibit].
+    next_state = decoded_dibit. Повертає bytes (~16 байт).
+    """
+    state = 0
+    out_bits = []
+    for i in range(0, len(bits196) - 2, 3):
+        sym = (bits196[i] << 2) | (bits196[i + 1] << 1) | bits196[i + 2]
+        best, bd = 0, 4
+        for d in range(4):
+            dist = bin(_TR[state][d] ^ sym).count('1')
+            if dist < bd:
+                bd, best = dist, d
+        out_bits.extend([(best >> 1) & 1, best & 1])
+        state = best
+    n = (len(out_bits) // 8) * 8
+    return bytes(sum(out_bits[i + j] << (7 - j) for j in range(8))
+                 for i in range(0, n, 8))
+
+# ---------------------------------------------------------------------------
+# CRC-9 для data-блоків (ETSI §B.3.10 rate-1/2, §B.3.12 rate-3/4)
+# ---------------------------------------------------------------------------
+def _crc9(data, dbsn7, final_mask):
+    """Базовий CRC-9 (poly=0x059, init=0). Накопичує data, потім 7 DBSN-бітів."""
+    reg = 0
+    for byte in data:
+        for b in range(7, -1, -1):
+            msb = (reg >> 8) & 1
+            reg = (reg << 1) & 0x1FF
+            if msb ^ ((byte >> b) & 1):
+                reg ^= 0x059
+    for b in range(6, -1, -1):
+        msb = (reg >> 8) & 1
+        reg = (reg << 1) & 0x1FF
+        if msb ^ ((dbsn7 >> b) & 1):
+            reg ^= 0x059
+    return (~reg & 0x1FF) ^ final_mask
+
+def crc9_r12(payload10, dbsn):
+    """CRC-9 для rate-1/2 блоку (ETSI §B.3.10, маска фіналу 0x0F0)."""
+    return _crc9(bytes(payload10), dbsn & 0x7F, 0x0F0)
+
+def crc9_r34(payload16, dbsn):
+    """CRC-9 для rate-3/4 блоку (ETSI §B.3.12, маска фіналу 0x1FF)."""
+    return _crc9(bytes(payload16), dbsn & 0x7F, 0x1FF)
+
+def _parse_blk_hdr(b, plen):
+    """Розбирає 2-байтний заголовок блоку: byte0[7:1]=DBSN, {byte0[0],byte1}=CRC9 (bit-reversed).
+    Повертає (dbsn, crc_rx, payload)."""
+    dbsn = (b[0] >> 1) & 0x7F
+    raw9 = ((b[0] & 1) << 8) | b[1]
+    crc_rx = int('{:09b}'.format(raw9)[::-1], 2)
+    return dbsn, crc_rx, b[2:2 + plen]
+
+def check_block_r12(b12):
+    """Валідація 12-байтного rate-1/2 блоку (ETSI §B.3.10).
+    Повертає (ok: bool, dbsn: int, payload10: bytes)."""
+    if len(b12) < 12:
+        return False, 0, bytes()
+    dbsn, crc_rx, payload = _parse_blk_hdr(b12, 10)
+    return crc9_r12(payload, dbsn) == crc_rx, dbsn, payload
+
+def check_block_r34(b18):
+    """Валідація 18-байтного rate-3/4 блоку (ETSI §B.3.12).
+    Повертає (ok: bool, dbsn: int, payload16: bytes)."""
+    if len(b18) < 18:
+        return False, 0, bytes()
+    dbsn, crc_rx, payload = _parse_blk_hdr(b18, 16)
+    return crc9_r34(payload, dbsn) == crc_rx, dbsn, payload
+
+def decode_r34_blk(bits, p):
+    """Спроба декодування rate-3/4 блоку з позиції синхрослова p.
+    Аналог decode_hdr, але через треліс. Повертає (bytes18, ok) або None."""
+    L0, R0 = p - 10 - 98, p + 48 + 10
+    if L0 < 0 or R0 + 98 > len(bits):
+        return None
+    raw = trellis_decode(bits[L0:L0 + 98] + bits[R0:R0 + 98])
+    if len(raw) < 18:
+        return None
+    b18 = raw[:18]
+    ok, _, _ = check_block_r34(b18)
+    return b18, ok
 
 def decode_hdr(bits, p, fec=True):
     L0, R0 = p - 10 - 98, p + 48 + 10
