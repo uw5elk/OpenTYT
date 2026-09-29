@@ -49,10 +49,14 @@ void dmrDataTriggerReboot(void)
 }
 
 /* ---- host-parameterised DMR data-frame TX (bring-up harness) ---------------- */
-/* Plain .bss (zero-initialised at boot, so s_dataTxActive can't be a stray 1 that
- * would corrupt a normal voice TX). The resulting ambebuffer shift is harmless —
- * the AMBE codec addresses its buffers via the pointer passed in r1 (proven on-air). */
-static uint8_t          s_bursts[DMR_DATA_MAX_BURSTS][1 + DMR_DATA_BURST_LEN];
+/* s_bursts -- у CCM, а не в .bss. Розширення з 12 до 18 байт payload'у (rate-3/4)
+ * зробило б масив 40×19 = 760 байт у main RAM (вільно лише ~212 Б). CCM не обнулюється
+ * стартапом, але s_bursts завжди пишеться повністю до будь-якого читання:
+ * dmrDataTxLoadDelayed() заповнює [0..n-1] через memcpy, а s_dataTxActive (у .bss,
+ * отже надійно нульовий) не дає ISR прочитати масив раніше.
+ * Стан-машина (s_dataTxActive, s_burstCount, s_burstIndex) -- у .bss як і раніше. */
+static uint8_t          s_bursts[DMR_DATA_MAX_BURSTS][1 + DMR_DATA_BURST_LEN]
+                                 __attribute__((section(".ccmram")));
 static volatile uint8_t s_burstCount;   /* read in the HR-C6000 ISR (dmrDataTxNextBurst), so */
 static volatile uint8_t s_burstIndex;   /* volatile: dmrDataTxEnd's resets must not reorder  */
 static volatile uint8_t s_dataTxActive; /* past the active=0 store the ISR gates on           */

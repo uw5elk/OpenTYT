@@ -79,6 +79,39 @@ static void expect_byte(const char *what, uint8_t got, uint8_t exp)
 	}
 }
 
+/* ---- копія алгоритму rate-3/4 з dmr_sms.c --------------------------------
+ * Те саме, але payload = 16 байт (не 10). Решта ідентична. */
+static uint16_t crc9_r34_ref(const uint8_t *payload16, uint8_t dbsn)
+{
+	uint16_t reg = 0;
+	for (int i = 0; i < 16; i++)
+		for (int b = 7; b >= 0; b--)
+		{
+			uint16_t msb = (reg >> 8) & 1;
+			reg = (uint16_t)((reg << 1) & 0x1FF);
+			if (msb ^ ((payload16[i] >> b) & 1)) { reg ^= 0x059; }
+		}
+	for (int b = 6; b >= 0; b--)
+	{
+		uint16_t msb = (reg >> 8) & 1;
+		reg = (uint16_t)((reg << 1) & 0x1FF);
+		if (msb ^ ((dbsn >> b) & 1)) { reg ^= 0x059; }
+	}
+	return (uint16_t)((~reg & 0x1FF) ^ 0x0F0);
+}
+
+/* ---- копія confirmed_block_fill_r34() з dmr_sms.c -----------------------
+ * Пакує [7b DBSN][9b CRC9 bit-rev][16B payload] у 18 байт. */
+static void block_fill_r34_ref(uint8_t *p18, const uint8_t *payload16, uint8_t dbsn)
+{
+	uint16_t c9 = crc9_r34_ref(payload16, dbsn);
+	p18[0] = (uint8_t)((dbsn << 1) | (c9 & 1));
+	uint8_t b1 = 0;
+	for (int i = 1; i <= 8; i++) { b1 |= (uint8_t)(((c9 >> i) & 1) << (8 - i)); }
+	p18[1] = b1;
+	memcpy(p18 + 2, payload16, 16);
+}
+
 /* ---- основна програма ---------------------------------------------------- */
 int main(void)
 {
@@ -167,6 +200,80 @@ int main(void)
 			printf("  FAIL DBSN у byte0: очік=5, маємо=%u\n", dbsn_got);
 		} else {
 			printf("  ok   DBSN=5 кодується у byte0[7:1] правильно\n");
+		}
+	}
+
+	/* === CRC9 RATE-3/4 (16-байтний payload) =====================================
+	 * Алгоритм ідентичний rate-1/2, але обробляє 16 байт payload замість 10.
+	 * Вектори 1-3: all-zero → рег = 0 → CRC9 визначається тільки DBSN.
+	 *   Результати тотожні rate-1/2 для all-zeros (payload нульовий — XOR не спрацьовує).
+	 * Вектор 4: {1..16}, DBSN=0 → 0x19D (обраховано crc9r34.c на ПК).
+	 * Вектор 5: 0xFF*16, DBSN=0 → 0x133.
+	 * Вектор 6: 0xFF*16, DBSN=3 → 0x1D8.
+	 * ⚠ Ці вектори ще НЕ звірені з ефіром — звірка через dmrSmsRxRawBlocks USB 0xB3. */
+	printf("  [rate-3/4 CRC9]\n");
+	{
+		uint8_t zeros16[16] = {0};
+		uint8_t seq16[16]   = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+		uint8_t ffs16[16];
+		memset(ffs16, 0xFF, 16);
+
+		expect_u16("CRC9_r34(zeros,0)",  crc9_r34_ref(zeros16, 0), 0x10F);
+		expect_u16("CRC9_r34(zeros,1)",  crc9_r34_ref(zeros16, 1), 0x156);
+		expect_u16("CRC9_r34(zeros,2)",  crc9_r34_ref(zeros16, 2), 0x1BD);
+		expect_u16("CRC9_r34({1..16},0)", crc9_r34_ref(seq16, 0),  0x19D);
+		expect_u16("CRC9_r34(0xFF*16,0)", crc9_r34_ref(ffs16, 0),  0x133);
+		expect_u16("CRC9_r34(0xFF*16,3)", crc9_r34_ref(ffs16, 3),  0x1D8);
+
+		/* Санітарні: різний payload та DBSN → різний CRC9. */
+		if (crc9_r34_ref(zeros16, 0) == crc9_r34_ref(zeros16, 1)) {
+			fails++; printf("  FAIL CRC9_r34 не залежить від DBSN\n");
+		} else {
+			printf("  ok   CRC9_r34 залежить від DBSN\n");
+		}
+		if (crc9_r34_ref(zeros16, 0) == crc9_r34_ref(seq16, 0)) {
+			fails++; printf("  FAIL CRC9_r34 не залежить від payload\n");
+		} else {
+			printf("  ok   CRC9_r34 залежить від payload\n");
+		}
+	}
+
+	/* === РОЗКЛАДКА 18-БАЙТНОГО БЛОКА =========================================
+	 * [7b DBSN][9b CRC9 bit-rev][16B payload] — та сама логіка пакування,
+	 * але 2 header байти + 16 payload = 18. */
+	printf("  [rate-3/4 block packing]\n");
+	{
+		uint8_t p18[18];
+		uint8_t zeros16[16] = {0};
+		uint8_t seq16[16]   = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+
+		/* zeros,0: c9=0x10F → byte0=(0<<1)|1=0x01, byte1=0xE1 */
+		block_fill_r34_ref(p18, zeros16, 0);
+		expect_byte("block_r34(zeros,0) byte0", p18[0], 0x01);
+		expect_byte("block_r34(zeros,0) byte1", p18[1], 0xE1);
+		if (memcmp(p18 + 2, zeros16, 16) != 0) {
+			fails++; printf("  FAIL block_r34 payload corrupted\n");
+		} else {
+			printf("  ok   payload passthrough (16B)\n");
+		}
+
+		/* {1..16},0: c9=0x19D → byte0=0x01, byte1=0x73 */
+		block_fill_r34_ref(p18, seq16, 0);
+		expect_byte("block_r34({1..16},0) byte0", p18[0], 0x01);
+		expect_byte("block_r34({1..16},0) byte1", p18[1], 0x73);
+		if (memcmp(p18 + 2, seq16, 16) != 0) {
+			fails++; printf("  FAIL block_r34 payload corrupted\n");
+		} else {
+			printf("  ok   payload passthrough (16B)\n");
+		}
+
+		/* DBSN=5 у старших 7 бітах byte0 */
+		block_fill_r34_ref(p18, zeros16, 5);
+		if ((uint8_t)(p18[0] >> 1) != 5) {
+			fails++;
+			printf("  FAIL block_r34 DBSN у byte0: очік=5, маємо=%u\n", p18[0] >> 1);
+		} else {
+			printf("  ok   DBSN=5 кодується у byte0[7:1] правильно (r34)\n");
 		}
 	}
 

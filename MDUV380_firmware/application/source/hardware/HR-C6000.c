@@ -1968,11 +1968,13 @@ void hrc6000TimeslotInterruptHandler(void)
 			if (dmrDataTxActive())
 			{
 				uint8_t dtype;
-				uint8_t payload[LC_DATA_LENGTH] = { 0 };
+				uint8_t payload[DMR_DATA_BURST_LEN] = { 0 };  /* 18 B: fits rate-3/4 and smaller bursts */
 
 				if (dmrDataTxNextBurst(&dtype, payload))
 				{
-					SPI0WritePageRegByteArray(0x02, 0x00, payload, LC_DATA_LENGTH);
+					/* Rate-3/4 CONFIRMED data (dtype 0x80): 18-byte payload; others: 12 bytes */
+					int plen = (dtype == 0x80) ? 18 : LC_DATA_LENGTH;
+					SPI0WritePageRegByteArray(0x02, 0x00, payload, plen);
 					SPI0WritePageRegByte(0x04, 0x41, 0x80);   // transmit during next timeslot
 					SPI0WritePageRegByte(0x04, 0x50, dtype);  // slot type (data)
 				}
@@ -2466,11 +2468,12 @@ static void hrc6000SendPcOrTgLCHeader(void)
 static void hrc6000DataTxStartBurst(void)
 {
 	uint8_t dtype;
-	uint8_t payload[LC_DATA_LENGTH] = { 0 };
+	uint8_t payload[DMR_DATA_BURST_LEN] = { 0 };  /* 18 B buffer; preambles use only first 12 */
 
 	if (dmrDataTxNextBurst(&dtype, payload))
 	{
-		SPI0WritePageRegByteArray(0x02, 0x00, payload, LC_DATA_LENGTH);
+		int plen = (dtype == 0x80) ? 18 : LC_DATA_LENGTH;
+		SPI0WritePageRegByteArray(0x02, 0x00, payload, plen);
 		SPI0WritePageRegByte(0x04, 0x50, dtype);   // CSBK preamble (0x30) -> data-call key-up
 	}
 	else

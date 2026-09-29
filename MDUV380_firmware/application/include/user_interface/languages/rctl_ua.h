@@ -74,4 +74,5 @@
 #define RCTL_CALL_ALERT_TITLE    "ѕерсональний виклик"
 #define RCTL_CALL_ALERT_HINT     "GRN:виклик RED:закр"
 
+#define RCTL_NOTE_SMS_ACKED      "SMS: доставлено"
 #endif
