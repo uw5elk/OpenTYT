@@ -141,9 +141,10 @@ void dmrSmsDiagSetSkipStore(int skip);
 int dmrSmsTxAcked(void);
 
 /* ---- Режим TX SMS (Task #31) ------------------------------------------- *
- * 0 = Без підтвердження (типово, Unconfirmed rate-3/4)
- * 1 = Підтв. rate-1/2 (Confirmed, rate-1/2 блоки)
- * 2 = Підтв. rate-3/4 (Confirmed, rate-3/4 -- як стокова TYT, типовий)
+ * 0 = Без підтвердження (ТИПОВО): рівно шлях 438ec23, що працював у полі -- Unconfirmed,
+ *     сирі 12-байтні rate-1/2 блоки (dmrSmsPduBuildUnconf, functions/dmr_sms_pdu.c)
+ * 1 = Підтв. rate-1/2 (CONFIRMED, rate-1/2 блоки з DBSN+CRC9)
+ * 2 = Підтв. rate-3/4 (CONFIRMED, rate-3/4 блоки -- так шле стокова TYT)
  * Зберігається у CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE (1 байт, SPI flash). */
 int  dmrSmsTxMode(void);
 void dmrSmsTxModeSet(uint8_t mode);

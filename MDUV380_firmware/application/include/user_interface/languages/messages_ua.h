@@ -1,65 +1,66 @@
 /*
- * пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ SMS-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * Рядки екрана SMS-повідомлень українською.
  *
- * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ: пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ, пїЅпїЅ пїЅ ukrainian.h, пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ cp1251 -- пїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
- * HX8353E_charset_UA.h пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ 192-255. пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ UTF-8.
+ * ВАЖЛИВО: цей файл, як і ukrainian.h, має кодування cp1251 -- саме так шрифт
+ * HX8353E_charset_UA.h трактує коди 192-255. Не зберігати в UTF-8.
  *
- * пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ, пїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ stringsTable_t: SMS -- пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
- * пїЅпїЅпїЅпїЅпїЅ, пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ CPS. пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
- * пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅ'пїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅНІпїЅ
- * пїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ. пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * Чому окремим файлом, а не полями у stringsTable_t: SMS -- функція саме цього
+ * форку, а таблицю рядків читає ще й мовний файл, який пише CPS. Три десятки
+ * нових полів зламали б ту сумісність і з'їли б близько кілобайта флеша в КОЖНІЙ
+ * збірці, зокрема неукраїнській. Тут перемикання відбувається на етапі компіляції.
  */
 #ifndef USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_
 #define USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_
 
-#define MSGS_TITLE               "пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_INBOX_FMT           "пїЅпїЅпїЅпїЅпїЅпїЅ (%d)"
-#define MSGS_SENT_FMT            "пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (%d)"
-#define MSGS_NEW                 "пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_TITLE_SENT          "пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_TITLE_INBOX         "пїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_EMPTY               "(пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ)"
-#define MSGS_HINT_BACK           "RED:пїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_DELETE_ALL          "[пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ]"
-#define MSGS_TO                  "пїЅпїЅпїЅпїЅ"
-#define MSGS_FROM                "ВіпїЅ"
-#define MSGS_HINT_SENT_ITEM      "SK2+GRN:пїЅпїЅпїЅ GRN:пїЅпїЅ пїЅпїЅпїЅ"
-#define MSGS_HINT_INBOX_ITEM     "SK2+GRN:пїЅпїЅпїЅ GRN:пїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_TITLE_NEW           "пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_CHARS_FMT           "%d/%d пїЅпїЅпїЅпїЅ."
-#define MSGS_HINT_PRESET         "U:пїЅпїЅпїЅпїЅпїЅпїЅ  L:пїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_HINT_TO_CANCEL      "GRN:пїЅпїЅпїЅпїЅ  RED:пїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_TITLE_RCPT          "пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_TO_FMT              "пїЅпїЅпїЅпїЅ: %s"
-#define MSGS_TYPE_FMT            "пїЅпїЅпїЅ: %s"
-#define MSGS_GROUP               "пїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_PRIVATE             "пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_HINT_ID             "0-9:id  L:пїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_HINT_GRP_PRIV       "U/D:пїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_HINT_CONTACTS       "SK1:пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_HINT_SEND_BACK      "GRN:пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ  RED:пїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_TITLE_PICK_TG       "пїЅпїЅпїЅпїЅ TG пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_TITLE_PICK_PC       "пїЅпїЅпїЅпїЅ PC пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_NO_CONTACTS         "(пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ)"
-#define MSGS_SENT_OK             "пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_KEYED_TX            "(пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅ)"
-#define MSGS_SEND_FAILED         "пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_ERR_GENERIC         "пїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_ERR_TX_BUSY         "TX пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_ERR_BAD_TEXT        "пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_ERR_TOO_LONG        "пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ"
+#define MSGS_TITLE               "Повідомлення"
+#define MSGS_INBOX_FMT           "Вхідні (%d)"
+#define MSGS_SENT_FMT            "Надіслані (%d)"
+#define MSGS_NEW                 "Нове повідомлення"
+#define MSGS_TITLE_SENT          "Надіслані"
+#define MSGS_TITLE_INBOX         "Вхідні"
+#define MSGS_EMPTY               "(порожньо)"
+#define MSGS_HINT_BACK           "RED:назад"
+#define MSGS_DELETE_ALL          "[Видалити все]"
+#define MSGS_TO                  "Кому"
+#define MSGS_FROM                "Від"
+#define MSGS_HINT_SENT_ITEM      "SK2+GRN:вид GRN:ще раз"
+#define MSGS_HINT_INBOX_ITEM     "SK2+GRN:вид GRN:відпов"
+#define MSGS_TITLE_NEW           "Нове повідомлення"
+#define MSGS_CHARS_FMT           "%d/%d симв."
+#define MSGS_HINT_PRESET         "U:шаблон  L:стерти"
+#define MSGS_HINT_TO_CANCEL      "GRN:кому  RED:відміна"
+#define MSGS_TITLE_RCPT          "Одержувач"
+#define MSGS_TO_FMT              "Кому: %s"
+#define MSGS_TYPE_FMT            "Тип: %s"
+#define MSGS_GROUP               "Група"
+#define MSGS_PRIVATE             "Приватний"
+#define MSGS_HINT_ID             "0-9:id  L:стерти"
+#define MSGS_HINT_GRP_PRIV       "U/D:група/приват"
+#define MSGS_HINT_CONTACTS       "SK1:контакти"
+#define MSGS_HINT_SEND_BACK      "GRN:надіслати  RED:назад"
+#define MSGS_TITLE_PICK_TG       "Вибір TG контакту"
+#define MSGS_TITLE_PICK_PC       "Вибір PC контакту"
+#define MSGS_NO_CONTACTS         "(немає контактів)"
+#define MSGS_SENT_OK             "Надіслано"
+#define MSGS_KEYED_TX            "(вихід в ефір)"
+#define MSGS_SEND_FAILED         "Не надіслано"
+#define MSGS_ERR_GENERIC         "помилка"
+#define MSGS_ERR_TX_BUSY         "TX зайнятий"
+#define MSGS_ERR_BAD_TEXT        "хибний текст"
+#define MSGS_ERR_TOO_LONG        "задовгий текст"
 #define MSGS_FAIL_FMT            "%s (%d)"
-#define MSGS_HINT_ANY_KEY        "пїЅпїЅпїЅпїЅ-пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ: пїЅпїЅпїЅпїЅпїЅ"
-#define MSGS_MONITOR_FMT         "пїЅпїЅпїЅпїЅпїЅпїЅпїЅ: %s"
-#define MSGS_MON_ON              "пїЅпїЅпїЅпїЅ"
-#define MSGS_MON_OFF             "пїЅпїЅпїЅпїЅ"
-/* пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ: пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ). */
-#define MSGS_MORE_UNREAD_FMT     "пїЅпїЅ %d пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ."
-#define MSGS_FOREIGN             " (пїЅпїЅ пїЅпїЅпїЅ)"
-/* пїЅпїЅпїЅпїЅпїЅ TX SMS (Task #31, 2026-09-29). */
+#define MSGS_HINT_ANY_KEY        "будь-яка клавіша: назад"
+#define MSGS_MONITOR_FMT         "Монітор: %s"
+#define MSGS_MON_ON              "увімк"
+#define MSGS_MON_OFF             "вимк"
+/* Банер вхідного: скільки ще НЕпрочитаних, крім показаного (окремим кольором). */
+#define MSGS_MORE_UNREAD_FMT     "ще %d непрочит."
+#define MSGS_FOREIGN             " (не вам)"
+
+/* Режим TX SMS (2026-09-29): рядок у головному меню «Повідомлення». */
 #define MSGS_TX_MODE_FMT         "TX: %s"
-#define MSGS_TX_MODE_UNCONF      "\xC1\xE5\xE7 \xEF\xB3\xE4\xF2\xE2."
-#define MSGS_TX_MODE_R12         "\xCF\xB3\xE4\xF2\xE2. \xBD"
-#define MSGS_TX_MODE_R34         "\xCF\xB3\xE4\xF2\xE2. \xBE"
+#define MSGS_TX_MODE_UNCONF      "Без підтв."
+#define MSGS_TX_MODE_R12         "Підтв. 1/2"
+#define MSGS_TX_MODE_R34         "Підтв. 3/4"
 
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

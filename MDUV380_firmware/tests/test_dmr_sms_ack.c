@@ -18,41 +18,17 @@
 #include <stdio.h>
 #include <string.h>
 
-/* --- копія з dmr_sms.c (той самий алгоритм) --- */
-static uint16_t crc16d(const uint8_t *data, int len)
-{
-	uint16_t crc = 0;
-	for (int i = 0; i < len; i++)
-		for (int k = 7; k >= 0; k--)
-		{
-			int bit = (data[i] >> k) & 1;
-			if (((crc >> 15) & 1) ^ bit) crc = (uint16_t)((crc << 1) ^ 0x1021);
-			else                         crc = (uint16_t)(crc << 1);
-		}
-	return (uint16_t)(crc ^ 0xFFFF);
-}
-static void hdr_crc(const uint8_t *h, int len, uint16_t mask, uint8_t out2[2])
-{
-	uint16_t v = (uint16_t)(crc16d(h, len) ^ mask);
-	out2[0] = (uint8_t)(v >> 8); out2[1] = (uint8_t)(v & 0xFF);
-}
+/* 2026-09-30: тест лінкує СПРАВЖНІЙ functions/dmr_sms_pdu.c (раніше тут була копія коду --
+ * вона могла розійтися з прошивкою непомітно, що й сталося з o9 у b7eedd6). */
+#include "functions/dmr_sms_pdu.h"
+#define hdr_crc dmrSmsPduHdrCrc
 
-/* Побудова заголовка-квитанції — дзеркало dmrSmsAckTick() (без CSBK-преамбул: тут перевіряємо
- * сам Response header).
- *
- * o8/o9 -- КОНСТАНТИ, параметра тут навмисно немає. Перша версія цього тесту приймала `bf`
- * і викликалась із 0x08, тож збігалася з ефіром ВИПАДКОВО, а прошивка в полі підставляла туди
- * лічильник блоків (4) і слала `00 04` = Status=4 замість ACK. Тест це пропустив. Тепер
- * підставити нічого не можна: o8=BF=0, o9=0x08 (Class=00 ACK, Type=001). */
+/* Ефірний зразок BBD_0005 -- квитанція стокової з o9=0x08, тобто Status=0. Номер N(S)
+ * повідомлення RT4D, на яке вона відповідала, із запису не відомий (заголовок confAir нижче --
+ * це ВЛАСНЕ повідомлення стокової до RT4D, не те, що квитується). Тому зразок звіряємо з ns=0. */
 static void build_ack(uint32_t to, uint32_t from, uint8_t out12[12])
 {
-	uint8_t h[10];
-	h[0] = 0x01; h[1] = 0x40;
-	h[2] = (uint8_t)(to >> 16); h[3] = (uint8_t)(to >> 8); h[4] = (uint8_t)to;
-	h[5] = (uint8_t)(from >> 16); h[6] = (uint8_t)(from >> 8); h[7] = (uint8_t)from;
-	h[8] = 0x00; h[9] = 0x08;
-	memcpy(out12, h, 10);
-	hdr_crc(h, 10, 0xCCCC, out12 + 10);
+	dmrSmsPduAckHeader(to, from, 0, out12);
 }
 
 static int fails = 0;
@@ -83,13 +59,30 @@ int main(void)
 	build_ack(0x26EA1B /*кому: RT4D*/, 0x26EA3D /*від кого: стокова*/, ack);
 	expect_eq("Response header == ефірний зразок", ack, ackAir, 12);
 
-	/* 1a) Регресія польового бага: код відповіді сидить у o9 і дорівнює рівно 0x08.
-	 * Якщо туди колись знову підставлять лічильник блоків -- тест впаде тут. */
-	if (ack[8] != 0x00 || ack[9] != 0x08)
+	/* 1a) Регресія польового бага: o8 = BF = 0 (не лічильник блоків). */
+	if (ack[8] != 0x00) { fails++; printf("  FAIL o8 має бути 00, а не %02x\n", ack[8]); }
+	else { printf("  ok   o8=00 (BF)\n"); }
+
+	/* 1b) o9 = Class(7-6)=00 | Type(5-3)=001 | Status(2-0)=N(S). b7eedd6 писав N(S) у біти 6-4
+	 * (N(S)=3 -> 0x38 = Type 111), це ламало Class/Type. */
 	{
-		fails++; printf("  FAIL o8/o9 мають бути 00 08, а не %02x %02x\n", ack[8], ack[9]);
+		uint8_t a[12];
+		dmrSmsPduAckHeader(0x26EA1B, 0x26EA3D, 3, a);
+		if (a[9] != 0x0B) { fails++; printf("  FAIL N(S)=3 -> o9=%02x (очік. 0B)\n", a[9]); }
+		else { printf("  ok   N(S)=3 -> o9=0B\n"); }
+		dmrSmsPduAckHeader(0x26EA1B, 0x26EA3D, 0, a);
+		if (a[9] != 0x08) { fails++; printf("  FAIL N(S)=0 -> o9=%02x (очік. 08)\n", a[9]); }
+		else { printf("  ok   N(S)=0 -> o9=08\n"); }
+		int cls = 1;
+		for (uint8_t ns = 0; ns < 16; ns++)   /* і 8..15: зайві біти відкидаються */
+		{
+			dmrSmsPduAckHeader(1, 2, ns, a);
+			uint8_t c[2]; hdr_crc(a, 10, 0xCCCC, c);
+			if ((a[9] & 0xF8) != 0x08 || (a[9] & 7) != (ns & 7) || memcmp(c, a + 10, 2) != 0) { cls = 0; }
+		}
+		if (!cls) { fails++; printf("  FAIL Class/Type не 00/001 або Status != N(S)&7 або CRC\n"); }
+		else { printf("  ok   для N(S)=0..15: Class=00, Type=001, Status=N(S)&7, CRC сходиться\n"); }
 	}
-	else { printf("  ok   o8=00 (BF), o9=08 (Class=ACK) -- константи\n"); }
 
 	/* 2) CRC-контракт заголовка оригіналу (Confirmed data header): ті самі 10 байт -> ті самі CRC. */
 	const uint8_t confAir[12] = { 0x43,0x4b, 0x26,0xea,0x1b, 0x26,0xea,0x3d, 0x83,0x38, 0x35,0xb8 };
