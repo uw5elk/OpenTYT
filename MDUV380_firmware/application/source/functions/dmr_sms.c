@@ -23,6 +23,7 @@
 #include "user_interface/uiGlobals.h"    /* currentRxGroupData + *_ALL_CALL_VALUE: адресний фільтр RX */
 #include "hardware/HR-C6000.h"           /* PC_CALL_FLAG: тип виклику в старшому байті trxTalkGroupOrPcId */
 #include "functions/sound.h"             /* soundSetMelody: audible RX alert */
+#include "user_interface/languages/rctl_ua.h"  /* RCTL_NOTE_SMS_ACKED: "SMS: доставлено" */
 #include <string.h>
 
 /* ETSI slot data types as reported in HR-C6000 reg 0x51 [7:4]. */
@@ -33,6 +34,7 @@
 #define DTB_CSBK         0x30
 #define DTB_DATA_HEADER  0x60
 #define DTB_RATE12_DATA  0x70
+#define DTB_RATE34_DATA  0x80   /* rate-3/4 CONFIRMED data block (18-byte payload) */
 
 #define UDP_SMS_PORT     0x0FA7          /* 4007, src==dst, stock TYT */
 
@@ -522,11 +524,15 @@ static int build_plaintext(const char *text, int tlen, uint32_t src, uint32_t ds
 }
 
 /* ============================ TX ======================================== */
-/* Burst queue for the data-TX harness: count*(1 type byte + 12 payload). */
-static int append_burst(uint8_t *q, int n, uint8_t typeByte, const uint8_t *p12)
+/* Burst queue: stride = 1 type byte + DMR_DATA_BURST_LEN (18) payload bytes = 19 bytes.
+ * plen -- фактичний розмір payload (12 для CSBK/заголовків, 18 для rate-3/4 блоків).
+ * Решта stride-буфера обнуляється, щоб HR-C6000 не отримав сміття при запису. */
+#define BURST_STRIDE (1 + DMR_DATA_BURST_LEN)
+static int append_burst(uint8_t *q, int n, uint8_t typeByte, const uint8_t *payload, int plen)
 {
-	q[n * 13 + 0] = typeByte;
-	memcpy(q + n * 13 + 1, p12, 12);
+	q[n * BURST_STRIDE + 0] = typeByte;
+	memset(q + n * BURST_STRIDE + 1, 0, DMR_DATA_BURST_LEN);
+	memcpy(q + n * BURST_STRIDE + 1, payload, (size_t)plen);
 	return n + 1;
 }
 
@@ -571,6 +577,43 @@ static void confirmed_block_fill(uint8_t *p12, const uint8_t *payload10, uint8_t
 	for (int i = 1; i <= 8; i++) { b1 |= (uint8_t)(((c9 >> i) & 1) << (8 - i)); }
 	p12[1] = b1;
 	memcpy(p12 + 2, payload10, 10);
+}
+
+/* CRC-9 для Rate-3/4 CONFIRMED data blocks. Той самий poly=0x059, init=0, маска 0x0F0 --
+ * лише payload 16 байт замість 10.  ETSI TS 102 361-1 §B.3.10. */
+static uint16_t crc9_r34(const uint8_t *payload16, uint8_t dbsn)
+{
+	uint16_t reg = 0;
+	for (int i = 0; i < 16; i++)
+	{
+		for (int b = 7; b >= 0; b--)
+		{
+			uint16_t msb = (reg >> 8) & 1;
+			reg = (uint16_t)((reg << 1) & 0x1FF);
+			if (msb ^ ((payload16[i] >> b) & 1)) { reg ^= 0x059; }
+		}
+	}
+	for (int b = 6; b >= 0; b--)
+	{
+		uint16_t msb = (reg >> 8) & 1;
+		reg = (uint16_t)((reg << 1) & 0x1FF);
+		if (msb ^ ((dbsn >> b) & 1)) { reg ^= 0x059; }
+	}
+	return (uint16_t)((~reg & 0x1FF) ^ 0x0F0);
+}
+
+/* Заповнити 18-байтний Rate-3/4 CONFIRMED data block.
+ * payload16: 16 байт (нормальний: 16 Б навантаження; останній: 12 Б даних + 4 Б CRC32).
+ * dbsn: 7-бітний Data Block Sequence Number.
+ * Розкладка: [7 біт DBSN][9 біт CRC9 БІТ-РЕВЕРСНУТИЙ][16 байт навантаження]. */
+static void confirmed_block_fill_r34(uint8_t *p18, const uint8_t *payload16, uint8_t dbsn)
+{
+	uint16_t c9 = crc9_r34(payload16, dbsn);
+	p18[0] = (uint8_t)((dbsn << 1) | (c9 & 1));
+	uint8_t b1 = 0;
+	for (int i = 1; i <= 8; i++) { b1 |= (uint8_t)(((c9 >> i) & 1) << (8 - i)); }
+	p18[1] = b1;
+	memcpy(p18 + 2, payload16, 16);
 }
 
 /* DIAGNOSTIC (USB 0x97): lets the host invoke the REAL dmrSmsSend() menu path directly,
@@ -816,7 +859,7 @@ static void buildAndLoadSmsAck(uint32_t dst)
 	h[9] = 0x08;                                       /* Class=00 ACK, Type=001, Status=000 */
 	uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 
-	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * 13];
+	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * BURST_STRIDE] DMR_AES_CCM;
 	int n = 0;
 	/* CSBK-преамбули (як перед звичайним повідомленням) -- «заводять» data-виклик у приймача. */
 	for (int i = 0; i < (int)s_ackPreambles; i++)
@@ -827,11 +870,11 @@ static void buildAndLoadSmsAck(uint32_t dst)
 		body[4] = (uint8_t)(dst >> 16); body[5] = (uint8_t)(dst >> 8); body[6] = (uint8_t)dst;
 		body[7] = (uint8_t)(src >> 16); body[8] = (uint8_t)(src >> 8); body[9] = (uint8_t)src;
 		uint8_t pb[12]; memcpy(pb, body, 10); hdr_crc(body, 10, 0xA5A5, pb + 10);
-		n = append_burst(q, n, DTB_CSBK, pb);
+		n = append_burst(q, n, DTB_CSBK, pb, 12);
 	}
 	for (int i = 0; i < (int)s_ackRepeats; i++)
 	{
-		n = append_burst(q, n, DTB_DATA_HEADER, p12);
+		n = append_burst(q, n, DTB_DATA_HEADER, p12, 12);
 	}
 	/* Коротка затримка ключування замість типових 100 мс: відправник слухає вузьке вікно. */
 	dmrDataTxLoadDelayed(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS);
@@ -876,13 +919,14 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	if (encrypt) { for (int i = 0; i + 16 <= ptLen; i += 16) { aes256_ecb_encrypt(key, pt + i); } }
 	int ctLen = ptLen;                       /* ct = whole enc blocks + clear tail (or all clear) */
 
-	/* 2) CONFIRMED block layout: nNormal повних блоків по 10 байт + 1 останній блок.
-	 * Нормальний блок: 10 Б навантаження.
-	 * Останній блок: 6 Б навантаження + (6 - r) нульовий pad + 4 Б CRC32 (усього 10 Б).
-	 * poc = кількість нульових байтів, доданих для вирівнювання. */
-	int nNormal    = (ctLen > 6) ? ((ctLen - 6 + 9) / 10) : 0;
+	/* 2) Rate-3/4 CONFIRMED block layout: nNormal повних блоків по 16 байт + 1 останній блок.
+	 * Нормальний блок: 16 Б навантаження.
+	 * Останній блок: до 12 Б навантаження + нульовий pad + 4 Б CRC32 (разом 16 Б у CRC9-зоні).
+	 * poc = кількість нульових байтів, доданих для вирівнювання ПЕРЕД CRC32.
+	 * Стокова TYT шле саме rate-3/4 і відповідає на нас «01 40» лише на rate-3/4. */
+	int nNormal    = (ctLen > 12) ? ((ctLen - 12 + 15) / 16) : 0;
 	int nDataBlocks = nNormal + 1;
-	int ctPad      = nNormal * 10 + 6;              /* загальна ємність навантаження */
+	int ctPad      = nNormal * 16 + 12;             /* загальна ємність навантаження (без CRC32) */
 	int poc        = ctPad - ctLen;                  /* нульовий хвіст */
 	uint8_t pdu[400];                                /* 390 Б -- більш ніж достатньо для 144-симв */
 	if (ctPad > (int)sizeof pdu) { return -4; }
@@ -892,8 +936,9 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	uint32_t crc = crc32_dmr(pdu, ctPad);
 	int nblocks = (encrypt ? 1 : 0) + nDataBlocks;
 
-	/* 3) build the burst queue: CSBK preamble + 2 headers + rate-1/2 blocks */
-	static uint8_t q[DMR_DATA_MAX_BURSTS * 13];
+	/* 3) build the burst queue: CSBK preamble + 2 headers + rate-3/4 blocks.
+	 * q -- у CCM: 40×19 = 760 байт, замість 520 у main RAM. */
+	static uint8_t q[DMR_DATA_MAX_BURSTS * BURST_STRIDE] DMR_AES_CCM;
 	int n = 0;
 	int preamble = 6;
 	int tail = (encrypt ? 2 : 1) + nDataBlocks;  /* headers (CONFIRMED [+ ENC]) + data blocks after CSBKs */
@@ -907,7 +952,7 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 		body[7] = (uint8_t)(src >> 16); body[8] = (uint8_t)(src >> 8); body[9] = (uint8_t)src;
 		uint8_t p12[12]; memcpy(p12, body, 10); hdr_crc(body, 10, 0xA5A5, p12 + 10);
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
-		n = append_burst(q, n, DTB_CSBK, p12);
+		n = append_burst(q, n, DTB_CSBK, p12, 12);
 	}
 	/* CONFIRMED data header (DPF=3, A-bit=0x40 -- запит link-layer квитанції).
 	 * SAP 09 [EXTD HDR] when encrypting (the ENC ext header is
@@ -923,7 +968,7 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 		h[8] = (uint8_t)(0x80 | (nblocks & 0x7F)); h[9] = 0x08;
 		uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
-		n = append_burst(q, n, DTB_DATA_HEADER, p12);
+		n = append_burst(q, n, DTB_DATA_HEADER, p12, 12);
 	}
 	/* ENC extended header (SAP04 IP, MFID Moto, ALG05 AES256, key id, MI=0) — encrypted SMS only */
 	if (encrypt)
@@ -931,27 +976,28 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 		uint8_t e[10] = { 0x4F, 0x10, 0x51, keyId, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 		uint8_t p12[12]; memcpy(p12, e, 10); hdr_crc(e, 10, 0xCCCC, p12 + 10);
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
-		n = append_burst(q, n, DTB_DATA_HEADER, p12);
+		n = append_burst(q, n, DTB_DATA_HEADER, p12, 12);
 	}
-	/* rate-1/2 CONFIRMED data blocks: [7b DBSN][9b CRC9 bit-rev][10B payload].
-	 * Нормальні блоки: 10 Б навантаження кожен. */
+	/* Rate-3/4 CONFIRMED data blocks: [7b DBSN][9b CRC9 bit-rev][16B payload].
+	 * Нормальні блоки: 16 Б навантаження кожен.
+	 * Стокова TYT шле саме rate-3/4 і квитує (01 40) лише rate-3/4 SMS. */
 	for (int b = 0; b < nNormal; b++)
 	{
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
-		uint8_t p12[12];
-		confirmed_block_fill(p12, pdu + b * 10, (uint8_t)b);
-		n = append_burst(q, n, DTB_RATE12_DATA, p12);
+		uint8_t p18[18];
+		confirmed_block_fill_r34(p18, pdu + b * 16, (uint8_t)b);
+		n = append_burst(q, n, DTB_RATE34_DATA, p18, 18);
 	}
-	/* Останній блок: 6 Б навантаження + 4 Б CRC32 (усього 10 Б у CRC9-зоні). */
+	/* Останній блок: до 12 Б навантаження + 4 Б CRC32 (разом 16 Б у CRC9-зоні). */
 	{
 		if (n >= DMR_DATA_MAX_BURSTS) { return -5; }
-		uint8_t last10[10];
-		memcpy(last10, pdu + nNormal * 10, 6);
-		last10[6] = (uint8_t)(crc >> 24); last10[7] = (uint8_t)(crc >> 16);
-		last10[8] = (uint8_t)(crc >> 8);  last10[9] = (uint8_t)crc;
-		uint8_t p12[12];
-		confirmed_block_fill(p12, last10, (uint8_t)nNormal);
-		n = append_burst(q, n, DTB_RATE12_DATA, p12);
+		uint8_t last16[16];
+		memcpy(last16, pdu + nNormal * 16, 12);  /* ctPad - nNormal*16 = 12 */
+		last16[12] = (uint8_t)(crc >> 24); last16[13] = (uint8_t)(crc >> 16);
+		last16[14] = (uint8_t)(crc >> 8);  last16[15] = (uint8_t)crc;
+		uint8_t p18[18];
+		confirmed_block_fill_r34(p18, last16, (uint8_t)nNormal);
+		n = append_burst(q, n, DTB_RATE34_DATA, p18, 18);
 	}
 
 	/* Queue the Sent-folder write for AFTER the TX finishes (see s_pendSent / dmrSmsTxPersistTick)
@@ -1292,6 +1338,22 @@ void dmrSmsRxTick(void)
 {
 	dmrSmsTxPersistTick();   /* flush any deferred Sent-folder write once the TX has fully un-keyed */
 	dmrSmsAckTick();         /* відключити квитанцію на вхідне CONFIRMED SMS, коли настав час */
+
+	/* TX-ACK: стокова TYT отримала наш CONFIRMED SMS і відповіла «01 40».
+	 * Позначаємо найновіше надіслане як DMR_SMS_FLAG_DELIVERED і показуємо банер. */
+	if (dmrSmsTxAcked())
+	{
+		store_ensure();
+		int o = off_for(1, 0);   /* 1 = outgoing, 0 = newest */
+		if (o >= 0 && !(s_store.data[o] & DMR_SMS_FLAG_DELIVERED))
+		{
+			s_store.data[o] |= DMR_SMS_FLAG_DELIVERED;
+			store_save();
+		}
+		displayLightTrigger(false);
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, RCTL_NOTE_SMS_ACKED, true);
+		soundSetMelody(MELODY_ACK_BEEP);
+	}
 
 	if (!s_rxReady) { return; }
 

@@ -32,8 +32,8 @@ void dmrDataTriggerReboot(void);
  * header-bit | LCSS — e.g. 0x60 data header, 0x70 rate-1/2 data, 0x20 terminator)
  * followed by 12 payload bytes (the 96 info bits the chip FEC-encodes), matching
  * the proven AES PI-header burst path (page 0x02 reg 0x00 + reg 0x50). */
-#define DMR_DATA_MAX_BURSTS  40   /* up to a 144-char SMS: 6 CSBK + 2 hdr + ~28 rate-1/2 + slack */
-#define DMR_DATA_BURST_LEN   12
+#define DMR_DATA_MAX_BURSTS  40   /* up to a 144-char SMS: 6 CSBK + 2 hdr + ~22 rate-3/4 + slack */
+#define DMR_DATA_BURST_LEN   18   /* max payload: rate-3/4 CONFIRMED data = 18 B; CSBK/headers use only first 12 */
 
 /* Load the burst queue (bursts = count * (1 type byte + DMR_DATA_BURST_LEN payload))
  * and key a data call (deferred to the main loop). Called from the CPS handler. */
@@ -51,7 +51,7 @@ int  dmrDataTxFastEnd(void);
  * fetch the next burst (1 + fills dataType/payload; 0 when the queue is drained). */
 int  dmrDataTxActive(void);
 uint16_t dmrDataTxFinishMs(void);  /* скільки мс зайняло завершення останньої передачі */
-int  dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payload12Out);
+int  dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payloadOut);  /* fills DMR_DATA_BURST_LEN bytes */
 void dmrDataTxEnd(void);   /* clear the data-call state (queue drained / TX ended) */
 
 #endif // ENABLE_DMR_DATA
