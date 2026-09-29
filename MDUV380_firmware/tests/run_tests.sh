@@ -40,7 +40,8 @@ declare -A SRCS=(
 	[test_dmr_rctl_stock]="$APP/source/crypto/dmr_rctl_stock.c"
 	[test_emb_sb]="$APP/source/crypto/dmr_aes.c"
 	[test_le_mi]="$APP/source/crypto/dmr_aes.c"
-	[test_dmr_sms_ack]=""             # самодостатній: контракт формату SMS-квитанції
+	[test_dmr_sms_ack]="$APP/source/functions/dmr_sms_pdu.c"   # квитанція: СПРАВЖНІЙ білдер заголовка
+	[test_dmr_sms_unconf]="$APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c"   # режим 0 == 438ec23 байт-у-байт
 	[test_dmr_sms_confirmed]=""       # самодостатній: CRC9 + розкладка CONFIRMED-блока
 	[test_call_replay]="$APP/source/functions/callReplay.c"   # лише ЧИСТА кільцева логіка -- callReplayPlayback.c (codec/sound/trx/FreeRTOS) сюди навмисно не тягнеться
 )
