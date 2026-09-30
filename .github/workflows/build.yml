@@ -92,11 +92,14 @@ jobs:
       # .bin і .hex вивантажуємо завжди (потрібні для прошивки); .elf і .map --
       # лише при ручному запуску (workflow_dispatch), бо вони великі (~10 МБ кожен)
       # і потрібні лише для детального розбору пам'яті поза CI-логом.
-      # Всі артефакти живуть 7 днів -- після цього GitHub видаляє їх автоматично.
+      # Всі артефакти живуть 2 дні (було 7): квота сховища артефактів перераховується лише
+      # раз на 6-12 год, і старі артефакти блокували upload нових збірок ("Artifact storage
+      # quota has been hit"). .bin/.hex стискаються максимально (compression-level: 9).
       - uses: actions/upload-artifact@v4
         with:
           name: openuv380-10w-aes${{ matrix.aes }}
-          retention-days: 7
+          retention-days: 2
+          compression-level: 9
           path: |
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
@@ -106,7 +109,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         with:
           name: openuv380-10w-aes${{ matrix.aes }}-debug
-          retention-days: 7
+          retention-days: 2
           path: |
             MDUV380_firmware/build/*.elf
             MDUV380_firmware/build/*.map
@@ -139,7 +142,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: openuv380-10w-ukrainian
-          retention-days: 7
+          retention-days: 2
+          compression-level: 9
           path: |
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
@@ -147,7 +151,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         with:
           name: openuv380-10w-ukrainian-debug
-          retention-days: 7
+          retention-days: 2
           path: |
             MDUV380_firmware/build/*.elf
             MDUV380_firmware/build/*.map
@@ -175,7 +179,11 @@ jobs:
   # Залежить від build-ukrainian -- бере вже готовий .bin і вбудовує його прямо в .exe,
   # тож тестеру не треба окремо шукати артефакт прошивки. Тулчейн для .exe є тільки на
   # windows-latest (PyInstaller збирає під ту ОС, на якій запущений).
+  # Лише при ручному запуску (workflow_dispatch): .exe великий і на кожен push з'їдав
+  # квоту сховища артефактів. Запуск: GitHub -> Actions -> "Build MD-UV390 10W firmware" ->
+  # Run workflow.
   build-gui-flasher:
+    if: github.event_name == 'workflow_dispatch'
     needs: build-ukrainian
     runs-on: windows-latest
     name: build (GUI-прошивальник, Windows .exe)
@@ -228,5 +236,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: openuv380-flasher-windows
-          retention-days: 7
+          retention-days: 2
           path: MDUV380_firmware/tools/dist/TYT MD-UV390UKR.exe

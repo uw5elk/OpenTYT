@@ -1147,6 +1147,16 @@
 - Дублювання між job-ами матриці відсутнє: `build` (aes=[0,1]) і `build-ukrainian` — різні
   конфігурації з різними назвами артефактів; `build-gui-flasher` залежить від `build-ukrainian`.
 
+**Квота сховища артефактів (2026-09-30, ci_retention) — НЕ ПЕРЕВІРЕНО реальним прогоном.**
+Upload почав падати з «Artifact storage quota has been hit» (збірки й `mem_report` проходили).
+Квота перераховується раз на 6–12 год, тож старі артефакти блокували нові збірки. Змінено лише
+`.github/workflows/build.yml`, код прошивки не чіпали:
+- `retention-days: 2` (було 7) на всіх 5 кроках `upload-artifact`;
+- `compression-level: 9` для артефактів із `.bin`/`.hex` (`openuv380-10w-aes0/1`,
+  `openuv380-10w-ukrainian`);
+- job `build-gui-flasher` (Windows `.exe`) — лише при `workflow_dispatch`, не на кожен push/PR.
+Матриця, назви артефактів і звіт про пам'ять — без змін. YAML перевірено `yaml.safe_load`.
+
 ## Розвідка (нічого не реалізовано)
 
 - **Запис переговорів (call recording) -- технічна розвідка (2026-09-18).** Питання
