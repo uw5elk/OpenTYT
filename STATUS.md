@@ -1163,6 +1163,21 @@ Upload почав падати з «Artifact storage quota has been hit» (зб�
 перевірки української збірки після upload виконуються. `.bin` за вичерпаної квоти однаково
 не буде; job `.exe` (лише вручну) тоді впаде на download-artifact — це очікувано.
 
+**Збірки в GitHub Releases (2026-09-30, ci_release) — НЕ ПЕРЕВІРЕНО реальним прогоном.**
+Release-assets не входять у квоту сховища артефактів, тож прошивку можна забрати й тоді,
+коли upload-artifact падає. Змінено лише `.github/workflows/build.yml`:
+- `build-ukrainian` (`permissions: contents: write`): ПІСЛЯ перевірок розміру й українських
+  рядків публікує `openuv380-10w-ukrainian-<sha7>.bin` у prerelease з тегом `ci-<sha7>`
+  (gh CLI, без сторонніх екшенів). Лише push у `main` і ручний запуск; для PR — ні.
+- Автоочистка: лишаються 5 найновіших `ci-*` релізів, старіші видаляються з тегом
+  (`--cleanup-tag`); крок `continue-on-error`. Інших релізів (не `ci-*`) не чіпає.
+- `build-gui-flasher` (лише ручний запуск): `.bin` бере з релізу `ci-<sha7>` (а не з
+  артефакту — той за вичерпаної квоти не існує) і додає `.exe` до того самого релізу.
+  GitHub замінює пробіли в назвах assets крапками: у релізі файл — `TYT.MD-UV390UKR.exe`.
+- `upload-artifact` лишився як був (`continue-on-error`).
+Забрати найновіший `.bin` у Termux (у /sdcard/Download/):
+`cd ~/OpenGD77-AES256 && T=$(gh release list --limit 20 --json tagName,createdAt -q '[.[] | select(.tagName|startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // empty') && test -n "$T" && echo "$T" && gh release download "$T" --pattern '*.bin' -D /sdcard/Download/ --clobber && ls -l /sdcard/Download/openuv380-10w-ukrainian-*.bin`
+
 ## Розвідка (нічого не реалізовано)
 
 - **Запис переговорів (call recording) -- технічна розвідка (2026-09-18).** Питання

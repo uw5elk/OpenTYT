@@ -126,6 +126,11 @@ jobs:
   build-ukrainian:
     runs-on: ubuntu-latest
     name: build (українська, ENABLE_AES=1 ENABLE_DMR_DATA=1)
+    # contents: write -- лише для публікації .bin у GitHub Release (крок нижче). Release-assets
+    # НЕ входять у квоту сховища артефактів Actions, тож прошивку можна забрати навіть тоді,
+    # коли upload-artifact падає на "Artifact storage quota has been hit".
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Install ARM GNU toolchain
@@ -180,6 +185,49 @@ jobs:
           assert needle in data, "українських рядків у .bin немає -- LANGUAGE_UKRAINIAN=1 не спрацював"
           print("OK: українські рядки знайдено у прошивці")
           PY
+      # Публікація в GitHub Release -- ПІСЛЯ перевірок вище, тож у реліз потрапляє лише
+      # прошивка, що пройшла і розмір, і наявність українських рядків.
+      # Тег ci-<короткий sha>, prerelease. Створюємо, якщо його ще немає (повторний запуск
+      # того самого коміту лише перезаписує файл через --clobber). Лише push у main і ручний
+      # запуск: для PR і інших гілок реліз не потрібен (і токен PR з форку -- лише читання).
+      - name: Опублікувати .bin у GitHub Release (ci-<sha>)
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        working-directory: MDUV380_firmware
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          TAG="ci-${SHORT}"
+          ASSET="openuv380-10w-ukrainian-${SHORT}.bin"
+          cp build/openuv380-10w.bin "$ASSET"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+              --title "CI ${SHORT} (${GITHUB_REF_NAME})" \
+              --notes "Автоматична CI-збірка коміту ${GITHUB_SHA}. Прошивка: українська, ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1. Windows-прошивальник (.exe) додається лише при ручному запуску workflow. НЕ перевірено на залізі."
+          fi
+          gh release upload "$TAG" "$ASSET" --clobber
+          echo "OK: $ASSET -> реліз $TAG"
+      # Автоочистка: лишаємо 5 найновіших ci-* релізів, старіші видаляємо разом із тегом.
+      # continue-on-error: невдале прибирання не повинно червонити збірку.
+      - name: Прибрати старі ci-* релізи (лишити 5)
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          OLD=$(gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName')
+          for T in $OLD; do
+            gh release delete "$T" --yes --cleanup-tag
+            echo "видалено реліз $T"
+          done
+          echo "OK: лишилось не більше 5 ci-* релізів"
 
   # GUI-прошивальник для простих користувачів/тестерів: один .exe із двома кнопками
   # ("Обрати донор" і "ПРОШИТИ"), без ручного pip install/копіювання libusb dll.
@@ -194,12 +242,25 @@ jobs:
     needs: build-ukrainian
     runs-on: windows-latest
     name: build (GUI-прошивальник, Windows .exe)
+    # contents: write -- щоб додати .exe до релізу ci-<sha>, який створив build-ukrainian.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: openuv380-10w-ukrainian
-          path: firmware
+      # .bin беремо з релізу ci-<sha> (його щойно опублікував build-ukrainian), а НЕ з
+      # артефакту: при вичерпаній квоті артефакт не вивантажується, і download-artifact падав.
+      - name: Завантажити .bin із релізу ci-<sha>
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          mkdir -p firmware
+          gh release download "ci-${SHORT}" --pattern "openuv380-10w-ukrainian-${SHORT}.bin" -D firmware --clobber
+          mv "firmware/openuv380-10w-ukrainian-${SHORT}.bin" firmware/openuv380-10w.bin
+          ls -l firmware
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -246,3 +307,16 @@ jobs:
           name: openuv380-flasher-windows
           retention-days: 2
           path: MDUV380_firmware/tools/dist/TYT MD-UV390UKR.exe
+      # Той самий .exe -- у реліз ci-<sha> поруч із .bin (не залежить від квоти артефактів).
+      # Увага: GitHub у назвах release-assets замінює пробіли крапками, тож у релізі файл
+      # називатиметься "TYT.MD-UV390UKR.exe".
+      - name: Додати .exe до релізу ci-<sha>
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="ci-${GITHUB_SHA::7}"
+          gh release upload "$TAG" "MDUV380_firmware/tools/dist/TYT MD-UV390UKR.exe" --clobber
+          echo "OK: .exe -> реліз $TAG"
