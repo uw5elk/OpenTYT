@@ -92,10 +92,14 @@ jobs:
       # .bin і .hex вивантажуємо завжди (потрібні для прошивки); .elf і .map --
       # лише при ручному запуску (workflow_dispatch), бо вони великі (~10 МБ кожен)
       # і потрібні лише для детального розбору пам'яті поза CI-логом.
+      # continue-on-error на КОЖНОМУ upload: якщо квоту сховища вичерпано, збірка лишається
+      # зеленою, не скасовує сусідні пункти матриці, а перевірки після upload (розмір,
+      # українські рядки) однаково виконуються. Сам збій upload видно жовтим у логах кроку.
       # Всі артефакти живуть 2 дні (було 7): квота сховища артефактів перераховується лише
       # раз на 6-12 год, і старі артефакти блокували upload нових збірок ("Artifact storage
       # quota has been hit"). .bin/.hex стискаються максимально (compression-level: 9).
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: openuv380-10w-aes${{ matrix.aes }}
           retention-days: 2
@@ -106,6 +110,7 @@ jobs:
       # .elf + .map (налагоджувальні символи і лінкерна карта) -- лише вручну.
       # Запуск: GitHub → Actions → "Build MD-UV390 10W firmware" → Run workflow.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: github.event_name == 'workflow_dispatch'
         with:
           name: openuv380-10w-aes${{ matrix.aes }}-debug
@@ -140,6 +145,7 @@ jobs:
       # зібраний .bin все одно має лишитись доступним для завантаження.
       # .bin і .hex -- завжди; .elf і .map -- лише при ручному запуску (workflow_dispatch).
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: openuv380-10w-ukrainian
           retention-days: 2
@@ -148,6 +154,7 @@ jobs:
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: github.event_name == 'workflow_dispatch'
         with:
           name: openuv380-10w-ukrainian-debug
@@ -234,6 +241,7 @@ jobs:
             --add-data "build_info.txt;." \
             gui_flasher.py
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: openuv380-flasher-windows
           retention-days: 2
