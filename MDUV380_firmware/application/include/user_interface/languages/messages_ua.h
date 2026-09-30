@@ -63,4 +63,18 @@
 #define MSGS_TX_MODE_R12         "Підтв. 1/2"
 #define MSGS_TX_MODE_R34         "Підтв. 3/4"
 
+/* Екран «Діагностика» (2026-09-30): лічильники ланцюга квитанції. FONT_SIZE_1 -- до 26
+ * символів у рядку з числами. Розшифровка -- TESTING.md, блок M. */
+#define MSGS_DIAG                "Діагностика"
+#define MSGS_DG_ACK1_FMT         "Квит RX: бач %u черг %u"
+#define MSGS_DG_ACK2_FMT         "  ефір %u простр %u"
+#define MSGS_DG_ACK3_FMT         "  пауза %u мс"
+#define MSGS_DG_DATA1_FMT        "Дані: відк %u старт %u"
+#define MSGS_DG_DATA2_FMT        "  тайм %u без старт %u"
+#define MSGS_DG_CONF_FMT         "Наші CONF: %u"
+#define MSGS_DG_RESP_FMT         "Відп %u нам %u наші %u"
+#define MSGS_DG_HDR_FMT          "Заг6 HW %u SW %u пог %u"
+#define MSGS_DG_FAST_FMT         "Шв. кінець: %s"
+#define MSGS_DG_HINT             "GRN:шв.кін дов:скид RED"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

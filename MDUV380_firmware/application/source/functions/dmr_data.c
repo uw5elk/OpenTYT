@@ -63,6 +63,28 @@ static volatile uint8_t s_dataTxActive; /* past the active=0 store the ISR gates
 static uint16_t         s_txFinishPolls;
 static volatile uint8_t s_fastEnd;      /* 1 = обірвати передачу відразу після останнього бургста */
 
+/* Діагностика (екран «Діагностика» меню Повідомлення, 2026-09-30): де саме губиться data-TX.
+ * У CCM (main RAM на межі), секція .aes_ccmram -- вона стоїть ПІСЛЯ всього .ccmram, тож
+ * нічого з наявного в CCM не зсуває. Скидає dmrDataTxDiagReset(), її кличе dmrSmsInit()
+ * (через runtimeReset) при старті. */
+#define DMR_DATA_DIAG_CCM __attribute__((section(".aes_ccmram")))
+static volatile uint16_t s_dgRejected   DMR_DATA_DIAG_CCM;  /* чергу відкинуто: передача вже активна */
+static volatile uint16_t s_dgStarted    DMR_DATA_DIAG_CCM;  /* перший burst реально пішов у чип */
+static volatile uint16_t s_dgTimeout    DMR_DATA_DIAG_CCM;  /* dmrDataTxFinishPoll вийшов по таймауту */
+static volatile uint16_t s_dgNoStart    DMR_DATA_DIAG_CCM;  /* ... і жоден burst так і не пішов */
+static volatile uint8_t  s_dgBurstSeen  DMR_DATA_DIAG_CCM;  /* у поточній передачі burst уже брали */
+
+void dmrDataTxDiag(uint16_t out[4])
+{
+	out[0] = s_dgRejected; out[1] = s_dgStarted; out[2] = s_dgTimeout; out[3] = s_dgNoStart;
+}
+
+void dmrDataTxDiagReset(void)
+{
+	s_dgRejected = s_dgStarted = s_dgTimeout = s_dgNoStart = 0;
+	s_dgBurstSeen = 0;
+}
+
 /*
  * Форк: період опитування 25 -> 5 мс. Причина -- квитанція RCTL: після нашої команди
  * стокова відповідає вже через ~30 мс (виміряно SDR-захватом, RCTL_COMPAT.md §5a), а
@@ -91,6 +113,11 @@ static void dmrDataTxFinishPoll(void)
 		addTimerCallback(dmrDataTxFinishPoll, DMR_DATA_TX_FINISH_POLL_MS, MENU_ANY, false);
 		return;
 	}
+	if (s_txFinishPolls >= DMR_DATA_TX_FINISH_TIMEOUT)
+	{
+		s_dgTimeout++;
+		if (!s_dgBurstSeen) { s_dgNoStart++; }   /* ключували, а слот так і не віддав жодного burst-а */
+	}
 	dmrDataTxEnd();           // ensure the queue/flags are cleared (idempotent)
 	trxDisableTransmission(); // LED_RED off + trxActivateRx() -> back to RX, like PTT release
 
@@ -111,6 +138,7 @@ static void dmrDataTxFinishPoll(void)
 static void dmrDataKeyTx(void)
 {
 	s_burstIndex = 0;
+	s_dgBurstSeen = 0;
 	s_dataTxActive = 1;
 	s_txFinishPolls = 0;
 	// hrc6000Tick() starts the DMR TX only when isWaking == NONE AND slotState == IDLE.
@@ -136,6 +164,7 @@ void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count)
 {
 	if (s_dataTxActive)
 	{
+		s_dgRejected++;
 		return;
 	}
 	s_fastEnd = 1;
@@ -154,11 +183,12 @@ int dmrDataTxFastEnd(void)
  * чистий програш: відправник чекає відповідь у вузькому вікні (стокова TYT квитує SMS через
  * ~80 мс по кінці передачі, RCTL_COMPAT §5h -- через 30 мс). Запис з ефіру (BBD_0006) показав
  * нашу квитанцію аж через 366 мс -- стокова її вже не приймала. */
-void dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs)
+int dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs)
 {
 	if (s_dataTxActive)
 	{
-		return; // a data call is already keyed; ignore overlapping triggers
+		s_dgRejected++;
+		return 0; // a data call is already keyed; ignore overlapping triggers
 	}
 	if (count > DMR_DATA_MAX_BURSTS)
 	{
@@ -169,6 +199,7 @@ void dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs
 	s_burstCount = count;
 	s_burstIndex = 0;
 	addTimerCallback(dmrDataKeyTx, delayMs, MENU_ANY, false);
+	return 1;
 }
 
 void dmrDataTxLoad(const uint8_t *bursts, uint8_t count)
@@ -193,6 +224,7 @@ int dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payload12Out)
 	{
 		return 0;
 	}
+	if (!s_dgBurstSeen) { s_dgBurstSeen = 1; s_dgStarted++; }   /* передача реально почалась */
 	uint8_t *b = s_bursts[s_burstIndex++];
 	*dataTypeOut = b[0];
 	memcpy(payload12Out, b + 1, DMR_DATA_BURST_LEN);

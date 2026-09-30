@@ -41,7 +41,8 @@ void dmrDataTxLoad(const uint8_t *bursts, uint8_t count);
 /* Те саме, але з керованою затримкою ключування (типові 100 мс -- це вихід із критичної
  * секції CPS). Для квитанцій, які й так кличуть із головного циклу, затримку треба різати:
  * відправник слухає відповідь у вузькому вікні (стокова квитує SMS через ~80 мс). */
-void dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs);
+/* Повертає 1, якщо чергу прийнято; 0 -- відкинуто (data-передача вже активна). */
+int  dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs);
 /* Те саме, але без термінатора й довгого TX_END -- передача гасне одразу після
  * останнього бургста, щоб встигнути почути відповідь (RCTL_COMPAT.md §5h). */
 void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count);
@@ -53,6 +54,11 @@ int  dmrDataTxActive(void);
 uint16_t dmrDataTxFinishMs(void);  /* скільки мс зайняло завершення останньої передачі */
 int  dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payloadOut);  /* fills DMR_DATA_BURST_LEN bytes */
 void dmrDataTxEnd(void);   /* clear the data-call state (queue drained / TX ended) */
+
+/* Діагностика data-TX: out = [чергу відкинуто, передач почалось (перший burst у чипі),
+ * вихід по таймауту, таймаут без жодного burst-а]. */
+void dmrDataTxDiag(uint16_t out[4]);
+void dmrDataTxDiagReset(void);
 
 #endif // ENABLE_DMR_DATA
 #endif // _OPENGD77_DMR_DATA_H_

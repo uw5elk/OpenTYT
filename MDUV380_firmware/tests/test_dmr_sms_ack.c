@@ -96,6 +96,40 @@ int main(void)
 	if (memcmp(ack2 + 10, ack + 10, 2) == 0) { fails++; printf("  FAIL CRC не залежить від адрес\n"); }
 	else { printf("  ok   CRC залежить від вмісту\n"); }
 
+	/* 4) diag3 / Завдання 0: програмна перевірка CRC data-заголовка (dmrSmsPduHdrCrcOk), якою
+	 * ISR тепер приймає тип 6 з апаратним CRC «bad». Має пропускати і квитанцію стокової, і
+	 * звичайні заголовки SMS (стокової 43.. та наш 02..), і відкидати зіпсоване. */
+	{
+		/* BBD_0000 (2026-09-30): квитанція стокової 0x26EA29 на наше CONFIRMED від 0x26EA0F. */
+		const uint8_t ack0000[12] = { 0x01,0x40, 0x26,0xea,0x0f, 0x26,0xea,0x29, 0x00,0x08, 0x66,0x8d };
+		int okAck  = dmrSmsPduHdrCrcOk(ack0000, 0xCCCC);
+		int okConf = dmrSmsPduHdrCrcOk(confAir, 0xCCCC);          /* заголовок стокової 43 4b .. */
+		uint8_t q[16 * BURST_STRIDE];
+		uint8_t ct[40]; for (int i = 0; i < 40; i++) ct[i] = (uint8_t)(i * 7 + 1);
+		int n = dmrSmsPduBuildUnconf(q, 16, ct, 40, 0x26EA0F, 0x26EA29, 0, 0, 0);
+		const uint8_t *our = q + 6 * BURST_STRIDE + 1;               /* burst 6 = наш заголовок 02 .. */
+		int okOur  = (n > 7) && (our[0] == 0x02) && dmrSmsPduHdrCrcOk(our, 0xCCCC);
+		const uint8_t *csbk = q + 0 * BURST_STRIDE + 1;              /* CSBK-преамбула, маска A5A5 */
+		int okCsbk = dmrSmsPduHdrCrcOk(csbk, 0xA5A5) && !dmrSmsPduHdrCrcOk(csbk, 0xCCCC);
+		int badAll = 1;                                               /* будь-який 1 біт зіпсовано -> bad */
+		for (int bit = 0; bit < 96; bit++)
+		{
+			uint8_t t[12]; memcpy(t, ack0000, 12); t[bit / 8] ^= (uint8_t)(0x80 >> (bit % 8));
+			if (dmrSmsPduHdrCrcOk(t, 0xCCCC)) { badAll = 0; }
+		}
+		int wrongMask = !dmrSmsPduHdrCrcOk(ack0000, 0xA5A5);
+		if (okAck && okConf && okOur && okCsbk && badAll && wrongMask)
+		{
+			printf("  ok   SW CRC: квитанція BBD_0000, заголовки 43../02.., CSBK(A5A5) -- ok; 96 однобітних псувань -- bad\n");
+		}
+		else
+		{
+			fails++;
+			printf("  FAIL SW CRC: ack=%d conf=%d our=%d csbk=%d flips=%d mask=%d\n",
+			       okAck, okConf, okOur, okCsbk, badAll, wrongMask);
+		}
+	}
+
 	printf(fails ? "ПРОВАЛ (%d)\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;
 }
