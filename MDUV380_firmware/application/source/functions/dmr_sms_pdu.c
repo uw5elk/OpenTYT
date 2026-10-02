@@ -227,4 +227,35 @@ void dmrSmsPduAckHeader(uint32_t to, uint32_t from, uint8_t ns, uint8_t out12[12
 	dmrSmsPduHdrCrc(h, 10, 0xCCCC, out12 + 10);
 }
 
+/* Черга квитанції (див. dmr_sms_pdu.h). Преамбула: BD 00 80 <лишилось burst-ів> <до> <від>,
+ * CRC ^ 0xA5A5 -- та сама, що перед звичайним повідомленням. */
+int dmrSmsPduBuildAckQueue(uint8_t *q, int maxBursts, uint32_t to, uint32_t from, uint8_t ns,
+                           int preambles, int repeats)
+{
+	uint8_t p12[12];
+	dmrSmsPduAckHeader(to, from, ns, p12);
+	if ((preambles < 0) || (repeats < 0) || ((preambles + repeats) > maxBursts)) { return -5; }
+	int n = 0;
+	for (int i = 0; i < preambles; i++)
+	{
+		uint8_t body[10];
+		body[0] = 0xBD; body[1] = 0x00; body[2] = 0x80;   /* індивідуальна data-преамбула */
+		body[3] = (uint8_t)((preambles - 1 - i) + repeats);
+		body[4] = (uint8_t)(to >> 16);   body[5] = (uint8_t)(to >> 8);   body[6] = (uint8_t)to;
+		body[7] = (uint8_t)(from >> 16); body[8] = (uint8_t)(from >> 8); body[9] = (uint8_t)from;
+		uint8_t pb[12]; memcpy(pb, body, 10); dmrSmsPduHdrCrc(body, 10, 0xA5A5, pb + 10);
+		n = dmrSmsPduAppendBurst(q, n, DTB_CSBK, pb, 12);
+	}
+	for (int i = 0; i < repeats; i++)
+	{
+		n = dmrSmsPduAppendBurst(q, n, DTB_DATA_HEADER, p12, 12);
+	}
+	return n;
+}
+
+int dmrSmsPduUseFastEnd(int txMode, int fastEndFlag)
+{
+	return ((txMode == 1) || (txMode == 2)) && (fastEndFlag != 0);
+}
+
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */

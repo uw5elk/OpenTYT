@@ -55,5 +55,23 @@ int      dmrSmsPduHdrCrcOk(const uint8_t p12[12], uint16_t mask);
  * o9 = Class(7-6)=00 | Type(5-3)=001 | Status(2-0)=N(S) відправника. */
 void     dmrSmsPduAckHeader(uint32_t to, uint32_t from, uint8_t ns, uint8_t out12[12]);
 
+/* Черга квитанції: preambles CSBK-преамбул (0 = як у стокової, одразу заголовок), потім
+ * repeats однакових Response-заголовків. Байти заголовка не залежать від preambles.
+ * Повертає кількість burst-ів або -5, якщо не влізло в maxBursts. */
+int      dmrSmsPduBuildAckQueue(uint8_t *q, int maxBursts, uint32_t to, uint32_t from, uint8_t ns,
+                                int preambles, int repeats);
+
+/* ---- Типові значення перемикачів екрана «Діагностика» (fix3, 2026-10-02) ----------
+ * Не зберігаються: dmrSmsInit() (старт рації) виставляє саме ці. Винесено сюди, щоб
+ * хост-тест перевіряв ті самі числа, з якими стартує прошивка. */
+#define DMR_SMS_DEFAULT_FAST_END       1   /* наше CONFIRMED без термінатора (доведено M2) */
+#define DMR_SMS_DEFAULT_RX_BYPASS      1   /* data 6/7/8 у SMS-хук до фільтра RX-стану */
+#define DMR_SMS_DEFAULT_ACK_PREAMBLES  0   /* квитанція без CSBK-преамбул, як у стокової */
+#define DMR_SMS_DEFAULT_ACK_TERM       0   /* квитанція без термінатора */
+
+/* Чи слати повідомлення без термінатора: лише CONFIRMED (txMode 1/2) і лише якщо
+ * перемикач увімкнено. Режим 0 «Без підтв.» -- завжди звичайний кінець (шлях 438ec23). */
+int      dmrSmsPduUseFastEnd(int txMode, int fastEndFlag);
+
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_SMS_PDU_H_ */

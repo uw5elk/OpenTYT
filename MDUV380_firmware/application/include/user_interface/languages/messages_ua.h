@@ -74,7 +74,20 @@
 #define MSGS_DG_CONF_FMT         "Наші CONF: %u"
 #define MSGS_DG_RESP_FMT         "Відп %u нам %u наші %u"
 #define MSGS_DG_HDR_FMT          "Заг6 HW %u SW %u пог %u"
-#define MSGS_DG_FAST_FMT         "Шв. кінець: %s"
-#define MSGS_DG_HINT             "GRN:шв.кін дов:скид RED"
+#define MSGS_DG_FAST_FMT         "%cШв. кінець: %s"
+#define MSGS_DG_HINT             "DN:стор.2 дов.GRN:скид RED"
+
+/* Екран «Діагностика», сторінка 2 (fix3, 2026-10-02): лічильники ISR до фільтрів і
+ * перемикачі (GREEN на виділеному рядку). '%c' -- маркер виділення ('>' або пробіл). */
+#define MSGS_DIAG2               "Діагностика 2"
+#define MSGS_DG_ISR_FMT          "ISR: т6 %u т8 %u"
+#define MSGS_DG_FILT_FMT         "Фільтр RX: т6 %u т8 %u"
+#define MSGS_DG_REAL_FMT         "Квит факт: %u мс"
+#define MSGS_DG_BYP_FMT          "%cRX обхід: %s"
+#define MSGS_DG_PRE_FMT          "%cКвит. преамб: %u"
+#define MSGS_DG_TERM_FMT         "%cКвит. терм.: %s"
+#define MSGS_DG_YES              "так"
+#define MSGS_DG_NO               "ні"
+#define MSGS_DG_HINT2            "U/D GRN:змін дов:скид RED"
 
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

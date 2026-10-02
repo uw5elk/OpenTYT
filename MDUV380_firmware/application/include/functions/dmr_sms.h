@@ -169,12 +169,25 @@ typedef struct
 	uint16_t txConf, respAll, respForUs, respMatch;
 	/* data-заголовки (тип 6): HW CRC ok / HW bad але SW ok / відкинуто */
 	uint16_t hdrHwOk, hdrSwOk, hdrBad;
+	/* fix3, сторінка 2: data-переривань типу 6 / 8 до фільтрів; скільки з них відкинув би
+	 * фільтр RX-стану HR-C6000; фактична затримка квитанції від тиші до старту TX, мс */
+	uint16_t isr6, isr8, filt6, filt8, ackRealMs;
 } dmrSmsDiagScreen_t;
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
 void dmrSmsDiagScreenReset(void);
 /* Експеримент: наше CONFIRMED без термінатора (dmrDataTxLoadFast). Типово вимк, не зберігається. */
 int  dmrSmsDiagFastEnd(void);
 void dmrSmsDiagFastEndToggle(void);
+/* fix3: перемикачі 2-ї сторінки «Діагностики» (не зберігаються, типові -- DMR_SMS_DEFAULT_*). */
+int  dmrSmsRxBypass(void);              /* RX обхід фільтра RX-стану для data 6/7/8 (ISR) */
+void dmrSmsDiagRxBypassToggle(void);
+int  dmrSmsDiagAckTerm(void);           /* 1 = квитанція з термінатором */
+void dmrSmsDiagAckTermToggle(void);
+int  dmrSmsDiagAckPreambles(void);      /* CSBK-преамбул перед квитанцією (0 або 6) */
+void dmrSmsDiagAckPreamblesToggle(void);
+/* ISR HR-C6000: облік data-переривання (тип 6/8) до фільтрів; filterDrops -- чи відкинув би
+ * його фільтр RX-стану. */
+void dmrSmsRxEarlyNote(int rxDataType, int filterDrops);
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_SMS_H_ */

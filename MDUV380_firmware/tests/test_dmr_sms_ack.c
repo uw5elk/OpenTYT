@@ -130,6 +130,48 @@ int main(void)
 		}
 	}
 
+	/* 5) fix3: черга квитанції. Типово БЕЗ преамбул -- одразу Response-заголовок; байти
+	 * заголовка ті самі, що й з 6 преамбулами (лише без CSBK попереду). */
+	{
+		uint8_t hdr[12];
+		dmrSmsPduAckHeader(0x26EA29, 0x26EA0F, 6, hdr);           /* BBD_0004: Status=N(S)=6 -> o9=0E */
+		static uint8_t q0[8 * BURST_STRIDE], q6[8 * BURST_STRIDE];
+		int n0 = dmrSmsPduBuildAckQueue(q0, 8, 0x26EA29, 0x26EA0F, 6, DMR_SMS_DEFAULT_ACK_PREAMBLES, 1);
+		int n6 = dmrSmsPduBuildAckQueue(q6, 8, 0x26EA29, 0x26EA0F, 6, 6, 1);
+		/* Ефірний зразок нашої ж квитанції з BBD_0004: 01 40 26ea29 26ea0f 00 0e 8ac4. */
+		const uint8_t air0004[12] = { 0x01,0x40, 0x26,0xea,0x29, 0x26,0xea,0x0f, 0x00,0x0e, 0x8a,0xc4 };
+		int ok = (DMR_SMS_DEFAULT_ACK_PREAMBLES == 0) && (n0 == 1) && (n6 == 7) && (memcmp(hdr, air0004, 12) == 0)
+		         && (q0[0] == DTB_DATA_HEADER) && (memcmp(q0 + 1, hdr, 12) == 0)
+		         && (q6[6 * BURST_STRIDE] == DTB_DATA_HEADER) && (memcmp(q6 + 6 * BURST_STRIDE + 1, hdr, 12) == 0);
+		for (int i = 0; i < 6 && ok; i++)
+		{
+			const uint8_t *c = q6 + i * BURST_STRIDE;
+			ok = (c[0] == DTB_CSBK) && (c[1] == 0xBD) && (c[4] == (uint8_t)(6 - i))   /* лишилось burst-ів */
+			     && dmrSmsPduHdrCrcOk(c + 1, 0xA5A5);
+		}
+		int tooMany = dmrSmsPduBuildAckQueue(q0, 8, 1, 2, 0, 8, 1);   /* 9 > 8 -> -5 */
+		if (ok && tooMany == -5)
+		{
+			printf("  ok   черга квитанції: типово 0 преамбул -> 1 burst (== ефір BBD_0004 `01 40 .. 00 0e 8ac4`); з 6 -- той самий заголовок після 6 CSBK\n");
+		}
+		else
+		{
+			fails++;
+			printf("  FAIL черга квитанції: n0=%d n6=%d o9=%02x tooMany=%d\n", n0, n6, hdr[9], tooMany);
+		}
+	}
+
+	/* 6) fix3: типові перемикачі й рішення «без термінатора». */
+	{
+		int ok = (DMR_SMS_DEFAULT_FAST_END == 1) && (DMR_SMS_DEFAULT_RX_BYPASS == 1) && (DMR_SMS_DEFAULT_ACK_TERM == 0)
+		         && !dmrSmsPduUseFastEnd(0, DMR_SMS_DEFAULT_FAST_END)     /* «Без підтв.» -- завжди з термінатором */
+		         && dmrSmsPduUseFastEnd(1, DMR_SMS_DEFAULT_FAST_END)
+		         && dmrSmsPduUseFastEnd(2, DMR_SMS_DEFAULT_FAST_END)
+		         && !dmrSmsPduUseFastEnd(2, 0) && !dmrSmsPduUseFastEnd(3, 1);
+		if (ok) { printf("  ok   типово: «Шв. кінець» увімк для Підтв. 1/2 і 3/4, режим 0 -- з термінатором; RX обхід увімк; квит. без терм.\n"); }
+		else    { fails++; printf("  FAIL типові перемикачі / dmrSmsPduUseFastEnd\n"); }
+	}
+
 	printf(fails ? "ПРОВАЛ (%d)\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;
 }
