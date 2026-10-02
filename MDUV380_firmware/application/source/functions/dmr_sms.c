@@ -629,6 +629,11 @@ static uint16_t s_ackTargetMs = 80;    /* цільова пауза після �
  * власна безпреамбульна квитанція йому зайшла. Коли преамбули були в нас (rev<=4), тоді
  * стояв хибний код 00 04 -- тож поєднання «преамбули + правильний код» не перевірялось. */
 static uint8_t  s_ackPreambles = 6;
+/* fix3 (2026-10-02): ПІД ЧАС СТАРТУ (runtimeReset) виставляється DMR_SMS_DEFAULT_ACK_PREAMBLES = 0 --
+ * запис BBD_0004 показав, що 6 преамбул (360 мс) відсувають наш заголовок на ~620 мс після кінця
+ * передачі стокової, а сама стокова квитує через ~120 мс без преамбул. Ініціалізатор 6 лишено
+ * навмисно: заміна на 0 перенесла б змінну з .data у .bss і зсунула б розкладку main RAM.
+ * Перемикач 6/0 -- на 2-й сторінці екрана «Діагностика»; USB 0x95 (dmrSmsAckSetTuning) теж діє. */
 
 void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles)
 {
@@ -680,14 +685,49 @@ static volatile uint16_t s_dgRespAll    DMR_AES_CCM;  /* Response-заголов
 static volatile uint16_t s_dgRespForUs  DMR_AES_CCM;  /* ... з них адресованих нам (to == наш ID) */
 static volatile uint16_t s_dgRespMatch  DMR_AES_CCM;  /* ... і від адресата нашого CONFIRMED -> «доставлено» */
 static volatile uint16_t s_dgTxConf     DMR_AES_CCM;  /* наших CONFIRMED SMS поставлено в ефір */
-/* Експеримент з екрана «Діагностика» (типово 0, НЕ зберігається): слати наше CONFIRMED через
+/* Перемикач з екрана «Діагностика» (НЕ зберігається; з fix3 типово УВІМК): слати наше CONFIRMED через
  * dmrDataTxLoadFast() -- без термінатора й довгого TX_END. Звичайний хвіст триває ~120 мс
  * (RCTL_COMPAT.md §5h), а квитанція стокової в BBD_0000 прийшла саме через ~120 мс після
  * нашого останнього блока -- можливо, ми ще передаємо або перелаштовуємось і не чуємо її. */
-static uint8_t s_dgFastEnd DMR_AES_CCM;
+static uint8_t s_dgFastEnd DMR_AES_CCM;   /* fix3: типово 1 (DMR_SMS_DEFAULT_FAST_END), доведено M2 */
 
 int  dmrSmsDiagFastEnd(void)       { return s_dgFastEnd; }
 void dmrSmsDiagFastEndToggle(void) { s_dgFastEnd = s_dgFastEnd ? 0 : 1; }
+
+/* ---- fix3 (2026-10-02): прийом усіх спроб стокової + вчасна квитанція -----------------
+ * Усе в CCM, не зберігається; типові значення -- DMR_SMS_DEFAULT_* (dmr_sms_pdu.h). */
+/* RX обхід: data-burst-и 6/7/8 іти в SMS-хук ДО фільтра RX-стану HR-C6000 (той відкидає все з
+ * апаратно «поганим» CRC, а rate-3/4 HW так і позначає). Гіпотеза з BBD_0004: форк бачив
+ * заголовок лише однієї спроби стокової з трьох. */
+static volatile uint8_t  s_dgRxBypass   DMR_AES_CCM;
+/* Квитанція з термінатором (1) чи без (0, типово -- як і наше CONFIRMED). */
+static uint8_t           s_dgAckTerm    DMR_AES_CCM;
+/* Лічильники ISR до будь-яких фільтрів (лише !transmissionEnabled і SYNC_CLASS_DATA): */
+static volatile uint16_t s_dgIsr6       DMR_AES_CCM;  /* data-переривань типу 6 (заголовок) */
+static volatile uint16_t s_dgIsr8       DMR_AES_CCM;  /* ... типу 8 (rate-3/4) */
+static volatile uint16_t s_dgFilt6      DMR_AES_CCM;  /* з них відкинув би фільтр RX-стану, тип 6 */
+static volatile uint16_t s_dgFilt8      DMR_AES_CCM;  /* ... тип 8 */
+/* Фактична затримка квитанції: від тиші в каналі (останній прийнятий burst) до першого
+ * burst-а квитанції в чипі, мс. Міряється в dmrSmsRxTick() за dmrDataTxLastStartMs(). */
+static volatile uint16_t s_ackRealDelayMs DMR_AES_CCM;
+static uint32_t          s_ackSilenceMs DMR_AES_CCM;  /* s_lastRxBurstMs на момент постановки */
+static uint32_t          s_ackLoadMs    DMR_AES_CCM;  /* коли чергу віддали в dmr_data */
+static uint8_t           s_ackAwaitStart DMR_AES_CCM; /* 1 = чекаємо старту передачі квитанції */
+
+int  dmrSmsRxBypass(void)              { return s_dgRxBypass; }
+void dmrSmsDiagRxBypassToggle(void)    { s_dgRxBypass = s_dgRxBypass ? 0 : 1; }
+int  dmrSmsDiagAckTerm(void)           { return s_dgAckTerm; }
+void dmrSmsDiagAckTermToggle(void)     { s_dgAckTerm = s_dgAckTerm ? 0 : 1; }
+int  dmrSmsDiagAckPreambles(void)      { return s_ackPreambles; }
+void dmrSmsDiagAckPreamblesToggle(void){ s_ackPreambles = (s_ackPreambles != 0) ? 0 : 6; }
+
+/* ISR: облік data-переривання ДО фільтрів. filterDrops = 1, якщо фільтр RX-стану HR-C6000
+ * (slotState RX_1/RX_2 + PI/CRC/CC) цей burst відкинув би. */
+void dmrSmsRxEarlyNote(int rxDataType, int filterDrops)
+{
+	if (rxDataType == 6)      { s_dgIsr6++; if (filterDrops) { s_dgFilt6++; } }
+	else if (rxDataType == 8) { s_dgIsr8++; if (filterDrops) { s_dgFilt8++; } }
+}
 
 /* Рішення для data-заголовка (тип 6) з HR-C6000 ISR. Раніше брали лише з апаратним crcOk --
  * а запис BBD_0000 (2026-09-30) показав: стокова ШЛЕ квитанцію `01 40 ...` з валідним CRC через
@@ -723,6 +763,11 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 	d->dataStarted  = dd[1];
 	d->dataTimeout  = dd[2];
 	d->dataNoStart  = dd[3];
+	d->isr6         = s_dgIsr6;
+	d->isr8         = s_dgIsr8;
+	d->filt6        = s_dgFilt6;
+	d->filt8        = s_dgFilt8;
+	d->ackRealMs    = s_ackRealDelayMs;
 }
 
 void dmrSmsDiagScreenReset(void)
@@ -732,6 +777,8 @@ void dmrSmsDiagScreenReset(void)
 	s_dgHdrHwOk = s_dgHdrSwOk = s_dgHdrBad = 0;
 	s_dgRespAll = s_dgRespForUs = s_dgRespMatch = 0;
 	s_dgTxConf = 0;
+	s_dgIsr6 = s_dgIsr8 = s_dgFilt6 = s_dgFilt8 = 0;
+	s_ackRealDelayMs = 0;
 	dmrDataTxDiagReset();
 }
 
@@ -822,33 +869,25 @@ static void dmrSmsAckTick(void)
 static void buildAndLoadSmsAck(uint32_t dst)
 {
 	uint32_t src = trxDMRID;        /* від кого: ми */
-	/* Response header: BF=0, o9 = Class 00 | Type 001 (ACK) | Status = N(S) відправника
-	 * (біти 2-0; див. dmrSmsPduAckHeader). */
-	uint8_t p12[12];
-	dmrSmsPduAckHeader(dst, src, s_rxLastNS, p12);
-
+	/* [CSBK-преамбули x s_ackPreambles] + Response header x s_ackRepeats. Заголовок: BF=0,
+	 * o9 = Class 00 | Type 001 (ACK) | Status = N(S) відправника (dmrSmsPduAckHeader).
+	 * fix3: типово 0 преамбул (як у стокової) -- див. коментар біля s_ackPreambles. */
 	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * BURST_STRIDE] DMR_AES_CCM;
-	int n = 0;
-	/* CSBK-преамбули (як перед звичайним повідомленням) -- «заводять» data-виклик у приймача. */
-	for (int i = 0; i < (int)s_ackPreambles; i++)
+	int n = dmrSmsPduBuildAckQueue(q, SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS, dst, src, s_rxLastNS,
+	                               (int)s_ackPreambles, (int)s_ackRepeats);
+	if (n <= 0) { s_ackPending = 0; return; }
+	/* Коротка затримка ключування замість типових 100 мс: відправник слухає вузьке вікно.
+	 * fix3: без термінатора (s_dgAckTerm=0, типово) -- після нашого заголовка йшли 2 TERM_LC
+	 * зі сміттям (LC ми не задаємо), і стокова в цей час уже мала б слухати.
+	 * s_ackSent -- лише якщо dmr_data прийняв чергу (відмови видно в рядку «Дані»). */
+	uint32_t now = ticksGetMillis();
+	if (dmrDataTxLoadDelayedEx(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS, s_dgAckTerm ? 0 : 1))
 	{
-		uint8_t body[10];
-		body[0] = 0xBD; body[1] = 0x00; body[2] = 0x80;   /* індивідуальна data-преамбула */
-		body[3] = (uint8_t)(((int)s_ackPreambles - 1 - i) + (int)s_ackRepeats);
-		body[4] = (uint8_t)(dst >> 16); body[5] = (uint8_t)(dst >> 8); body[6] = (uint8_t)dst;
-		body[7] = (uint8_t)(src >> 16); body[8] = (uint8_t)(src >> 8); body[9] = (uint8_t)src;
-		uint8_t pb[12]; memcpy(pb, body, 10); dmrSmsPduHdrCrc(body, 10, 0xA5A5, pb + 10);
-		n = dmrSmsPduAppendBurst(q, n, DTB_CSBK, pb, 12);
+		s_ackSent++;
+		s_ackSilenceMs = s_lastRxBurstMs;   /* відлік фактичної затримки -- від тиші в каналі */
+		s_ackLoadMs = now;
+		s_ackAwaitStart = 1;
 	}
-	for (int i = 0; i < (int)s_ackRepeats; i++)
-	{
-		n = dmrSmsPduAppendBurst(q, n, DTB_DATA_HEADER, p12, 12);
-	}
-	/* Коротка затримка ключування замість типових 100 мс: відправник слухає вузьке вікно. */
-	/* s_ackSent -- лише якщо dmr_data прийняв чергу. Раніше рахувався й тоді, коли
-	 * dmrDataTxLoadDelayed мовчки відкидав її (активна передача) -- «в ефір» брехав.
-	 * Відмови видно окремо (екран «Діагностика», рядок «Дані»). */
-	if (dmrDataTxLoadDelayed(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS)) { s_ackSent++; }
 	s_ackPending = 0;
 }
 
@@ -1050,8 +1089,10 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	s_txPendingDst = (txMode != 0) ? dst : 0;
 	s_txAcked = 0;
 	if (txMode != 0) { s_dgTxConf++; }
-	if ((txMode != 0) && s_dgFastEnd) { dmrDataTxLoadFast(q, (uint8_t)n); }   /* експеримент, див. s_dgFastEnd */
-	else                              { dmrDataTxLoad(q, (uint8_t)n); }
+	/* CONFIRMED (режими 1/2) -- типово без термінатора (fix3, доведено M2: інакше наш хвіст
+	 * перекриває квитанцію стокової). Режим 0 -- завжди звичайний кінець (шлях 438ec23). */
+	if (dmrSmsPduUseFastEnd(txMode, s_dgFastEnd)) { dmrDataTxLoadFast(q, (uint8_t)n); }
+	else                                          { dmrDataTxLoad(q, (uint8_t)n); }
 	return 0;
 }
 
@@ -1380,6 +1421,24 @@ void dmrSmsRxTick(void)
 	dmrSmsTxPersistTick();   /* flush any deferred Sent-folder write once the TX has fully un-keyed */
 	dmrSmsAckTick();         /* відключити квитанцію на вхідне CONFIRMED SMS, коли настав час */
 
+	/* Фактична затримка квитанції (fix3): перший burst квитанції пішов у чип -> від тиші в
+	 * каналі до цього моменту. Старт старшої передачі (до постановки) не рахуємо; якщо за 3 с
+	 * передача так і не почалась -- перестаємо чекати (видно в лічильниках «Дані»). */
+	if (s_ackAwaitStart)
+	{
+		uint32_t st = dmrDataTxLastStartMs();
+		if ((int32_t)(st - s_ackLoadMs) >= 0)
+		{
+			uint32_t d = st - s_ackSilenceMs;
+			s_ackRealDelayMs = (uint16_t)((d > 65535u) ? 65535u : d);
+			s_ackAwaitStart = 0;
+		}
+		else if ((int32_t)(ticksGetMillis() - s_ackLoadMs) > 3000)
+		{
+			s_ackAwaitStart = 0;
+		}
+	}
+
 	/* TX-ACK: стокова TYT отримала наш CONFIRMED SMS і відповіла «01 40».
 	 * Позначаємо найновіше надіслане як DMR_SMS_FLAG_DELIVERED і показуємо банер. */
 	if (dmrSmsTxAcked())
@@ -1574,7 +1633,13 @@ static void runtimeReset(void)
 	s_rxLastNS = 0;                  /* N(S) з останнього вхідного CONFIRMED (Task #33) */
 	s_dedupPeer = 0; s_dedupIpId = 0; s_dedupTmsSeq = 0; s_dedupTs = 0;  /* деdup (Task #34) */
 	dmrSmsDiagScreenReset();         /* лічильники екрана «Діагностика» (CCM, не .bss) */
-	s_dgFastEnd = 0;                 /* експеримент «швидкий кінець» -- після ввімкнення вимкнено */
+	/* Перемикачі екрана «Діагностика» -- типові значення при старті (fix3), не зберігаються. */
+	s_dgFastEnd    = DMR_SMS_DEFAULT_FAST_END;
+	s_dgRxBypass   = DMR_SMS_DEFAULT_RX_BYPASS;
+	s_dgAckTerm    = DMR_SMS_DEFAULT_ACK_TERM;
+	s_ackPreambles = DMR_SMS_DEFAULT_ACK_PREAMBLES;
+	s_ackAwaitStart = 0;
+	s_ackSilenceMs = 0; s_ackLoadMs = 0;
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
 

@@ -73,6 +73,14 @@ static volatile uint16_t s_dgStarted    DMR_DATA_DIAG_CCM;  /* перший burs
 static volatile uint16_t s_dgTimeout    DMR_DATA_DIAG_CCM;  /* dmrDataTxFinishPoll вийшов по таймауту */
 static volatile uint16_t s_dgNoStart    DMR_DATA_DIAG_CCM;  /* ... і жоден burst так і не пішов */
 static volatile uint8_t  s_dgBurstSeen  DMR_DATA_DIAG_CCM;  /* у поточній передачі burst уже брали */
+/* Час (мс) першого burst-а ОСТАННЬОЇ передачі, що реально почалась (fix3): щоб SMS-модуль
+ * бачив фактичну затримку квитанції, а не лише момент постановки в чергу. */
+static volatile uint32_t s_dgFirstBurstMs DMR_DATA_DIAG_CCM;
+
+uint32_t dmrDataTxLastStartMs(void)
+{
+	return s_dgFirstBurstMs;
+}
 
 void dmrDataTxDiag(uint16_t out[4])
 {
@@ -83,6 +91,7 @@ void dmrDataTxDiagReset(void)
 {
 	s_dgRejected = s_dgStarted = s_dgTimeout = s_dgNoStart = 0;
 	s_dgBurstSeen = 0;
+	s_dgFirstBurstMs = 0;
 }
 
 /*
@@ -185,11 +194,19 @@ int dmrDataTxFastEnd(void)
  * нашу квитанцію аж через 366 мс -- стокова її вже не приймала. */
 int dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs)
 {
+	return dmrDataTxLoadDelayedEx(bursts, count, delayMs, 0);
+}
+
+/* Те саме, з вибором кінця передачі: fastEnd=1 -- без термінатора й TX_END (як
+ * dmrDataTxLoadFast), але з керованою затримкою ключування (fix3: квитанція SMS). */
+int dmrDataTxLoadDelayedEx(const uint8_t *bursts, uint8_t count, uint16_t delayMs, int fastEnd)
+{
 	if (s_dataTxActive)
 	{
 		s_dgRejected++;
 		return 0; // a data call is already keyed; ignore overlapping triggers
 	}
+	if (fastEnd) { s_fastEnd = 1; }   // знімає dmrDataTxEnd() наприкінці передачі
 	if (count > DMR_DATA_MAX_BURSTS)
 	{
 		count = DMR_DATA_MAX_BURSTS;
@@ -224,7 +241,7 @@ int dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payload12Out)
 	{
 		return 0;
 	}
-	if (!s_dgBurstSeen) { s_dgBurstSeen = 1; s_dgStarted++; }   /* передача реально почалась */
+	if (!s_dgBurstSeen) { s_dgBurstSeen = 1; s_dgStarted++; s_dgFirstBurstMs = ticksGetMillis(); }   /* передача реально почалась */
 	uint8_t *b = s_bursts[s_burstIndex++];
 	*dataTypeOut = b[0];
 	memcpy(payload12Out, b + 1, DMR_DATA_BURST_LEN);

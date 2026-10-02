@@ -101,8 +101,19 @@
 #define MSGS_DG_CONF_FMT         "Our CONF: %u"
 #define MSGS_DG_RESP_FMT         "Resp %u tous %u match %u"
 #define MSGS_DG_HDR_FMT          "Hdr6 HW %u SW %u bad %u"
-#define MSGS_DG_FAST_FMT         "Fast end: %s"
-#define MSGS_DG_HINT             "GRN:fast long:reset RED"
+#define MSGS_DG_FAST_FMT         "%cFast end: %s"
+#define MSGS_DG_HINT             "DN:page 2 long GRN:reset"
+/* Сторінка 2 (fix3): лічильники ISR і перемикачі. */
+#define MSGS_DIAG2               "Diagnostics 2"
+#define MSGS_DG_ISR_FMT          "ISR: t6 %u t8 %u"
+#define MSGS_DG_FILT_FMT         "RX filter: t6 %u t8 %u"
+#define MSGS_DG_REAL_FMT         "Ack real: %u ms"
+#define MSGS_DG_BYP_FMT          "%cRX bypass: %s"
+#define MSGS_DG_PRE_FMT          "%cAck preamb: %u"
+#define MSGS_DG_TERM_FMT         "%cAck term: %s"
+#define MSGS_DG_YES              "yes"
+#define MSGS_DG_NO               "no"
+#define MSGS_DG_HINT2            "U/D GRN:set long:reset RED"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -146,6 +157,8 @@ static struct
 	int8_t   result;        // dmrSmsSend() return for the result screen
 	ticksTimer_t resultTimer;    // скільки ще показувати результат -- РЕАЛЬНИЙ час
 	ticksTimer_t resultGuard;    // поки не сплив -- клавіші не закривають екран (див. doSend)
+	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3)
+	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
 } s_msg DMR_AES_CCM;
 
 static void homeUpdate(void);
@@ -355,6 +368,8 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 				break;
 			case 5:
 				s_msg.view = MSG_DIAG;
+				s_msg.diagPage = 0;
+				s_msg.diagSel = 0;
 				diagUpdate();
 				break;
 		}
@@ -364,40 +379,85 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 
 /* ============================ DIAG ===================================== */
 /* Лічильники ланцюга квитанції одним поглядом, без USB-ПК (2026-09-30). Розшифровка
- * скорочень -- TESTING.md, блок M. FONT_SIZE_1: 26 символів у рядок. */
+ * скорочень -- TESTING.md, блоки M і N. FONT_SIZE_1: 26 символів у рядок.
+ * Сторінка 1 -- лічильники; DOWN -> сторінка 2 (fix3): лічильники ISR до фільтрів, фактична
+ * затримка квитанції і 4 перемикачі (UP/DOWN -- вибір, GREEN -- змінити; UP з першого
+ * перемикача -- назад на сторінку 1). Довге GREEN скидає лічильники ОБОХ сторінок. */
+#define DIAG_TOGGLES 4
+
+static void diagPage1(const dmrSmsDiagScreen_t *d)
+{
+	char buf[40];
+	int y = 16;
+	menuDisplayTitle(MSGS_DIAG);
+	snprintf(buf, sizeof buf, MSGS_DG_ACK1_FMT, (unsigned)d->ackSeen, (unsigned)d->ackQueued);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_ACK2_FMT, (unsigned)d->ackSent, (unsigned)d->ackStale);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_ACK3_FMT, (unsigned)d->ackDelayMs);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_DATA1_FMT, (unsigned)d->dataRejected, (unsigned)d->dataStarted);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_DATA2_FMT, (unsigned)d->dataTimeout, (unsigned)d->dataNoStart);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_CONF_FMT, (unsigned)d->txConf);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_RESP_FMT, (unsigned)d->respAll, (unsigned)d->respForUs, (unsigned)d->respMatch);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_HDR_FMT, (unsigned)d->hdrHwOk, (unsigned)d->hdrSwOk, (unsigned)d->hdrBad);
+	displayPrintAt(2, y, buf, FONT_SIZE_1);
+	displayPrintCentered(112, MSGS_DG_HINT, FONT_SIZE_1);
+}
+
+static void diagPage2(const dmrSmsDiagScreen_t *d)
+{
+	char buf[40];
+	int y = 16;
+	menuDisplayTitle(MSGS_DIAG2);
+	snprintf(buf, sizeof buf, MSGS_DG_ISR_FMT, (unsigned)d->isr6, (unsigned)d->isr8);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_FILT_FMT, (unsigned)d->filt6, (unsigned)d->filt8);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_REAL_FMT, (unsigned)d->ackRealMs);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 14;
+	/* Перемикачі (не зберігаються; типові -- DMR_SMS_DEFAULT_* у dmr_sms_pdu.h). */
+	for (int i = 0; i < DIAG_TOGGLES; i++)
+	{
+		char mark = (s_msg.diagSel == i) ? '>' : ' ';
+		switch (i)
+		{
+			case 0:  snprintf(buf, sizeof buf, MSGS_DG_FAST_FMT, mark, dmrSmsDiagFastEnd() ? MSGS_MON_ON : MSGS_MON_OFF); break;
+			case 1:  snprintf(buf, sizeof buf, MSGS_DG_BYP_FMT, mark, dmrSmsRxBypass() ? MSGS_MON_ON : MSGS_MON_OFF); break;
+			case 2:  snprintf(buf, sizeof buf, MSGS_DG_PRE_FMT, mark, (unsigned)dmrSmsDiagAckPreambles()); break;
+			default: snprintf(buf, sizeof buf, MSGS_DG_TERM_FMT, mark, dmrSmsDiagAckTerm() ? MSGS_DG_YES : MSGS_DG_NO); break;
+		}
+		displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	}
+	displayPrintCentered(112, MSGS_DG_HINT2, FONT_SIZE_1);
+}
+
 static void diagUpdate(void)
 {
 	dmrSmsDiagScreen_t d;
-	char buf[40];
 	dmrSmsDiagScreenGet(&d);
 
 	displayClearBuf();
-	menuDisplayTitle(MSGS_DIAG);
-	int y = 16;
-	snprintf(buf, sizeof buf, MSGS_DG_ACK1_FMT, (unsigned)d.ackSeen, (unsigned)d.ackQueued);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_ACK2_FMT, (unsigned)d.ackSent, (unsigned)d.ackStale);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_ACK3_FMT, (unsigned)d.ackDelayMs);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_DATA1_FMT, (unsigned)d.dataRejected, (unsigned)d.dataStarted);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_DATA2_FMT, (unsigned)d.dataTimeout, (unsigned)d.dataNoStart);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_CONF_FMT, (unsigned)d.txConf);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_RESP_FMT, (unsigned)d.respAll, (unsigned)d.respForUs, (unsigned)d.respMatch);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_HDR_FMT, (unsigned)d.hdrHwOk, (unsigned)d.hdrSwOk, (unsigned)d.hdrBad);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	/* Експеримент (типово вимк): наше CONFIRMED без термінатора -- щоб встигнути почути
-	 * квитанцію, як це вже зроблено для RCTL (RCTL_COMPAT.md §5h). Не зберігається. */
-	snprintf(buf, sizeof buf, MSGS_DG_FAST_FMT, dmrSmsDiagFastEnd() ? MSGS_MON_ON : MSGS_MON_OFF);
-	displayPrintAt(2, y, buf, FONT_SIZE_1);
-	displayPrintCentered(112, MSGS_DG_HINT, FONT_SIZE_1);
+	if (s_msg.diagPage == 0) { diagPage1(&d); }
+	else                     { diagPage2(&d); }
 	displayRender();
 
 	ticksTimerStart(&s_msg.resultTimer, MSGS_DIAG_REFRESH_MS);
+}
+
+static void diagToggle(int sel)
+{
+	switch (sel)
+	{
+		case 0:  dmrSmsDiagFastEndToggle();     break;   /* «Шв. кінець»: наше CONFIRMED без термінатора */
+		case 1:  dmrSmsDiagRxBypassToggle();    break;   /* «RX обхід» фільтра RX-стану */
+		case 2:  dmrSmsDiagAckPreamblesToggle(); break;  /* преамбули квитанції 0 <-> 6 */
+		default: dmrSmsDiagAckTermToggle();     break;   /* квитанція з термінатором чи без */
+	}
 }
 
 static void diagEvent(uiEvent_t *ev)
@@ -405,13 +465,30 @@ static void diagEvent(uiEvent_t *ev)
 	if ((ev->events & KEY_EVENT) == 0) { return; }
 	if (KEYCHECK_LONGDOWN(ev->keys, KEY_GREEN))
 	{
-		dmrSmsDiagScreenReset();
+		dmrSmsDiagScreenReset();   /* лічильники обох сторінок */
+		diagUpdate();
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		if (s_msg.diagPage == 0)                     { s_msg.diagPage = 1; s_msg.diagSel = 0; }
+		else if (s_msg.diagSel < (DIAG_TOGGLES - 1)) { s_msg.diagSel++; }
+		diagUpdate();
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
+	{
+		if (s_msg.diagPage == 1)
+		{
+			if (s_msg.diagSel > 0) { s_msg.diagSel--; }
+			else                   { s_msg.diagPage = 0; }
+		}
 		diagUpdate();
 		return;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
-		dmrSmsDiagFastEndToggle();
+		if (s_msg.diagPage == 1) { diagToggle(s_msg.diagSel); }
 		diagUpdate();
 		return;
 	}

@@ -43,6 +43,10 @@ void dmrDataTxLoad(const uint8_t *bursts, uint8_t count);
  * відправник слухає відповідь у вузькому вікні (стокова квитує SMS через ~80 мс). */
 /* Повертає 1, якщо чергу прийнято; 0 -- відкинуто (data-передача вже активна). */
 int  dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs);
+/* fastEnd=1: без термінатора й довгого TX_END, як dmrDataTxLoadFast(), але з delayMs. */
+int  dmrDataTxLoadDelayedEx(const uint8_t *bursts, uint8_t count, uint16_t delayMs, int fastEnd);
+/* Час (ticksGetMillis) першого burst-а останньої передачі, що реально почалась. */
+uint32_t dmrDataTxLastStartMs(void);
 /* Те саме, але без термінатора й довгого TX_END -- передача гасне одразу після
  * останнього бургста, щоб встигнути почути відповідь (RCTL_COMPAT.md §5h). */
 void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count);

@@ -966,6 +966,77 @@ static inline void hrc6000SysPostAccessInt(void)
 	}
 }
 
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+// Encrypted-SMS RX: the chip BPTC-decodes + CRC-checks each data-sync burst and presents
+// its 96 info bits at page 0x02 (the same path the PI header uses). Hand Data Header (6)
+// and Rate-1/2 (7) bursts to the SMS reassembler; it accumulates the PDU and the main loop
+// (dmrSmsRxTick) decrypts + stores it. Skip our own TX echoes.
+// fix3 (2026-10-02): винесено в окрему функцію -- її кличуть або РАНО (до фільтра RX-стану,
+// для data 6/7/8 при увімкненому «RX обхід»), або на старому місці. Один burst -- один виклик.
+static void hrc6000SmsDataHook(int rxDataType)
+{
+	int crcOk = hrc6000CrcIsValid() ? 1 : 0;
+	dmrSmsRxDiagBurst(rxDataType, crcOk);   // log every data-sync burst (any type/CRC)
+	// Сирі 12 інфо-байтів (сторінка 0x02) потрібні SMS/RCTL (типи 6/7). Плюс, під час
+	// реверсу стокового протоколу керування (RCTL_COMPAT.md) -- для БУДЬ-ЯКОГО типу, коли
+	// з ПК увімкнено захоплення (dmrRctlCapArmed): стокова TYT шле Radio Check/Stun як CSBK
+	// (тип 3), якого шлях 6/7 не бачить. У звичайній роботі capArmed=0 -> зайвого SPI-читання
+	// в ISR немає. Сторінку читаємо ОДИН раз на обидві потреби.
+	bool wantBurst  = (crcOk && (rxDataType == 7));
+	// Data header (тип 6) читаємо НЕЗАЛЕЖНО від апаратного crcOk (2026-09-30, запис BBD_0000):
+	// стокова шле квитанцію `01 40 ...` з валідним CRC ~120 мс після нашого останнього блока,
+	// а банера «доставлено» немає. Та сама картина, що й з CSBK нижче: відповідь одразу після
+	// нашої передачі HW позначає CRC-невалідною. Рішення -- dmrSmsRxHdrAccept(): HW ok, або
+	// програмний CRC16 ^ 0xCCCC сходиться; інакше відкинути. Тип 7 не чіпаємо.
+	bool wantHdr    = (rxDataType == 6);
+	// rate-3/4 (тип 8): стокова шле SMS саме так, 18 інфо-байтів/burst. НЕ гейтуємо на
+	// crcOk (per-burst CRC для rate-3/4 недостовірний) -- цілісність гарантує CRC32 усього
+	// PDU у збирачі, а зіпсовані блоки просто не дадуть валідний PDU (стокова ретранслює).
+	bool want34     = (rxDataType == 8);
+	// CSBK (тип 3) беремо БЕЗ апаратного crcOk. Причина: під час реверсу виявилось, що
+	// квитанція цілі не видна в crcOk-захопленні (див. wantCap нижче), тобто HW
+	// її відкидає. Цілісність від цього не страждає: і dmr_rctl_stock_parse(), і _parse_ack()
+	// самі перевіряють CRC16 програмно (та сама формула, ^0xA5A5), тож шум
+	// відсіюється на рівень вище, а не втрачається разом із квитанцією.
+	bool wantStock  = (rxDataType == 3);   // стоковий RCTL -- CSBK (команда або квитанція)
+	// Під час реверсу ловимо ВСЕ, навіть CRC-невалідне: квитанція-відповідь цілі могла
+	// приходити з CRC, який HW відкидає, тож у звичайному (crcOk) захопленні її не видно.
+	bool wantCap    = dmrRctlCapArmed();
+	if (wantBurst || wantHdr || want34 || wantStock || wantCap)
+	{
+		// 18 байтів: вистачає і для rate-3/4 (18), і для rate-1/2/CSBK (12 -- зайве ігнорується).
+		uint8_t dataBurst[18];
+		if (SPI0ReadPageRegByteArray(0x02, 0x00, dataBurst, 18) == kStatus_Success)
+		{
+			if (wantHdr && dmrSmsRxHdrAccept(crcOk, dataBurst))
+			{
+				dmrSmsRxBurst(rxDataType, dataBurst);
+				dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
+			}
+			if (wantBurst)
+			{
+				dmrSmsRxBurst(rxDataType, dataBurst);
+				dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
+			}
+			if (want34)
+			{
+				dmrSmsRxBurst(rxDataType, dataBurst); // навантаження SMS у rate-3/4 (18 Б)
+			}
+			if (wantStock)
+			{
+				dmrRctlStockRxBurst(dataBurst); // стокова команда керування (форк як ціль)
+			}
+			if (wantCap)
+			{
+				// Старший біт type = статус CRC (0x80 -> CRC невалідний), щоб у дампі
+				// відрізняти «брудні» burst-и (напр. відповідь цілі) від чистих.
+				dmrRctlCapBurst(rxDataType | (crcOk ? 0 : 0x80), dataBurst);
+			}
+		}
+	}
+}
+#endif
+
 static inline void hrc6000SysReceivedDataInt(void)
 {
 	/*
@@ -1033,6 +1104,30 @@ static inline void hrc6000SysReceivedDataInt(void)
 			currentRadioDevice->trxDMRModeRx = DMR_MODE_DMO; // not base station so must be DMO
 		}
 	}
+
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+	// fix3 (2026-10-02, запис BBD_0004): стокова шле CONFIRMED тричі, а форк бачив заголовок
+	// лише ОДНІЄЇ спроби. Гіпотеза: фільтр RX-стану нижче (slotState RX_1/RX_2) відкидає burst з
+	// апаратно невалідним CRC ДО SMS-хука, а rate-3/4 HW позначає саме так.
+	//  * лічильники -- до будь-яких фільтрів (лише не наша TX і data-синхра): скільки прийшло
+	//    data-переривань типу 6/8 і скільки з них цей фільтр відкинув би;
+	//  * «RX обхід» (типово увімк, екран «Діагностика» стор. 2): data 6/7/8 з правильним
+	//    колір-кодом віддаємо в SMS-хук ТУТ. Цілісність і так гарантують SW CRC16 заголовка
+	//    (dmrSmsRxHdrAccept) і CRC32 усього PDU. Голосовий шлях і фільтр для решти -- як були.
+	bool smsEarlyDone = false;
+	if ((hrc.transmissionEnabled == false) && (rxSyncClass == SYNC_CLASS_DATA) &&
+			(rxDataType >= 6) && (rxDataType <= 8))
+	{
+		bool rxStateDrops = ((slotState == DMR_STATE_RX_1) || (slotState == DMR_STATE_RX_2)) &&
+				((rxPrivacyIndicator != 0) || (hrc6000CrcIsValid() == false) || (hrc6000CheckColourCodeFilter() == false));
+		dmrSmsRxEarlyNote(rxDataType, rxStateDrops ? 1 : 0);
+		if (dmrSmsRxBypass() && hrc6000CheckColourCodeFilter())
+		{
+			hrc6000SmsDataHook(rxDataType);
+			smsEarlyDone = true;
+		}
+	}
+#endif
 
 	if (((slotState == DMR_STATE_RX_1) || (slotState == DMR_STATE_RX_2)) &&
 			((rxPrivacyIndicator != 0) || (hrc6000CrcIsValid() == false) || (hrc6000CheckColourCodeFilter() == false)))
@@ -1108,71 +1203,10 @@ static inline void hrc6000SysReceivedDataInt(void)
 	}
 
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
-	// Encrypted-SMS RX: the chip BPTC-decodes + CRC-checks each data-sync burst and presents
-	// its 96 info bits at page 0x02 (the same path the PI header uses). Hand Data Header (6)
-	// and Rate-1/2 (7) bursts to the SMS reassembler; it accumulates the PDU and the main loop
-	// (dmrSmsRxTick) decrypts + stores it. Skip our own TX echoes.
-	if ((hrc.transmissionEnabled == false) && (rxSyncClass == SYNC_CLASS_DATA))
+	// SMS/RCTL-хук на старому місці -- лише якщо цей burst ще не віддали рано (див. smsEarlyDone).
+	if ((hrc.transmissionEnabled == false) && (rxSyncClass == SYNC_CLASS_DATA) && !smsEarlyDone)
 	{
-		int crcOk = hrc6000CrcIsValid() ? 1 : 0;
-		dmrSmsRxDiagBurst(rxDataType, crcOk);   // log every data-sync burst (any type/CRC)
-		// Сирі 12 інфо-байтів (сторінка 0x02) потрібні SMS/RCTL (типи 6/7). Плюс, під час
-		// реверсу стокового протоколу керування (RCTL_COMPAT.md) -- для БУДЬ-ЯКОГО типу, коли
-		// з ПК увімкнено захоплення (dmrRctlCapArmed): стокова TYT шле Radio Check/Stun як CSBK
-		// (тип 3), якого шлях 6/7 не бачить. У звичайній роботі capArmed=0 -> зайвого SPI-читання
-		// в ISR немає. Сторінку читаємо ОДИН раз на обидві потреби.
-		bool wantBurst  = (crcOk && (rxDataType == 7));
-		// Data header (тип 6) читаємо НЕЗАЛЕЖНО від апаратного crcOk (2026-09-30, запис BBD_0000):
-		// стокова шле квитанцію `01 40 ...` з валідним CRC ~120 мс після нашого останнього блока,
-		// а банера «доставлено» немає. Та сама картина, що й з CSBK нижче: відповідь одразу після
-		// нашої передачі HW позначає CRC-невалідною. Рішення -- dmrSmsRxHdrAccept(): HW ok, або
-		// програмний CRC16 ^ 0xCCCC сходиться; інакше відкинути. Тип 7 не чіпаємо.
-		bool wantHdr    = (rxDataType == 6);
-		// rate-3/4 (тип 8): стокова шле SMS саме так, 18 інфо-байтів/burst. НЕ гейтуємо на
-		// crcOk (per-burst CRC для rate-3/4 недостовірний) -- цілісність гарантує CRC32 усього
-		// PDU у збирачі, а зіпсовані блоки просто не дадуть валідний PDU (стокова ретранслює).
-		bool want34     = (rxDataType == 8);
-		// CSBK (тип 3) беремо БЕЗ апаратного crcOk. Причина: під час реверсу виявилось, що
-		// квитанція цілі не видна в crcOk-захопленні (див. wantCap нижче), тобто HW
-		// її відкидає. Цілісність від цього не страждає: і dmr_rctl_stock_parse(), і _parse_ack()
-		// самі перевіряють CRC16 програмно (та сама формула, ^0xA5A5), тож шум
-		// відсіюється на рівень вище, а не втрачається разом із квитанцією.
-		bool wantStock  = (rxDataType == 3);   // стоковий RCTL -- CSBK (команда або квитанція)
-		// Під час реверсу ловимо ВСЕ, навіть CRC-невалідне: квитанція-відповідь цілі могла
-		// приходити з CRC, який HW відкидає, тож у звичайному (crcOk) захопленні її не видно.
-		bool wantCap    = dmrRctlCapArmed();
-		if (wantBurst || wantHdr || want34 || wantStock || wantCap)
-		{
-			// 18 байтів: вистачає і для rate-3/4 (18), і для rate-1/2/CSBK (12 -- зайве ігнорується).
-			uint8_t dataBurst[18];
-			if (SPI0ReadPageRegByteArray(0x02, 0x00, dataBurst, 18) == kStatus_Success)
-			{
-				if (wantHdr && dmrSmsRxHdrAccept(crcOk, dataBurst))
-				{
-					dmrSmsRxBurst(rxDataType, dataBurst);
-					dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
-				}
-				if (wantBurst)
-				{
-					dmrSmsRxBurst(rxDataType, dataBurst);
-					dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
-				}
-				if (want34)
-				{
-					dmrSmsRxBurst(rxDataType, dataBurst); // навантаження SMS у rate-3/4 (18 Б)
-				}
-				if (wantStock)
-				{
-					dmrRctlStockRxBurst(dataBurst); // стокова команда керування (форк як ціль)
-				}
-				if (wantCap)
-				{
-					// Старший біт type = статус CRC (0x80 -> CRC невалідний), щоб у дампі
-					// відрізняти «брудні» burst-и (напр. відповідь цілі) від чистих.
-					dmrRctlCapBurst(rxDataType | (crcOk ? 0 : 0x80), dataBurst);
-				}
-			}
-		}
+		hrc6000SmsDataHook(rxDataType);
 	}
 #endif
 
