@@ -179,8 +179,25 @@ typedef struct
 	 * блок без заголовка / блок відкинуто (попередній PDU не забрано) / переповнення / зайві
 	 * блоки / головний цикл: не нам / зіпсований; найбільша затримка «готовий -> забрано», мс */
 	uint16_t pduOk, crcFail, blkNoHdr, blkBusy, blkOvf, blkExtra, tickNotUs, tickBad, pickMaxMs;
+	/* diag6, сторінка 4: блоків rate-3/4 CONFIRMED з DBSN != порядковий номер (повтор або
+	 * перестановка); блоків т8, які HW позначив CRC-валідними */
+	uint16_t dbsnBad, hw8Ok;
 } dmrSmsDiagScreen_t;
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
+/* diag6: знімок ОСТАННЬОГО повністю зібраного PDU з невалідним CRC32 («CRC пог»). */
+typedef struct
+{
+	uint8_t        n;        /* блоків у знімку (0 = знімка ще нема), до 8 */
+	uint8_t        len;      /* байтів у блоці: 18 (rate-3/4, зі службовими DBSN+CRC9) або 12 */
+	uint8_t        hwOk;     /* біт i = чип позначив блок i CRC-валідним */
+	uint16_t       seq;      /* номер цього «CRC пог» від скидання */
+	uint32_t       crcWant;  /* CRC32 з останніх 4 байтів PDU */
+	uint32_t       crcGot;   /* CRC32, порахований по прийнятому */
+	const uint8_t *hdr;      /* сирий заголовок (12 Б) */
+} dmrSmsBadSnapInfo_t;
+int            dmrSmsBadSnapInfo(dmrSmsBadSnapInfo_t *i);
+/* Сирий блок idx знімка (len байтів) і його час від заголовка, мс; NULL -- нема такого. */
+const uint8_t *dmrSmsBadSnapBlock(int idx, uint16_t *ms);
 void dmrSmsDiagScreenReset(void);
 /* Експеримент: наше CONFIRMED без термінатора (dmrDataTxLoadFast). Типово вимк, не зберігається. */
 int  dmrSmsDiagFastEnd(void);
