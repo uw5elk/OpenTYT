@@ -747,9 +747,16 @@ void menuTxScreenHandleTxTermination(uiEvent_t *ev, txTerminationReason_t reason
 			// два рядки FONT_SIZE_3 (8x16) і підказка FONT_SIZE_1 (6x8).
 			displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
 			displayPrintCentered(4 + (DISPLAY_V_EXTRA_PIXELS / 4), currentLanguage->error, FONT_SIZE_4);
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+			// ui1 (2026-10-04): третій рядок-здогадку «поза зоною дії?» прибрано; два рядки
+			// опущено, щоб стояли по центру вільного місця під заголовком (36..126 px).
+			displayPrintCentered(64, TXERR_RPT_LINE1, FONT_SIZE_3);
+			displayPrintCentered(82, TXERR_RPT_LINE2, FONT_SIZE_3);
+#else
 			displayPrintCentered(60, TXERR_RPT_LINE1, FONT_SIZE_3);
 			displayPrintCentered(78, TXERR_RPT_LINE2, FONT_SIZE_3);
 			displayPrintCentered(102, TXERR_RPT_HINT, FONT_SIZE_1);
+#endif
 #endif
 			voicePromptsAppendLanguageString(currentLanguage->error);
 

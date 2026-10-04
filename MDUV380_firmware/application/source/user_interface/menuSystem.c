@@ -661,7 +661,13 @@ const menuItemNewData_t mainMenuItems[] =
 	{   3, MENU_ZONE_LIST       },
 	{   6, MENU_CONTACTS_MENU   },
 	{  12, MENU_CHANNEL_DETAILS },
+#if !defined(LANGUAGE_BUILD_UKRAINIAN)
+	// Українська збірка (ui1, 2026-10-04): пункт «RSSI» прибрано з головного меню -- S-метр
+	// і так завжди в шапці. Сам екран лишився (MENU_RSSI_SCREEN, швидкі клавіші на нього
+	// працюють): швидкі клавіші меню зберігають ID меню, а не позицію пункту, тож нічого
+	// не з'їжджає.
 	{   4, MENU_RSSI_SCREEN     },
+#endif
 	{   8, MENU_FIRMWARE_INFO   },
 	{   9, MENU_OPTIONS         },
 	{   7, MENU_LAST_HEARD      },

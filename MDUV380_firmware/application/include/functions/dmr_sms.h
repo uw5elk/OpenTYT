@@ -172,6 +172,9 @@ typedef struct
 	/* fix3, сторінка 2: data-переривань типу 6 / 8 до фільтрів; скільки з них відкинув би
 	 * фільтр RX-стану HR-C6000; фактична затримка квитанції від тиші до старту TX, мс */
 	uint16_t isr6, isr8, filt6, filt8, ackRealMs;
+	/* ui1/fix4: етапи «Квит факт», мс: тиша->черга, черга->ключування, ключування->старт
+	 * TX_START_1, старт->перший burst квитанції в чипі */
+	uint16_t stgQ, stgK, stgS, stgB;
 } dmrSmsDiagScreen_t;
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
 void dmrSmsDiagScreenReset(void);
@@ -185,6 +188,8 @@ int  dmrSmsDiagAckTerm(void);           /* 1 = квитанція з термі�
 void dmrSmsDiagAckTermToggle(void);
 int  dmrSmsDiagAckPreambles(void);      /* CSBK-преамбул перед квитанцією (0 або 6) */
 void dmrSmsDiagAckPreamblesToggle(void);
+int  dmrSmsDiagAckPause(void);          /* цільова пауза квитанції, мс (20/50/80) */
+void dmrSmsDiagAckPauseToggle(void);
 /* ISR HR-C6000: облік data-переривання (тип 6/8) до фільтрів; filterDrops -- чи відкинув би
  * його фільтр RX-стану. */
 void dmrSmsRxEarlyNote(int rxDataType, int filterDrops);

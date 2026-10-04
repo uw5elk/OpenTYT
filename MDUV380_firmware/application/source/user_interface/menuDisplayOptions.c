@@ -103,8 +103,11 @@ enum
 	DISPLAY_TIME_UTC_OR_LOCAL,
 	DISPLAY_SHOW_DISTANCE,
 	DISPLAY_DMR_LAST_TALKER_ON_SCREEN,
-#if defined(HAS_COLOURS)
-	DISPLAY_SMETER_HEADER, // "S-метр у шапці" -- лише кольорові моделі (2026-09-03, PLANS.md)
+#if defined(HAS_COLOURS) && !defined(LANGUAGE_BUILD_UKRAINIAN)
+	// "S-метр у шапці" -- лише кольорові моделі (2026-09-03, PLANS.md). В українській збірці
+	// пункт прибрано (ui1, 2026-10-04): S-метр там показується завжди (smeterBlockIsAllowed()
+	// у uiUtilities.c). Біт BIT_SHOW_SMETER_IN_HEADER і розкладка налаштувань -- без змін.
+	DISPLAY_SMETER_HEADER,
 #endif
 	NUM_DISPLAY_MENU_ITEMS
 };
@@ -341,7 +344,7 @@ static void updateScreen(bool isFirstRun)
 					}
 					break;
 
-#if defined(HAS_COLOURS)
+#if defined(HAS_COLOURS) && !defined(LANGUAGE_BUILD_UKRAINIAN)
 				case DISPLAY_SMETER_HEADER:
 					leftSide = currentLanguage->smeter_header;
 					rightSideConst = settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) ? currentLanguage->on : currentLanguage->off;
@@ -727,7 +730,7 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 
-#if defined(HAS_COLOURS)
+#if defined(HAS_COLOURS) && !defined(LANGUAGE_BUILD_UKRAINIAN)
 				case DISPLAY_SMETER_HEADER:
 					if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) == false)
 					{
@@ -938,7 +941,7 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 
-#if defined(HAS_COLOURS)
+#if defined(HAS_COLOURS) && !defined(LANGUAGE_BUILD_UKRAINIAN)
 				case DISPLAY_SMETER_HEADER:
 					if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER))
 					{

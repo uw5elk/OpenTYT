@@ -2668,10 +2668,14 @@ static void drawSMeterBlock(int rssiDbm)
 static bool smeterBlockIsAllowed(void)
 {
 #if defined(HAS_COLOURS)
+#if !defined(LANGUAGE_BUILD_UKRAINIAN)
 	if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) == false)
 	{
 		return false;
 	}
+#endif
+	// Українська збірка (ui1, 2026-10-04): S-метр завжди увімк -- пункт у «Дисплей» прибрано,
+	// біт BIT_SHOW_SMETER_IN_HEADER вважаємо встановленим (самого біта не чіпаємо).
 
 	int menu = menuSystemGetCurrentMenuNumber();
 	if ((menu != UI_CHANNEL_MODE) && (menu != UI_VFO_MODE))

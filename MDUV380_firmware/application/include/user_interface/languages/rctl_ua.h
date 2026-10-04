@@ -74,5 +74,5 @@
 #define RCTL_CALL_ALERT_TITLE    "Персональний виклик"
 #define RCTL_CALL_ALERT_HINT     "GRN:виклик RED:закр"
 
-#define RCTL_NOTE_SMS_ACKED      "SMS: доставлено"
+/* RCTL_NOTE_SMS_ACKED прибрано (ui1, 2026-10-04): «доставлено» тепер -- зелена галочка без тексту. */
 #endif

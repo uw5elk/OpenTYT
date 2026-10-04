@@ -114,6 +114,9 @@
 #define MSGS_DG_YES              "yes"
 #define MSGS_DG_NO               "no"
 #define MSGS_DG_HINT2            "U/D GRN:set long:reset RED"
+/* ui1/fix4: етапи затримки квитанції і перемикач цільової паузи. */
+#define MSGS_DG_STG_FMT          "Stages: %u+%u+%u+%u"
+#define MSGS_DG_PAUSE_FMT        "%cAck pause: %u ms"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -383,7 +386,7 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
  * Сторінка 1 -- лічильники; DOWN -> сторінка 2 (fix3): лічильники ISR до фільтрів, фактична
  * затримка квитанції і 4 перемикачі (UP/DOWN -- вибір, GREEN -- змінити; UP з першого
  * перемикача -- назад на сторінку 1). Довге GREEN скидає лічильники ОБОХ сторінок. */
-#define DIAG_TOGGLES 4
+#define DIAG_TOGGLES 5
 
 static void diagPage1(const dmrSmsDiagScreen_t *d)
 {
@@ -419,7 +422,11 @@ static void diagPage2(const dmrSmsDiagScreen_t *d)
 	snprintf(buf, sizeof buf, MSGS_DG_FILT_FMT, (unsigned)d->filt6, (unsigned)d->filt8);
 	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
 	snprintf(buf, sizeof buf, MSGS_DG_REAL_FMT, (unsigned)d->ackRealMs);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 14;
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	/* ui1/fix4: «Квит факт» по етапах: тиша->черга + черга->ключування + ключування->старт TX
+	 * + старт->перший burst. Сума ~ «Квит факт». */
+	snprintf(buf, sizeof buf, MSGS_DG_STG_FMT, (unsigned)d->stgQ, (unsigned)d->stgK, (unsigned)d->stgS, (unsigned)d->stgB);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 12;
 	/* Перемикачі (не зберігаються; типові -- DMR_SMS_DEFAULT_* у dmr_sms_pdu.h). */
 	for (int i = 0; i < DIAG_TOGGLES; i++)
 	{
@@ -429,7 +436,8 @@ static void diagPage2(const dmrSmsDiagScreen_t *d)
 			case 0:  snprintf(buf, sizeof buf, MSGS_DG_FAST_FMT, mark, dmrSmsDiagFastEnd() ? MSGS_MON_ON : MSGS_MON_OFF); break;
 			case 1:  snprintf(buf, sizeof buf, MSGS_DG_BYP_FMT, mark, dmrSmsRxBypass() ? MSGS_MON_ON : MSGS_MON_OFF); break;
 			case 2:  snprintf(buf, sizeof buf, MSGS_DG_PRE_FMT, mark, (unsigned)dmrSmsDiagAckPreambles()); break;
-			default: snprintf(buf, sizeof buf, MSGS_DG_TERM_FMT, mark, dmrSmsDiagAckTerm() ? MSGS_DG_YES : MSGS_DG_NO); break;
+			case 3:  snprintf(buf, sizeof buf, MSGS_DG_TERM_FMT, mark, dmrSmsDiagAckTerm() ? MSGS_DG_YES : MSGS_DG_NO); break;
+			default: snprintf(buf, sizeof buf, MSGS_DG_PAUSE_FMT, mark, (unsigned)dmrSmsDiagAckPause()); break;
 		}
 		displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
 	}
@@ -456,7 +464,8 @@ static void diagToggle(int sel)
 		case 0:  dmrSmsDiagFastEndToggle();     break;   /* «Шв. кінець»: наше CONFIRMED без термінатора */
 		case 1:  dmrSmsDiagRxBypassToggle();    break;   /* «RX обхід» фільтра RX-стану */
 		case 2:  dmrSmsDiagAckPreamblesToggle(); break;  /* преамбули квитанції 0 <-> 6 */
-		default: dmrSmsDiagAckTermToggle();     break;   /* квитанція з термінатором чи без */
+		case 3:  dmrSmsDiagAckTermToggle();     break;   /* квитанція з термінатором чи без */
+		default: dmrSmsDiagAckPauseToggle();    break;   /* цільова пауза квитанції 80/50/20 мс */
 	}
 }
 
@@ -542,6 +551,29 @@ static void listUpdate(void)
 			snprintf(buf, sizeof buf, "%c%s%s:%s", mark, foreign, who, txt);
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+
+		/* ui1 (2026-10-04): у «Надісланих» доставлене (квитанція отримана) -- маленька галочка
+		 * в першій клітинці рядка (там, де у «Вхідних» стоїть '*' непрочитаного; у
+		 * «Надісланих» вона порожня). Клітинка FONT_SIZE_3 -- 8x16 px, галочка 7x6 px, 2 px.
+		 * На виділеному рядку -- кольором тла (як інвертований текст), інакше зеленим з теми. */
+		if ((s_msg.folder == 1) && (mNum < count))
+		{
+			const dmrSmsMessage_t *m = dmrSmsGet(1, mNum);
+			if ((m != NULL) && (m->flags & DMR_SMS_FLAG_DELIVERED))
+			{
+				int16_t cx = DISPLAY_X_POS_MENU_TEXT_OFFSET;
+				int16_t cy = (int16_t)(DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + (i * MENU_ENTRY_HEIGHT));
+				bool focused = (mNum == menuDataGlobal.currentItemIndex);
+				displayThemeApply(focused ? THEME_ITEM_BG : THEME_ITEM_FG_RSSI_BAR,
+				                  focused ? THEME_ITEM_BG_MENU_ITEM_SELECTED : THEME_ITEM_BG);
+				for (int16_t k = 0; k < 2; k++)
+				{
+					displayDrawLine(cx, (int16_t)(cy + 8 + k), (int16_t)(cx + 2), (int16_t)(cy + 11 + k), true);
+					displayDrawLine((int16_t)(cx + 2), (int16_t)(cy + 11 + k), (int16_t)(cx + 7), (int16_t)(cy + 5 + k), true);
+				}
+				displayThemeResetToDefault();
+			}
+		}
 	}
 	displayRender();
 }
