@@ -234,11 +234,11 @@ jobs:
   # Залежить від build-ukrainian -- бере вже готовий .bin і вбудовує його прямо в .exe,
   # тож тестеру не треба окремо шукати артефакт прошивки. Тулчейн для .exe є тільки на
   # windows-latest (PyInstaller збирає під ту ОС, на якій запущений).
-  # Лише при ручному запуску (workflow_dispatch): .exe великий і на кожен push з'їдав
-  # квоту сховища артефактів. Запуск: GitHub -> Actions -> "Build MD-UV390 10W firmware" ->
-  # Run workflow.
+  # На кожен push у main і при ручному запуску: готовий прошивальник можна взяти прямо з
+  # GitHub (Actions -> run -> Artifacts, або Releases -> ci-<sha>). Квоту тримає в межах
+  # retention-days: 2 нижче; .exe також лежить у релізі ci-<sha>, який до квоти не входить.
   build-gui-flasher:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: build-ukrainian
     runs-on: windows-latest
     name: build (GUI-прошивальник, Windows .exe)
