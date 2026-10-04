@@ -76,10 +76,30 @@ static volatile uint8_t  s_dgBurstSeen  DMR_DATA_DIAG_CCM;  /* у поточні
 /* Час (мс) першого burst-а ОСТАННЬОЇ передачі, що реально почалась (fix3): щоб SMS-модуль
  * бачив фактичну затримку квитанції, а не лише момент постановки в чергу. */
 static volatile uint32_t s_dgFirstBurstMs DMR_DATA_DIAG_CCM;
+/* ui1/fix4: проміжні мітки часу останньої передачі -- щоб розкласти затримку квитанції на
+ * етапи: dmrDataKeyTx() (ключування) і момент, коли HR-C6000 почав стартову послідовність
+ * (slotState = TX_START_1, dmrDataTxNoteSlotStart() з HR-C6000.c). */
+static volatile uint32_t s_dgKeyTxMs     DMR_DATA_DIAG_CCM;
+static volatile uint32_t s_dgSlotStartMs DMR_DATA_DIAG_CCM;
 
 uint32_t dmrDataTxLastStartMs(void)
 {
 	return s_dgFirstBurstMs;
+}
+
+uint32_t dmrDataTxLastKeyMs(void)
+{
+	return s_dgKeyTxMs;
+}
+
+uint32_t dmrDataTxLastSlotStartMs(void)
+{
+	return s_dgSlotStartMs;
+}
+
+void dmrDataTxNoteSlotStart(void)
+{
+	s_dgSlotStartMs = ticksGetMillis();
 }
 
 void dmrDataTxDiag(uint16_t out[4])
@@ -92,6 +112,8 @@ void dmrDataTxDiagReset(void)
 	s_dgRejected = s_dgStarted = s_dgTimeout = s_dgNoStart = 0;
 	s_dgBurstSeen = 0;
 	s_dgFirstBurstMs = 0;
+	s_dgKeyTxMs = 0;
+	s_dgSlotStartMs = 0;
 }
 
 /*
@@ -146,6 +168,7 @@ static void dmrDataTxFinishPoll(void)
 
 static void dmrDataKeyTx(void)
 {
+	s_dgKeyTxMs = ticksGetMillis();   /* етап затримки «черга -> ключування» */
 	s_burstIndex = 0;
 	s_dgBurstSeen = 0;
 	s_dataTxActive = 1;

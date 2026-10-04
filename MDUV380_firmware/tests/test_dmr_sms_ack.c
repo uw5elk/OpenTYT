@@ -167,8 +167,12 @@ int main(void)
 		         && !dmrSmsPduUseFastEnd(0, DMR_SMS_DEFAULT_FAST_END)     /* «Без підтв.» -- завжди з термінатором */
 		         && dmrSmsPduUseFastEnd(1, DMR_SMS_DEFAULT_FAST_END)
 		         && dmrSmsPduUseFastEnd(2, DMR_SMS_DEFAULT_FAST_END)
-		         && !dmrSmsPduUseFastEnd(2, 0) && !dmrSmsPduUseFastEnd(3, 1);
-		if (ok) { printf("  ok   типово: «Шв. кінець» увімк для Підтв. 1/2 і 3/4, режим 0 -- з термінатором; RX обхід увімк; квит. без терм.\n"); }
+		         && !dmrSmsPduUseFastEnd(2, 0) && !dmrSmsPduUseFastEnd(3, 1)
+		         /* ui1/fix4: цільова пауза квитанції -- типово 80 мс, перемикач 80 -> 50 -> 20 -> 80 */
+		         && (DMR_SMS_DEFAULT_ACK_PAUSE_MS == 80)
+		         && (dmrSmsPduNextAckPause(80) == 50) && (dmrSmsPduNextAckPause(50) == 20)
+		         && (dmrSmsPduNextAckPause(20) == 80) && (dmrSmsPduNextAckPause(37) == 80);
+		if (ok) { printf("  ok   типово: «Шв. кінець» увімк для Підтв. 1/2 і 3/4, режим 0 -- з термінатором; RX обхід увімк; квит. без терм.; пауза 80 (80->50->20->80)\n"); }
 		else    { fails++; printf("  FAIL типові перемикачі / dmrSmsPduUseFastEnd\n"); }
 	}
 

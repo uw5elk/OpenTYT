@@ -116,6 +116,9 @@ typedef enum
 	/* Форк (2026-09-26): вхідний Call Alert (RCTL, claude/call-alert-reverse.md) -- той
 	 * самий "на весь екран, тримається до RED" патерн, що й SMS вище. */
 	NOTIFICATION_TYPE_CALL_ALERT,
+	/* Форк (ui1, 2026-10-04): «SMS доставлено» -- велика зелена галочка на весь екран
+	 * без тексту (текстовий банер обрізався й просвічував екран під собою). */
+	NOTIFICATION_TYPE_SMS_ACKED,
 #endif
 	NOTIFICATION_TYPE_BEARING,
 	NOTIFICATION_TYPE_MAX
@@ -136,6 +139,7 @@ typedef enum
 	NOTIFICATION_ID_SMS,        /* форк: окремий id, щоб банер SMS не змішувався з рештою */
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 	NOTIFICATION_ID_CALL_ALERT, /* форк (2026-09-26) -- дивись NOTIFICATION_TYPE_CALL_ALERT вище */
+	NOTIFICATION_ID_SMS_ACKED,  /* форк (ui1) -- дивись NOTIFICATION_TYPE_SMS_ACKED вище */
 #endif
 	NOTIFICATION_ID_BEARING,
 	NOTIFICATION_ID_TX_INHIBIT,

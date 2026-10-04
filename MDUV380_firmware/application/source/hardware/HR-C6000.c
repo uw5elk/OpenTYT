@@ -318,7 +318,8 @@ volatile int dmrMonitorCapturedTS = -1;
 static bool hrc6000CallAcceptFilter(void);
 static void hrc6000SendPcOrTgLCHeader(void);
 #if defined(ENABLE_DMR_DATA)
-static void hrc6000DataTxStartBurst(void);
+static bool hrc6000DataTxStartBurst(void);
+static void hrc6000DataTxFastStop(void);
 #endif
 #ifdef ENABLE_AES
 static uint32_t hrc6000AesRngSeed(void);
@@ -1645,6 +1646,9 @@ static void hrc6000TransitionToTx(void)
 
 	slotState = DMR_STATE_TX_START_1;
 	hrc.txSequence = 0;
+#if defined(ENABLE_DMR_DATA)
+	if (dmrDataTxActive()) { dmrDataTxNoteSlotStart(); }   // етап затримки квитанції (діагностика)
+#endif
 }
 
 //used as a delayed callback to allow time for the final Tx burst and then simulate the final Rx Interrupt and return to receive.
@@ -1917,7 +1921,10 @@ void hrc6000TimeslotInterruptHandler(void)
 			if (dmrDataTxActive())
 			{
 				SPI0WritePageRegByte(0x04, 0x41, 0x80);    // Transmit during next Timeslot
-				hrc6000DataTxStartBurst();                 // CSBK-led key-up (no Voice-LC header)
+				if (hrc6000DataTxStartBurst() == false)    // CSBK-led key-up (no Voice-LC header)
+				{
+					break;                                 // fast end: черга порожня -- передачу вже зупинено
+				}
 			}
 			else
 #endif
@@ -1940,7 +1947,10 @@ void hrc6000TimeslotInterruptHandler(void)
 #if defined(ENABLE_DMR_DATA)
 			if (dmrDataTxActive())
 			{
-				hrc6000DataTxStartBurst();              // CSBK-led key-up (no Voice-LC / PI header)
+				if (hrc6000DataTxStartBurst() == false) // CSBK-led key-up (no Voice-LC / PI header)
+				{
+					break;                              // fast end: черга порожня -- передачу вже зупинено
+				}
 			}
 			else
 #endif
@@ -1973,7 +1983,10 @@ void hrc6000TimeslotInterruptHandler(void)
 #if defined(ENABLE_DMR_DATA)
 			if (dmrDataTxActive())
 			{
-				hrc6000DataTxStartBurst();              // CSBK-led key-up (no Voice-LC / PI header)
+				if (hrc6000DataTxStartBurst() == false) // CSBK-led key-up (no Voice-LC / PI header)
+				{
+					break;                              // fast end: черга порожня -- передачу вже зупинено
+				}
 			}
 			else
 #endif
@@ -2038,13 +2051,7 @@ void hrc6000TimeslotInterruptHandler(void)
 						// Ми й заглушували єї власними термінаторами, й повертались у прийом аж
 						// після її кінця. Термінатор тут нічого не вартий: стокова вже відповідає
 						// до нього, тобто команду вона вважає завершеною по самому CSBK.
-						SPI0WritePageRegByte(0x04, 0x41, 0x00);   // в наступному слоті не передавати
-						HRC6000InitDigitalDmrRx();
-						hrc.isWaking = WAKING_MODE_NONE;
-						hrc.keepMonitorCapturedTSAfterTxing = false;
-						hrc.timeCode = -1;
-						trxIsTransmitting = false;                // -> dmrDataTxFinishPoll зніме ПА за <=5 мс
-						slotState = DMR_STATE_IDLE;
+						hrc6000DataTxFastStop();
 						break;
 					}
 
@@ -2510,7 +2517,15 @@ static void hrc6000SendPcOrTgLCHeader(void)
 // and drop the data PDU. Consuming the first 3 preamble CSBKs here (across TX_START_1/3/5)
 // leaves the remaining CSBKs + headers + blocks for TX_2, so the on-air frame is CSBK-led
 // exactly like a stock SMS. Falls back to Voice-LC only if the queue is unexpectedly empty.
-static void hrc6000DataTxStartBurst(void)
+/* Повертає false, якщо передачу ЗУПИНЕНО (fast end і черга вже порожня) -- тоді виклик у
+ * TX_START_x має одразу вийти, не змінюючи slotState.
+ *
+ * ui1/fix4 (2026-10-04, запис BBD_0003): квитанція SMS -- це ОДИН burst. Стартова
+ * послідовність бере data-burst-и тричі (TX_START_1/3/5), тож у START_3 і START_5 черга вже
+ * порожня, і старий fallback записував тип 0x10 (VLC_HDR) -- а сторінка 0x02 досі тримала
+ * байти заголовка. У ефір ішли ДВА VLC_HDR з тими самими байтами. Для fast end тепер: черга
+ * скінчилась -> зупинити передачу, як і в TX_2. Звичайний кінець і голос -- як були. */
+static bool hrc6000DataTxStartBurst(void)
 {
 	uint8_t dtype;
 	uint8_t payload[DMR_DATA_BURST_LEN] = { 0 };  /* 18 B buffer; preambles use only first 12 */
@@ -2521,10 +2536,31 @@ static void hrc6000DataTxStartBurst(void)
 		SPI0WritePageRegByteArray(0x02, 0x00, payload, plen);
 		SPI0WritePageRegByte(0x04, 0x50, dtype);   // CSBK preamble (0x30) -> data-call key-up
 	}
+	else if (dmrDataTxFastEnd())
+	{
+		dmrDataTxEnd();                            // clears trxTransmissionEnabled
+		hrc.transmissionEnabled = false;
+		hrc6000DataTxFastStop();
+		return false;
+	}
 	else
 	{
 		SPI0WritePageRegByte(0x04, 0x50, 0x10);    // fallback: Voice-LC header
 	}
+	return true;
+}
+
+/* Fast end: в ефір більше нічого -- ні термінатора, ні TX_END. Спільне для TX_2 і стартової
+ * послідовності (див. hrc6000DataTxStartBurst). */
+static void hrc6000DataTxFastStop(void)
+{
+	SPI0WritePageRegByte(0x04, 0x41, 0x00);   // в наступному слоті не передавати
+	HRC6000InitDigitalDmrRx();
+	hrc.isWaking = WAKING_MODE_NONE;
+	hrc.keepMonitorCapturedTSAfterTxing = false;
+	hrc.timeCode = -1;
+	trxIsTransmitting = false;                // -> dmrDataTxFinishPoll зніме ПА за <=5 мс
+	slotState = DMR_STATE_IDLE;
 }
 #endif
 
@@ -2701,6 +2737,9 @@ static void hrc6000Tick(void)
 				}
 
 				slotState = DMR_STATE_TX_START_1;
+#if defined(ENABLE_DMR_DATA)
+				if (dmrDataTxActive()) { dmrDataTxNoteSlotStart(); }   // етап затримки квитанції (діагностика)
+#endif
 			}
 			else
 			{

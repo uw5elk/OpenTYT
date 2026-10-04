@@ -253,6 +253,11 @@ int dmrSmsPduBuildAckQueue(uint8_t *q, int maxBursts, uint32_t to, uint32_t from
 	return n;
 }
 
+int dmrSmsPduNextAckPause(int ms)
+{
+	return (ms == 80) ? 50 : ((ms == 50) ? 20 : 80);
+}
+
 int dmrSmsPduUseFastEnd(int txMode, int fastEndFlag)
 {
 	return ((txMode == 1) || (txMode == 2)) && (fastEndFlag != 0);

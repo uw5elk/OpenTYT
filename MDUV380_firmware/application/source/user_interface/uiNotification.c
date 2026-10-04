@@ -164,6 +164,7 @@ static void displaySmsFullScreen(void);
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 static void displayCallAlertFullScreen(void);
+static void displaySmsAckedFullScreen(void);
 #endif
 
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t msTimeout, const char *message, bool immediateRender)
@@ -216,6 +217,12 @@ void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32
 
 		case NOTIFICATION_TYPE_BEARING:
 			break;
+
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+		case NOTIFICATION_TYPE_SMS_ACKED:
+			// Лише картинка (галочка) -- текст не зберігаємо, гасне по таймауту як звичайний банер.
+			break;
+#endif
 
 		default:
 			valid = false;
@@ -380,6 +387,10 @@ void uiNotificationRefresh(void)
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 			case NOTIFICATION_TYPE_CALL_ALERT:
 				displayCallAlertFullScreen();
+				break;
+
+			case NOTIFICATION_TYPE_SMS_ACKED:
+				displaySmsAckedFullScreen();
 				break;
 #endif
 
@@ -767,6 +778,35 @@ static void displayCallAlertFullScreen(void)
 	displayPrintCentered(44, buffer, FONT_SIZE_3); /* FONT_SIZE_3: довгі імена (напр. "UW5ELK Богдан") влазять у рядок (rev2 polish) */
 
 	displayPrintCentered((int16_t)(DISPLAY_SIZE_Y - FONT_SIZE_1_HEIGHT - 4), RCTL_CALL_ALERT_HINT, FONT_SIZE_1);
+}
+
+/* Форк (ui1, 2026-10-04): «SMS доставлено» -- велика зелена галочка по центру, без тексту.
+ * Чому не текстовий банер: «SMS: доставлено» шрифтом FONT_SIZE_3 у рамці на 14 символів
+ * обрізався («SMS: доставлен»), а рамка не закривала екран під собою. Тут -- той самий фон
+ * і рамка на весь екран, що й у displaySmsFullScreen(), і галочка ~48x36 px товщиною ~4 px.
+ * Колір -- зелений із теми (THEME_ITEM_FG_RSSI_BAR: день 0x006400, ніч 0x33FF33), тож
+ * контраст до тла сповіщення вже підібраний для обох тем. */
+#define SMS_ACK_CHECK_X0     58   /* ліва точка короткого штриха */
+#define SMS_ACK_CHECK_Y0     62
+#define SMS_ACK_CHECK_XM     72   /* нижня точка (злам) */
+#define SMS_ACK_CHECK_YM     76
+#define SMS_ACK_CHECK_X1    104   /* верхня права точка довгого штриха */
+#define SMS_ACK_CHECK_Y1     44
+#define SMS_ACK_CHECK_THICK   5   /* паралельних ліній зі зсувом по вертикалі: ~3.5 px упоперек */
+static void displaySmsAckedFullScreen(void)
+{
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+	displayDrawRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+
+	displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG_NOTIFICATION);
+	for (int16_t k = 0; k < SMS_ACK_CHECK_THICK; k++)
+	{
+		displayDrawLine(SMS_ACK_CHECK_X0, (SMS_ACK_CHECK_Y0 + k), SMS_ACK_CHECK_XM, (SMS_ACK_CHECK_YM + k), true);
+		displayDrawLine(SMS_ACK_CHECK_XM, (SMS_ACK_CHECK_YM + k), SMS_ACK_CHECK_X1, (SMS_ACK_CHECK_Y1 + k), true);
+	}
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
 }
 #endif
 

@@ -24,7 +24,6 @@
 #include "user_interface/uiGlobals.h"    /* currentRxGroupData + *_ALL_CALL_VALUE: адресний фільтр RX */
 #include "hardware/HR-C6000.h"           /* PC_CALL_FLAG: тип виклику в старшому байті trxTalkGroupOrPcId */
 #include "functions/sound.h"             /* soundSetMelody: audible RX alert */
-#include "user_interface/languages/rctl_ua.h"  /* RCTL_NOTE_SMS_ACKED: "SMS: доставлено" */
 #include <string.h>
 
 /* ETSI slot data types as reported in HR-C6000 reg 0x51 [7:4]. */
@@ -713,6 +712,12 @@ static volatile uint16_t s_ackRealDelayMs DMR_AES_CCM;
 static uint32_t          s_ackSilenceMs DMR_AES_CCM;  /* s_lastRxBurstMs на момент постановки */
 static uint32_t          s_ackLoadMs    DMR_AES_CCM;  /* коли чергу віддали в dmr_data */
 static uint8_t           s_ackAwaitStart DMR_AES_CCM; /* 1 = чекаємо старту передачі квитанції */
+/* ui1/fix4: «Квит факт» розкладено на етапи, мс: тиша -> черга (s_ackLoadMs), черга ->
+ * dmrDataKeyTx(), ключування -> старт TX_START_1 у HR-C6000, старт -> перший burst у чипі. */
+static volatile uint16_t s_ackStgQ DMR_AES_CCM;
+static volatile uint16_t s_ackStgK DMR_AES_CCM;
+static volatile uint16_t s_ackStgS DMR_AES_CCM;
+static volatile uint16_t s_ackStgB DMR_AES_CCM;
 
 int  dmrSmsRxBypass(void)              { return s_dgRxBypass; }
 void dmrSmsDiagRxBypassToggle(void)    { s_dgRxBypass = s_dgRxBypass ? 0 : 1; }
@@ -720,6 +725,8 @@ int  dmrSmsDiagAckTerm(void)           { return s_dgAckTerm; }
 void dmrSmsDiagAckTermToggle(void)     { s_dgAckTerm = s_dgAckTerm ? 0 : 1; }
 int  dmrSmsDiagAckPreambles(void)      { return s_ackPreambles; }
 void dmrSmsDiagAckPreamblesToggle(void){ s_ackPreambles = (s_ackPreambles != 0) ? 0 : 6; }
+int  dmrSmsDiagAckPause(void)          { return s_ackTargetMs; }
+void dmrSmsDiagAckPauseToggle(void)    { s_ackTargetMs = (uint16_t)dmrSmsPduNextAckPause((int)s_ackTargetMs); }
 
 /* ISR: облік data-переривання ДО фільтрів. filterDrops = 1, якщо фільтр RX-стану HR-C6000
  * (slotState RX_1/RX_2 + PI/CRC/CC) цей burst відкинув би. */
@@ -768,6 +775,10 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 	d->filt6        = s_dgFilt6;
 	d->filt8        = s_dgFilt8;
 	d->ackRealMs    = s_ackRealDelayMs;
+	d->stgQ         = s_ackStgQ;
+	d->stgK         = s_ackStgK;
+	d->stgS         = s_ackStgS;
+	d->stgB         = s_ackStgB;
 }
 
 void dmrSmsDiagScreenReset(void)
@@ -779,6 +790,7 @@ void dmrSmsDiagScreenReset(void)
 	s_dgTxConf = 0;
 	s_dgIsr6 = s_dgIsr8 = s_dgFilt6 = s_dgFilt8 = 0;
 	s_ackRealDelayMs = 0;
+	s_ackStgQ = s_ackStgK = s_ackStgS = s_ackStgB = 0;
 	dmrDataTxDiagReset();
 }
 
@@ -1431,6 +1443,17 @@ void dmrSmsRxTick(void)
 		{
 			uint32_t d = st - s_ackSilenceMs;
 			s_ackRealDelayMs = (uint16_t)((d > 65535u) ? 65535u : d);
+			/* Етапи (ui1/fix4). Мітки ключування/старту беремо лише якщо вони з ЦІЄЇ передачі
+			 * (не раніші за постановку в чергу), інакше 0. */
+			uint32_t kt = dmrDataTxLastKeyMs();
+			uint32_t ss = dmrDataTxLastSlotStartMs();
+			if ((int32_t)(kt - s_ackLoadMs) < 0) { kt = s_ackLoadMs; }
+			if ((int32_t)(ss - kt) < 0)          { ss = kt; }
+			if ((int32_t)(st - ss) < 0)          { ss = st; }
+			s_ackStgQ = (uint16_t)SAFE_MIN(s_ackLoadMs - s_ackSilenceMs, 65535u);
+			s_ackStgK = (uint16_t)SAFE_MIN(kt - s_ackLoadMs, 65535u);
+			s_ackStgS = (uint16_t)SAFE_MIN(ss - kt, 65535u);
+			s_ackStgB = (uint16_t)SAFE_MIN(st - ss, 65535u);
 			s_ackAwaitStart = 0;
 		}
 		else if ((int32_t)(ticksGetMillis() - s_ackLoadMs) > 3000)
@@ -1451,7 +1474,9 @@ void dmrSmsRxTick(void)
 			store_save();
 		}
 		displayLightTrigger(false);
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, RCTL_NOTE_SMS_ACKED, true);
+		/* ui1 (2026-10-04): велика зелена галочка без тексту замість «SMS: доставлено»
+		 * (текст обрізався, рамка просвічувала). ~2,5 с, звук -- як і був. */
+		uiNotificationShow(NOTIFICATION_TYPE_SMS_ACKED, NOTIFICATION_ID_SMS_ACKED, 2500, NULL, true);
 		soundSetMelody(MELODY_ACK_BEEP);
 	}
 
@@ -1638,6 +1663,7 @@ static void runtimeReset(void)
 	s_dgRxBypass   = DMR_SMS_DEFAULT_RX_BYPASS;
 	s_dgAckTerm    = DMR_SMS_DEFAULT_ACK_TERM;
 	s_ackPreambles = DMR_SMS_DEFAULT_ACK_PREAMBLES;
+	s_ackTargetMs  = DMR_SMS_DEFAULT_ACK_PAUSE_MS;   /* перемикач «Квит. пауза» 20/50/80 */
 	s_ackAwaitStart = 0;
 	s_ackSilenceMs = 0; s_ackLoadMs = 0;
 	dmrSmsRxReset();                 /* clear the burst accumulator */

@@ -47,6 +47,11 @@ int  dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs
 int  dmrDataTxLoadDelayedEx(const uint8_t *bursts, uint8_t count, uint16_t delayMs, int fastEnd);
 /* Час (ticksGetMillis) першого burst-а останньої передачі, що реально почалась. */
 uint32_t dmrDataTxLastStartMs(void);
+/* Мітки часу (ticksGetMillis) останньої передачі: виклик dmrDataKeyTx() і старт
+ * стартової послідовності HR-C6000 (TX_START_1). */
+uint32_t dmrDataTxLastKeyMs(void);
+uint32_t dmrDataTxLastSlotStartMs(void);
+void     dmrDataTxNoteSlotStart(void);   /* HR-C6000.c: data-передача переходить у TX_START_1 */
 /* Те саме, але без термінатора й довгого TX_END -- передача гасне одразу після
  * останнього бургста, щоб встигнути почути відповідь (RCTL_COMPAT.md §5h). */
 void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count);

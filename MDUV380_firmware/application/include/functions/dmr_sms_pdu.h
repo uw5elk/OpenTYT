@@ -68,6 +68,12 @@ int      dmrSmsPduBuildAckQueue(uint8_t *q, int maxBursts, uint32_t to, uint32_t
 #define DMR_SMS_DEFAULT_RX_BYPASS      1   /* data 6/7/8 у SMS-хук до фільтра RX-стану */
 #define DMR_SMS_DEFAULT_ACK_PREAMBLES  0   /* квитанція без CSBK-преамбул, як у стокової */
 #define DMR_SMS_DEFAULT_ACK_TERM       0   /* квитанція без термінатора */
+#define DMR_SMS_DEFAULT_ACK_PAUSE_MS   80  /* ui1: цільова пауза від тиші в каналі до ключування квитанції;
+                                             * перемикач 20/50/80. Менше 60 мс -- ризик влізти між burst-ами
+                                             * відправника (у DMO він шле раз на 60 мс). */
+
+/* Наступне значення перемикача «Квит. пауза»: 80 -> 50 -> 20 -> 80 (будь-яке інше -> 80). */
+int      dmrSmsPduNextAckPause(int ms);
 
 /* Чи слати повідомлення без термінатора: лише CONFIRMED (txMode 1/2) і лише якщо
  * перемикач увімкнено. Режим 0 «Без підтв.» -- завжди звичайний кінець (шлях 438ec23). */

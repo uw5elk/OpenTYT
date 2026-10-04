@@ -90,4 +90,9 @@
 #define MSGS_DG_NO               "ні"
 #define MSGS_DG_HINT2            "U/D GRN:змін дов:скид RED"
 
+/* ui1/fix4 (2026-10-04): «Діагностика» стор. 2 -- етапи затримки квитанції (тиша->черга +
+ * черга->ключування + ключування->старт TX + старт->перший burst) і перемикач цільової паузи. */
+#define MSGS_DG_STG_FMT          "Етапи: %u+%u+%u+%u"
+#define MSGS_DG_PAUSE_FMT        "%cКвит. пауза: %u мс"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */
