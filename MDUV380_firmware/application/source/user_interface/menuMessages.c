@@ -117,6 +117,14 @@
 /* ui1/fix4: етапи затримки квитанції і перемикач цільової паузи. */
 #define MSGS_DG_STG_FMT          "Stages: %u+%u+%u+%u"
 #define MSGS_DG_PAUSE_FMT        "%cAck pause: %u ms"
+/* diag5: сторінка 3 -- де гине вхідний PDU. */
+#define MSGS_DIAG3               "Diagnostics 3"
+#define MSGS_DG3_PDU_FMT         "PDU: ok %u CRC bad %u"
+#define MSGS_DG3_BLK1_FMT        "Blk: nohdr %u busy %u"
+#define MSGS_DG3_BLK2_FMT        "  ovf %u extra %u"
+#define MSGS_DG3_TICK_FMT        "Loop: notus %u bad %u"
+#define MSGS_DG3_PICK_FMT        "Pickup max: %u ms"
+#define MSGS_DG3_HINT            "UP:page 2 long GRN:reset"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -160,7 +168,7 @@ static struct
 	int8_t   result;        // dmrSmsSend() return for the result screen
 	ticksTimer_t resultTimer;    // скільки ще показувати результат -- РЕАЛЬНИЙ час
 	ticksTimer_t resultGuard;    // поки не сплив -- клавіші не закривають екран (див. doSend)
-	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3)
+	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
 } s_msg DMR_AES_CCM;
 
@@ -385,7 +393,8 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
  * скорочень -- TESTING.md, блоки M і N. FONT_SIZE_1: 26 символів у рядок.
  * Сторінка 1 -- лічильники; DOWN -> сторінка 2 (fix3): лічильники ISR до фільтрів, фактична
  * затримка квитанції і 4 перемикачі (UP/DOWN -- вибір, GREEN -- змінити; UP з першого
- * перемикача -- назад на сторінку 1). Довге GREEN скидає лічильники ОБОХ сторінок. */
+ * перемикача -- назад на сторінку 1). Довге GREEN скидає лічильники ВСІХ сторінок.
+ * diag5: DOWN з останнього перемикача -> сторінка 3 (де гине вхідний PDU), UP -> назад. */
 #define DIAG_TOGGLES 5
 
 static void diagPage1(const dmrSmsDiagScreen_t *d)
@@ -444,14 +453,40 @@ static void diagPage2(const dmrSmsDiagScreen_t *d)
 	displayPrintCentered(112, MSGS_DG_HINT2, FONT_SIZE_1);
 }
 
+/* diag5: сторінка 3 -- шлях вхідного SMS від ISR до головного циклу. Порівнювати з
+ * «ISR: т6/т8» і «Квит RX: бач/черг»: якщо burst-и дійшли, а «PDU» менше за кількість
+ * спроб -- рядки нижче кажуть, на якому кроці PDU загинув (TESTING.md, блок R). */
+static void diagPage3(const dmrSmsDiagScreen_t *d)
+{
+	char buf[40];
+	int y = 16;
+	menuDisplayTitle(MSGS_DIAG3);
+	snprintf(buf, sizeof buf, MSGS_DG_ISR_FMT, (unsigned)d->isr6, (unsigned)d->isr8);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_ACK1_FMT, (unsigned)d->ackSeen, (unsigned)d->ackQueued);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 12;
+	snprintf(buf, sizeof buf, MSGS_DG3_PDU_FMT, (unsigned)d->pduOk, (unsigned)d->crcFail);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG3_BLK1_FMT, (unsigned)d->blkNoHdr, (unsigned)d->blkBusy);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG3_BLK2_FMT, (unsigned)d->blkOvf, (unsigned)d->blkExtra);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG3_TICK_FMT, (unsigned)d->tickNotUs, (unsigned)d->tickBad);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG3_PICK_FMT, (unsigned)d->pickMaxMs);
+	displayPrintAt(2, y, buf, FONT_SIZE_1);
+	displayPrintCentered(112, MSGS_DG3_HINT, FONT_SIZE_1);
+}
+
 static void diagUpdate(void)
 {
 	dmrSmsDiagScreen_t d;
 	dmrSmsDiagScreenGet(&d);
 
 	displayClearBuf();
-	if (s_msg.diagPage == 0) { diagPage1(&d); }
-	else                     { diagPage2(&d); }
+	if (s_msg.diagPage == 0)      { diagPage1(&d); }
+	else if (s_msg.diagPage == 1) { diagPage2(&d); }
+	else                          { diagPage3(&d); }
 	displayRender();
 
 	ticksTimerStart(&s_msg.resultTimer, MSGS_DIAG_REFRESH_MS);
@@ -481,13 +516,20 @@ static void diagEvent(uiEvent_t *ev)
 	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
 		if (s_msg.diagPage == 0)                     { s_msg.diagPage = 1; s_msg.diagSel = 0; }
+		else if (s_msg.diagPage == 2)                { /* остання сторінка */ }
 		else if (s_msg.diagSel < (DIAG_TOGGLES - 1)) { s_msg.diagSel++; }
+		else                                         { s_msg.diagPage = 2; }   /* diag5: стор. 3 */
 		diagUpdate();
 		return;
 	}
 	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
 	{
-		if (s_msg.diagPage == 1)
+		if (s_msg.diagPage == 2)
+		{
+			s_msg.diagPage = 1;   /* назад на стор. 2, на останній перемикач */
+			s_msg.diagSel = DIAG_TOGGLES - 1;
+		}
+		else if (s_msg.diagPage == 1)
 		{
 			if (s_msg.diagSel > 0) { s_msg.diagSel--; }
 			else                   { s_msg.diagPage = 0; }

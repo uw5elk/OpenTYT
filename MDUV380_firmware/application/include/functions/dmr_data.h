@@ -47,6 +47,8 @@ int  dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs
 int  dmrDataTxLoadDelayedEx(const uint8_t *bursts, uint8_t count, uint16_t delayMs, int fastEnd);
 /* Час (ticksGetMillis) першого burst-а останньої передачі, що реально почалась. */
 uint32_t dmrDataTxLastStartMs(void);
+/* Черга завантажена (ключування чекає таймера) або передача триває. */
+int      dmrDataTxBusy(void);
 /* Мітки часу (ticksGetMillis) останньої передачі: виклик dmrDataKeyTx() і старт
  * стартової послідовності HR-C6000 (TX_START_1). */
 uint32_t dmrDataTxLastKeyMs(void);

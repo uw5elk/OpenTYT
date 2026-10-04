@@ -175,6 +175,10 @@ typedef struct
 	/* ui1/fix4: етапи «Квит факт», мс: тиша->черга, черга->ключування, ключування->старт
 	 * TX_START_1, старт->перший burst квитанції в чипі */
 	uint16_t stgQ, stgK, stgS, stgB;
+	/* diag5, сторінка 3: де гине вхідний PDU -- зібрано / CRC32 не зійшовся на повній довжині /
+	 * блок без заголовка / блок відкинуто (попередній PDU не забрано) / переповнення / зайві
+	 * блоки / головний цикл: не нам / зіпсований; найбільша затримка «готовий -> забрано», мс */
+	uint16_t pduOk, crcFail, blkNoHdr, blkBusy, blkOvf, blkExtra, tickNotUs, tickBad, pickMaxMs;
 } dmrSmsDiagScreen_t;
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
 void dmrSmsDiagScreenReset(void);
