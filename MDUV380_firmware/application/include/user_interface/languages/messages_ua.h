@@ -95,4 +95,16 @@
 #define MSGS_DG_STG_FMT          "Етапи: %u+%u+%u+%u"
 #define MSGS_DG_PAUSE_FMT        "%cКвит. пауза: %u мс"
 
+/* diag5 (2026-10-04): «Діагностика» стор. 3 -- де гине вхідний PDU (TESTING.md, блок R).
+ * PDU: зібрано з валідним CRC32 / блоків рівно як у заголовку, а CRC32 не зійшовся.
+ * Блок: без заголовка / відкинуто, бо попередній PDU ще не забрано / переповнення / зайві.
+ * Цикл: головний цикл відкинув -- не нам / зіпсований. Забір: найдовше «готовий -> забрано». */
+#define MSGS_DIAG3               "Діагностика 3"
+#define MSGS_DG3_PDU_FMT         "PDU: ок %u CRC пог %u"
+#define MSGS_DG3_BLK1_FMT        "Блок: безЗаг %u зайн %u"
+#define MSGS_DG3_BLK2_FMT        "  переп %u зайві %u"
+#define MSGS_DG3_TICK_FMT        "Цикл: не нам %u зіпс %u"
+#define MSGS_DG3_PICK_FMT        "Забір макс: %u мс"
+#define MSGS_DG3_HINT            "UP:стор.2 дов.GRN:скид RED"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

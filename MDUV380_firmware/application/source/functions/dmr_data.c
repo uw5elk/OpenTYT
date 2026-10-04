@@ -258,6 +258,13 @@ int dmrDataTxActive(void)
 	return s_dataTxActive;
 }
 
+/* diag5: черга завантажена (чекає таймера ключування) АБО передача йде. dmrDataTxActive()
+ * стає 1 лише в dmrDataKeyTx(), тож між Load і ключуванням він хибно казав «вільно». */
+int dmrDataTxBusy(void)
+{
+	return (s_dataTxActive != 0) || (s_burstCount != 0);
+}
+
 int dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payload12Out)
 {
 	if (!s_dataTxActive || (s_burstIndex >= s_burstCount))

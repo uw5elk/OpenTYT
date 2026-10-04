@@ -718,6 +718,20 @@ static volatile uint16_t s_ackStgQ DMR_AES_CCM;
 static volatile uint16_t s_ackStgK DMR_AES_CCM;
 static volatile uint16_t s_ackStgS DMR_AES_CCM;
 static volatile uint16_t s_ackStgB DMR_AES_CCM;
+/* diag5 (2026-10-04, запис BBD_0004): де гине вхідний PDU. Стокова шле CONFIRMED тричі, усі
+ * burst-и доходять до SMS-хука (ISR т6 3, т8 12), а PDU склався лише з 3-ї спроби. Хост-реплей
+ * тих самих байтів (tests/test_dmr_sms_replay.c) збирає PDU з ПЕРШОЇ -- отже в полі щось
+ * відрізняється від реплею. Ці лічильники кажуть, що саме. ISR пише, головний цикл читає. */
+static volatile uint16_t s_dgPduOk     DMR_AES_CCM;  /* PDU з валідним CRC32 зібрано (ISR) */
+static volatile uint16_t s_dgCrcFail   DMR_AES_CCM;  /* блоків стільки, скільки в заголовку, а CRC32 не зійшовся */
+static volatile uint16_t s_dgBlkNoHdr  DMR_AES_CCM;  /* блок без заголовка (s_rxHaveHeader=0) -- відкинуто */
+static volatile uint16_t s_dgBlkBusy   DMR_AES_CCM;  /* блок відкинуто: попередній PDU ще не забрав головний цикл */
+static volatile uint16_t s_dgBlkOvf    DMR_AES_CCM;  /* блок не влазить у s_rxPdu (переповнення) */
+static volatile uint16_t s_dgBlkExtra  DMR_AES_CCM;  /* блоків уже більше, ніж у заголовку (зайві/чужі) */
+static volatile uint16_t s_dgTickNotUs DMR_AES_CCM;  /* головний цикл: PDU не нам (і монітор вимк) */
+static volatile uint16_t s_dgTickBad   DMR_AES_CCM;  /* головний цикл: закороткий PDU або CRC32 знімка не зійшовся */
+static volatile uint16_t s_dgPickMaxMs DMR_AES_CCM;  /* найбільша затримка «PDU готовий -> забрав головний цикл», мс */
+static volatile uint32_t s_rxReadyMs   DMR_AES_CCM;  /* коли ISR виставив s_rxReady */
 
 int  dmrSmsRxBypass(void)              { return s_dgRxBypass; }
 void dmrSmsDiagRxBypassToggle(void)    { s_dgRxBypass = s_dgRxBypass ? 0 : 1; }
@@ -779,6 +793,15 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 	d->stgK         = s_ackStgK;
 	d->stgS         = s_ackStgS;
 	d->stgB         = s_ackStgB;
+	d->pduOk        = s_dgPduOk;
+	d->crcFail      = s_dgCrcFail;
+	d->blkNoHdr     = s_dgBlkNoHdr;
+	d->blkBusy      = s_dgBlkBusy;
+	d->blkOvf       = s_dgBlkOvf;
+	d->blkExtra     = s_dgBlkExtra;
+	d->tickNotUs    = s_dgTickNotUs;
+	d->tickBad      = s_dgTickBad;
+	d->pickMaxMs    = s_dgPickMaxMs;
 }
 
 void dmrSmsDiagScreenReset(void)
@@ -791,6 +814,8 @@ void dmrSmsDiagScreenReset(void)
 	s_dgIsr6 = s_dgIsr8 = s_dgFilt6 = s_dgFilt8 = 0;
 	s_ackRealDelayMs = 0;
 	s_ackStgQ = s_ackStgK = s_ackStgS = s_ackStgB = 0;
+	s_dgPduOk = s_dgCrcFail = s_dgBlkNoHdr = s_dgBlkBusy = s_dgBlkOvf = s_dgBlkExtra = 0;
+	s_dgTickNotUs = s_dgTickBad = s_dgPickMaxMs = 0;
 	dmrDataTxDiagReset();
 }
 
@@ -807,7 +832,11 @@ static char     s_pendInboxText[DMR_SMS_TEXT_MAX + 1];
 
 static void dmrSmsTxPersistTick(void)
 {
-	if (s_pendSent && !dmrDataTxActive() && !trxIsTransmitting)
+	/* diag5: «не передаємо» -- це ще й «черга вже завантажена, але ключування чекає таймера»
+	 * (dmrDataTxBusy). Раніше запис у флеш (сотні мс, блокує головний цикл) влазив саме в це
+	 * вікно між dmrDataTxLoadDelayedEx() і dmrDataKeyTx(): таймер ключування не обслуговувався,
+	 * і квитанція виходила на ~228 мс пізніше (етап «черга->ключування» на стор. 2). */
+	if (s_pendSent && !dmrDataTxBusy() && !trxIsTransmitting)
 	{
 		store_add(s_pendFlags, s_pendPeer, s_pendText, s_pendTextLen);
 		s_pendSent = 0;
@@ -815,7 +844,7 @@ static void dmrSmsTxPersistTick(void)
 	/* Вхідне пишемо у флеш лише коли квитанція ВЖЕ пішла (s_ackPending знято) і передача
 	 * завершилась. Інакше блокуючий erase+write на сотні мс з'їдає те саме вікно, заради
 	 * якого ми чекаємо тиші -- рівно те, що зламало rev 5. */
-	if (s_pendInbox && !s_ackPending && !dmrDataTxActive() && !trxIsTransmitting)
+	if (s_pendInbox && !s_ackPending && !s_ackAwaitStart && !dmrDataTxBusy() && !trxIsTransmitting)
 	{
 		store_add(s_pendInboxFlags, s_pendInboxPeer, s_pendInboxText, s_pendInboxLen);
 		s_pendInbox = 0;
@@ -1113,6 +1142,7 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 static volatile uint8_t  s_rxHaveHeader DMR_AES_CCM;
 static volatile uint8_t  s_rxHaveEnc DMR_AES_CCM;
 static volatile uint8_t  s_rxExpBlocks DMR_AES_CCM;   /* rate-1/2 blocks expected (nblocks-1) */
+static volatile uint8_t  s_rxHdrBlocks DMR_AES_CCM;   /* diag5: nblocks із заголовка як є */
 static volatile uint8_t  s_rxCount DMR_AES_CCM;
 static volatile uint8_t  s_rxGroup DMR_AES_CCM;
 static volatile uint8_t  s_rxKeyId DMR_AES_CCM;
@@ -1260,7 +1290,7 @@ void dmrSmsRxDiag(uint32_t out[7])
 
 void dmrSmsRxReset(void)
 {
-	s_rxHaveHeader = 0; s_rxHaveEnc = 0; s_rxExpBlocks = 0; s_rxCount = 0; s_rxLen = 0;
+	s_rxHaveHeader = 0; s_rxHaveEnc = 0; s_rxExpBlocks = 0; s_rxHdrBlocks = 0; s_rxCount = 0; s_rxLen = 0;
 	s_rxAckReq = 0;
 }
 
@@ -1301,6 +1331,7 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxDst = ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 8) | p[4];
 			s_rxSrc = ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 8) | p[7];
 			uint8_t nblocks = (uint8_t)(p[8] & 0x7F);
+			s_rxHdrBlocks = nblocks;                                        /* diag5: для «CRC32 не зійшовся» */
 			s_rxExpBlocks = (uint8_t)((nblocks > 0) ? (nblocks - 1) : 0);  /* minus ENC header */
 			s_rxCount = 0;
 			s_rxLen = 0;
@@ -1328,10 +1359,10 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 	 * (самотермінувальне, не довіряємо лічильнику блоків із заголовка). */
 	if (rxDataType == DT_RATE12_DATA || rxDataType == DT_RATE34_DATA)
 	{
-		if (!s_rxHaveHeader) { return; }
+		if (!s_rxHaveHeader) { s_dgBlkNoHdr++; return; }
 		/* Не чіпаємо s_rxPdu, поки готовий PDU ще не забрав основний цикл (пишемо тепер
 		 * прямо в s_rxPdu, тож інакше новий burst затер би те, що ще не прочитано). */
-		if (s_rxReady) { return; }
+		if (s_rxReady) { s_dgBlkBusy++; return; }
 
 		/* rate-1/2 (unconfirmed): весь 12-байтний блок -- навантаження.
 		 * rate-3/4 від стокової -- CONFIRMED data: 18-байтний блок = [2 байти DBSN+CRC9] +
@@ -1350,10 +1381,13 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 		const uint8_t *src = p;
 		int blkLen = 12;
 		if (rxDataType == DT_RATE34_DATA) { src = p + 2; blkLen = 16; }
-		if ((int)s_rxLen + blkLen > (int)sizeof s_rxPdu) { return; }   /* захист від переповнення */
+		if ((int)s_rxLen + blkLen > (int)sizeof s_rxPdu) { s_dgBlkOvf++; return; }   /* захист від переповнення */
 		memcpy(s_rxPdu + s_rxLen, src, blkLen);
 		s_rxLen = (uint16_t)(s_rxLen + blkLen);
 		s_rxCount++;
+		/* Скільки блоків даних обіцяв заголовок: nblocks мінус ENC-заголовок, якщо він був. */
+		int expData = (int)s_rxHdrBlocks - (s_rxHaveEnc ? 1 : 0);
+		if ((expData > 0) && ((int)s_rxCount > expData)) { s_dgBlkExtra++; }
 
 		/* Завершуємо, коли накопичене утворює CRC32-валідний data-PDU. Самотермінувально:
 		 * змішування/обрив блоків просто не дасть валідний CRC32. Мінімум ~2 rate-1/2 блоки
@@ -1366,7 +1400,10 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 					((uint32_t)s_rxPdu[total - 2] << 8) | (uint32_t)s_rxPdu[total - 1];
 			if (dmrSmsPduCrc32(s_rxPdu, total) != want)
 			{
-				return;   /* not a complete/clean PDU yet — keep accumulating */
+				/* Ще не повний PDU -- копимо далі. Але якщо блоків уже рівно стільки, скільки
+				 * в заголовку, -- PDU мав скластися: рахуємо як «CRC32 не зійшовся». */
+				if ((expData > 0) && ((int)s_rxCount == expData)) { s_dgCrcFail++; }
+				return;
 			}
 			s_rxPduLen = (uint16_t)total;
 			s_rxPeer = s_rxSrc;
@@ -1376,6 +1413,8 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxPeerEnc = s_rxHaveEnc;   /* decrypt if the ENC header was seen, else read cleartext */
 			s_rxPeerAckReq = s_rxAckReq; /* чи винні ми квитанцію за це повідомлення */
 			s_rxReady = 1;          /* main loop will decrypt (or read cleartext) + store */
+			s_rxReadyMs = ticksGetMillis();
+			s_dgPduOk++;
 			s_diagPdu++;
 			/* snapshot raw (still-encrypted) PDU for USB inspection (clamped to the
 			 * snapshot buffer — the reported length must never exceed the bytes stored) */
@@ -1494,8 +1533,12 @@ void dmrSmsRxTick(void)
 	if (pduLen > (int)sizeof pdu) { pduLen = (int)sizeof pdu; }
 	memcpy(pdu, s_rxPdu, pduLen);
 	s_rxReady = 0;
+	{
+		uint32_t late = ticksGetMillis() - s_rxReadyMs;   /* diag5: як довго PDU чекав на головний цикл */
+		if (late > s_dgPickMaxMs) { s_dgPickMaxMs = (uint16_t)((late > 65535u) ? 65535u : late); }
+	}
 
-	if (pduLen < 32) { return; }            /* whole PDU is passed; decrypt derives the enc len */
+	if (pduLen < 32) { s_dgTickBad++; return; }   /* whole PDU is passed; decrypt derives the enc len */
 
 	/* Адресний фільтр. Раніше його не було зовсім: приймалося ВСЕ, що пролізло крізь
 	 * частоту/таймслот/кольоровий код і відкрилося будь-яким нашим ключем -- зокрема приватні
@@ -1509,6 +1552,7 @@ void dmrSmsRxTick(void)
 	int forUs = smsIsForUs(dst, group);
 	if ((forUs == 0) && (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false))
 	{
+		s_dgTickNotUs++;
 		return;
 	}
 
@@ -1518,7 +1562,7 @@ void dmrSmsRxTick(void)
 	{
 		uint32_t want = ((uint32_t)pdu[pduLen - 4] << 24) | ((uint32_t)pdu[pduLen - 3] << 16) |
 				((uint32_t)pdu[pduLen - 2] << 8) | (uint32_t)pdu[pduLen - 1];
-		if (dmrSmsPduCrc32(pdu, pduLen) != want) { return; }   /* corrupted reassembly -> drop */
+		if (dmrSmsPduCrc32(pdu, pduLen) != want) { s_dgTickBad++; return; }   /* corrupted reassembly -> drop */
 	}
 
 	/* Дедуплікація (Task #34): той самий PDU (відправник + IP-ID + TMS-seq) в межах 30 с -> пропустити.

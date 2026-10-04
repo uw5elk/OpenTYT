@@ -44,6 +44,21 @@ declare -A SRCS=(
 	[test_dmr_sms_unconf]="$APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c"   # режим 0 == 438ec23 байт-у-байт
 	[test_dmr_sms_confirmed]=""       # самодостатній: CRC9 + розкладка CONFIRMED-блока
 	[test_call_replay]="$APP/source/functions/callReplay.c"   # лише ЧИСТА кільцева логіка -- callReplayPlayback.c (codec/sound/trx/FreeRTOS) сюди навмисно не тягнеться
+	[test_dmr_sms_replay]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c"   # diag5: СПРАВЖНІЙ збирач SMS, залізо -- заглушки в тесті
+)
+
+# назва -> додаткові прапорці. dmr_sms.c тягне заголовки всієї прошивки (HAL/CMSIS/FreeRTOS),
+# тож потрібні ті самі -I і платформні -D, що в tools/syntax_check.sh (конфігурація UA).
+FW="$TESTS_DIR/.."
+FW_INCS="-I$FW/tools/hoststub -include $FW/tools/hoststub/host_compat.h -I$FW -I$FW/Core/Inc \
+ -I$FW/Drivers/CMSIS/Device/ST/STM32F4xx/Include -I$FW/Drivers/CMSIS/Include \
+ -I$FW/Drivers/STM32F4xx_HAL_Driver/Inc -I$FW/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy \
+ -I$FW/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc -I$FW/Middlewares/ST/STM32_USB_Device_Library/Core/Inc \
+ -I$FW/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I$FW/Middlewares/Third_Party/FreeRTOS/Source/include \
+ -I$FW/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F -I$FW/USB_DEVICE/App -I$FW/USB_DEVICE/Target \
+ -I$FW/application/include"
+declare -A XFLAGS=(
+	[test_dmr_sms_replay]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 )
 
 rm -rf "$BUILD" && mkdir -p "$BUILD"
@@ -58,10 +73,11 @@ for src in "$TESTS_DIR"/test_*.c; do
 		continue
 	fi
 	extra="${SRCS[$name]}"   # може бути порожнім -> самодостатній тест (лінкуємо лише сам файл)
+	xflags="${XFLAGS[$name]:-}"
 
 	bin="$BUILD/$name"
 	# shellcheck disable=SC2086
-	if ! out="$("$CC" "${CFLAGS[@]}" "${INC[@]}" -o "$bin" "$src" $extra 2>&1)"; then
+	if ! out="$("$CC" "${CFLAGS[@]}" $xflags "${INC[@]}" -o "$bin" "$src" $extra 2>&1)"; then
 		fail=$((fail + 1))
 		echo "ЗБІРКА ВПАЛА  $name"
 		printf '%s\n' "$out" | head -12
