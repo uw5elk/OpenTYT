@@ -124,7 +124,15 @@
 #define MSGS_DG3_BLK2_FMT        "  ovf %u extra %u"
 #define MSGS_DG3_TICK_FMT        "Loop: notus %u bad %u"
 #define MSGS_DG3_PICK_FMT        "Pickup max: %u ms"
-#define MSGS_DG3_HINT            "UP:page 2 long GRN:reset"
+#define MSGS_DG3_HINT            "U:page2 D:page4 long:reset"
+/* diag6: сторінка 4 -- знімок останнього PDU з «CRC bad». */
+#define MSGS_DIAG4               "Diagnostics 4"
+#define MSGS_DG4_NONE            "No snapshot yet"
+#define MSGS_DG4_SNAP_FMT        "Snap #%u: blk %u HW %02x"
+#define MSGS_DG4_CRC_FMT         "CRC w %08lx g %08lx"
+#define MSGS_DG4_CNT_FMT         "DBSN bad %u HW t8 ok %u"
+#define MSGS_DG4_HDR             "Hdr "
+#define MSGS_DG4_HINT            "U/D:scroll long GRN:reset"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -170,6 +178,7 @@ static struct
 	ticksTimer_t resultGuard;    // поки не сплив -- клавіші не закривають екран (див. doSend)
 	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
+	uint8_t  diagScroll;    // diag6: перший видимий рядок сторінки 4 (знімок «CRC пог»)
 } s_msg DMR_AES_CCM;
 
 static void homeUpdate(void);
@@ -380,6 +389,7 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 			case 5:
 				s_msg.view = MSG_DIAG;
 				s_msg.diagPage = 0;
+				s_msg.diagScroll = 0;
 				s_msg.diagSel = 0;
 				diagUpdate();
 				break;
@@ -478,6 +488,81 @@ static void diagPage3(const dmrSmsDiagScreen_t *d)
 	displayPrintCentered(112, MSGS_DG3_HINT, FONT_SIZE_1);
 }
 
+/* diag6: сторінка 4 -- знімок ОСТАННЬОГО PDU з «CRC пог»: сирі блоки так, як їх віддав чип
+ * (rate-3/4: 2 службові DBSN+CRC9 + 16 навантаження), для порівняння з декодом HackRF.
+ * Рядки (гортаються UP/DOWN): номер знімка, блоків, маска HW-CRC; CRC32 очікуваний/фактичний;
+ * лічильники DBSN/HW; сирий заголовок (2 рядки); далі по 2 рядки на блок:
+ *   «Nm ммммм hhhhhhhhhhhhhhhhhh» -- номер блока, '*' якщо HW CRC валідний, мс від заголовка,
+ *   перша половина байтів; другий рядок -- решта байтів під першою. */
+#define DIAG4_VISIBLE 9
+
+static void hexAppend(char *buf, int bufsz, const uint8_t *p, int n)
+{
+	int l = (int)strlen(buf);
+	for (int i = 0; (i < n) && (l + 2 < bufsz); i++, l += 2)
+	{
+		snprintf(buf + l, (size_t)(bufsz - l), "%02x", p[i]);
+	}
+}
+
+static int diagPage4Rows(void)
+{
+	dmrSmsBadSnapInfo_t si;
+	return (dmrSmsBadSnapInfo(&si) == 0) ? 2 : (5 + 2 * si.n);
+}
+
+static bool diagPage4Row(int r, const dmrSmsDiagScreen_t *d, char *buf, int bufsz)
+{
+	dmrSmsBadSnapInfo_t si;
+	int n = dmrSmsBadSnapInfo(&si);
+	buf[0] = 0;
+	if (n == 0)
+	{
+		if (r == 0) { snprintf(buf, bufsz, "%s", MSGS_DG4_NONE); return true; }
+		if (r == 1) { snprintf(buf, bufsz, MSGS_DG4_CNT_FMT, (unsigned)d->dbsnBad, (unsigned)d->hw8Ok); return true; }
+		return false;
+	}
+	switch (r)
+	{
+		case 0: snprintf(buf, bufsz, MSGS_DG4_SNAP_FMT, (unsigned)si.seq, (unsigned)n, (unsigned)si.hwOk); return true;
+		case 1: snprintf(buf, bufsz, MSGS_DG4_CRC_FMT, (unsigned long)si.crcWant, (unsigned long)si.crcGot); return true;
+		case 2: snprintf(buf, bufsz, MSGS_DG4_CNT_FMT, (unsigned)d->dbsnBad, (unsigned)d->hw8Ok); return true;
+		case 3: snprintf(buf, bufsz, "%s", MSGS_DG4_HDR); hexAppend(buf, bufsz, si.hdr, 8); return true;
+		case 4: snprintf(buf, bufsz, "    "); hexAppend(buf, bufsz, si.hdr + 8, 4); return true;
+		default: break;
+	}
+	int b = (r - 5) / 2;
+	uint16_t ms = 0;
+	const uint8_t *blk = dmrSmsBadSnapBlock(b, &ms);
+	if (blk == NULL) { return false; }
+	int half = (si.len + 1) / 2;
+	if (((r - 5) & 1) == 0)
+	{
+		snprintf(buf, bufsz, "%u%c%5u ", (unsigned)(b & 7), (si.hwOk & (1u << b)) ? '*' : ' ', (unsigned)ms);
+		hexAppend(buf, bufsz, blk, half);
+	}
+	else
+	{
+		snprintf(buf, bufsz, "        ");
+		hexAppend(buf, bufsz, blk + half, si.len - half);
+	}
+	return true;
+}
+
+static void diagPage4(const dmrSmsDiagScreen_t *d)
+{
+	char buf[40];
+	menuDisplayTitle(MSGS_DIAG4);
+	int rows = diagPage4Rows();
+	if (s_msg.diagScroll + DIAG4_VISIBLE > rows) { s_msg.diagScroll = (uint8_t)((rows > DIAG4_VISIBLE) ? (rows - DIAG4_VISIBLE) : 0); }
+	for (int k = 0; k < DIAG4_VISIBLE; k++)
+	{
+		if (!diagPage4Row(s_msg.diagScroll + k, d, buf, sizeof buf)) { break; }
+		displayPrintAt(2, 16 + 10 * k, buf, FONT_SIZE_1);
+	}
+	displayPrintCentered(112, MSGS_DG4_HINT, FONT_SIZE_1);
+}
+
 static void diagUpdate(void)
 {
 	dmrSmsDiagScreen_t d;
@@ -486,7 +571,8 @@ static void diagUpdate(void)
 	displayClearBuf();
 	if (s_msg.diagPage == 0)      { diagPage1(&d); }
 	else if (s_msg.diagPage == 1) { diagPage2(&d); }
-	else                          { diagPage3(&d); }
+	else if (s_msg.diagPage == 2) { diagPage3(&d); }
+	else                          { diagPage4(&d); }
 	displayRender();
 
 	ticksTimerStart(&s_msg.resultTimer, MSGS_DIAG_REFRESH_MS);
@@ -516,7 +602,11 @@ static void diagEvent(uiEvent_t *ev)
 	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
 		if (s_msg.diagPage == 0)                     { s_msg.diagPage = 1; s_msg.diagSel = 0; }
-		else if (s_msg.diagPage == 2)                { /* остання сторінка */ }
+		else if (s_msg.diagPage == 2)                { s_msg.diagPage = 3; s_msg.diagScroll = 0; }   /* diag6: стор. 4 */
+		else if (s_msg.diagPage == 3)
+		{
+			if ((s_msg.diagScroll + DIAG4_VISIBLE) < diagPage4Rows()) { s_msg.diagScroll++; }
+		}
 		else if (s_msg.diagSel < (DIAG_TOGGLES - 1)) { s_msg.diagSel++; }
 		else                                         { s_msg.diagPage = 2; }   /* diag5: стор. 3 */
 		diagUpdate();
@@ -524,7 +614,12 @@ static void diagEvent(uiEvent_t *ev)
 	}
 	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
 	{
-		if (s_msg.diagPage == 2)
+		if (s_msg.diagPage == 3)
+		{
+			if (s_msg.diagScroll > 0) { s_msg.diagScroll--; }
+			else                      { s_msg.diagPage = 2; }   /* назад на стор. 3 */
+		}
+		else if (s_msg.diagPage == 2)
 		{
 			s_msg.diagPage = 1;   /* назад на стор. 2, на останній перемикач */
 			s_msg.diagSel = DIAG_TOGGLES - 1;

@@ -732,6 +732,30 @@ static volatile uint16_t s_dgTickNotUs DMR_AES_CCM;  /* головний цик�
 static volatile uint16_t s_dgTickBad   DMR_AES_CCM;  /* головний цикл: закороткий PDU або CRC32 знімка не зійшовся */
 static volatile uint16_t s_dgPickMaxMs DMR_AES_CCM;  /* найбільша затримка «PDU готовий -> забрав головний цикл», мс */
 static volatile uint32_t s_rxReadyMs   DMR_AES_CCM;  /* коли ISR виставив s_rxReady */
+/* diag6 (2026-10-04): ЯКІ байти псуються. На залізі (diag5, 5 SMS) 3 з 8 повністю зібраних PDU
+ * (рівно стільки блоків, скільки в заголовку) мали невалідний CRC32, а HackRF ті самі спроби
+ * прийняв чисто. Тут -- знімок ОСТАННЬОГО такого PDU: сирі блоки (зі службовими DBSN+CRC9),
+ * час кожного від заголовка, HW-CRC кожного, сирий заголовок, CRC32 очікуваний/фактичний.
+ * Лише діагностика: прийом не змінено. ISR пише, екран «Діагностика 4» читає. */
+#define SMS_SNAP_MAX 8
+/* поточний PDU: навантаження вже лежить у s_rxPdu, тож тримаємо лише службові байти й час */
+static uint8_t           s_curSvc[SMS_SNAP_MAX][2] DMR_AES_CCM;
+static uint16_t          s_curMs[SMS_SNAP_MAX]     DMR_AES_CCM;
+static uint8_t           s_curHwOk                 DMR_AES_CCM;  /* біт i = HW CRC блока i валідний */
+static uint8_t           s_curHdr[12]              DMR_AES_CCM;
+static uint32_t          s_curHdrMs                DMR_AES_CCM;
+static volatile uint8_t  s_lastHwOk                DMR_AES_CCM;  /* HW CRC burst-а, що зараз у хуку */
+/* знімок останнього PDU з «CRC пог» */
+static uint8_t           s_badBlk[SMS_SNAP_MAX][18] DMR_AES_CCM;
+static uint16_t          s_badMs[SMS_SNAP_MAX]      DMR_AES_CCM;
+static uint8_t           s_badHdr[12]               DMR_AES_CCM;
+static volatile uint8_t  s_badN                     DMR_AES_CCM;  /* блоків у знімку; 0 = знімка нема */
+static uint8_t           s_badLen                   DMR_AES_CCM;  /* 18 (rate-3/4) або 12 (rate-1/2) */
+static uint8_t           s_badHwOk                  DMR_AES_CCM;
+static uint32_t          s_badWant, s_badGot        DMR_AES_CCM;
+static uint16_t          s_badSeq                   DMR_AES_CCM;  /* яке це «CRC пог» від скидання */
+static volatile uint16_t s_dgDbsnBad                DMR_AES_CCM;  /* rate-3/4 CONFIRMED: DBSN != порядковий номер */
+static volatile uint16_t s_dg8HwOk                  DMR_AES_CCM;  /* блоків т8, які HW позначив CRC-валідними */
 
 int  dmrSmsRxBypass(void)              { return s_dgRxBypass; }
 void dmrSmsDiagRxBypassToggle(void)    { s_dgRxBypass = s_dgRxBypass ? 0 : 1; }
@@ -802,6 +826,28 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 	d->tickNotUs    = s_dgTickNotUs;
 	d->tickBad      = s_dgTickBad;
 	d->pickMaxMs    = s_dgPickMaxMs;
+	d->dbsnBad      = s_dgDbsnBad;
+	d->hw8Ok        = s_dg8HwOk;
+}
+
+/* diag6: знімок останнього PDU з «CRC пог» для екрана «Діагностика 4». */
+int dmrSmsBadSnapInfo(dmrSmsBadSnapInfo_t *i)
+{
+	i->n       = s_badN;
+	i->len     = s_badLen;
+	i->hwOk    = s_badHwOk;
+	i->seq     = s_badSeq;
+	i->crcWant = s_badWant;
+	i->crcGot  = s_badGot;
+	i->hdr     = s_badHdr;
+	return s_badN;
+}
+
+const uint8_t *dmrSmsBadSnapBlock(int idx, uint16_t *ms)
+{
+	if ((idx < 0) || (idx >= (int)s_badN) || (idx >= SMS_SNAP_MAX)) { return NULL; }
+	if (ms) { *ms = s_badMs[idx]; }
+	return s_badBlk[idx];
 }
 
 void dmrSmsDiagScreenReset(void)
@@ -816,6 +862,8 @@ void dmrSmsDiagScreenReset(void)
 	s_ackStgQ = s_ackStgK = s_ackStgS = s_ackStgB = 0;
 	s_dgPduOk = s_dgCrcFail = s_dgBlkNoHdr = s_dgBlkBusy = s_dgBlkOvf = s_dgBlkExtra = 0;
 	s_dgTickNotUs = s_dgTickBad = s_dgPickMaxMs = 0;
+	s_dgDbsnBad = s_dg8HwOk = 0;
+	s_badN = 0; s_badSeq = 0;
 	dmrDataTxDiagReset();
 }
 
@@ -1222,6 +1270,8 @@ void dmrSmsRxDiagBurst(int rxDataType, int crcOk)
 	s_diagData++;
 	s_lastRxBurstMs = ticksGetMillis();   /* канал зайнятий ЗАРАЗ -- гейт тиші для квитанції */
 	s_diagType[rxDataType & 0x0F]++;   /* гістограма типів -- бачити тип блоків навантаження */
+	s_lastHwOk = (uint8_t)(crcOk ? 1 : 0);   /* diag6: хук кличе нас прямо перед dmrSmsRxBurst() */
+	if ((rxDataType == DT_RATE34_DATA) && crcOk) { s_dg8HwOk++; }
 	if (rxDataType == DT_DATA_HEADER) { if (crcOk) s_diagHdrOk++; else s_diagHdrBad++; }
 	else if (rxDataType == DT_RATE12_DATA) { if (crcOk) s_diagBlkOk++; else s_diagBlkBad++; }
 }
@@ -1332,6 +1382,9 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxSrc = ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 8) | p[7];
 			uint8_t nblocks = (uint8_t)(p[8] & 0x7F);
 			s_rxHdrBlocks = nblocks;                                        /* diag5: для «CRC32 не зійшовся» */
+			for (int i = 0; i < 12; i++) { s_curHdr[i] = p[i]; }           /* diag6: сирий заголовок */
+			s_curHdrMs = ticksGetMillis();
+			s_curHwOk = 0;
 			s_rxExpBlocks = (uint8_t)((nblocks > 0) ? (nblocks - 1) : 0);  /* minus ENC header */
 			s_rxCount = 0;
 			s_rxLen = 0;
@@ -1382,6 +1435,18 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 		int blkLen = 12;
 		if (rxDataType == DT_RATE34_DATA) { src = p + 2; blkLen = 16; }
 		if ((int)s_rxLen + blkLen > (int)sizeof s_rxPdu) { s_dgBlkOvf++; return; }   /* захист від переповнення */
+		/* diag6: службові байти, час і HW-CRC блока -- для знімка, якщо PDU не складеться.
+		 * DBSN (старші 7 бітів першого службового байта) у CONFIRMED rate-3/4 -- порядковий
+		 * номер блока: 0,1,2... Збирач його НЕ перевіряє (кладе блоки в порядку прибуття),
+		 * тож тут лише рахуємо розбіжності -- повтор або перестановка блока їх покаже. */
+		if (s_rxCount < SMS_SNAP_MAX)
+		{
+			s_curSvc[s_rxCount][0] = p[0];
+			s_curSvc[s_rxCount][1] = p[1];
+			s_curMs[s_rxCount] = (uint16_t)SAFE_MIN(ticksGetMillis() - s_curHdrMs, 65535u);
+			if (s_lastHwOk) { s_curHwOk |= (uint8_t)(1u << s_rxCount); }
+		}
+		if ((rxDataType == DT_RATE34_DATA) && s_rxAckReq && ((p[0] >> 1) != (s_rxCount & 0x7F))) { s_dgDbsnBad++; }
 		memcpy(s_rxPdu + s_rxLen, src, blkLen);
 		s_rxLen = (uint16_t)(s_rxLen + blkLen);
 		s_rxCount++;
@@ -1398,11 +1463,42 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			int total = s_rxLen;
 			uint32_t want = ((uint32_t)s_rxPdu[total - 4] << 24) | ((uint32_t)s_rxPdu[total - 3] << 16) |
 					((uint32_t)s_rxPdu[total - 2] << 8) | (uint32_t)s_rxPdu[total - 1];
-			if (dmrSmsPduCrc32(s_rxPdu, total) != want)
+			uint32_t got = dmrSmsPduCrc32(s_rxPdu, total);
+			if (got != want)
 			{
 				/* Ще не повний PDU -- копимо далі. Але якщо блоків уже рівно стільки, скільки
 				 * в заголовку, -- PDU мав скластися: рахуємо як «CRC32 не зійшовся». */
-				if ((expData > 0) && ((int)s_rxCount == expData)) { s_dgCrcFail++; }
+				if ((expData > 0) && ((int)s_rxCount == expData))
+				{
+					s_dgCrcFail++;
+					/* diag6: знімок цього PDU (сирі блоки = службові + навантаження з s_rxPdu). */
+					int n = SAFE_MIN((int)s_rxCount, SMS_SNAP_MAX);
+					int raw34 = (rxDataType == DT_RATE34_DATA);
+					s_badN = 0;   /* поки копіюємо -- знімка «нема» (екран читає з головного циклу) */
+					for (int b = 0; b < n; b++)
+					{
+						uint8_t *d = s_badBlk[b];
+						if (raw34)
+						{
+							d[0] = s_curSvc[b][0];
+							d[1] = s_curSvc[b][1];
+							memcpy(d + 2, s_rxPdu + b * 16, 16);
+						}
+						else
+						{
+							memcpy(d, s_rxPdu + b * 12, 12);
+							memset(d + 12, 0, 6);
+						}
+						s_badMs[b] = s_curMs[b];
+					}
+					memcpy(s_badHdr, s_curHdr, 12);
+					s_badLen  = (uint8_t)(raw34 ? 18 : 12);
+					s_badHwOk = s_curHwOk;
+					s_badWant = want;
+					s_badGot  = got;
+					s_badSeq  = s_dgCrcFail;
+					s_badN    = (uint8_t)n;
+				}
 				return;
 			}
 			s_rxPduLen = (uint16_t)total;

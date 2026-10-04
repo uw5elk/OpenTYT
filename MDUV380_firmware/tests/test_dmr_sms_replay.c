@@ -103,8 +103,9 @@ static void mainLoopFor(uint32_t ms)
 	for (uint32_t t = 0; t < ms; t++) { s_now++; dmrSmsRxTick(); }
 }
 
-/* Одна спроба стокової: 14 CSBK-преамбул, заголовок, 4 блоки rate-3/4, TERM_LC. */
-static void attempt(void)
+/* Одна спроба стокової: 14 CSBK-преамбул, заголовок, 4 блоки rate-3/4, TERM_LC.
+ * blk -- які блоки слати (diag6: зіпсовані/переставлені), hwOk -- біт i: HW CRC блока i «валідний». */
+static void attemptEx(const uint8_t (*blk)[18], uint8_t hwOk)
 {
 	uint8_t csbk[12] = { 0xbd,0x00,0x80,0x00,0x26,0xea,0x0f,0x26,0xea,0x29,0,0 };
 	for (int i = 0; i < 14; i++)
@@ -118,14 +119,15 @@ static void attempt(void)
 	mainLoopFor(SLOT_MS);
 	for (int b = 0; b < 4; b++)
 	{
-		dmrSmsRxDiagBurst(8, 0);              /* rate-3/4: HW CRC «поганий» -- як у полі */
-		dmrSmsRxBurst(8, BLK[b]);
+		dmrSmsRxDiagBurst(8, (hwOk >> b) & 1); /* rate-3/4: HW CRC зазвичай «поганий» -- як у полі */
+		dmrSmsRxBurst(8, blk[b]);
 		mainLoopFor(SLOT_MS);
 	}
 	/* CRC-валідний TERM_LC: гілка термінатора в ISR -> dmrSmsRxReset() і вихід ДО SMS-хука. */
 	dmrSmsRxReset();
 	mainLoopFor(SLOT_MS);
 }
+static void attempt(void) { attemptEx(BLK, 0); }
 
 static int fails = 0;
 #define CHECK(c, ...) do { if (c) { printf("  ok   "); } else { printf("  FAIL "); fails++; } printf(__VA_ARGS__); printf("\n"); } while (0)
@@ -161,6 +163,9 @@ int main(void)
 		       g.pduOk, g.crcFail, g.blkNoHdr, g.blkBusy, g.blkOvf, g.blkExtra, g.tickNotUs, g.tickBad, g.pickMaxMs);
 		CHECK(g.pduOk == 3 && g.crcFail == 0 && g.blkNoHdr == 0 && g.blkBusy == 0 && g.blkOvf == 0 &&
 		      g.blkExtra == 0 && g.tickNotUs == 0 && g.tickBad == 0, "лічильники стор. 3: 3 PDU, втрат 0");
+		CHECK(g.dbsnBad == 0 && g.hw8Ok == 0, "стор. 4: DBSN по порядку (0 розбіжностей), HW-ok т8 = 0");
+		dmrSmsBadSnapInfo_t si;
+		CHECK(dmrSmsBadSnapInfo(&si) == 0, "стор. 4: чистий реплей -- знімка «CRC пог» нема");
 	}
 
 	/* diag5, етап 2 (228 мс): жодного запису у флеш, поки квитанція в черзі або в ефірі;
@@ -168,6 +173,56 @@ int main(void)
 	printf("       записів у флеш: усього %d, у вікні квитанції %d\n", s_flashWrites, s_flashInTxWindow);
 	CHECK(s_flashInTxWindow == 0, "у вікні «черга -> ключування -> передача» флеш не пишеться");
 	CHECK(s_flashWrites > 0, "вхідне SMS записано у флеш після передачі квитанції");
+
+	/* ===== diag6: знімок PDU з «CRC пог» ===== */
+	printf("       diag6: спроба з одним зіпсованим бітом у блоці 2 (HW-ok лише в блока 1)\n");
+	dmrSmsDiagScreenReset();
+	{
+		uint8_t bad[4][18];
+		memcpy(bad, BLK, sizeof bad);
+		bad[2][10] ^= 0x04;                          /* один біт навантаження */
+		attemptEx((const uint8_t (*)[18])bad, 0x02);
+		mainLoopFor(600);
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		dmrSmsBadSnapInfo_t si;
+		int n = dmrSmsBadSnapInfo(&si);
+		CHECK(g.crcFail == 1 && g.pduOk == 0, "CRC пог = 1, PDU ок = 0");
+		CHECK(n == 4 && si.len == 18 && si.seq == 1 && si.hwOk == 0x02, "знімок: 4 блоки по 18 Б, №1, маска HW 02");
+		CHECK(memcmp(si.hdr, HDR, 12) == 0, "знімок: сирий заголовок = 434c26ea0f26ea298408a851");
+		int same = 1;
+		for (int b = 0; b < 4; b++)
+		{
+			uint16_t ms = 0;
+			const uint8_t *k = dmrSmsBadSnapBlock(b, &ms);
+			if (!k || memcmp(k, bad[b], 18) != 0 || ms != (uint16_t)(SLOT_MS * (b + 1))) { same = 0; }
+		}
+		CHECK(same, "знімок: сирі блоки байт-у-байт (разом зі службовими), час 60/120/180/240 мс");
+		CHECK(si.crcWant == 0xecfc3cebu && si.crcGot != si.crcWant, "знімок: CRC32 очікуваний ecfc3ceb, фактичний інший (%08x)", (unsigned)si.crcGot);
+		CHECK(dmrSmsBadSnapBlock(4, NULL) == NULL, "блока 5 у знімку нема");
+		CHECK(g.dbsnBad == 0 && g.hw8Ok == 1, "DBSN по порядку, HW-ok т8 = 1");
+	}
+	printf("       diag6: спроба з переставленими блоками 1 і 2\n");
+	{
+		uint8_t sw[4][18];
+		memcpy(sw, BLK, sizeof sw);
+		memcpy(sw[1], BLK[2], 18); memcpy(sw[2], BLK[1], 18);
+		attemptEx((const uint8_t (*)[18])sw, 0);
+		mainLoopFor(600);
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		dmrSmsBadSnapInfo_t si;
+		dmrSmsBadSnapInfo(&si);
+		CHECK(g.crcFail == 2 && g.dbsnBad == 2 && si.seq == 2, "перестановка: CRC пог 2, DBSN пор 2, знімок оновився (№2)");
+		dmrSmsDiagScreenReset();
+		CHECK(dmrSmsBadSnapInfo(&si) == 0, "довге GREEN (скидання) прибирає знімок");
+	}
+	/* Після зіпсованих спроб чиста знову збирається з першого разу. */
+	{
+		int before = s_txLoads;
+		attempt();
+		mainLoopFor(600);
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.pduOk == 1 && s_txLoads == before + 1, "після зіпсованих -- чиста спроба: PDU і квитанція");
+	}
 
 	printf(fails ? "ПРОВАЛ (%d)\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

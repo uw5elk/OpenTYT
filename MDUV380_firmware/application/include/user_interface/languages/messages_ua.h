@@ -105,6 +105,17 @@
 #define MSGS_DG3_BLK2_FMT        "  переп %u зайві %u"
 #define MSGS_DG3_TICK_FMT        "Цикл: не нам %u зіпс %u"
 #define MSGS_DG3_PICK_FMT        "Забір макс: %u мс"
-#define MSGS_DG3_HINT            "UP:стор.2 дов.GRN:скид RED"
+#define MSGS_DG3_HINT            "U:стор.2 D:стор.4 дов:скид"
+
+/* diag6 (2026-10-04): «Діагностика» стор. 4 -- знімок останнього PDU з «CRC пог»: сирі блоки,
+ * мс від заголовка, '*' = HW CRC блока валідний; CRC32 очікуваний (о) / фактичний (ф);
+ * DBSN пор -- блоки rate-3/4 з DBSN не за порядком; HW т8 ок -- блоки т8 з валідним HW CRC. */
+#define MSGS_DIAG4               "Діагностика 4"
+#define MSGS_DG4_NONE            "Знімка ще нема"
+#define MSGS_DG4_SNAP_FMT        "Знімок #%u: бл %u HW %02x"
+#define MSGS_DG4_CRC_FMT         "CRC о %08lx ф %08lx"
+#define MSGS_DG4_CNT_FMT         "DBSN пор %u HW т8 ок %u"
+#define MSGS_DG4_HDR             "Заг "
+#define MSGS_DG4_HINT            "U/D:гортати дов.GRN:скид"
 
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */
