@@ -89,16 +89,15 @@
 #define MSGS_FOREIGN             " (not yours)"
 #define MSGS_TX_MODE_FMT         "TX: %s"
 #define MSGS_TX_MODE_UNCONF      "Unconfirmed"
+/* ui2: два режими -- «Unconfirmed» і «Confirmed» (CONFIRMED rate-3/4); rate-1/2 -- лише діагностика. */
+#define MSGS_TX_MODE_CONF        "Confirmed"
+#if defined(ENABLE_SMS_DIAG)
 #define MSGS_TX_MODE_R12         "Confirmed 1/2"
-#define MSGS_TX_MODE_R34         "Confirmed 3/4"
-/* Екран «Діагностика»: у будь-якій збірці -- одна сторінка (cleanup1). */
+/* Екран «Діагностика» -- лише з ENABLE_SMS_DIAG (ui2: пункту в звичайному меню немає). */
 #define MSGS_DIAG                "Diagnostics"
 #define MSGS_DG_ACK1_FMT         "Ack RX: seen %u q %u"
 #define MSGS_DG3_PDU_FMT         "PDU: ok %u CRC bad %u"
 #define MSGS_DG3_FIX1_FMT        "Fix: ok %u ambig %u"
-#define MSGS_DG_FIXNONE_FMT      "  none %u"
-#define MSGS_DG_HINT_MIN         "long GRN:reset RED:back"
-#if defined(ENABLE_SMS_DIAG)
 /* Екран «Діагностика» (2026-09-30): лічильники ланцюга квитанції. */
 #define MSGS_DG_ACK2_FMT         "  sent %u stale %u"
 #define MSGS_DG_ACK3_FMT         "  delay %u ms"
@@ -204,12 +203,17 @@ static void readEvent(uiEvent_t *ev);
 static void composeEvent(uiEvent_t *ev);
 static void recipientEvent(uiEvent_t *ev);
 static void pickContactEvent(uiEvent_t *ev);
+#if defined(ENABLE_SMS_DIAG)
 static void diagUpdate(void);
 static void diagEvent(uiEvent_t *ev);
 
 /* Вхідні / Надіслані / Нове / Монітор / TX режим / Діагностика */
 #define MSGS_HOME_ITEMS   6
 #define MSGS_DIAG_REFRESH_MS 500   /* екран діагностики оновлюється сам -- лічильники живі */
+#else
+/* Вхідні / Надіслані / Нове / Монітор / TX режим (ui2: «Діагностика» -- лише з ENABLE_SMS_DIAG) */
+#define MSGS_HOME_ITEMS   5
+#endif
 
 static void gotoHome(void)
 {
@@ -251,6 +255,7 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 		return exitCode;
 	}
 
+#if defined(ENABLE_SMS_DIAG)
 	if (s_msg.view == MSG_DIAG)
 	{
 		if (ev->hasEvent) { diagEvent(ev); }
@@ -261,6 +266,7 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 		}
 		return exitCode;
 	}
+#endif
 
 	if (ev->hasEvent)
 	{
@@ -299,16 +305,24 @@ static void homeUpdate(void)
 			// замовчуванням; докладніше -- у smsIsForUs() в dmr_sms.c.
 			case 3:  snprintf(buf, sizeof buf, MSGS_MONITOR_FMT,
 					settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? MSGS_MON_ON : MSGS_MON_OFF); break;
-			// Режим TX SMS: Без підтв. / Підтв. rate-1/2 / Підтв. rate-3/4 (Task #31).
+			// Режим TX SMS (ui2): «Без підтв.» / «З підтв.» (CONFIRMED rate-3/4); rate-1/2 --
+			// лише з ENABLE_SMS_DIAG.
 			case 4:
 			{
-				static const char * const modes[] = { MSGS_TX_MODE_UNCONF, MSGS_TX_MODE_R12, MSGS_TX_MODE_R34 };
 				int m = dmrSmsTxMode();
-				snprintf(buf, sizeof buf, MSGS_TX_MODE_FMT, (m >= 0 && m <= 2) ? modes[m] : modes[0]);
+				const char *name = (m == 0) ? MSGS_TX_MODE_UNCONF : MSGS_TX_MODE_CONF;
+#if defined(ENABLE_SMS_DIAG)
+				if (m == 1) { name = MSGS_TX_MODE_R12; }
+#endif
+				snprintf(buf, sizeof buf, MSGS_TX_MODE_FMT, name);
 				break;
 			}
+#if defined(ENABLE_SMS_DIAG)
 			// Лічильники ланцюга квитанції -- окремий екран (2026-09-30).
 			default: snprintf(buf, sizeof buf, MSGS_DIAG); break;
+#else
+			default: buf[0] = 0; break;
+#endif
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
@@ -392,10 +406,16 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 				homeUpdate();
 				break;
 			case 4:
-				/* Цикл режимів TX SMS: Без підтв. → Підтв.½ → Підтв.¾ → Без підтв. */
+#if defined(ENABLE_SMS_DIAG)
+				/* Цикл режимів TX SMS: Без підтв. → Підтв.½ → З підтв. → Без підтв. */
 				dmrSmsTxModeSet((uint8_t)((dmrSmsTxMode() + 1) % 3));
+#else
+				/* ui2: лише два режими -- «Без підтв.» (0) <-> «З підтв.» (2). */
+				dmrSmsTxModeSet((uint8_t)((dmrSmsTxMode() == 0) ? 2 : 0));
+#endif
 				homeUpdate();
 				break;
+#if defined(ENABLE_SMS_DIAG)
 			case 5:
 				s_msg.view = MSG_DIAG;
 #if defined(ENABLE_SMS_DIAG)
@@ -405,6 +425,7 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 #endif
 				diagUpdate();
 				break;
+#endif /* ENABLE_SMS_DIAG */
 		}
 		return;
 	}
@@ -607,33 +628,6 @@ static void diagToggle(int sel)
 		default: dmrSmsDiagAckPauseToggle();    break;   /* цільова пауза квитанції 80/50/20 мс */
 	}
 }
-#else
-/* cleanup1 (2026-10-05): звичайна збірка -- одна сторінка з мінімумом для польових скарг:
- * чи бачили CONFIRMED і чи квитували, скільки PDU зібрано / з поганим CRC32, скільки виправила
- * корекція трибітів (fix7). Довге GREEN -- скинути, RED -- назад. Усе інше -- ENABLE_SMS_DIAG. */
-static void diagUpdate(void)
-{
-	dmrSmsDiagScreen_t d;
-	char buf[40];
-	int y = 16;
-	dmrSmsDiagScreenGet(&d);
-
-	displayClearBuf();
-	menuDisplayTitle(MSGS_DIAG);
-	snprintf(buf, sizeof buf, MSGS_DG_ACK1_FMT, (unsigned)d.ackSeen, (unsigned)d.ackQueued);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 12;
-	snprintf(buf, sizeof buf, MSGS_DG3_PDU_FMT, (unsigned)d.pduOk, (unsigned)d.crcFail);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 12;
-	snprintf(buf, sizeof buf, MSGS_DG3_FIX1_FMT, (unsigned)d.fixOk, (unsigned)d.fixAmb);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
-	snprintf(buf, sizeof buf, MSGS_DG_FIXNONE_FMT, (unsigned)d.fixNone);
-	displayPrintAt(2, y, buf, FONT_SIZE_1);
-	displayPrintCentered(112, MSGS_DG_HINT_MIN, FONT_SIZE_1);
-	displayRender();
-
-	ticksTimerStart(&s_msg.resultTimer, MSGS_DIAG_REFRESH_MS);
-}
-#endif /* ENABLE_SMS_DIAG */
 
 static void diagEvent(uiEvent_t *ev)
 {
@@ -644,7 +638,6 @@ static void diagEvent(uiEvent_t *ev)
 		diagUpdate();
 		return;
 	}
-#if defined(ENABLE_SMS_DIAG)
 	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
 		if (s_msg.diagPage == 0)                     { s_msg.diagPage = 1; s_msg.diagSel = 0; }
@@ -684,7 +677,6 @@ static void diagEvent(uiEvent_t *ev)
 		diagUpdate();
 		return;
 	}
-#endif
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
 		gotoHome();
@@ -692,6 +684,8 @@ static void diagEvent(uiEvent_t *ev)
 		homeUpdate();
 	}
 }
+
+#endif /* ENABLE_SMS_DIAG: екран «Діагностика» */
 
 /* ============================ LIST ===================================== */
 static void listUpdate(void)

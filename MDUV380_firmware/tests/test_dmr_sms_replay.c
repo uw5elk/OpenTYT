@@ -44,7 +44,13 @@ const int16_t MELODY_SMS_RECEIVED_BEEP[1] = { 0 };
 
 bool settingsIsOptionBitSet(bitfieldOptions_t bit) { (void)bit; return false; }
 uint8_t codeplugChannelGetFlag(CodeplugChannel_t *c, ChannelFlag_t f) { (void)c; (void)f; return 0; }
-bool codeplugGetOpenGD77CustomDataBounded(CodeplugCustomDataType_t t, uint8_t *b, int m) { (void)t; (void)b; (void)m; return false; }
+/* ui2: блок режиму TX SMS (1 байт) моделюємо окремо; -1 -- блоку ще немає (нова установка). */
+static int s_txModeStored = -1;
+bool codeplugGetOpenGD77CustomDataBounded(CodeplugCustomDataType_t t, uint8_t *b, int m)
+{
+	if ((t == CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE) && (s_txModeStored >= 0) && (m >= 1)) { b[0] = (uint8_t)s_txModeStored; return true; }
+	return false;
+}
 /* Запис у флеш на рації блокує головний цикл на сотні мс. Рахуємо, скільки записів припало
  * на вікно «квитанція в черзі -> ключування/передача» (diag5: саме вони давали етап 2 = 228 мс). */
 static int      s_txLoads;
@@ -53,7 +59,8 @@ static uint32_t s_txLoadMs;
 static int s_flashWrites, s_flashInTxWindow;
 bool codeplugSetOpenGD77CustomData(CodeplugCustomDataType_t t, uint8_t *b, int l)
 {
-	(void)t; (void)b; (void)l;
+	(void)l;
+	if (t == CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE) { s_txModeStored = b[0]; return true; }
 	s_flashWrites++;
 	if ((s_txLoads > 0) && ((s_now - s_txLoadMs) < TX_BUSY_MS)) { s_flashInTxWindow++; }
 	return true;
@@ -78,8 +85,17 @@ void dmrDataTxDiagReset(void) { }
 uint32_t dmrDataTxLastKeyMs(void) { return 0; }
 uint32_t dmrDataTxLastSlotStartMs(void) { return 0; }
 uint32_t dmrDataTxLastStartMs(void) { return ((s_txLoads > 0) && ((s_now - s_txLoadMs) >= 20)) ? (s_txLoadMs + 20) : 0; }
-void dmrDataTxLoad(const uint8_t *b, uint8_t n) { (void)b; (void)n; }
-void dmrDataTxLoadFast(const uint8_t *b, uint8_t n) { (void)b; (void)n; }
+/* ui2: наше SMS -- яку чергу побудовано (перший data-заголовок) і чи швидкий кінець. */
+static uint8_t s_sendHdr0;
+static int     s_sendFast = -1;
+static void noteSend(const uint8_t *b, uint8_t n, int fast)
+{
+	s_sendFast = fast;
+	s_sendHdr0 = 0;
+	for (int i = 0; i < n; i++) { if (b[i * BURST_STRIDE] == DTB_DATA_HEADER) { s_sendHdr0 = b[i * BURST_STRIDE + 1]; break; } }
+}
+void dmrDataTxLoad(const uint8_t *b, uint8_t n) { noteSend(b, n, 0); }
+void dmrDataTxLoadFast(const uint8_t *b, uint8_t n) { noteSend(b, n, 1); }
 int  dmrDataTxLoadDelayedEx(const uint8_t *b, uint8_t n, uint16_t d, int f)
 {
 	(void)d; (void)f;
@@ -146,9 +162,8 @@ int main(void)
 	{
 		attempt();
 		mainLoopFor(600);                          /* пауза після спроби -- час на квитанцію */
-		dmrSmsDiagScreen_t s; dmrSmsDiagScreenGet(&s);
-		printf("       спроба %d: PDU зібрано %u, квитанцій у черзі %u, віддано в dmr_data %d\n",
-		       k, (unsigned)s.pduOk, (unsigned)s.ackQueued, s_txLoads);
+		printf("       спроба %d: у «Вхідних» %d, квитанцій віддано в dmr_data %d\n",
+		       k, dmrSmsCount(0), s_txLoads);
 		if ((ackAfter == 0) && (s_txLoads > 0)) { ackAfter = k; }
 		mainLoopFor(5000);                         /* ~5,6 с між спробами */
 	}
@@ -161,9 +176,10 @@ int main(void)
 
 	/* Лічильники сторінки 3 «Діагностики» на чистому реплеї: 3 PDU, жодних втрат. */
 	{
-		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
-		CHECK(g.pduOk == 3 && g.crcFail == 0 && g.ackSeen == 3 && g.ackQueued == 3, "спрощена «Діагностика»: PDU ок 3, CRC пог 0, бач 3, черг 3");
+		CHECK(dmrSmsCount(0) == 1 && s_txLoads == 3, "3 спроби: квитанція на кожну, у «Вхідних» одне (дедуп)");
 #if defined(ENABLE_SMS_DIAG)
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.pduOk == 3 && g.crcFail == 0 && g.ackSeen == 3 && g.ackQueued == 3, "PDU ок 3, CRC пог 0, бач 3, черг 3");
 		printf("       стор.3: PDU %u, CRC %u, безЗаг %u, зайнято %u, переп %u, зайві %u, не_нам %u, зіпс %u, забір %u мс\n",
 		       g.pduOk, g.crcFail, g.blkNoHdr, g.blkBusy, g.blkOvf, g.blkExtra, g.tickNotUs, g.tickBad, g.pickMaxMs);
 		CHECK(g.pduOk == 3 && g.crcFail == 0 && g.blkNoHdr == 0 && g.blkBusy == 0 && g.blkOvf == 0 &&
@@ -182,7 +198,9 @@ int main(void)
 
 	/* ===== fix7: корекція трибітів; diag6: знімок лише невиправлених ===== */
 	printf("       fix7: спроба з одним зіпсованим трибітом у блоці 2 -> має виправитись\n");
+#if defined(ENABLE_SMS_DIAG)
 	dmrSmsDiagScreenReset();
+#endif
 	{
 		uint8_t bad[4][18];
 		memcpy(bad, BLK, sizeof bad);
@@ -190,11 +208,11 @@ int main(void)
 		int before = s_txLoads;
 		attemptEx((const uint8_t (*)[18])bad, 0x02);
 		mainLoopFor(600);
+		CHECK(s_txLoads == before + 1, "виправлений PDU квитовано (квитанція в ефір)");
+#if defined(ENABLE_SMS_DIAG)
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
 		printf("       CRC пог %u, корекц ок %u неод %u нема %u\n", g.crcFail, g.fixOk, g.fixAmb, g.fixNone);
 		CHECK(g.crcFail == 1 && g.fixOk == 1 && g.fixAmb == 0 && g.fixNone == 0, "CRC пог 1 -> «Корекц ок» 1");
-		CHECK(s_txLoads == before + 1, "виправлений PDU квитовано (квитанція в ефір)");
-#if defined(ENABLE_SMS_DIAG)
 		dmrSmsBadSnapInfo_t si;
 		CHECK(dmrSmsBadSnapInfo(&si) == 0, "виправлений PDU у знімок «Діагностики 4» НЕ потрапляє");
 		CHECK(g.hw8Ok == 1, "HW-ok т8 = 1");
@@ -209,9 +227,10 @@ int main(void)
 		int before = s_txLoads;
 		attemptEx((const uint8_t (*)[18])bad, 0x02);
 		mainLoopFor(600);
-		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
-		CHECK(g.crcFail == 2 && g.fixOk == 1 && g.fixNone == 1 && s_txLoads == before, "CRC пог 2, «нема» 1, квитанції немає");
+		CHECK(s_txLoads == before, "дві помилки поза заголовком: не виправлено, квитанції немає");
 #if defined(ENABLE_SMS_DIAG)
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.crcFail == 2 && g.fixOk == 1 && g.fixNone == 1, "CRC пог 2, «нема» 1");
 		dmrSmsBadSnapInfo_t si;
 		int n = dmrSmsBadSnapInfo(&si);
 		CHECK(n == 4 && si.len == 18 && si.seq == 2 && si.hwOk == 0x02, "знімок: 4 блоки по 18 Б, №2, маска HW 02");
@@ -234,20 +253,18 @@ int main(void)
 		uint8_t sw[4][18];
 		memcpy(sw, BLK, sizeof sw);
 		memcpy(sw[1], BLK[2], 18); memcpy(sw[2], BLK[1], 18);
+		int before = s_txLoads;
 		attemptEx((const uint8_t (*)[18])sw, 0);
 		mainLoopFor(600);
-		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
-		CHECK(g.crcFail == 3 && g.fixNone == 2, "перестановка: CRC пог 3, не «виправлено» (нема 2)");
+		CHECK(s_txLoads == before, "перестановка блоків: не «виправлено», квитанції немає");
 #if defined(ENABLE_SMS_DIAG)
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.crcFail == 3 && g.fixNone == 2, "перестановка: CRC пог 3, нема 2");
 		dmrSmsBadSnapInfo_t si;
 		dmrSmsBadSnapInfo(&si);
 		CHECK(g.dbsnBad == 2 && si.seq == 3, "перестановка: DBSN пор 2, знімок №3");
 		dmrSmsDiagScreenReset();
 		CHECK(dmrSmsBadSnapInfo(&si) == 0, "довге GREEN (скидання) прибирає знімок");
-#else
-		dmrSmsDiagScreenReset();
-		dmrSmsDiagScreenGet(&g);
-		CHECK(g.crcFail == 0 && g.fixNone == 0 && g.pduOk == 0, "довге GREEN (скидання) обнуляє спрощену «Діагностику»");
 #endif
 	}
 	/* fix7: знімок #12 з рації (2026-10-05) наскрізь через справжній збирач: дві помилки в
@@ -258,7 +275,9 @@ int main(void)
 		                                    "042f85040d000a006d0075d06d0031006100", "07366d006a000000000000000000292ac790" };
 		uint8_t b12[4][18];
 		for (int b = 0; b < 4; b++) { for (int i = 0; i < 18; i++) { unsigned v; sscanf(R12[b] + 2 * i, "%2x", &v); b12[b][i] = (uint8_t)v; } }
+#if defined(ENABLE_SMS_DIAG)
 		dmrSmsDiagScreenReset();
+#endif
 		int before = s_txLoads;
 		for (int i = 0; i < 14; i++) { dmrSmsRxDiagBurst(3, 1); mainLoopFor(SLOT_MS); }
 		dmrSmsRxDiagBurst(6, 1);
@@ -267,10 +286,13 @@ int main(void)
 		for (int b = 0; b < 4; b++) { dmrSmsRxDiagBurst(8, 0); dmrSmsRxBurst(8, b12[b]); mainLoopFor(SLOT_MS); }
 		dmrSmsRxReset();
 		mainLoopFor(600);
-		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
 		uint8_t exp[12]; dmrSmsPduAckHeader(0x26EA29, 0x26EA0F, 4, exp);
-		CHECK(g.crcFail == 1 && g.fixOk == 1 && s_txLoads == before + 1 && memcmp(s_txQ + 1, exp, 12) == 0,
-		      "знімок #12 наскрізь: «Корекц ок» 1, квитанція 01 40 26ea29 26ea0f 00 0c (N(S)=4)");
+		CHECK(s_txLoads == before + 1 && memcmp(s_txQ + 1, exp, 12) == 0,
+		      "знімок #12 наскрізь: виправлено, квитанція 01 40 26ea29 26ea0f 00 0c (N(S)=4)");
+#if defined(ENABLE_SMS_DIAG)
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.crcFail == 1 && g.fixOk == 1, "знімок #12: CRC пог 1, «Корекц ок» 1");
+#endif
 	}
 
 	/* Після зіпсованих спроб чиста знову збирається з першого разу. */
@@ -278,8 +300,94 @@ int main(void)
 		int before = s_txLoads;
 		attempt();
 		mainLoopFor(600);
+		CHECK(s_txLoads == before + 1, "після зіпсованих -- чиста спроба: квитанція");
+#if defined(ENABLE_SMS_DIAG)
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
-		CHECK(g.pduOk == 1 && s_txLoads == before + 1, "після зіпсованих -- чиста спроба: PDU і квитанція");
+		CHECK(g.pduOk == 1, "після зіпсованих -- чиста спроба: PDU ок 1");
+#endif
+	}
+
+	/* ===== ui2: лічильник непрочитаних з урахуванням відкладеного запису ===== */
+	printf("       ui2: 10 різних SMS стокова -> форк, жодне не відкрите\n");
+	{
+		dmrSmsMarkAllRead();
+		mainLoopFor(600);
+		int unreadAtArrival = -1, writesBefore = 0, writesAtArrival = 0;
+		for (int k = 1; k <= 10; k++)
+		{
+			char text[16];
+			int tl = snprintf(text, sizeof text, "SMS %d", k);
+			uint8_t pdu[128];
+			int pl = dmrSmsPduBuildPlaintext(text, tl, 0x26EA29, 0x26EA0F, (uint8_t)(0x90 | k), (uint16_t)(0x1000 + k), pdu);
+			int len = ((pl + 4 + 15) / 16) * 16;
+			memset(pdu + pl, 0, (size_t)(len - pl));
+			uint32_t c = dmrSmsPduCrc32(pdu, len);
+			pdu[len - 4] = (uint8_t)(c >> 24); pdu[len - 3] = (uint8_t)(c >> 16); pdu[len - 2] = (uint8_t)(c >> 8); pdu[len - 1] = (uint8_t)c;
+			int nb = len / 16;
+			uint8_t h[12] = { 0x43, 0x40, 0x26, 0xea, 0x0f, 0x26, 0xea, 0x29, (uint8_t)(0x80 | nb), (uint8_t)(0x08 | ((k & 7) << 4)), 0, 0 };
+			for (int i = 0; i < 14; i++) { dmrSmsRxDiagBurst(3, 1); mainLoopFor(SLOT_MS); }
+			dmrSmsRxDiagBurst(6, 1);
+			if (dmrSmsRxHdrAccept(1, h)) { dmrSmsRxBurst(6, h); }
+			mainLoopFor(SLOT_MS);
+			writesBefore = s_flashWrites;
+			for (int b = 0; b < nb; b++)
+			{
+				uint8_t raw[18] = { (uint8_t)(b << 1), 0 };
+				memcpy(raw + 2, pdu + 16 * b, 16);
+				dmrSmsRxDiagBurst(8, 0);
+				dmrSmsRxBurst(8, raw);
+				mainLoopFor((b == nb - 1) ? 5 : SLOT_MS);
+			}
+			if (k == 10)
+			{
+				/* саме тут банер «ще N непрочит.» малюється: повідомлення ще НЕ у флеші */
+				unreadAtArrival = dmrSmsUnreadCount();
+				writesAtArrival = s_flashWrites;
+			}
+			dmrSmsRxReset();
+			mainLoopFor(600);
+		}
+		int more = unreadAtArrival - 1;   /* як у displaySmsFullScreen() (uiNotification.c) */
+		printf("       на 10-му: непрочит. %d (банер «ще %d»), записів у флеш до/під час банера %d/%d\n",
+		       unreadAtArrival, more, writesBefore, writesAtArrival);
+		CHECK(writesAtArrival == writesBefore, "10-те ще у відкладеному записі (s_pendInbox), коли малюється банер");
+		CHECK(more == 9, "банер на 10-му: «ще 9» (було «ще 8»)");
+		CHECK(dmrSmsUnreadCount() == 10 && s_flashWrites > writesAtArrival, "після запису у флеш -- те саме число: 10 (значок головного екрана)");
+		CHECK(s_flashInTxWindow == 0, "запис у флеш і далі поза вікном квитанції");
+		dmrSmsMarkAllRead();
+		CHECK(dmrSmsUnreadCount() == 0, "«Позначити все прочитаним» -> 0");
+	}
+
+	/* ===== ui2: режим TX SMS -- лише «Без підтв.» (0) і «З підтв.» (2) ===== */
+	printf("       ui2: режим TX SMS\n");
+	{
+		s_txModeStored = -1;
+		CHECK(dmrSmsTxMode() == 2, "нова установка (блоку немає) -> «З підтв.» (2)");
+		dmrSmsTxModeSet(0);
+		CHECK(dmrSmsTxMode() == 0 && s_txModeStored == 0, "перемикання -> «Без підтв.» (0), збережено");
+		s_txModeStored = 1;   /* збережене старою прошивкою «Підтв. 1/2» */
+#if defined(ENABLE_SMS_DIAG)
+		CHECK(dmrSmsTxMode() == 1, "з ENABLE_SMS_DIAG збережене 1 лишається rate-1/2 (експеримент)");
+#else
+		CHECK(dmrSmsTxMode() == 2, "збережене 1 (старий «Підтв. 1/2») читається як «З підтв.» (2)");
+		dmrSmsTxModeSet(1);
+		CHECK(s_txModeStored == 2, "запис 1 у звичайній збірці -> 2");
+#endif
+		s_txModeStored = 7;
+		CHECK(dmrSmsTxMode() == 2, "невідоме значення -> «З підтв.»");
+
+		/* Наше SMS: «З підтв.» приватне -> CONFIRMED (DPF=3, A), швидкий кінець; групове -> Unconfirmed. */
+		s_txModeStored = 2;
+		mainLoopFor(600);
+		int r = dmrSmsSend("Test", 0x26EA29, 0, 0);
+		CHECK((r == 0) && ((s_sendHdr0 & 0x4F) == 0x43) && (s_sendFast == 1), "«З підтв.» приватне: CONFIRMED (hdr 0x43), без термінатора");
+		mainLoopFor(600);
+		r = dmrSmsSend("Test", 9, 1, 0);
+		CHECK((r == 0) && ((s_sendHdr0 & 0x0F) == 0x02) && (s_sendHdr0 & 0x80) && (s_sendFast == 0), "«З підтв.» групове: Unconfirmed (DPF=2, G=1), як завжди");
+		s_txModeStored = 0;
+		mainLoopFor(600);
+		r = dmrSmsSend("Test", 0x26EA29, 0, 0);
+		CHECK((r == 0) && ((s_sendHdr0 & 0x0F) == 0x02) && (s_sendFast == 0), "«Без підтв.» приватне: Unconfirmed (шлях 438ec23)");
 	}
 
 	printf(fails ? "ПРОВАЛ (%d)\n" : "ПРОЙДЕНО\n", fails);
