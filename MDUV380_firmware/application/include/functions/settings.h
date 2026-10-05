@@ -193,6 +193,11 @@ typedef enum
 #endif
 	BIT_CHANNELS_ARE_READ_ONLY      = (SETTINGS_BITS_BANK_0 | (1 << 27)),
 	BIT_UI_USES_DOUBLE_HEIGHT       = (SETTINGS_BITS_BANK_0 | (1 << 28)),
+	// ui6 (2026-10-05, форк): «Шрифт SMS» на екрані читання повідомлень. 0 (типово, і в усіх
+	// наявних налаштуваннях -- біт досі ніким не використовувався) = ВЕЛИКИЙ (font_8x16),
+	// 1 = малий (font_8x8, як до ui6). Останній вільний біт банку 0; ні нових банків, ні зміни
+	// розкладки nonVolatileSettings. Читається лише під ENABLE_AES + ENABLE_DMR_DATA.
+	BIT_SMS_FONT_SMALL              = (SETTINGS_BITS_BANK_0 | (1 << 29)),
 
 	// Last usable bit is 29
 	//BIT_xxxxxxx_xxxxxxxxxxxx      = (SETTINGS_BITS_BANK_1 | (1 << 0)),

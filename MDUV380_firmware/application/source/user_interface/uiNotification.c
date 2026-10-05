@@ -140,10 +140,16 @@ static uiNotificationData_t notificationData =
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 #include "functions/dmr_sms.h"        /* dmrSmsUnreadCount(): скільки ще непрочитаних */
+#include "functions/sms_format.h"     /* ui6: smsPluralForm, SMS_TIME_* */
+#include "user_interface/uiSms.h"     /* ui6: позивний/ім'я, місцевий час, перенесення за словами */
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "user_interface/languages/messages_ua.h"
 #else
-#define MSGS_MORE_UNREAD_FMT     "+%d unread"
+#define MSGS_FROM                "From"
+/* ui6: загальна кількість непрочитаних (разом із показаним); англійською форма одна. */
+#define MSGS_UNREAD1_FMT         "%d unread"
+#define MSGS_UNREAD2_FMT         "%d unread"
+#define MSGS_UNREAD5_FMT         "%d unread"
 #endif
 /* Банер Call Alert (форк, 2026-09-26) -- заголовок і підказка закриття; сам текст
  * абонента (ім'я/ID) приходить готовим у notificationData.message, як SMS/MESSAGE. */
@@ -663,6 +669,92 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 	}
 }
 
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+/* Форк: вхідне SMS на ВЕСЬ екран, тримається до RED.
+ * ui6 (2026-10-05): угорі -- відправник («Від ...», як на екрані читання; для перехопленого
+ * монітором -- «ВІД -> КОМУ») і праворуч час прийому; нижче -- текст шрифтом 8x16 з перенесенням
+ * за словами (uiSmsDrawWrapped/smsWrapLine -- та сама функція, що на екрані читання); унизу --
+ * ЗАГАЛЬНА кількість непрочитаних разом із показаним («4 непрочитаних»), якщо їх більше одного.
+ * Текст і відправник беруться зі сховища (dmrSmsNewestInbox: відкладене або найновіше вхідне),
+ * а не з notificationData.message: той буфер лише 68 Б, тобто довше SMS обрізалось би ще до
+ * екрана. message лишається запасним варіантом, коли вхідних немає. */
+static void displaySmsFullScreen(void)
+{
+	const int16_t lineH = FONT_SIZE_3_HEIGHT;      /* 16: font_8x16, 8 px завширшки */
+	const int16_t cntH  = FONT_SIZE_2_HEIGHT;      /* 8: рядок лічильника */
+	const int16_t textY = 14;                      /* під рядком відправника і рискою */
+	const int cols = (DISPLAY_SIZE_X - 6) / 8;     /* 19: x = 3, рамка по краях */
+	uint32_t t = 0;
+	const dmrSmsMessage_t *m = dmrSmsNewestInbox(&t);
+	int unread = dmrSmsUnreadCount();
+
+	int16_t reserved = (int16_t)((unread > 1) ? (cntH + 2) : 0);
+	int16_t maxLines = (int16_t)((DISPLAY_SIZE_Y - textY - 2 - reserved) / lineH);
+	if (maxLines < 1) { maxLines = 1; }
+
+	/* Фон на весь екран + рамка (полярність isInverted -- як і раніше, див. displayFillRect/DrawRect). */
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+	displayDrawRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+
+	if (m == NULL)
+	{
+		displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+		uiSmsDrawWrapped(notificationData.message, (int)strlen(notificationData.message), cols, 0, maxLines + 1,
+				3, 2, lineH, FONT_SIZE_3, 1);
+		return;
+	}
+
+	/* Рядок відправника (FONT_SIZE_1, 6 px): час праворуч, відправник -- скільки влізе ліворуч. */
+	{
+		char tm[12];
+		char who[20], whom[20];
+		char hdr[44];
+		int tl = uiSmsTimeStr(t, SMS_TIME_HM, tm, sizeof tm);
+		int maxChars = (DISPLAY_SIZE_X - 6 - (tl ? (tl * 6 + 6) : 0)) / 6;
+
+		uiSmsWhoStr(m->peerId, 0, who, sizeof who);
+		if (m->flags & DMR_SMS_FLAG_FOREIGN)
+		{
+			uiSmsWhoStr(dmrSmsLastRxDst(), (m->flags & DMR_SMS_FLAG_GROUP) ? 1 : 0, whom, sizeof whom);
+			snprintf(hdr, sizeof hdr, "%s -> %s", who, whom);
+		}
+		else
+		{
+			snprintf(hdr, sizeof hdr, "%s %s", MSGS_FROM, who);
+		}
+		if (maxChars < 0) { maxChars = 0; }
+		if (maxChars < (int)sizeof hdr) { hdr[maxChars] = 0; }   /* обрізати, щоб влізло в рядок */
+
+		displayThemeApply((m->flags & DMR_SMS_FLAG_FOREIGN) ? THEME_ITEM_FG_WARNING_NOTIFICATION : THEME_ITEM_FG_NOTIFICATION,
+				THEME_ITEM_BG_NOTIFICATION);
+		displayPrintCore(3, 3, hdr, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+		if (tl > 0)
+		{
+			displayPrintCore((int16_t)(DISPLAY_SIZE_X - 3 - tl * 6), 3, tm, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		}
+		displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+		displayDrawFastHLine(3, 12, DISPLAY_SIZE_X - 6, true);   /* true -- видима риска (полярність як у DrawRect) */
+	}
+
+	/* Текст: перенесення за словами; не влізло -- «...» в кінці останнього рядка. */
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	uiSmsDrawWrapped(m->text, m->textLen, cols, 0, maxLines, 3, textY, lineH, FONT_SIZE_3, 1);
+
+	/* Загальна кількість непрочитаних, разом із показаним (ui6; до ui6 -- «ще N» без нього). */
+	if (unread > 1)
+	{
+		char cnt[24];
+		int f = smsPluralForm(unread);
+		snprintf(cnt, sizeof cnt, (f == 0) ? MSGS_UNREAD1_FMT : ((f == 1) ? MSGS_UNREAD2_FMT : MSGS_UNREAD5_FMT), unread);
+		displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+		displayPrintCentered((int16_t)(DISPLAY_SIZE_Y - cntH - 2), cnt, FONT_SIZE_2);
+		displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	}
+}
+#else
 /* Форк: вхідне SMS на ВЕСЬ екран, з переносом по словах, тримається до RED.
  * Чому не звичайний банер: той малює 3-4 рядки по 14 символів у рамці й гасне за 4 с --
  * для повідомлення до 144 символів цього замало, а якщо рація лежала в розвантажці, воно
@@ -755,6 +847,7 @@ static void displaySmsFullScreen(void)
 	}
 #endif
 }
+#endif /* ENABLE_AES && ENABLE_DMR_DATA */
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 /* Форк (2026-09-26): вхідний Call Alert (RCTL, claude/call-alert-reverse.md) -- на весь

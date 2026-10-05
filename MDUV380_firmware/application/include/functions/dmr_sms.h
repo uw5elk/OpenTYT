@@ -62,6 +62,14 @@ int  dmrSmsCount(int outgoing);
 const dmrSmsMessage_t *dmrSmsGet(int outgoing, int idx);
 /* Total unread (Inbox) messages — for the idle-screen indicator. */
 int  dmrSmsUnreadCount(void);
+/* ui6: час запису (секунди UTC; 0 = невідомо / годинник не був виставлений). Читається прямо
+ * зі сховища (запис v3), у dmrSmsMessage_t поля немає -- RAM не росте. */
+uint32_t dmrSmsGetTime(int outgoing, int idx);
+/* ui6: найновіше вхідне для банера (відкладене, ще не у флеші, або перше у «Вхідних») і його час.
+ * Повертає той самий буфер, що й dmrSmsGet(); NULL -- вхідних немає. */
+const dmrSmsMessage_t *dmrSmsNewestInbox(uint32_t *timeOut);
+/* ui6: адресат (DMR ID або TG) останнього прийнятого SMS -- банер «ВІД -> КОМУ» для монітора. */
+uint32_t dmrSmsLastRxDst(void);
 
 /* ---- store mutate (UI) ------------------------------------------------- */
 void dmrSmsMarkRead(int outgoing, int idx);
