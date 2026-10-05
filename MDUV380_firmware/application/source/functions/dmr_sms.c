@@ -14,6 +14,7 @@
 
 #include "functions/dmr_data.h"
 #include "functions/dmr_sms_pdu.h"   /* чисті CRC/PDU-білдери (спільні з хост-тестами) */
+#include "functions/dmr_sms_fix.h"   /* fix7: корекція трибітів rate-3/4 (чиста, спільна з хост-тестами) */
 #include "functions/trx.h"
 #include "functions/ticks.h"
 #include "functions/codeplug.h"
@@ -756,6 +757,47 @@ static uint32_t          s_badWant, s_badGot        DMR_AES_CCM;
 static uint16_t          s_badSeq                   DMR_AES_CCM;  /* яке це «CRC пог» від скидання */
 static volatile uint16_t s_dgDbsnBad                DMR_AES_CCM;  /* rate-3/4 CONFIRMED: DBSN != порядковий номер */
 static volatile uint16_t s_dg8HwOk                  DMR_AES_CCM;  /* блоків т8, які HW позначив CRC-валідними */
+/* fix7 (2026-10-05): програмна корекція 1-2 сусідніх трибітів у rate-3/4 PDU (dmr_sms_fix.c).
+ * ISR віддає головному циклу PDU, зібраний рівно під заголовок, але з невалідним CRC32
+ * (s_rxPeerFix = 1); головний цикл пробує виправити. Лічильники -- стор. 3 «Діагностики». */
+static volatile uint8_t  s_rxPeerFix                DMR_AES_CCM;  /* 1 = готовий PDU з невалідним CRC32 -- на корекцію */
+static volatile uint16_t s_dgFixOk                  DMR_AES_CCM;  /* виправлено (рівно один кандидат) */
+static volatile uint16_t s_dgFixAmb                 DMR_AES_CCM;  /* кілька кандидатів -- відкинуто */
+static volatile uint16_t s_dgFixNone                DMR_AES_CCM;  /* жодного -- відкинуто (знімок на стор. 4) */
+static volatile uint16_t s_dgFixLastMs              DMR_AES_CCM;  /* час останньої корекції, мс */
+static volatile uint16_t s_dgFixMaxMs               DMR_AES_CCM;  /* найдовша корекція, мс */
+
+/* diag6/fix7: записати знімок невиправленого PDU для «Діагностики 4». Кличуть ISR (rate-1/2)
+ * і головний цикл (rate-3/4 після невдалої корекції). pdu -- навантаження блоків підряд. */
+static void smsSnapStore(const uint8_t *pdu, int n, int raw34, const uint8_t svc[][2], const uint16_t *ms,
+                         uint8_t hwOk, const uint8_t *hdr, uint32_t want, uint32_t got, uint16_t seq)
+{
+	if (n > SMS_SNAP_MAX) { n = SMS_SNAP_MAX; }
+	s_badN = 0;   /* поки копіюємо -- знімка «нема» (екран читає з головного циклу) */
+	for (int b = 0; b < n; b++)
+	{
+		uint8_t *d = s_badBlk[b];
+		if (raw34)
+		{
+			d[0] = svc[b][0];
+			d[1] = svc[b][1];
+			memcpy(d + 2, pdu + b * 16, 16);
+		}
+		else
+		{
+			memcpy(d, pdu + b * 12, 12);
+			memset(d + 12, 0, 6);
+		}
+		s_badMs[b] = ms[b];
+	}
+	memcpy(s_badHdr, hdr, 12);
+	s_badLen  = (uint8_t)(raw34 ? 18 : 12);
+	s_badHwOk = hwOk;
+	s_badWant = want;
+	s_badGot  = got;
+	s_badSeq  = seq;
+	s_badN    = (uint8_t)n;
+}
 
 int  dmrSmsRxBypass(void)              { return s_dgRxBypass; }
 void dmrSmsDiagRxBypassToggle(void)    { s_dgRxBypass = s_dgRxBypass ? 0 : 1; }
@@ -828,6 +870,11 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 	d->pickMaxMs    = s_dgPickMaxMs;
 	d->dbsnBad      = s_dgDbsnBad;
 	d->hw8Ok        = s_dg8HwOk;
+	d->fixOk        = s_dgFixOk;
+	d->fixAmb       = s_dgFixAmb;
+	d->fixNone      = s_dgFixNone;
+	d->fixLastMs    = s_dgFixLastMs;
+	d->fixMaxMs     = s_dgFixMaxMs;
 }
 
 /* diag6: знімок останнього PDU з «CRC пог» для екрана «Діагностика 4». */
@@ -863,6 +910,7 @@ void dmrSmsDiagScreenReset(void)
 	s_dgPduOk = s_dgCrcFail = s_dgBlkNoHdr = s_dgBlkBusy = s_dgBlkOvf = s_dgBlkExtra = 0;
 	s_dgTickNotUs = s_dgTickBad = s_dgPickMaxMs = 0;
 	s_dgDbsnBad = s_dg8HwOk = 0;
+	s_dgFixOk = s_dgFixAmb = s_dgFixNone = s_dgFixLastMs = s_dgFixMaxMs = 0;
 	s_badN = 0; s_badSeq = 0;
 	dmrDataTxDiagReset();
 }
@@ -1344,6 +1392,21 @@ void dmrSmsRxReset(void)
 	s_rxAckReq = 0;
 }
 
+/* Готовий PDU -> головному циклу (ISR). fix = 1: CRC32 невалідний, спершу корекція (fix7). */
+static void smsRxPublish(int total, uint8_t fix)
+{
+	s_rxPduLen = (uint16_t)total;
+	s_rxPeer = s_rxSrc;
+	s_rxPeerDst = s_rxDst;
+	s_rxPeerGroup = s_rxGroup;
+	s_rxPeerKeyId = s_rxKeyId;
+	s_rxPeerEnc = s_rxHaveEnc;   /* decrypt if the ENC header was seen, else read cleartext */
+	s_rxPeerAckReq = s_rxAckReq; /* чи винні ми квитанцію за це повідомлення */
+	s_rxPeerFix = fix;
+	s_rxReady = 1;          /* main loop will decrypt (or read cleartext) + store */
+	s_rxReadyMs = ticksGetMillis();
+}
+
 void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 {
 	if (rxDataType == DT_DATA_HEADER)
@@ -1471,45 +1534,25 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 				if ((expData > 0) && ((int)s_rxCount == expData))
 				{
 					s_dgCrcFail++;
-					/* diag6: знімок цього PDU (сирі блоки = службові + навантаження з s_rxPdu). */
-					int n = SAFE_MIN((int)s_rxCount, SMS_SNAP_MAX);
-					int raw34 = (rxDataType == DT_RATE34_DATA);
-					s_badN = 0;   /* поки копіюємо -- знімка «нема» (екран читає з головного циклу) */
-					for (int b = 0; b < n; b++)
+					if (rxDataType == DT_RATE34_DATA)
 					{
-						uint8_t *d = s_badBlk[b];
-						if (raw34)
-						{
-							d[0] = s_curSvc[b][0];
-							d[1] = s_curSvc[b][1];
-							memcpy(d + 2, s_rxPdu + b * 16, 16);
-						}
-						else
-						{
-							memcpy(d, s_rxPdu + b * 12, 12);
-							memset(d + 12, 0, 6);
-						}
-						s_badMs[b] = s_curMs[b];
+						/* fix7: зібрано рівно під заголовок, а CRC32 не зійшовся. Трелліс-декодер
+						 * чипа псує 1-2 сусідні трибіти (знімки #8/#12) -- віддаємо головному циклу
+						 * на програмну корекцію (dmr_sms_fix.c). Знімок «Діагностики 4» робить він
+						 * же, і лише якщо виправити не вдалося. */
+						smsRxPublish(total, 1);
+						dmrSmsRxReset();
 					}
-					memcpy(s_badHdr, s_curHdr, 12);
-					s_badLen  = (uint8_t)(raw34 ? 18 : 12);
-					s_badHwOk = s_curHwOk;
-					s_badWant = want;
-					s_badGot  = got;
-					s_badSeq  = s_dgCrcFail;
-					s_badN    = (uint8_t)n;
+					else
+					{
+						/* diag6: знімок цього PDU (сирі блоки = службові + навантаження з s_rxPdu). */
+						smsSnapStore(s_rxPdu, (int)s_rxCount, 0, s_curSvc, s_curMs, s_curHwOk, s_curHdr,
+						             want, got, s_dgCrcFail);
+					}
 				}
 				return;
 			}
-			s_rxPduLen = (uint16_t)total;
-			s_rxPeer = s_rxSrc;
-			s_rxPeerDst = s_rxDst;
-			s_rxPeerGroup = s_rxGroup;
-			s_rxPeerKeyId = s_rxKeyId;
-			s_rxPeerEnc = s_rxHaveEnc;   /* decrypt if the ENC header was seen, else read cleartext */
-			s_rxPeerAckReq = s_rxAckReq; /* чи винні ми квитанцію за це повідомлення */
-			s_rxReady = 1;          /* main loop will decrypt (or read cleartext) + store */
-			s_rxReadyMs = ticksGetMillis();
+			smsRxPublish(total, 0);
 			s_dgPduOk++;
 			s_diagPdu++;
 			/* snapshot raw (still-encrypted) PDU for USB inspection (clamped to the
@@ -1559,6 +1602,31 @@ static int smsIsForUs(uint32_t dst, int group)
 	for (int i = 0; i < currentRxGroupData.NOT_IN_CODEPLUG_numTGsInGroup; i++)
 	{
 		if (currentRxGroupData.NOT_IN_CODEPLUG_contactsTG[i] == dst) { return 1; }
+	}
+	return 0;
+}
+
+/* fix7: прийнятність виправленого PDU -- IPv4 header checksum + UDP checksum. Шифрований --
+ * спершу розшифрувати копію (ключ із заголовка, потім усі завантажені, як і основний шлях). */
+typedef struct
+{
+	uint8_t enc;
+	uint8_t keyId;
+} smsFixCtx_t;
+
+static int smsFixVerify(const uint8_t *pdu, int len, void *ctx)
+{
+	const smsFixCtx_t *c = (const smsFixCtx_t *)ctx;
+	if (!c->enc) { return dmrSmsPduIpUdpOk(pdu, len); }
+	uint8_t tmp[384];
+	char text[DMR_SMS_TEXT_MAX + 1];
+	if (len > (int)sizeof tmp) { return 0; }
+	for (int attempt = 0; attempt <= DMR_AES_MAX_KEYS; attempt++)
+	{
+		uint8_t k = (attempt == 0) ? c->keyId : (uint8_t)attempt;
+		if ((k == 0) || (k >= DMR_AES_MAX_KEYS)) { continue; }
+		memcpy(tmp, pdu, (size_t)len);
+		if ((dmr_aes_sms_decrypt(k, tmp, len, text, sizeof text) > 0) && dmrSmsPduIpUdpOk(tmp, len)) { return 1; }
 	}
 	return 0;
 }
@@ -1626,6 +1694,22 @@ void dmrSmsRxTick(void)
 	uint8_t  keyId = s_rxPeerKeyId;
 	uint8_t  enc = s_rxPeerEnc;
 	uint8_t  ackReq = s_rxPeerAckReq;
+	/* fix7: PDU на корекцію -- забрати й службові байти/час/заголовок для знімка, поки ISR
+	 * не почав наступний PDU (після s_rxReady = 0 він може). */
+	uint8_t  fixReq = s_rxPeerFix;
+	uint8_t  fxSvc[SMS_SNAP_MAX][2];
+	uint16_t fxMs[SMS_SNAP_MAX];
+	uint8_t  fxHdr[12];
+	uint8_t  fxHw = 0;
+	uint16_t fxSeq = 0;
+	if (fixReq)
+	{
+		memcpy(fxSvc, s_curSvc, sizeof fxSvc);
+		memcpy(fxMs, s_curMs, sizeof fxMs);
+		memcpy(fxHdr, s_curHdr, sizeof fxHdr);
+		fxHw = s_curHwOk;
+		fxSeq = s_dgCrcFail;
+	}
 	if (pduLen > (int)sizeof pdu) { pduLen = (int)sizeof pdu; }
 	memcpy(pdu, s_rxPdu, pduLen);
 	s_rxReady = 0;
@@ -1658,7 +1742,30 @@ void dmrSmsRxTick(void)
 	{
 		uint32_t want = ((uint32_t)pdu[pduLen - 4] << 24) | ((uint32_t)pdu[pduLen - 3] << 16) |
 				((uint32_t)pdu[pduLen - 2] << 8) | (uint32_t)pdu[pduLen - 1];
-		if (dmrSmsPduCrc32(pdu, pduLen) != want) { s_dgTickBad++; return; }   /* corrupted reassembly -> drop */
+		uint32_t got = dmrSmsPduCrc32(pdu, pduLen);
+		if (got != want)
+		{
+			if (!fixReq) { s_dgTickBad++; return; }   /* corrupted reassembly -> drop */
+			/* fix7: програмна корекція 1-2 сусідніх трибітів (див. dmr_sms_fix.h). Приймаємо,
+			 * лише якщо CRC32 + IPv4 + UDP сходяться і кандидат РІВНО один. Далі -- як звичайний
+			 * PDU (квитанція, дедуп, збереження). Невдача -- знімок на «Діагностику 4». */
+			uint32_t t0 = ticksGetMillis();
+			smsFixCtx_t vc;
+			vc.enc = enc;
+			vc.keyId = keyId;
+			int r = dmrSmsPduFix34(pdu, pduLen, enc ? 0 : 1, smsFixVerify, &vc, NULL);
+			uint32_t dt = ticksGetMillis() - t0;
+			s_dgFixLastMs = (uint16_t)SAFE_MIN(dt, 65535u);
+			if (s_dgFixLastMs > s_dgFixMaxMs) { s_dgFixMaxMs = s_dgFixLastMs; }
+			if (r != DMR_SMS_FIX_OK)
+			{
+				if (r == DMR_SMS_FIX_AMBIG) { s_dgFixAmb++; }
+				else                        { s_dgFixNone++; }
+				smsSnapStore(pdu, pduLen / 16, 1, (const uint8_t (*)[2])fxSvc, fxMs, fxHw, fxHdr, want, got, fxSeq);
+				return;
+			}
+			s_dgFixOk++;
+		}
 	}
 
 	/* Дедуплікація (Task #34): той самий PDU (відправник + IP-ID + TMS-seq) в межах 30 с -> пропустити.

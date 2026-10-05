@@ -118,4 +118,10 @@
 #define MSGS_DG4_HDR             "Заг "
 #define MSGS_DG4_HINT            "U/D:гортати дов.GRN:скид"
 
+/* fix7 (2026-10-05): «Діагностика» стор. 3 -- програмна корекція 1-2 сусідніх трибітів у
+ * вхідних rate-3/4 PDU: виправлено / кілька кандидатів (відкинуто); не знайдено, час
+ * останньої корекції і найдовшої, мс. */
+#define MSGS_DG3_FIX1_FMT        "Корекц: ок %u неод %u"
+#define MSGS_DG3_FIX2_FMT        "  нема %u мс %u макс %u"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */
