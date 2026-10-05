@@ -151,6 +151,22 @@ menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun)
 
 	menuStatus_t exitCode = MENU_STATUS_SUCCESS;
 
+	/* ui3 (2026-10-05): FUNC_REDRAW після закриття картки сповіщення (гучність тощо) --
+	 * перемалювати поточний вигляд; інакше картка висить до першої клавіші. Очікування
+	 * квитанції (RCTL_WAIT) цей тік пропускає -- наступний перевірить як завжди. */
+	if (ev->hasEvent && (ev->events & FUNCTION_EVENT) && (ev->function == FUNC_REDRAW))
+	{
+		switch (s_rc.view)
+		{
+			case RCTL_ENTRY:        updateEntry();       break;
+			case RCTL_PICK_CONTACT: updatePickContact(); break;
+			case RCTL_WAIT:         updateWait();        break;
+			case RCTL_RESULT:       updateResult();      break;
+			default:                updatePickCmd();     break;
+		}
+		return exitCode;
+	}
+
 	if (s_rc.view == RCTL_WAIT)
 	{
 		// Чекаємо квитанцію на Radio Check. Ознака "прийшла НОВА" -- зросле покоління

@@ -11,9 +11,11 @@
  *
  * Key combos (2026-08-31 pass — moved into the main menu, added Reply/Resend, a
  * contacts-based recipient picker, and "mark all read", on top of what already existed):
- *   HOME/LIST : GREEN opens/selects, SK2+GREEN deletes (single, or "[Delete all]" row),
- *               SK2+RED marks every Inbox message read in one go.
- *   READ      : SK2+GREEN deletes; plain GREEN = Reply (Inbox: blank text, recipient
+ *   HOME/LIST : GREEN opens/selects, SK2+GREEN deletes the selected message, GREEN on the
+ *               "[Delete all]" row deletes the folder -- both only after a CONFIRM screen
+ *               (ui3, 2026-10-05: GREEN -- так, RED -- ні); SK2+RED marks every Inbox
+ *               message read in one go.
+ *   READ      : SK2+GREEN deletes (after CONFIRM); plain GREEN = Reply (Inbox: blank text, recipient
  *               pre-set to the sender) or Resend (Sent: text AND recipient both
  *               pre-filled, lands straight on RECIPIENT); RED goes back.
  *   RECIPIENT : SK1 opens PICK_CONTACT, browsing the Contact List filtered by the
@@ -91,6 +93,10 @@
 #define MSGS_TX_MODE_UNCONF      "Unconfirmed"
 /* ui2: два режими -- «Unconfirmed» і «Confirmed» (CONFIRMED rate-3/4); rate-1/2 -- лише діагностика. */
 #define MSGS_TX_MODE_CONF        "Confirmed"
+/* ui3: підтвердження видалення. */
+#define MSGS_DEL_ALL_Q_FMT       "Delete all %d?"
+#define MSGS_DEL_ONE_Q           "Delete message?"
+#define MSGS_HINT_YES_NO         "GREEN: yes, RED: no"
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_TX_MODE_R12         "Confirmed 1/2"
 /* Екран «Діагностика» -- лише з ENABLE_SMS_DIAG (ui2: пункту в звичайному меню немає). */
@@ -165,7 +171,7 @@ static void smsWhoStr(uint32_t id, char *out, int outsz)
 	snprintf(out, outsz, "%lu", (unsigned long)id);
 }
 
-enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG };
+enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG, MSG_CONFIRM };
 
 static struct
 {
@@ -183,6 +189,9 @@ static struct
 	int8_t   result;        // dmrSmsSend() return for the result screen
 	ticksTimer_t resultTimer;    // скільки ще показувати результат -- РЕАЛЬНИЙ час
 	ticksTimer_t resultGuard;    // поки не сплив -- клавіші не закривають екран (див. doSend)
+	uint8_t  confirmAll;    // ui3: екран підтвердження -- 1 = «Видалити все», 0 = одне повідомлення
+	uint8_t  confirmFrom;   // ui3: звідки прийшли (MSG_LIST / MSG_READ) -- туди ж RED
+	int16_t  confirmIdx;    // ui3: яке повідомлення видаляти (для одного)
 #if defined(ENABLE_SMS_DIAG)
 	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
@@ -197,6 +206,9 @@ static void composeUpdate(void);
 static void recipientUpdate(void);
 static void pickContactUpdate(void);
 static void resultUpdate(void);
+static void confirmUpdate(void);
+static void confirmEvent(uiEvent_t *ev);
+static void redrawCurrent(void);
 static void homeEvent(uiEvent_t *ev, menuStatus_t *ec);
 static void listEvent(uiEvent_t *ev);
 static void readEvent(uiEvent_t *ev);
@@ -238,6 +250,16 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 
 	menuStatus_t exitCode = MENU_STATUS_SUCCESS;
 
+	/* ui3 (2026-10-05): синтетична FUNC_REDRAW від uiNotificationHide(true) -- картку (гучність,
+	 * потужність тощо) закрито, а в кадровому буфері лишилась лише вона (бекапу фону для неї
+	 * немає, docs/notification-buffer.md). Штатні меню на цю подію перемальовуються; наші
+	 * обробники виходили на «не KEY_EVENT», і вікно гучності висіло до першої клавіші. */
+	if (ev->hasEvent && (ev->events & FUNCTION_EVENT) && (ev->function == FUNC_REDRAW))
+	{
+		redrawCurrent();
+		return exitCode;
+	}
+
 	if (s_msg.view == MSG_RESULT)
 	{
 		// Клавіші ігноруються, поки не сплив короткий "запобіжник": та сама GREEN, якою
@@ -278,6 +300,7 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 			case MSG_COMPOSE:      composeEvent(ev);         break;
 			case MSG_RECIPIENT:    recipientEvent(ev);       break;
 			case MSG_PICK_CONTACT: pickContactEvent(ev);     break;
+			case MSG_CONFIRM:      confirmEvent(ev);         break;
 		}
 	}
 	return exitCode;
@@ -784,13 +807,90 @@ static void listEvent(uiEvent_t *ev)
 
 	int idx = menuDataGlobal.currentItemIndex;
 
-	// SK2+GREEN deletes the selected message (deliberate combo).
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && BUTTONCHECK_DOWN(ev, BUTTON_SK2))
+	// ui3: видалення -- лише через екран підтвердження. SK2+GREEN на повідомленні -> «Видалити
+	// SMS?»; GREEN (з SK2 чи без) на рядку «[Видалити все]» -> «Видалити всі N?». У полі
+	// «Видалити все» спрацьовувало, хоча SK2 не тиснули (див. STATUS.md, ui3) -- тож одна
+	// комбінація більше не видаляє нічого сама.
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && ((idx == count) || BUTTONCHECK_DOWN(ev, BUTTON_SK2)))
 	{
-		if (idx == count) { dmrSmsDeleteAll(s_msg.folder); }   // delete-all row + SK2
-		else              { dmrSmsDelete(s_msg.folder, idx); }
-		int newCount = dmrSmsCount(s_msg.folder);
-		menuDataGlobal.numItems = newCount + 1;
+		s_msg.confirmAll = (uint8_t)((idx == count) ? 1 : 0);
+		s_msg.confirmIdx = (int16_t)idx;
+		s_msg.confirmFrom = MSG_LIST;
+		s_msg.view = MSG_CONFIRM;
+		confirmUpdate();
+		return;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		s_msg.readIdx = (int16_t)idx;
+		dmrSmsMarkRead(s_msg.folder, idx);
+		s_msg.view = MSG_READ;
+		readUpdate();
+		return;
+	}
+}
+
+/* ============================ CONFIRM (ui3) ============================ */
+/* «Видалити всі N?» / «Видалити SMS?» -- видаляємо лише на GREEN тут; RED -- назад туди, звідки
+ * прийшли (список або читання), нічого не чіпаючи. */
+static void confirmUpdate(void)
+{
+	char buf[32];
+	displayClearBuf();
+	menuDisplayTitle(s_msg.folder ? MSGS_TITLE_SENT : MSGS_TITLE_INBOX);
+	if (s_msg.confirmAll)
+	{
+		snprintf(buf, sizeof buf, MSGS_DEL_ALL_Q_FMT, dmrSmsCount(s_msg.folder));
+		displayPrintCentered(48, buf, FONT_SIZE_3);
+	}
+	else
+	{
+		displayPrintCentered(40, MSGS_DEL_ONE_Q, FONT_SIZE_3);
+		const dmrSmsMessage_t *m = dmrSmsGet(s_msg.folder, s_msg.confirmIdx);
+		if (m != NULL)
+		{
+			/* Що саме видаляємо: відправник/адресат і початок тексту (FONT_SIZE_1, до 26 симв.). */
+			char who[20];
+			char txt[DMR_SMS_TEXT_MAX + 1];
+			int n = (m->textLen < (int)sizeof txt - 1) ? m->textLen : (int)sizeof txt - 1;
+			memcpy(txt, m->text, n); txt[n] = 0;
+			smsWhoStr(m->peerId, who, sizeof who);
+			char line[27];   /* «хто:текст», обрізано до 26 символів (рядок FONT_SIZE_1) */
+			int wl = (int)strlen(who);
+			if (wl > 24) { wl = 24; }
+			memcpy(line, who, (size_t)wl);
+			line[wl] = ':';
+			int tl = (int)sizeof line - 1 - (wl + 1);
+			if (tl > n) { tl = n; }
+			memcpy(line + wl + 1, txt, (size_t)tl);
+			line[wl + 1 + tl] = 0;
+			displayPrintCentered(72, line, FONT_SIZE_1);
+		}
+	}
+	displayPrintCentered(112, MSGS_HINT_YES_NO, FONT_SIZE_1);
+	displayRender();
+}
+
+static void confirmEvent(uiEvent_t *ev)
+{
+	if ((ev->events & KEY_EVENT) == 0) { return; }
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		if (s_msg.confirmAll)
+		{
+			dmrSmsDeleteAll(s_msg.folder);
+			openFolder(s_msg.folder);
+			return;
+		}
+		dmrSmsDelete(s_msg.folder, s_msg.confirmIdx);
+		if (s_msg.confirmFrom == MSG_READ)
+		{
+			openFolder(s_msg.folder);
+			return;
+		}
+		/* зі списку -- лишаємось на тому ж місці, як і раніше */
+		s_msg.view = MSG_LIST;
+		menuDataGlobal.numItems = dmrSmsCount(s_msg.folder) + 1;
 		if (menuDataGlobal.currentItemIndex >= menuDataGlobal.numItems)
 		{
 			menuDataGlobal.currentItemIndex = menuDataGlobal.numItems - 1;
@@ -798,14 +898,29 @@ static void listEvent(uiEvent_t *ev)
 		listUpdate();
 		return;
 	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
-		if (idx == count) { return; }   // need SK2 to confirm delete-all
-		s_msg.readIdx = (int16_t)idx;
-		dmrSmsMarkRead(s_msg.folder, idx);
-		s_msg.view = MSG_READ;
-		readUpdate();
-		return;
+		if (s_msg.confirmFrom == MSG_READ) { s_msg.view = MSG_READ; readUpdate(); }
+		else                               { s_msg.view = MSG_LIST; listUpdate(); }
+	}
+}
+
+/* ui3: перемалювати поточний вигляд (FUNC_REDRAW після закриття картки сповіщення). */
+static void redrawCurrent(void)
+{
+	switch (s_msg.view)
+	{
+		case MSG_LIST:         listUpdate();        break;
+		case MSG_READ:         readUpdate();        break;
+		case MSG_COMPOSE:      composeUpdate();     break;
+		case MSG_RECIPIENT:    recipientUpdate();   break;
+		case MSG_PICK_CONTACT: pickContactUpdate(); break;
+		case MSG_RESULT:       resultUpdate();      break;
+		case MSG_CONFIRM:      confirmUpdate();     break;
+#if defined(ENABLE_SMS_DIAG)
+		case MSG_DIAG:         diagUpdate();        break;
+#endif
+		default:               homeUpdate();        break;
 	}
 }
 
@@ -889,8 +1004,11 @@ static void readEvent(uiEvent_t *ev)
 
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && BUTTONCHECK_DOWN(ev, BUTTON_SK2))
 	{
-		dmrSmsDelete(s_msg.folder, s_msg.readIdx);
-		openFolder(s_msg.folder);
+		s_msg.confirmAll = 0;   /* ui3: спершу підтвердження */
+		s_msg.confirmIdx = s_msg.readIdx;
+		s_msg.confirmFrom = MSG_READ;
+		s_msg.view = MSG_CONFIRM;
+		confirmUpdate();
 		return;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))

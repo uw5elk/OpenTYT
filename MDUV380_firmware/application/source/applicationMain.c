@@ -1557,6 +1557,16 @@ void applicationMainTask(void)
 				rctlStunned ||   // у сні не даємо авто-вимкненню спрацювати: рація має лишатись
 						         // онлайн, щоб прийняти Enable по ефіру й прокинутись
 #endif
+#if defined(ENABLE_AES)
+				// ui3 (2026-10-05): регулятор гучності на MD-UV390 -- потенціометр (АЦП), а не
+				// клавіша чи енкодер, тож для APO він НЕ був «подією оператора». Під час
+				// попередження APO крок ручки показував картку гучності ЗАМІСТЬ APO (сповіщення
+				// одне), а наступний apoTick() бачив, що APO не видно, і хвилина ще не минула --
+				// і показував APO знову (з мелодією); наступний крок -- знову гучність: блимання.
+				// Поки видно картку гучності, це дія оператора: таймер APO скидається, APO не
+				// повертається, лишається одне вікно гучності. Логіку apoTick() не змінено.
+				(uiNotificationIsVisible() && (uiNotificationGetId() == NOTIFICATION_ID_VOLUME)) ||
+#endif
 				(settingsIsOptionBitSet(BIT_APO_WITH_RF) ? (audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) : false)));
 
 		// Autolock trigger/reset

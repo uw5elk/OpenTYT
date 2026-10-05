@@ -88,6 +88,13 @@ menuStatus_t menuAESKeys(uiEvent_t *ev, bool isFirstRun)
 
 	if (ev->hasEvent)
 	{
+		// ui3 (2026-10-05): FUNC_REDRAW після закриття картки сповіщення (гучність тощо) --
+		// перемалювати поточний екран; інакше картка висить до першої клавіші.
+		if ((ev->events & FUNCTION_EVENT) && (ev->function == FUNC_REDRAW))
+		{
+			if (s_aes.editing) { editorUpdateScreen(); } else { updateScreen(); }
+			return exitCode;
+		}
 		if (s_aes.editing)
 		{
 			editorHandleEvent(ev);

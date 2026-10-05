@@ -151,4 +151,9 @@
  * замість колишнього «Підтв. 3/4» (MSGS_TX_MODE_R34 прибрано). */
 #define MSGS_TX_MODE_CONF        "З підтв."
 
+/* ui3 (2026-10-05): підтвердження видалення («[Видалити все]» і одного повідомлення). */
+#define MSGS_DEL_ALL_Q_FMT       "Видалити всі %d?"
+#define MSGS_DEL_ONE_Q           "Видалити SMS?"
+#define MSGS_HINT_YES_NO         "GREEN -- так, RED -- ні"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

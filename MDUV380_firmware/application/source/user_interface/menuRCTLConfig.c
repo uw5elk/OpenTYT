@@ -120,6 +120,13 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 
 	menuStatus_t exitCode = MENU_STATUS_SUCCESS;
 
+	/* ui3 (2026-10-05): FUNC_REDRAW після закриття картки сповіщення -- перемалювати. */
+	if (ev->hasEvent && (ev->events & FUNCTION_EVENT) && (ev->function == FUNC_REDRAW))
+	{
+		updateScreen();
+		return exitCode;
+	}
+
 	if (ev->hasEvent && ((ev->events & KEY_EVENT) != 0))
 	{
 		if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
