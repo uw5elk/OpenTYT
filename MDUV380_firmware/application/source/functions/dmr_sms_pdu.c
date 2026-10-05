@@ -9,6 +9,7 @@
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
 
 #include "functions/dmr_sms.h"   /* DMR_SMS_TEXT_MAX */
+#include "functions/dmr_sms_text.h" /* ui4: cp1251 -> UTF-16LE */
 #include <string.h>
 
 /* ============================ контрольні суми / CRC ====================== */
@@ -82,7 +83,7 @@ int dmrSmsPduHdrCrcOk(const uint8_t p12[12], uint16_t mask)
 
 /* ============================ відкритий текст ============================ */
 /* IPv4/UDP/TMS відкритий текст у out (>=160 Б). Повертає довжину. */
-int dmrSmsPduBuildPlaintext(const char *text, int tlen, uint32_t src, uint32_t dst,
+int dmrSmsPduBuildPlaintext(const char *text, int tlen, uint32_t src, uint32_t dst, int group,
                            uint8_t seq, uint16_t ipid, uint8_t *out)
 {
 	uint8_t tms[16 + 2 * DMR_SMS_TEXT_MAX];
@@ -92,14 +93,22 @@ int dmrSmsPduBuildPlaintext(const char *text, int tlen, uint32_t src, uint32_t d
 	tms[ti++] = 0xA0; tms[ti++] = 0x00; tms[ti++] = seq; tms[ti++] = 0x04;
 	tms[ti++] = 0x0D; tms[ti++] = 0x00;   /* fixed CRLF header (stock uses 0d/0a here, NOT L+3/L) */
 	tms[ti++] = 0x0A; tms[ti++] = 0x00;
-	for (int i = 0; i < tlen; i++) { tms[ti++] = (uint8_t)text[i]; tms[ti++] = 0x00; }
+	/* ui4: текст рації -- cp1251 (1 байт = 1 символ); в ефір -- UTF-16LE. Раніше кожен байт
+	 * ішов як U+00xx, тож кирилиця виходила латиницею-1. ASCII -- побайтово як і раніше. */
+	for (int i = 0; i < tlen; i++)
+	{
+		uint16_t u = dmrSmsCp1251ToUcs2((uint8_t)text[i]);
+		tms[ti++] = (uint8_t)u; tms[ti++] = (uint8_t)(u >> 8);
+	}
 
 	int udpLen = 8 + ti;
 	/* MotoTRBO CAI IP = prefix.<id[23:16]>.<id[15:8]>.<id[7:0]> — the FULL 24-bit DMR ID/TG.
 	 * (Byte 1 was hardcoded 0x00, truncating to 16 bits; correct only for ids <= 65535, wrong
-	 * for real 7-digit DMR ids.) src = individual radio (12.x.x.x), group dst = 225.x.x.x. */
+	 * for real 7-digit DMR ids.) src = individual radio (12.x.x.x), group dst = 225.x.x.x.
+	 * ui4: приватний dst -- теж 12.x.x.x, як шле стокова (запис BBD_0004: 12.38.234.41 ->
+	 * 12.38.234.15); раніше dst завжди був 225.x. Псевдозаголовок UDP бере той самий dstIp. */
 	uint8_t srcIp[4] = { 0x0C, (uint8_t)(src >> 16), (uint8_t)(src >> 8), (uint8_t)src };
-	uint8_t dstIp[4] = { 0xE1, (uint8_t)(dst >> 16), (uint8_t)(dst >> 8), (uint8_t)dst };
+	uint8_t dstIp[4] = { group ? 0xE1 : 0x0C, (uint8_t)(dst >> 16), (uint8_t)(dst >> 8), (uint8_t)dst };
 
 	uint8_t udp[8 + 16 + 2 * DMR_SMS_TEXT_MAX];
 	udp[0] = UDP_SMS_PORT >> 8; udp[1] = UDP_SMS_PORT & 0xFF;

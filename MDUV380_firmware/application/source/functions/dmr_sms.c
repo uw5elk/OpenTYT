@@ -1275,7 +1275,7 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	s_txMsgCounter++;
 	uint16_t ipid = s_txMsgCounter;
 	uint8_t  tmsSeq = (uint8_t)(0x90 | (s_txMsgCounter & 0x0F));
-	int ptLen = dmrSmsPduBuildPlaintext(text, tlen, src, dst, tmsSeq, ipid, pt);
+	int ptLen = dmrSmsPduBuildPlaintext(text, tlen, src, dst, group, tmsSeq, ipid, pt);
 	if (encrypt) { for (int i = 0; i + 16 <= ptLen; i += 16) { aes256_ecb_encrypt(key, pt + i); } }
 	int ctLen = ptLen;                       /* ct = whole enc blocks + clear tail (or all clear) */
 

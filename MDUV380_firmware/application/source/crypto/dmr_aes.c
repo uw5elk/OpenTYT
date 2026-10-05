@@ -6,6 +6,7 @@
  * application mirror DSD-FME (reference/dmr_pi.c, dmr_block.c). Self-contained; embedded-friendly.
  */
 #include "crypto/dmr_aes.h"
+#include "functions/dmr_sms_text.h"   /* ui4: UTF-16LE -> cp1251 для вхідного тексту SMS */
 #include <string.h>
 
 /* ===== AES-256 (encrypt only) =========================================== */
@@ -511,7 +512,14 @@ int dmr_sms_text_from_plaintext(const uint8_t *pdu, int pdu_len, char *out, int 
     if (iptot > pdu_len) { iptot = pdu_len; }
     tend = iptot;                                          /* text runs [38, IP packet end) */
     for (i = 38; i + 1 < tend && n < out_max - 1; i += 2) {
+#if defined(ENABLE_AES)
+        /* ui4: UTF-16LE -> cp1251 (шрифт рації): кирилиця більше не відкидається; чого в cp1251
+         * немає -> '?', керівні (CR/LF) -> пробіл, U+0000 пропускаємо. */
+        uint8_t c = dmrSmsUcs2ToCp1251((uint16_t)(pdu[i] | (pdu[i+1] << 8)));
+        if (c != 0) out[n++] = (char)c;
+#else
         if (pdu[i+1] == 0 && pdu[i] >= 0x20 && pdu[i] < 0x7f) out[n++] = (char)pdu[i];
+#endif
     }
     out[n] = 0;
     return n;

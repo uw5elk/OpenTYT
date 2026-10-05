@@ -1,0 +1,45 @@
+/*
+ * dmr_sms_text.c -- cp1251 <-> Unicode для тексту SMS (ui4, 2026-10-05). Див. dmr_sms_text.h.
+ * Порожній модуль без ENABLE_AES (типова збірка не змінюється).
+ */
+#include "functions/dmr_sms_text.h"
+
+#if defined(ENABLE_AES)
+
+/* Windows-1251, 0x80..0xBF (0xC0..0xFF -- суцільний блок U+0410..U+044F, рахуємо). 0 -- не
+ * визначено в cp1251 (лише 0x98). Згенеровано з Python codecs 'cp1251'. 128 Б у flash. */
+static const uint16_t s_cp1251Hi[64] =
+{
+	0x0402, 0x0403, 0x201A, 0x0453, 0x201E, 0x2026, 0x2020, 0x2021,   /* 0x80 */
+	0x20AC, 0x2030, 0x0409, 0x2039, 0x040A, 0x040C, 0x040B, 0x040F,   /* 0x88 */
+	0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,   /* 0x90 */
+	0x0000, 0x2122, 0x0459, 0x203A, 0x045A, 0x045C, 0x045B, 0x045F,   /* 0x98 */
+	0x00A0, 0x040E, 0x045E, 0x0408, 0x00A4, 0x0490, 0x00A6, 0x00A7,   /* 0xA0 */
+	0x0401, 0x00A9, 0x0404, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x0407,   /* 0xA8 */
+	0x00B0, 0x00B1, 0x0406, 0x0456, 0x0491, 0x00B5, 0x00B6, 0x00B7,   /* 0xB0 */
+	0x0451, 0x2116, 0x0454, 0x00BB, 0x0458, 0x0405, 0x0455, 0x0457,   /* 0xB8 */
+};
+
+uint16_t dmrSmsCp1251ToUcs2(uint8_t c)
+{
+	if (c < 0x80) { return c; }
+	if (c >= 0xC0) { return (uint16_t)(0x0410 + (c - 0xC0)); }
+	uint16_t u = s_cp1251Hi[c - 0x80];
+	return (u != 0) ? u : (uint16_t)'?';
+}
+
+uint8_t dmrSmsUcs2ToCp1251(uint16_t u)
+{
+	if (u == 0) { return 0; }
+	if (u < 0x20) { return ' '; }   /* CR/LF/TAB та інші керівні -> пробіл (не губимо межу слів) */
+	if (u == 0x7F) { return (uint8_t)'?'; }
+	if (u < 0x80) { return (uint8_t)u; }
+	if ((u >= 0x0410) && (u <= 0x044F)) { return (uint8_t)(0xC0 + (u - 0x0410)); }
+	for (int i = 0; i < 64; i++)
+	{
+		if (s_cp1251Hi[i] == u) { return (uint8_t)(0x80 + i); }
+	}
+	return (uint8_t)'?';
+}
+
+#endif

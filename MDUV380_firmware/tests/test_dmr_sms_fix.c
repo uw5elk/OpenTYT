@@ -80,7 +80,7 @@ static int makePdu(uint8_t *pdu)
 	char text[64];
 	int tl = 1 + (int)(rnd() % 40);
 	for (int i = 0; i < tl; i++) { text[i] = (char)(0x20 + rnd() % 95); }
-	int pl = dmrSmsPduBuildPlaintext(text, tl, 0x26EA29, 0x26EA0F, (uint8_t)rnd(), (uint16_t)rnd(), pdu);
+	int pl = dmrSmsPduBuildPlaintext(text, tl, 0x26EA29, 0x26EA0F, 0, (uint8_t)rnd(), (uint16_t)rnd(), pdu);
 	int len = ((pl + 4 + 15) / 16) * 16;
 	memset(pdu + pl, 0, (size_t)(len - pl));
 	uint32_t c = dmrSmsPduCrc32(pdu, len);
@@ -250,7 +250,7 @@ int main(void)
 	{
 		char text[200];
 		memset(text, 'x', sizeof text);
-		int pl = dmrSmsPduBuildPlaintext(text, DMR_SMS_TEXT_MAX, 0x26EA29, 0x26EA0F, 1, 2, orig);
+		int pl = dmrSmsPduBuildPlaintext(text, DMR_SMS_TEXT_MAX, 0x26EA29, 0x26EA0F, 0, 1, 2, orig);
 		int len = ((pl + 4 + 15) / 16) * 16;
 		memset(orig + pl, 0, (size_t)(len - pl));
 		uint32_t c = dmrSmsPduCrc32(orig, len);

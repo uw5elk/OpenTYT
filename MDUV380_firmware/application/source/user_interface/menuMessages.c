@@ -5,7 +5,8 @@
  *   HOME         : Inbox (n) / Sent (n) / New Message
  *   LIST         : the messages of a folder + a "[Delete all]" row
  *   READ         : full text of one message
- *   COMPOSE      : keypad text entry (multi-tap, like the contact-name editor)
+ *   COMPOSE      : keypad text entry -- власний multitap (ui4, functions/sms_multitap.c):
+ *                  '#' перемикає «АБВ»/«абв»/«ABC»/«abc»/«123», '*' -- пробіл і спецсимволи
  *   RECIPIENT    : destination DMR ID / talkgroup + Group/Private + send
  *   PICK_CONTACT : browse the existing codeplug Contact List instead of typing an ID
  *
@@ -37,6 +38,7 @@
 #include "functions/codeplug.h"   /* Contact List browsing for the recipient picker */
 #include "crypto/dmr_aes.h"
 #include "io/keyboard.h"
+#include "functions/sms_multitap.h"   /* ui4: розкладки набору (кирилиця, регістр, цифри) */
 
 /*
  * Рядки цього екрана перемикаються на етапі компіляції, а не через stringsTable_t:
@@ -97,6 +99,8 @@
 #define MSGS_DEL_ALL_Q_FMT       "Delete all %d?"
 #define MSGS_DEL_ONE_Q           "Delete message?"
 #define MSGS_HINT_YES_NO         "GREEN: yes, RED: no"
+/* ui4: підказка біля індикатора режиму набору. */
+#define MSGS_HINT_MODE           "#:mode"
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_TX_MODE_R12         "Confirmed 1/2"
 /* Екран «Діагностика» -- лише з ENABLE_SMS_DIAG (ui2: пункту в звичайному меню немає). */
@@ -192,12 +196,33 @@ static struct
 	uint8_t  confirmAll;    // ui3: екран підтвердження -- 1 = «Видалити все», 0 = одне повідомлення
 	uint8_t  confirmFrom;   // ui3: звідки прийшли (MSG_LIST / MSG_READ) -- туди ж RED
 	int16_t  confirmIdx;    // ui3: яке повідомлення видаляти (для одного)
+	smsMt_t  mt;            // ui4: символ, що гортається (клавіша + номер у циклі)
+	uint8_t  mtMode;        // ui4: режим набору (SMS_MT_*)
+	ticksTimer_t mtTimer;   // ui4: вікно ~1 с, у межах якого та сама клавіша гортає далі
 #if defined(ENABLE_SMS_DIAG)
 	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
 	uint8_t  diagScroll;    // diag6: перший видимий рядок сторінки 4 (знімок «CRC пог»)
 #endif
 } s_msg DMR_AES_CCM;
+
+/* ui4: останній режим набору -- до перезавантаження, без custom-data. s_msg на кожному вході в
+ * меню обнуляється, тож режим живе окремо. CCM стартовий код не обнуляє: після ввімкнення там
+ * сміття, тому поруч контрольний байт (режим ^ 0xA5) -- без збігу беремо типовий режим. */
+static uint8_t s_mtModeKeep[2] DMR_AES_CCM;
+
+static uint8_t mtModeLoad(void)
+{
+	uint8_t m = s_mtModeKeep[0];
+	if ((m < SMS_MT_MODES) && (s_mtModeKeep[1] == (uint8_t)(m ^ 0xA5))) { return m; }
+	return SMS_MT_DEFAULT;
+}
+
+static void mtModeSave(uint8_t m)
+{
+	s_mtModeKeep[0] = m;
+	s_mtModeKeep[1] = (uint8_t)(m ^ 0xA5);
+}
 
 static void homeUpdate(void);
 static void listUpdate(void);
@@ -290,6 +315,14 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 	}
 #endif
 
+	/* ui4: символ, що гортається, підтверджується сам за ~1 с (як у keyboard.c). Перевірка --
+	 * ДО обробки клавіші: та сама клавіша після таймауту має почати новий символ. */
+	if ((s_msg.view == MSG_COMPOSE) && (s_msg.mt.key != 0) && ticksTimerHasExpired(&s_msg.mtTimer))
+	{
+		smsMtCommit(&s_msg.mt, &s_msg.composePos);
+		composeUpdate();
+	}
+
 	if (ev->hasEvent)
 	{
 		switch (s_msg.view)
@@ -362,6 +395,18 @@ static void openFolder(int folder)
 	listUpdate();
 }
 
+/* Показати екран набору (новий текст, Reply або повернення з RECIPIENT). ui4: стоковий
+ * alpha-режим клавіатури ВИМКНЕНО -- клавіші приходять сирими, multitap робить sms_multitap.c. */
+static void composeShow(void)
+{
+	keypadAlphaEnable = false;
+	s_msg.mt.key = 0;
+	s_msg.mt.idx = 0;
+	s_msg.mtMode = mtModeLoad();   /* і після Resend -> RED, де startCompose() не викликався */
+	s_msg.view = MSG_COMPOSE;
+	composeUpdate();
+}
+
 static void startCompose(void)
 {
 	memset(s_msg.compose, 0, sizeof s_msg.compose);
@@ -371,9 +416,7 @@ static void startCompose(void)
 	// stale Reply/Resend target left over from an earlier, possibly cancelled, attempt.
 	// startReplyOrResend() re-sets this to 1 itself AFTER calling this function.
 	s_msg.rcptPreset = 0;
-	s_msg.view = MSG_COMPOSE;
-	keypadAlphaEnable = true;
-	composeUpdate();
+	composeShow();
 }
 
 /* Cycle the next non-empty quick-text preset into the compose buffer. */
@@ -388,10 +431,10 @@ static void cyclePreset(void)
 		if (p != NULL)
 		{
 			int cap = dmrSmsMaxLen();
+			s_msg.mt.key = 0;   /* ui4: шаблон замінює весь текст разом із символом перегляду */
 			strncpy(s_msg.compose, p, cap);
 			s_msg.compose[cap] = 0;
 			s_msg.composePos = (int16_t)strlen(s_msg.compose);
-			if (s_msg.composePos > cap - 1) { s_msg.composePos = cap - 1; }
 			composeUpdate();
 			return;
 		}
@@ -944,19 +987,23 @@ static void readUpdate(void)
 			who, (m->flags & DMR_SMS_FLAG_FOREIGN) ? MSGS_FOREIGN : "");
 	displayPrintAt(2, 16, hdr, FONT_SIZE_1);
 
-	// word-free char wrap into ~21-char lines
+	// word-free char wrap
 	char txt[DMR_SMS_TEXT_MAX + 1];
 	int n = (m->textLen < (int)sizeof txt - 1) ? m->textLen : (int)sizeof txt - 1;
 	memcpy(txt, m->text, n); txt[n] = 0;
 
-	const int perLine = 21;
+	/* ui4: БУЛО 21 символ від x = 2 через 12 px -- але font_8x8 має 8 px, і displayPrintCore
+	 * обрізав кожен рядок до (160 - 2) / 8 = 19: 20-й і 21-й символи кожного рядка зникали
+	 * (для кирилиці й латиниці однаково). Тепер 20 від x = 0, 8 рядків через 11 px --
+	 * 160 символів >= DMR_SMS_TEXT_MAX (144), останній рядок закінчується на y = 111. */
+	const int perLine = 20;
 	char line[perLine + 1];
-	int y = 30;
-	for (int i = 0; i < n && y < 104; i += perLine, y += 12)
+	int y = 26;
+	for (int i = 0; i < n && y < 104; i += perLine, y += 11)
 	{
 		int len = ((n - i) < perLine) ? (n - i) : perLine;
 		memcpy(line, txt + i, len); line[len] = 0;
-		displayPrintAt(2, y, line, FONT_SIZE_2);
+		displayPrintAt(0, y, line, FONT_SIZE_2);
 	}
 
 	displayPrintCentered(112, s_msg.folder ? MSGS_HINT_SENT_ITEM : MSGS_HINT_INBOX_ITEM, FONT_SIZE_1);
@@ -1029,28 +1076,54 @@ static void composeUpdate(void)
 	displayClearBuf();
 	menuDisplayTitle(MSGS_TITLE_NEW);
 
-	// show the text wrapped
-	const int perLine = 21;
+	/* ui4: font_8x8 -- 8 px на символ, екран 160 px -> рівно 20 у рядок від x = 0. БУЛО 21 від
+	 * x = 2: displayPrintCore обрізав рядок до (160 - 2) / 8 = 19, і кожен 20-й та 21-й символ
+	 * просто не малювався. 5 рядків -- 100 символів; довший текст прокручується за курсором. */
+	const int perLine = 20;
+	const int rows = 5;
+	const int cap = dmrSmsMaxLen();
 	int n = (int)strlen(s_msg.compose);
+	int cur = s_msg.composePos;                       /* клітинка курсора / символу перегляду */
+	int curCell = ((cur >= cap) && (cur > 0)) ? (cur - 1) : cur;   /* повний текст: без зайвого рядка */
+	int first = curCell / perLine - (rows - 1);
+	if (first < 0) { first = 0; }
 	char line[perLine + 1];
-	int y = 22;
-	if (n == 0)
+
+	for (int r = 0; r < rows; r++)
 	{
-		displayPrintAt(2, y, "_", FONT_SIZE_2);
-	}
-	for (int i = 0; i < n && y < 92; i += perLine, y += 14)
-	{
+		int i = (first + r) * perLine;
+		if (i >= n) { break; }
 		int len = ((n - i) < perLine) ? (n - i) : perLine;
 		memcpy(line, s_msg.compose + i, len); line[len] = 0;
-		displayPrintAt(2, y, line, FONT_SIZE_2);
+		displayPrintAt(0, (uint16_t)(22 + r * 14), line, FONT_SIZE_2);
 	}
 
+	int cx = (cur % perLine) * 8;
+	int cy = 22 + (cur / perLine - first) * 14;
+	if (s_msg.mt.key != 0)
+	{
+		/* Символ, що гортається, -- інверсно (поки не підтверджено). Пробіл -- суцільний блок. */
+		char one[2] = { s_msg.compose[cur], 0 };
+		displayFillRect((int16_t)cx, (int16_t)cy, 8, 8, false);
+		displayPrintCore((int16_t)cx, (int16_t)cy, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, true);
+	}
+	else if (cur < cap)
+	{
+		displayPrintAt((uint16_t)cx, (uint16_t)cy, "_", FONT_SIZE_2);
+	}
+
+	/* Індикатор режиму -- інверсна плашка в лівому нижньому куті, лічильник -- праворуч. */
+	const char *lbl = smsMtModeLabel(s_msg.mtMode);
+	displayFillRect(0, 95, (int16_t)(strlen(lbl) * 6 + 4), 10, false);
+	displayPrintCore(2, 96, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+	displayPrintAt((uint16_t)(strlen(lbl) * 6 + 8), 96, MSGS_HINT_MODE, FONT_SIZE_1);
+
 	char cnt[20];
-	snprintf(cnt, sizeof cnt, MSGS_CHARS_FMT, n, dmrSmsMaxLen());
-	displayPrintCentered(96, cnt, FONT_SIZE_1);
+	snprintf(cnt, sizeof cnt, MSGS_CHARS_FMT, n, cap);
+	displayPrintCore(0, 96, cnt, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
 	if (dmrSmsPresetCount() > 0)
 	{
-		displayPrintCentered(104, MSGS_HINT_PRESET, FONT_SIZE_1);
+		displayPrintCentered(106, MSGS_HINT_PRESET, FONT_SIZE_1);
 	}
 	displayPrintCentered(116, MSGS_HINT_TO_CANCEL, FONT_SIZE_1);
 	displayRender();
@@ -1087,6 +1160,7 @@ static void composeEvent(uiEvent_t *ev)
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
+		smsMtCommit(&s_msg.mt, &s_msg.composePos);   /* ui4: символ перегляду -- теж у текст */
 		if (strlen(s_msg.compose) == 0) { return; }
 		keypadAlphaEnable = false;
 		if (s_msg.rcptPreset) { s_msg.rcptPreset = 0; }   // Reply: rcpt/rcptGroup already set
@@ -1097,8 +1171,8 @@ static void composeEvent(uiEvent_t *ev)
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_LEFT))
 	{
-		int n = (int)strlen(s_msg.compose);
-		if (n > 0) { s_msg.compose[n - 1] = 0; if (s_msg.composePos > 0) s_msg.composePos--; }
+		/* ui4: спершу -- символ, що гортається, інакше -- останній підтверджений. */
+		smsMtBackspace(&s_msg.mt, s_msg.compose, &s_msg.composePos);
 		composeUpdate();
 		return;
 	}
@@ -1107,25 +1181,29 @@ static void composeEvent(uiEvent_t *ev)
 		cyclePreset();
 		return;
 	}
-	// multi-tap alpha entry (keypadAlphaEnable handles cycling; same idiom as contact name)
-	if (s_msg.composePos < dmrSmsMaxLen())
+
+	/* ui4: власний multitap. Діємо на натисканні (KEY_MOD_PRESS приходить разом із DOWN);
+	 * довге утримання (KEY_MOD_LONG) нічого не гортає. */
+	if ((ev->keys.event & KEY_MOD_LONG) || ((ev->keys.event & KEY_MOD_PRESS) == 0)) { return; }
+
+	if (ev->keys.key == KEY_HASH)
 	{
-		if (ev->keys.event == KEY_MOD_PREVIEW)
+		smsMtCommit(&s_msg.mt, &s_msg.composePos);
+		s_msg.mtMode = smsMtModeNext(s_msg.mtMode);
+		mtModeSave(s_msg.mtMode);
+		composeUpdate();
+		return;
+	}
+
+	char k = (char)ev->keys.key;
+	if (smsMtKeyMap(s_msg.mtMode, k) != NULL)
+	{
+		bool same = (s_msg.mt.key == k) && !ticksTimerHasExpired(&s_msg.mtTimer);
+		if (smsMtKey(&s_msg.mt, s_msg.mtMode, k, same, s_msg.compose, &s_msg.composePos, dmrSmsMaxLen()) == 1)
 		{
-			s_msg.compose[s_msg.composePos] = ev->keys.key;
-			composeUpdate();
-			return;
+			ticksTimerStart(&s_msg.mtTimer, SMS_MT_TIMEOUT_MS);
 		}
-		if (ev->keys.event == KEY_MOD_PRESS)
-		{
-			s_msg.compose[s_msg.composePos] = ev->keys.key;
-			if (s_msg.composePos < (int)strlen(s_msg.compose) && s_msg.composePos < dmrSmsMaxLen() - 1)
-			{
-				s_msg.composePos++;
-			}
-			composeUpdate();
-			return;
-		}
+		composeUpdate();   /* навіть якщо місця немає -- попередній символ міг підтвердитись */
 	}
 }
 
@@ -1185,9 +1263,7 @@ static void recipientEvent(uiEvent_t *ev)
 
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
-		s_msg.view = MSG_COMPOSE;
-		keypadAlphaEnable = true;
-		composeUpdate();
+		composeShow();   /* ui4: режим набору лишається той самий */
 		return;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))

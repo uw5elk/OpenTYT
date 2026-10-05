@@ -32,20 +32,22 @@ FILTER="${1:-}"
 
 # назва -> додаткові файли для лінкування (крім самого тесту)
 declare -A SRCS=(
-	[test_dmr_aes]="$APP/source/crypto/dmr_aes.c"
+	[test_dmr_aes]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"
 	[test_dmr_rctl_pdu]="$APP/source/crypto/dmr_rctl_pdu.c"
-	[test_dmr_rctl_frame]="$APP/source/crypto/dmr_rctl_frame.c $APP/source/crypto/dmr_rctl_pdu.c $APP/source/crypto/dmr_aes.c"
+	[test_dmr_rctl_frame]="$APP/source/crypto/dmr_rctl_frame.c $APP/source/crypto/dmr_rctl_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"
 	[test_dmr_rctl_cfg]="$TESTS_DIR/mock_codeplug.c $APP/source/functions/dmr_rctl_cfg.c $APP/source/crypto/dmr_rctl_pdu.c"
 	[test_dmr_rctl_cap]="$APP/source/functions/dmr_rctl_cap.c"
 	[test_dmr_rctl_stock]="$APP/source/crypto/dmr_rctl_stock.c"
-	[test_emb_sb]="$APP/source/crypto/dmr_aes.c"
-	[test_le_mi]="$APP/source/crypto/dmr_aes.c"
-	[test_dmr_sms_ack]="$APP/source/functions/dmr_sms_pdu.c"   # квитанція: СПРАВЖНІЙ білдер заголовка
-	[test_dmr_sms_unconf]="$APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c"   # режим 0 == 438ec23 байт-у-байт
+	[test_emb_sb]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"
+	[test_le_mi]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"
+	[test_dmr_sms_ack]="$APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_text.c"   # квитанція: СПРАВЖНІЙ білдер заголовка
+	[test_dmr_sms_unconf]="$APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # режим 0 == 438ec23 байт-у-байт
 	[test_dmr_sms_confirmed]=""       # самодостатній: CRC9 + розкладка CONFIRMED-блока
 	[test_call_replay]="$APP/source/functions/callReplay.c"   # лише ЧИСТА кільцева логіка -- callReplayPlayback.c (codec/sound/trx/FreeRTOS) сюди навмисно не тягнеться
-	[test_dmr_sms_fix]="$APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c"   # fix7: корекція трибітів rate-3/4
-	[test_dmr_sms_replay]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c"   # diag5: СПРАВЖНІЙ збирач SMS, залізо -- заглушки в тесті
+	[test_dmr_sms_fix]="$APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_text.c"   # fix7: корекція трибітів rate-3/4
+	[test_dmr_sms_replay]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # diag5: СПРАВЖНІЙ збирач SMS, залізо -- заглушки в тесті
+	[test_sms_multitap]="$APP/source/functions/sms_multitap.c"   # ui4: розкладки й логіка multitap набору SMS
+	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 
 # назва -> додаткові прапорці. dmr_sms.c тягне заголовки всієї прошивки (HAL/CMSIS/FreeRTOS),
@@ -65,6 +67,9 @@ declare -A XFLAGS=(
 # cleanup1 (2026-10-05): тести, які ще раз збираються з -DENABLE_SMS_DIAG (окремий бінарник
 # <назва>_smsdiag) -- діагностику SMS у CI не вмикають, тож інакше її код ніхто б не ганяв.
 SMSDIAG_TOO=(test_dmr_sms_replay)
+# ui4: тести, які ще раз збираються з -DLANGUAGE_BUILD_UKRAINIAN (бінарник <назва>_ua) --
+# кириличні розкладки існують лише в українській збірці.
+UA_TOO=(test_sms_multitap)
 
 rm -rf "$BUILD" && mkdir -p "$BUILD"
 
@@ -82,9 +87,11 @@ for src in "$TESTS_DIR"/test_*.c; do
 
 	variants=("")
 	for d in "${SMSDIAG_TOO[@]}"; do [ "$d" = "$name" ] && variants+=("-DENABLE_SMS_DIAG"); done
+	for d in "${UA_TOO[@]}"; do [ "$d" = "$name" ] && variants+=("-DLANGUAGE_BUILD_UKRAINIAN"); done
 	for vflag in "${variants[@]}"; do
 		vname="$name"
-		[ -n "$vflag" ] && vname="${name}_smsdiag"
+		[ "$vflag" = "-DENABLE_SMS_DIAG" ] && vname="${name}_smsdiag"
+		[ "$vflag" = "-DLANGUAGE_BUILD_UKRAINIAN" ] && vname="${name}_ua"
 		bin="$BUILD/$vname"
 		# shellcheck disable=SC2086
 		if ! out="$("$CC" "${CFLAGS[@]}" $xflags $vflag "${INC[@]}" -o "$bin" "$src" $extra 2>&1)"; then
