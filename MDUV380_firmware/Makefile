@@ -29,6 +29,13 @@ ifeq ($(ENABLE_DMR_DATA),1)
 DEFS += -DENABLE_DMR_DATA
 endif
 
+# Діагностика SMS (cleanup1, 2026-10-05): екрани «Діагностика» 2-4, перемикачі, знімок PDU,
+# лічильники, USB 0x93/0x94/0x95/0x97/0xB2/0xB3. Лише для розборів; у CI НЕ вмикати.
+# Має сенс тільки разом з ENABLE_AES=1 ENABLE_DMR_DATA=1.
+ifeq ($(ENABLE_SMS_DIAG),1)
+DEFS += -DENABLE_SMS_DIAG
+endif
+
 ifeq ($(DMR_AES_DIAG_PATTERN),1)
 DEFS += -DDMR_AES_DIAG_PATTERN
 endif

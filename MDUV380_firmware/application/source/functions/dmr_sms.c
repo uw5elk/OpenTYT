@@ -27,6 +27,16 @@
 #include "functions/sound.h"             /* soundSetMelody: audible RX alert */
 #include <string.h>
 
+/* cleanup1 (2026-10-05): уся діагностика SMS (екрани «Діагностика» 2-4, перемикачі, знімок PDU,
+ * лічильники s_dg... і s_diag..., розклад затримки квитанції, USB 0x93/0x94/0x95/0x97/0xB2/0xB3) --
+ * лише з ENABLE_SMS_DIAG. Без нього перевірені налаштування -- константи DMR_SMS_DEFAULT_*,
+ * а з лічильників лишається мінімум для польових скарг (бач/черг, PDU ок/пог, корекція). */
+#if defined(ENABLE_SMS_DIAG)
+#define SMS_DG(x) do { x; } while (0)
+#else
+#define SMS_DG(x) do { } while (0)
+#endif
+
 /* ETSI slot data types as reported in HR-C6000 reg 0x51 [7:4]. */
 #define DT_DATA_HEADER   6
 #define DT_RATE12_DATA   7
@@ -521,8 +531,13 @@ static void confirmed_block_fill_r34(uint8_t *p18, const uint8_t *payload16, uin
  * radio buttons. This was used to hunt bug #3 (see below) -- the store_add() write turned out
  * to be innocent, but the harness is kept as a general on-demand SMS-TX diagnostic. Plain .bss;
  * the physical menu path never sets it. */
+#if defined(ENABLE_SMS_DIAG)
 static uint8_t s_diagSkipStore;
 void dmrSmsDiagSetSkipStore(int skip) { s_diagSkipStore = (skip != 0) ? 1 : 0; }
+#define SMS_SKIP_STORE() (s_diagSkipStore)
+#else
+#define SMS_SKIP_STORE() (0)
+#endif
 
 /* ---- deferred Sent-folder persist (defensive hygiene, not the bug #3 fix) ---
  * store_add() does a BLOCKING SPI-flash sector erase+write (~100s of ms). Investigating bug #3
@@ -619,6 +634,7 @@ static volatile uint32_t s_lastRxBurstMs;
 /* 1 = квитанція ON за замовчуванням: один Response-заголовок після отримання CONFIRMED SMS.
  * Стокова (BBD_0005) чекає квитанції; без неї вона ретрансмітить.
  * N(S) з вхідного CONFIRMED-заголовка відлунюється в o9 квитанції (Task #33). */
+#if defined(ENABLE_SMS_DIAG)
 static uint8_t  s_ackRepeats = 1;
 static uint16_t s_ackTargetMs = 80;    /* цільова пауза після тиші в каналі, мс */
 /* CSBK-преамбули перед квитанцією. ТИПОВО 6 -- і ось чому.
@@ -633,7 +649,7 @@ static uint8_t  s_ackPreambles = 6;
  * запис BBD_0004 показав, що 6 преамбул (360 мс) відсувають наш заголовок на ~620 мс після кінця
  * передачі стокової, а сама стокова квитує через ~120 мс без преамбул. Ініціалізатор 6 лишено
  * навмисно: заміна на 0 перенесла б змінну з .data у .bss і зсунула б розкладку main RAM.
- * Перемикач 6/0 -- на 2-й сторінці екрана «Діагностика»; USB 0x95 (dmrSmsAckSetTuning) теж діє. */
+ * Перемикач 6/0 -- на 2-й сторінці екрана «Діагностика»; USB 0xB2 (dmrSmsAckSetTuning) теж діє. */
 
 void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles)
 {
@@ -644,6 +660,17 @@ void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles)
 	s_ackTargetMs = delayMs;
 	s_ackPreambles = preambles;
 }
+#define SMS_ACK_REPEATS()   ((int)s_ackRepeats)
+#define SMS_ACK_PAUSE_MS()  ((uint32_t)s_ackTargetMs)
+#define SMS_ACK_PREAMBLES() ((int)s_ackPreambles)
+#else
+/* cleanup1: перевірено на залізі 2026-10-05 -- один Response-заголовок, без CSBK-преамбул,
+ * пауза 80 мс від тиші в каналі. Константи замість змінних (.data/USB 0xB2 -- лише з
+ * ENABLE_SMS_DIAG). */
+#define SMS_ACK_REPEATS()   (1)
+#define SMS_ACK_PAUSE_MS()  ((uint32_t)DMR_SMS_DEFAULT_ACK_PAUSE_MS)
+#define SMS_ACK_PREAMBLES() (DMR_SMS_DEFAULT_ACK_PREAMBLES)
+#endif
 
 /* Ревізія формату/подачі квитанції -- видно в діагностиці (sms_diag.py), щоб не гадати,
  * яка саме прошивка залита:
@@ -668,6 +695,7 @@ void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles)
  * останнього вхідного data-заголовка (тобто що НАСПРАВДІ шле стокова). */
 static volatile uint32_t s_ackSeen;      /* заголовків CONFIRMED + біт A */
 static volatile uint32_t s_ackQueued;    /* разів поставили квитанцію в чергу */
+#if defined(ENABLE_SMS_DIAG)
 static volatile uint32_t s_ackSent;      /* разів реально віддали в ефір (dmrDataTxLoad) */
 static volatile uint32_t s_ackStale;     /* разів кинули, бо канал не звільнився */
 static volatile uint8_t  s_ackLastHdr0;  /* p[0] останнього вхідного data-заголовка */
@@ -693,7 +721,12 @@ static uint8_t s_dgFastEnd DMR_AES_CCM;   /* fix3: типово 1 (DMR_SMS_DEFAU
 
 int  dmrSmsDiagFastEnd(void)       { return s_dgFastEnd; }
 void dmrSmsDiagFastEndToggle(void) { s_dgFastEnd = s_dgFastEnd ? 0 : 1; }
+#define SMS_FAST_END() ((int)s_dgFastEnd)
+#else
+#define SMS_FAST_END() (DMR_SMS_DEFAULT_FAST_END)   /* cleanup1: перевірено M2/U1 */
+#endif
 
+#if defined(ENABLE_SMS_DIAG)
 /* ---- fix3 (2026-10-02): прийом усіх спроб стокової + вчасна квитанція -----------------
  * Усе в CCM, не зберігається; типові значення -- DMR_SMS_DEFAULT_* (dmr_sms_pdu.h). */
 /* RX обхід: data-burst-и 6/7/8 іти в SMS-хук ДО фільтра RX-стану HR-C6000 (той відкидає все з
@@ -723,8 +756,6 @@ static volatile uint16_t s_ackStgB DMR_AES_CCM;
  * burst-и доходять до SMS-хука (ISR т6 3, т8 12), а PDU склався лише з 3-ї спроби. Хост-реплей
  * тих самих байтів (tests/test_dmr_sms_replay.c) збирає PDU з ПЕРШОЇ -- отже в полі щось
  * відрізняється від реплею. Ці лічильники кажуть, що саме. ISR пише, головний цикл читає. */
-static volatile uint16_t s_dgPduOk     DMR_AES_CCM;  /* PDU з валідним CRC32 зібрано (ISR) */
-static volatile uint16_t s_dgCrcFail   DMR_AES_CCM;  /* блоків стільки, скільки в заголовку, а CRC32 не зійшовся */
 static volatile uint16_t s_dgBlkNoHdr  DMR_AES_CCM;  /* блок без заголовка (s_rxHaveHeader=0) -- відкинуто */
 static volatile uint16_t s_dgBlkBusy   DMR_AES_CCM;  /* блок відкинуто: попередній PDU ще не забрав головний цикл */
 static volatile uint16_t s_dgBlkOvf    DMR_AES_CCM;  /* блок не влазить у s_rxPdu (переповнення) */
@@ -760,10 +791,6 @@ static volatile uint16_t s_dg8HwOk                  DMR_AES_CCM;  /* блокі�
 /* fix7 (2026-10-05): програмна корекція 1-2 сусідніх трибітів у rate-3/4 PDU (dmr_sms_fix.c).
  * ISR віддає головному циклу PDU, зібраний рівно під заголовок, але з невалідним CRC32
  * (s_rxPeerFix = 1); головний цикл пробує виправити. Лічильники -- стор. 3 «Діагностики». */
-static volatile uint8_t  s_rxPeerFix                DMR_AES_CCM;  /* 1 = готовий PDU з невалідним CRC32 -- на корекцію */
-static volatile uint16_t s_dgFixOk                  DMR_AES_CCM;  /* виправлено (рівно один кандидат) */
-static volatile uint16_t s_dgFixAmb                 DMR_AES_CCM;  /* кілька кандидатів -- відкинуто */
-static volatile uint16_t s_dgFixNone                DMR_AES_CCM;  /* жодного -- відкинуто (знімок на стор. 4) */
 static volatile uint16_t s_dgFixLastMs              DMR_AES_CCM;  /* час останньої корекції, мс */
 static volatile uint16_t s_dgFixMaxMs               DMR_AES_CCM;  /* найдовша корекція, мс */
 
@@ -815,6 +842,24 @@ void dmrSmsRxEarlyNote(int rxDataType, int filterDrops)
 	if (rxDataType == 6)      { s_dgIsr6++; if (filterDrops) { s_dgFilt6++; } }
 	else if (rxDataType == 8) { s_dgIsr8++; if (filterDrops) { s_dgFilt8++; } }
 }
+#define SMS_ACK_TERM()   ((int)s_dgAckTerm)
+#define SMS_ACK_AWAIT()  (s_ackAwaitStart)
+#else
+/* cleanup1: «RX обхід» -- dmrSmsRxBypass() у dmr_sms.h (константа); квитанція без
+ * термінатора; очікування старту квитанції (лише для розкладу етапів) не потрібне --
+ * dmrDataTxBusy() у гейті запису у флеш і так тримає до кінця передачі. */
+#define SMS_ACK_TERM()   (DMR_SMS_DEFAULT_ACK_TERM)
+#define SMS_ACK_AWAIT()  (0)
+#endif /* ENABLE_SMS_DIAG */
+
+/* Мінімум лічильників для польових скарг (екран «Діагностика» у будь-якій збірці). */
+static volatile uint16_t s_dgPduOk     DMR_AES_CCM;  /* PDU з валідним CRC32 зібрано (ISR) */
+static volatile uint16_t s_dgCrcFail   DMR_AES_CCM;  /* блоків стільки, скільки в заголовку, а CRC32 не зійшовся */
+/* fix7 (2026-10-05): програмна корекція 1-2 сусідніх трибітів у rate-3/4 PDU (dmr_sms_fix.c). */
+static volatile uint8_t  s_rxPeerFix   DMR_AES_CCM;  /* 1 = готовий PDU з невалідним CRC32 -- на корекцію */
+static volatile uint16_t s_dgFixOk     DMR_AES_CCM;  /* виправлено (рівно один кандидат) */
+static volatile uint16_t s_dgFixAmb    DMR_AES_CCM;  /* кілька кандидатів -- відкинуто */
+static volatile uint16_t s_dgFixNone   DMR_AES_CCM;  /* жодного -- відкинуто */
 
 /* Рішення для data-заголовка (тип 6) з HR-C6000 ISR. Раніше брали лише з апаратним crcOk --
  * а запис BBD_0000 (2026-09-30) показав: стокова ШЛЕ квитанцію `01 40 ...` з валідним CRC через
@@ -824,9 +869,9 @@ void dmrSmsRxEarlyNote(int rxDataType, int filterDrops)
  * сходиться програмно (ті самі байти сторінки 0x02). Лічильники доводять або спростовують. */
 int dmrSmsRxHdrAccept(int hwCrcOk, const uint8_t *p12)
 {
-	if (hwCrcOk) { s_dgHdrHwOk++; return 1; }
-	if (dmrSmsPduHdrCrcOk(p12, 0xCCCC)) { s_dgHdrSwOk++; return 1; }
-	s_dgHdrBad++;
+	if (hwCrcOk) { SMS_DG(s_dgHdrHwOk++); return 1; }
+	if (dmrSmsPduHdrCrcOk(p12, 0xCCCC)) { SMS_DG(s_dgHdrSwOk++); return 1; }
+	SMS_DG(s_dgHdrBad++);
 	return 0;
 }
 
@@ -834,6 +879,12 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 {
 	d->ackSeen      = (uint16_t)s_ackSeen;
 	d->ackQueued    = (uint16_t)s_ackQueued;
+	d->pduOk        = s_dgPduOk;
+	d->crcFail      = s_dgCrcFail;
+	d->fixOk        = s_dgFixOk;
+	d->fixAmb       = s_dgFixAmb;
+	d->fixNone      = s_dgFixNone;
+#if defined(ENABLE_SMS_DIAG)
 	d->ackSent      = (uint16_t)s_ackSent;
 	d->ackStale     = (uint16_t)s_ackStale;
 	d->ackDelayMs   = (uint16_t)((s_ackLastDelayMs > 65535u) ? 65535u : s_ackLastDelayMs);
@@ -859,8 +910,6 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 	d->stgK         = s_ackStgK;
 	d->stgS         = s_ackStgS;
 	d->stgB         = s_ackStgB;
-	d->pduOk        = s_dgPduOk;
-	d->crcFail      = s_dgCrcFail;
 	d->blkNoHdr     = s_dgBlkNoHdr;
 	d->blkBusy      = s_dgBlkBusy;
 	d->blkOvf       = s_dgBlkOvf;
@@ -870,13 +919,12 @@ void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 	d->pickMaxMs    = s_dgPickMaxMs;
 	d->dbsnBad      = s_dgDbsnBad;
 	d->hw8Ok        = s_dg8HwOk;
-	d->fixOk        = s_dgFixOk;
-	d->fixAmb       = s_dgFixAmb;
-	d->fixNone      = s_dgFixNone;
 	d->fixLastMs    = s_dgFixLastMs;
 	d->fixMaxMs     = s_dgFixMaxMs;
+#endif
 }
 
+#if defined(ENABLE_SMS_DIAG)
 /* diag6: знімок останнього PDU з «CRC пог» для екрана «Діагностика 4». */
 int dmrSmsBadSnapInfo(dmrSmsBadSnapInfo_t *i)
 {
@@ -896,10 +944,15 @@ const uint8_t *dmrSmsBadSnapBlock(int idx, uint16_t *ms)
 	if (ms) { *ms = s_badMs[idx]; }
 	return s_badBlk[idx];
 }
+#endif
 
 void dmrSmsDiagScreenReset(void)
 {
-	s_ackSeen = s_ackQueued = s_ackSent = s_ackStale = 0;
+	s_ackSeen = s_ackQueued = 0;
+	s_dgPduOk = s_dgCrcFail = 0;
+	s_dgFixOk = s_dgFixAmb = s_dgFixNone = 0;
+#if defined(ENABLE_SMS_DIAG)
+	s_ackSent = s_ackStale = 0;
 	s_ackLastDelayMs = 0;
 	s_dgHdrHwOk = s_dgHdrSwOk = s_dgHdrBad = 0;
 	s_dgRespAll = s_dgRespForUs = s_dgRespMatch = 0;
@@ -907,12 +960,13 @@ void dmrSmsDiagScreenReset(void)
 	s_dgIsr6 = s_dgIsr8 = s_dgFilt6 = s_dgFilt8 = 0;
 	s_ackRealDelayMs = 0;
 	s_ackStgQ = s_ackStgK = s_ackStgS = s_ackStgB = 0;
-	s_dgPduOk = s_dgCrcFail = s_dgBlkNoHdr = s_dgBlkBusy = s_dgBlkOvf = s_dgBlkExtra = 0;
+	s_dgBlkNoHdr = s_dgBlkBusy = s_dgBlkOvf = s_dgBlkExtra = 0;
 	s_dgTickNotUs = s_dgTickBad = s_dgPickMaxMs = 0;
 	s_dgDbsnBad = s_dg8HwOk = 0;
-	s_dgFixOk = s_dgFixAmb = s_dgFixNone = s_dgFixLastMs = s_dgFixMaxMs = 0;
+	s_dgFixLastMs = s_dgFixMaxMs = 0;
 	s_badN = 0; s_badSeq = 0;
 	dmrDataTxDiagReset();
+#endif
 }
 
 /* Flush the deferred Sent-folder entry if one is queued and the radio has finished transmitting.
@@ -940,7 +994,7 @@ static void dmrSmsTxPersistTick(void)
 	/* Вхідне пишемо у флеш лише коли квитанція ВЖЕ пішла (s_ackPending знято) і передача
 	 * завершилась. Інакше блокуючий erase+write на сотні мс з'їдає те саме вікно, заради
 	 * якого ми чекаємо тиші -- рівно те, що зламало rev 5. */
-	if (s_pendInbox && !s_ackPending && !s_ackAwaitStart && !dmrDataTxBusy() && !trxIsTransmitting)
+	if (s_pendInbox && !s_ackPending && !SMS_ACK_AWAIT() && !dmrDataTxBusy() && !trxIsTransmitting)
 	{
 		store_add(s_pendInboxFlags, s_pendInboxPeer, s_pendInboxText, s_pendInboxLen);
 		s_pendInbox = 0;
@@ -978,15 +1032,15 @@ static void dmrSmsAckTick(void)
 		/* Канал так і не звільнився (відправник молотить ретрансміти впритул) -- кидаємо,
 		 * інакше квитанція вилетить у зовсім інший момент і тільки заважатиме. */
 		s_ackPending = 0;
-		s_ackStale++;
+		SMS_DG(s_ackStale++);
 		return;
 	}
 	if (dmrDataTxActive() || trxIsTransmitting) { return; }        /* ми самі передаємо */
 	/* Головна умова: відправник має ЗАМОВКНУТИ. Поки в каналі ідуть data-burst-и (хвіст
 	 * повідомлення, термінатор), він передає і нас не почує. */
 	{
-		uint32_t wait = (s_ackTargetMs > SMS_ACK_KEY_DELAY_MS)
-				? (uint32_t)(s_ackTargetMs - SMS_ACK_KEY_DELAY_MS) : 1u;
+		uint32_t wait = (SMS_ACK_PAUSE_MS() > SMS_ACK_KEY_DELAY_MS)
+				? (uint32_t)(SMS_ACK_PAUSE_MS() - SMS_ACK_KEY_DELAY_MS) : 1u;
 		if ((uint32_t)(now - s_lastRxBurstMs) < wait) { return; }
 	}
 	/* На slotState НЕ гейтуємо навмисно: після прийому він тримається в RX-стані до
@@ -997,7 +1051,7 @@ static void dmrSmsAckTick(void)
 	/* Самовимір: скільки минуло від ОСТАННЬОГО прийнятого burst-а відправника до моменту,
 	 * коли ми віддали квитанцію. Еталон -- ~80 мс у стокової; 366 мс (rev 5) було пізно.
 	 * Видно в sms_diag.py, тож наступну перевірку таймінгу можна робити без HackRF. */
-	s_ackLastDelayMs = now - s_lastRxBurstMs;
+	SMS_DG(s_ackLastDelayMs = now - s_lastRxBurstMs);
 	buildAndLoadSmsAck(s_ackTo);
 }
 
@@ -1011,19 +1065,20 @@ static void buildAndLoadSmsAck(uint32_t dst)
 	 * fix3: типово 0 преамбул (як у стокової) -- див. коментар біля s_ackPreambles. */
 	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * BURST_STRIDE] DMR_AES_CCM;
 	int n = dmrSmsPduBuildAckQueue(q, SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS, dst, src, s_rxLastNS,
-	                               (int)s_ackPreambles, (int)s_ackRepeats);
+	                               SMS_ACK_PREAMBLES(), SMS_ACK_REPEATS());
 	if (n <= 0) { s_ackPending = 0; return; }
 	/* Коротка затримка ключування замість типових 100 мс: відправник слухає вузьке вікно.
 	 * fix3: без термінатора (s_dgAckTerm=0, типово) -- після нашого заголовка йшли 2 TERM_LC
 	 * зі сміттям (LC ми не задаємо), і стокова в цей час уже мала б слухати.
 	 * s_ackSent -- лише якщо dmr_data прийняв чергу (відмови видно в рядку «Дані»). */
-	uint32_t now = ticksGetMillis();
-	if (dmrDataTxLoadDelayedEx(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS, s_dgAckTerm ? 0 : 1))
+	if (dmrDataTxLoadDelayedEx(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS, SMS_ACK_TERM() ? 0 : 1))
 	{
+#if defined(ENABLE_SMS_DIAG)
 		s_ackSent++;
 		s_ackSilenceMs = s_lastRxBurstMs;   /* відлік фактичної затримки -- від тиші в каналі */
-		s_ackLoadMs = now;
+		s_ackLoadMs = ticksGetMillis();
 		s_ackAwaitStart = 1;
+#endif
 	}
 	s_ackPending = 0;
 }
@@ -1204,7 +1259,7 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	/* Queue the Sent-folder write for AFTER the TX finishes (see s_pendSent / dmrSmsTxPersistTick)
 	 * -- keeps the blocking flash erase+write out of the TX-keying window on general principle
 	 * (see the comment above s_pendSent for why this turned out not to be bug #3 itself). */
-	if (!s_diagSkipStore)
+	if (!SMS_SKIP_STORE())
 	{
 		/* A prior send not yet flushed? The guard above ensured no active data call, so persist it
 		 * now before reusing the single pending slot. In practice the main-loop tick already
@@ -1225,10 +1280,10 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	 * не просить -- 0 не збігається з жодним реальним ID, хибного «доставлено» не буде. */
 	s_txPendingDst = (txMode != 0) ? dst : 0;
 	s_txAcked = 0;
-	if (txMode != 0) { s_dgTxConf++; }
+	if (txMode != 0) { SMS_DG(s_dgTxConf++); }
 	/* CONFIRMED (режими 1/2) -- типово без термінатора (fix3, доведено M2: інакше наш хвіст
 	 * перекриває квитанцію стокової). Режим 0 -- завжди звичайний кінець (шлях 438ec23). */
-	if (dmrSmsPduUseFastEnd(txMode, s_dgFastEnd)) { dmrDataTxLoadFast(q, (uint8_t)n); }
+	if (dmrSmsPduUseFastEnd(txMode, SMS_FAST_END())) { dmrDataTxLoadFast(q, (uint8_t)n); }
 	else                                          { dmrDataTxLoad(q, (uint8_t)n); }
 	return 0;
 }
@@ -1266,6 +1321,7 @@ static volatile uint32_t s_dedupPeer   DMR_AES_CCM;   /* відправник */
 static volatile uint16_t s_dedupIpId   DMR_AES_CCM;   /* IPv4 IP-ID pdu[4..5] */
 static volatile uint8_t  s_dedupTmsSeq DMR_AES_CCM;   /* TMS-seq pdu[32] */
 static volatile uint32_t s_dedupTs     DMR_AES_CCM;   /* tick часу останнього прийнятого (мс) */
+#if defined(ENABLE_SMS_DIAG)
 /* diagnostic counters (visible on the Messages home screen) to localise RX failures */
 static volatile uint32_t s_diagData   DMR_AES_CCM; /* ALL data-sync-class bursts the chip delivered */
 static volatile uint32_t s_diagHdrOk  DMR_AES_CCM; /* type-6 data-header, CRC OK   */
@@ -1309,19 +1365,6 @@ int dmrSmsRxLastPdu(uint8_t *out, int maxlen)
 	out[7] = (uint8_t)(s_diagLastPeer >> 24);
 	for (int i = 0; i < n; i++) { out[8 + i] = s_diagLastPdu[i]; }
 	return 8 + n;
-}
-
-/* Called for EVERY data-sync-class burst (any type, any CRC) so we can see exactly what
- * the HR-C6000 delivers during a stock SMS transmission. ISR context: counters only. */
-void dmrSmsRxDiagBurst(int rxDataType, int crcOk)
-{
-	s_diagData++;
-	s_lastRxBurstMs = ticksGetMillis();   /* канал зайнятий ЗАРАЗ -- гейт тиші для квитанції */
-	s_diagType[rxDataType & 0x0F]++;   /* гістограма типів -- бачити тип блоків навантаження */
-	s_lastHwOk = (uint8_t)(crcOk ? 1 : 0);   /* diag6: хук кличе нас прямо перед dmrSmsRxBurst() */
-	if ((rxDataType == DT_RATE34_DATA) && crcOk) { s_dg8HwOk++; }
-	if (rxDataType == DT_DATA_HEADER) { if (crcOk) s_diagHdrOk++; else s_diagHdrBad++; }
-	else if (rxDataType == DT_RATE12_DATA) { if (crcOk) s_diagBlkOk++; else s_diagBlkBad++; }
 }
 
 void dmrSmsRxDiagReset(void)
@@ -1385,6 +1428,27 @@ void dmrSmsRxDiag(uint32_t out[7])
 	out[3] = s_diagBlkOk; out[4] = s_diagBlkBad;
 	out[5] = s_diagPdu;   out[6] = s_diagMsg;
 }
+#endif /* ENABLE_SMS_DIAG: USB 0x93/0x94/0x95/0xB2/0xB3 */
+
+/* Called for EVERY data-sync-class burst (any type, any CRC) so we can see exactly what
+ * the HR-C6000 delivers during a stock SMS transmission. ISR context. ФУНКЦІЙНА частина
+ * (будь-яка збірка): мітка s_lastRxBurstMs -- гейт тиші для квитанції. Решта -- лічильники
+ * ENABLE_SMS_DIAG. */
+void dmrSmsRxDiagBurst(int rxDataType, int crcOk)
+{
+	s_lastRxBurstMs = ticksGetMillis();   /* канал зайнятий ЗАРАЗ -- гейт тиші для квитанції */
+#if defined(ENABLE_SMS_DIAG)
+	s_diagData++;
+	s_diagType[rxDataType & 0x0F]++;   /* гістограма типів -- бачити тип блоків навантаження */
+	s_lastHwOk = (uint8_t)(crcOk ? 1 : 0);   /* diag6: хук кличе нас прямо перед dmrSmsRxBurst() */
+	if ((rxDataType == DT_RATE34_DATA) && crcOk) { s_dg8HwOk++; }
+	if (rxDataType == DT_DATA_HEADER) { if (crcOk) s_diagHdrOk++; else s_diagHdrBad++; }
+	else if (rxDataType == DT_RATE12_DATA) { if (crcOk) s_diagBlkOk++; else s_diagBlkBad++; }
+#else
+	(void)rxDataType;
+	(void)crcOk;
+#endif
+}
 
 void dmrSmsRxReset(void)
 {
@@ -1404,7 +1468,7 @@ static void smsRxPublish(int total, uint8_t fix)
 	s_rxPeerAckReq = s_rxAckReq; /* чи винні ми квитанцію за це повідомлення */
 	s_rxPeerFix = fix;
 	s_rxReady = 1;          /* main loop will decrypt (or read cleartext) + store */
-	s_rxReadyMs = ticksGetMillis();
+	SMS_DG(s_rxReadyMs = ticksGetMillis());
 }
 
 void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
@@ -1418,11 +1482,11 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 		{
 			uint32_t to   = ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 8) | p[4];
 			uint32_t from = ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 8) | p[7];
-			s_dgRespAll++;
-			if (to == trxDMRID) { s_dgRespForUs++; }
+			SMS_DG(s_dgRespAll++);
+			if (to == trxDMRID) { SMS_DG(s_dgRespForUs++); }
 			if (to == trxDMRID && s_txPendingDst != 0 && from == s_txPendingDst)
 			{
-				s_dgRespMatch++;
+				SMS_DG(s_dgRespMatch++);
 				s_txAcked = 1;
 			}
 			return;
@@ -1445,9 +1509,11 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxSrc = ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 8) | p[7];
 			uint8_t nblocks = (uint8_t)(p[8] & 0x7F);
 			s_rxHdrBlocks = nblocks;                                        /* diag5: для «CRC32 не зійшовся» */
+#if defined(ENABLE_SMS_DIAG)
 			for (int i = 0; i < 12; i++) { s_curHdr[i] = p[i]; }           /* diag6: сирий заголовок */
 			s_curHdrMs = ticksGetMillis();
 			s_curHwOk = 0;
+#endif
 			s_rxExpBlocks = (uint8_t)((nblocks > 0) ? (nblocks - 1) : 0);  /* minus ENC header */
 			s_rxCount = 0;
 			s_rxLen = 0;
@@ -1463,8 +1529,8 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			/* N(S) з CONFIRMED-заголовка (o9 біти 6-4) -> Status квитанції (o9 біти 2-0). */
 			if (s_rxAckReq) { s_rxLastNS = (p[9] >> 4) & 7; }
 			/* Діагностика: що НАСПРАВДІ прислала стокова (перші два байти заголовка). */
-			s_ackLastHdr0 = p[0];
-			s_ackLastHdr1 = p[1];
+			SMS_DG(s_ackLastHdr0 = p[0]);
+			SMS_DG(s_ackLastHdr1 = p[1]);
 			if (s_rxAckReq) { s_ackSeen++; }
 		}
 		return;
@@ -1475,16 +1541,17 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 	 * (самотермінувальне, не довіряємо лічильнику блоків із заголовка). */
 	if (rxDataType == DT_RATE12_DATA || rxDataType == DT_RATE34_DATA)
 	{
-		if (!s_rxHaveHeader) { s_dgBlkNoHdr++; return; }
+		if (!s_rxHaveHeader) { SMS_DG(s_dgBlkNoHdr++); return; }
 		/* Не чіпаємо s_rxPdu, поки готовий PDU ще не забрав основний цикл (пишемо тепер
 		 * прямо в s_rxPdu, тож інакше новий burst затер би те, що ще не прочитано). */
-		if (s_rxReady) { s_dgBlkBusy++; return; }
+		if (s_rxReady) { SMS_DG(s_dgBlkBusy++); return; }
 
 		/* rate-1/2 (unconfirmed): весь 12-байтний блок -- навантаження.
 		 * rate-3/4 від стокової -- CONFIRMED data: 18-байтний блок = [2 байти DBSN+CRC9] +
 		 * [16 байтів навантаження]. Беремо лише 16 байтів навантаження: перші 2 службові й НЕ
 		 * входять у data-PDU/CRC32. Підтверджено дампом з ефіру (2026-09-05): так блоки
 		 * складаються в чистий IPv4/UDP/TMS і CRC32 усього PDU сходиться (0x43bc6082). */
+#if defined(ENABLE_SMS_DIAG)
 		/* Знімок СИРОГО блока (до відкидання службових байтів) -- еталон для CRC9. */
 		if (s_rawBlkCount < SMS_RAWBLK_MAX)
 		{
@@ -1493,15 +1560,17 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rawBlkLen[s_rawBlkCount] = (uint8_t)raw;
 			s_rawBlkCount++;
 		}
+#endif
 
 		const uint8_t *src = p;
 		int blkLen = 12;
 		if (rxDataType == DT_RATE34_DATA) { src = p + 2; blkLen = 16; }
-		if ((int)s_rxLen + blkLen > (int)sizeof s_rxPdu) { s_dgBlkOvf++; return; }   /* захист від переповнення */
+		if ((int)s_rxLen + blkLen > (int)sizeof s_rxPdu) { SMS_DG(s_dgBlkOvf++); return; }   /* захист від переповнення */
 		/* diag6: службові байти, час і HW-CRC блока -- для знімка, якщо PDU не складеться.
 		 * DBSN (старші 7 бітів першого службового байта) у CONFIRMED rate-3/4 -- порядковий
 		 * номер блока: 0,1,2... Збирач його НЕ перевіряє (кладе блоки в порядку прибуття),
 		 * тож тут лише рахуємо розбіжності -- повтор або перестановка блока їх покаже. */
+#if defined(ENABLE_SMS_DIAG)
 		if (s_rxCount < SMS_SNAP_MAX)
 		{
 			s_curSvc[s_rxCount][0] = p[0];
@@ -1510,12 +1579,13 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			if (s_lastHwOk) { s_curHwOk |= (uint8_t)(1u << s_rxCount); }
 		}
 		if ((rxDataType == DT_RATE34_DATA) && s_rxAckReq && ((p[0] >> 1) != (s_rxCount & 0x7F))) { s_dgDbsnBad++; }
+#endif
 		memcpy(s_rxPdu + s_rxLen, src, blkLen);
 		s_rxLen = (uint16_t)(s_rxLen + blkLen);
 		s_rxCount++;
 		/* Скільки блоків даних обіцяв заголовок: nblocks мінус ENC-заголовок, якщо він був. */
 		int expData = (int)s_rxHdrBlocks - (s_rxHaveEnc ? 1 : 0);
-		if ((expData > 0) && ((int)s_rxCount > expData)) { s_dgBlkExtra++; }
+		if ((expData > 0) && ((int)s_rxCount > expData)) { SMS_DG(s_dgBlkExtra++); }
 
 		/* Завершуємо, коли накопичене утворює CRC32-валідний data-PDU. Самотермінувально:
 		 * змішування/обрив блоків просто не дасть валідний CRC32. Мінімум ~2 rate-1/2 блоки
@@ -1543,17 +1613,22 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 						smsRxPublish(total, 1);
 						dmrSmsRxReset();
 					}
+#if defined(ENABLE_SMS_DIAG)
 					else
 					{
 						/* diag6: знімок цього PDU (сирі блоки = службові + навантаження з s_rxPdu). */
 						smsSnapStore(s_rxPdu, (int)s_rxCount, 0, s_curSvc, s_curMs, s_curHwOk, s_curHdr,
 						             want, got, s_dgCrcFail);
 					}
+#else
+					(void)got;
+#endif
 				}
 				return;
 			}
 			smsRxPublish(total, 0);
 			s_dgPduOk++;
+#if defined(ENABLE_SMS_DIAG)
 			s_diagPdu++;
 			/* snapshot raw (still-encrypted) PDU for USB inspection (clamped to the
 			 * snapshot buffer — the reported length must never exceed the bytes stored) */
@@ -1562,6 +1637,7 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_diagLastExp = s_rxExpBlocks;
 			s_diagLastPeer = s_rxSrc;
 			for (int i = 0; i < total && i < (int)sizeof s_diagLastPdu; i++) { s_diagLastPdu[i] = s_rxPdu[i]; }
+#endif
 			dmrSmsRxReset();
 		}
 	}
@@ -1636,6 +1712,7 @@ void dmrSmsRxTick(void)
 	dmrSmsTxPersistTick();   /* flush any deferred Sent-folder write once the TX has fully un-keyed */
 	dmrSmsAckTick();         /* відключити квитанцію на вхідне CONFIRMED SMS, коли настав час */
 
+#if defined(ENABLE_SMS_DIAG)
 	/* Фактична затримка квитанції (fix3): перший burst квитанції пішов у чип -> від тиші в
 	 * каналі до цього моменту. Старт старшої передачі (до постановки) не рахуємо; якщо за 3 с
 	 * передача так і не почалась -- перестаємо чекати (видно в лічильниках «Дані»). */
@@ -1664,6 +1741,7 @@ void dmrSmsRxTick(void)
 			s_ackAwaitStart = 0;
 		}
 	}
+#endif
 
 	/* TX-ACK: стокова TYT отримала наш CONFIRMED SMS і відповіла «01 40».
 	 * Позначаємо найновіше надіслане як DMR_SMS_FLAG_DELIVERED і показуємо банер. */
@@ -1697,6 +1775,7 @@ void dmrSmsRxTick(void)
 	/* fix7: PDU на корекцію -- забрати й службові байти/час/заголовок для знімка, поки ISR
 	 * не почав наступний PDU (після s_rxReady = 0 він може). */
 	uint8_t  fixReq = s_rxPeerFix;
+#if defined(ENABLE_SMS_DIAG)
 	uint8_t  fxSvc[SMS_SNAP_MAX][2];
 	uint16_t fxMs[SMS_SNAP_MAX];
 	uint8_t  fxHdr[12];
@@ -1710,15 +1789,18 @@ void dmrSmsRxTick(void)
 		fxHw = s_curHwOk;
 		fxSeq = s_dgCrcFail;
 	}
+#endif
 	if (pduLen > (int)sizeof pdu) { pduLen = (int)sizeof pdu; }
 	memcpy(pdu, s_rxPdu, pduLen);
 	s_rxReady = 0;
+#if defined(ENABLE_SMS_DIAG)
 	{
 		uint32_t late = ticksGetMillis() - s_rxReadyMs;   /* diag5: як довго PDU чекав на головний цикл */
 		if (late > s_dgPickMaxMs) { s_dgPickMaxMs = (uint16_t)((late > 65535u) ? 65535u : late); }
 	}
+#endif
 
-	if (pduLen < 32) { s_dgTickBad++; return; }   /* whole PDU is passed; decrypt derives the enc len */
+	if (pduLen < 32) { SMS_DG(s_dgTickBad++); return; }   /* whole PDU is passed; decrypt derives the enc len */
 
 	/* Адресний фільтр. Раніше його не було зовсім: приймалося ВСЕ, що пролізло крізь
 	 * частоту/таймслот/кольоровий код і відкрилося будь-яким нашим ключем -- зокрема приватні
@@ -1732,7 +1814,7 @@ void dmrSmsRxTick(void)
 	int forUs = smsIsForUs(dst, group);
 	if ((forUs == 0) && (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false))
 	{
-		s_dgTickNotUs++;
+		SMS_DG(s_dgTickNotUs++);
 		return;
 	}
 
@@ -1745,23 +1827,29 @@ void dmrSmsRxTick(void)
 		uint32_t got = dmrSmsPduCrc32(pdu, pduLen);
 		if (got != want)
 		{
-			if (!fixReq) { s_dgTickBad++; return; }   /* corrupted reassembly -> drop */
+			if (!fixReq) { SMS_DG(s_dgTickBad++); return; }   /* corrupted reassembly -> drop */
 			/* fix7: програмна корекція 1-2 сусідніх трибітів (див. dmr_sms_fix.h). Приймаємо,
 			 * лише якщо CRC32 + IPv4 + UDP сходяться і кандидат РІВНО один. Далі -- як звичайний
 			 * PDU (квитанція, дедуп, збереження). Невдача -- знімок на «Діагностику 4». */
+#if defined(ENABLE_SMS_DIAG)
 			uint32_t t0 = ticksGetMillis();
+#endif
 			smsFixCtx_t vc;
 			vc.enc = enc;
 			vc.keyId = keyId;
 			int r = dmrSmsPduFix34(pdu, pduLen, enc ? 0 : 1, smsFixVerify, &vc, NULL);
+#if defined(ENABLE_SMS_DIAG)
 			uint32_t dt = ticksGetMillis() - t0;
 			s_dgFixLastMs = (uint16_t)SAFE_MIN(dt, 65535u);
 			if (s_dgFixLastMs > s_dgFixMaxMs) { s_dgFixMaxMs = s_dgFixLastMs; }
+#endif
 			if (r != DMR_SMS_FIX_OK)
 			{
 				if (r == DMR_SMS_FIX_AMBIG) { s_dgFixAmb++; }
 				else                        { s_dgFixNone++; }
+#if defined(ENABLE_SMS_DIAG)
 				smsSnapStore(pdu, pduLen / 16, 1, (const uint8_t (*)[2])fxSvc, fxMs, fxHw, fxHdr, want, got, fxSeq);
+#endif
 				return;
 			}
 			s_dgFixOk++;
@@ -1795,8 +1883,8 @@ void dmrSmsRxTick(void)
 	 * саме нам приватно, а відправник просив підтвердити (CONFIRMED+A) -> шлемо Response header.
 	 * Робимо це ДО розшифровки: квитанція -- про доставку кадрів, а не про те, чи ми прочитали
 	 * текст (стокова так само квитує ще до показу). Групові й «моніторні»/чужі не квитуємо. */
-	s_ackLastGroup = group;
-	s_ackLastForUs = (uint8_t)(forUs ? 1 : 0);
+	SMS_DG(s_ackLastGroup = group);
+	SMS_DG(s_ackLastForUs = (uint8_t)(forUs ? 1 : 0));
 	/* Квитанцію ставимо в чергу, а віддає її dmrSmsAckTick() -- щойно канал ЗАМОВКНЕ.
 	 * Два ефірні заміри задали це вікно з обох боків:
 	 *  - rev 5 (BBD_0006): форма квитанції правильна байт-у-байт, але вийшла через 366 мс
@@ -1872,7 +1960,7 @@ void dmrSmsRxTick(void)
 			store_add(flags, peer, text, got);
 		}
 	}
-	s_diagMsg++;
+	SMS_DG(s_diagMsg++);
 
 	/* notify the user: visual banner (existing) + audible alert (new — раніше цей шлях був
 	 * німим, і вхідне SMS можна було пропустити, якщо не дивитись на екран саме в цю мить).
@@ -1893,9 +1981,11 @@ void dmrSmsRxTick(void)
 static void runtimeReset(void)
 {
 	s_cfgLoaded = 0;                 /* force the MSGC config to (re)load */
+#if defined(ENABLE_SMS_DIAG)
 	s_diagData = s_diagHdrOk = s_diagHdrBad = s_diagBlkOk = s_diagBlkBad = 0;
 	s_diagPdu = s_diagMsg = 0;
 	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
+#endif
 	s_rxReady = 0;                   /* don't process stray garbage as a PDU */
 	s_ackPending = 0;                /* не тягнути квитанцію через зміну каналу */
 	s_pendInbox = 0;                 /* і відкладений запис вхідного теж */
@@ -1905,6 +1995,8 @@ static void runtimeReset(void)
 	s_rxLastNS = 0;                  /* N(S) з останнього вхідного CONFIRMED (Task #33) */
 	s_dedupPeer = 0; s_dedupIpId = 0; s_dedupTmsSeq = 0; s_dedupTs = 0;  /* деdup (Task #34) */
 	dmrSmsDiagScreenReset();         /* лічильники екрана «Діагностика» (CCM, не .bss) */
+	s_rxPeerFix = 0;
+#if defined(ENABLE_SMS_DIAG)
 	/* Перемикачі екрана «Діагностика» -- типові значення при старті (fix3), не зберігаються. */
 	s_dgFastEnd    = DMR_SMS_DEFAULT_FAST_END;
 	s_dgRxBypass   = DMR_SMS_DEFAULT_RX_BYPASS;
@@ -1913,6 +2005,7 @@ static void runtimeReset(void)
 	s_ackTargetMs  = DMR_SMS_DEFAULT_ACK_PAUSE_MS;   /* перемикач «Квит. пауза» 20/50/80 */
 	s_ackAwaitStart = 0;
 	s_ackSilenceMs = 0; s_ackLoadMs = 0;
+#endif
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
 

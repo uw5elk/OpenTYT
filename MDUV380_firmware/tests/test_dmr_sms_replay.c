@@ -134,7 +134,11 @@ static int fails = 0;
 
 int main(void)
 {
+#if defined(ENABLE_SMS_DIAG)
+	printf("test_dmr_sms_replay (ENABLE_SMS_DIAG):\n");
+#else
 	printf("test_dmr_sms_replay:\n");
+#endif
 	dmrSmsInit();
 
 	int ackAfter = 0;
@@ -142,10 +146,9 @@ int main(void)
 	{
 		attempt();
 		mainLoopFor(600);                          /* пауза після спроби -- час на квитанцію */
-		uint32_t d[7]; dmrSmsRxDiag(d);
 		dmrSmsDiagScreen_t s; dmrSmsDiagScreenGet(&s);
 		printf("       спроба %d: PDU зібрано %u, квитанцій у черзі %u, віддано в dmr_data %d\n",
-		       k, (unsigned)d[5], (unsigned)s.ackQueued, s_txLoads);
+		       k, (unsigned)s.pduOk, (unsigned)s.ackQueued, s_txLoads);
 		if ((ackAfter == 0) && (s_txLoads > 0)) { ackAfter = k; }
 		mainLoopFor(5000);                         /* ~5,6 с між спробами */
 	}
@@ -159,6 +162,8 @@ int main(void)
 	/* Лічильники сторінки 3 «Діагностики» на чистому реплеї: 3 PDU, жодних втрат. */
 	{
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.pduOk == 3 && g.crcFail == 0 && g.ackSeen == 3 && g.ackQueued == 3, "спрощена «Діагностика»: PDU ок 3, CRC пог 0, бач 3, черг 3");
+#if defined(ENABLE_SMS_DIAG)
 		printf("       стор.3: PDU %u, CRC %u, безЗаг %u, зайнято %u, переп %u, зайві %u, не_нам %u, зіпс %u, забір %u мс\n",
 		       g.pduOk, g.crcFail, g.blkNoHdr, g.blkBusy, g.blkOvf, g.blkExtra, g.tickNotUs, g.tickBad, g.pickMaxMs);
 		CHECK(g.pduOk == 3 && g.crcFail == 0 && g.blkNoHdr == 0 && g.blkBusy == 0 && g.blkOvf == 0 &&
@@ -166,6 +171,7 @@ int main(void)
 		CHECK(g.dbsnBad == 0 && g.hw8Ok == 0, "стор. 4: DBSN по порядку (0 розбіжностей), HW-ok т8 = 0");
 		dmrSmsBadSnapInfo_t si;
 		CHECK(dmrSmsBadSnapInfo(&si) == 0, "стор. 4: чистий реплей -- знімка «CRC пог» нема");
+#endif
 	}
 
 	/* diag5, етап 2 (228 мс): жодного запису у флеш, поки квитанція в черзі або в ефірі;
@@ -185,12 +191,14 @@ int main(void)
 		attemptEx((const uint8_t (*)[18])bad, 0x02);
 		mainLoopFor(600);
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
-		dmrSmsBadSnapInfo_t si;
-		printf("       стор.3: CRC пог %u, корекц ок %u неод %u нема %u, %u мс\n", g.crcFail, g.fixOk, g.fixAmb, g.fixNone, g.fixLastMs);
+		printf("       CRC пог %u, корекц ок %u неод %u нема %u\n", g.crcFail, g.fixOk, g.fixAmb, g.fixNone);
 		CHECK(g.crcFail == 1 && g.fixOk == 1 && g.fixAmb == 0 && g.fixNone == 0, "CRC пог 1 -> «Корекц ок» 1");
 		CHECK(s_txLoads == before + 1, "виправлений PDU квитовано (квитанція в ефір)");
+#if defined(ENABLE_SMS_DIAG)
+		dmrSmsBadSnapInfo_t si;
 		CHECK(dmrSmsBadSnapInfo(&si) == 0, "виправлений PDU у знімок «Діагностики 4» НЕ потрапляє");
 		CHECK(g.hw8Ok == 1, "HW-ok т8 = 1");
+#endif
 	}
 	printf("       diag6/fix7: помилки у двох блоках поза заголовком IPv4 (2 і 3) -> «нема», знімок\n");
 	{
@@ -202,9 +210,10 @@ int main(void)
 		attemptEx((const uint8_t (*)[18])bad, 0x02);
 		mainLoopFor(600);
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.crcFail == 2 && g.fixOk == 1 && g.fixNone == 1 && s_txLoads == before, "CRC пог 2, «нема» 1, квитанції немає");
+#if defined(ENABLE_SMS_DIAG)
 		dmrSmsBadSnapInfo_t si;
 		int n = dmrSmsBadSnapInfo(&si);
-		CHECK(g.crcFail == 2 && g.fixOk == 1 && g.fixNone == 1 && s_txLoads == before, "CRC пог 2, «нема» 1, квитанції немає");
 		CHECK(n == 4 && si.len == 18 && si.seq == 2 && si.hwOk == 0x02, "знімок: 4 блоки по 18 Б, №2, маска HW 02");
 		CHECK(memcmp(si.hdr, HDR, 12) == 0, "знімок: сирий заголовок = 434c26ea0f26ea298408a851");
 		int same = 1;
@@ -218,6 +227,7 @@ int main(void)
 		CHECK(si.crcWant == 0xecfc3cebu && si.crcGot != si.crcWant, "знімок: CRC32 очікуваний ecfc3ceb, фактичний інший (%08x)", (unsigned)si.crcGot);
 		CHECK(dmrSmsBadSnapBlock(4, NULL) == NULL, "блока 5 у знімку нема");
 		CHECK(g.dbsnBad == 0, "DBSN по порядку");
+#endif
 	}
 	printf("       diag6: спроба з переставленими блоками 1 і 2\n");
 	{
@@ -227,11 +237,18 @@ int main(void)
 		attemptEx((const uint8_t (*)[18])sw, 0);
 		mainLoopFor(600);
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		CHECK(g.crcFail == 3 && g.fixNone == 2, "перестановка: CRC пог 3, не «виправлено» (нема 2)");
+#if defined(ENABLE_SMS_DIAG)
 		dmrSmsBadSnapInfo_t si;
 		dmrSmsBadSnapInfo(&si);
-		CHECK(g.crcFail == 3 && g.dbsnBad == 2 && g.fixNone == 2 && si.seq == 3, "перестановка: CRC пог 3, DBSN пор 2, не «виправлено», знімок №3");
+		CHECK(g.dbsnBad == 2 && si.seq == 3, "перестановка: DBSN пор 2, знімок №3");
 		dmrSmsDiagScreenReset();
 		CHECK(dmrSmsBadSnapInfo(&si) == 0, "довге GREEN (скидання) прибирає знімок");
+#else
+		dmrSmsDiagScreenReset();
+		dmrSmsDiagScreenGet(&g);
+		CHECK(g.crcFail == 0 && g.fixNone == 0 && g.pduOk == 0, "довге GREEN (скидання) обнуляє спрощену «Діагностику»");
+#endif
 	}
 	/* fix7: знімок #12 з рації (2026-10-05) наскрізь через справжній збирач: дві помилки в
 	 * різних блоках (заголовок IPv4 + блок 2) -> виправлено, квитанція з N(S)=4. */

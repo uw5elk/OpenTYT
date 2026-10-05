@@ -91,9 +91,15 @@
 #define MSGS_TX_MODE_UNCONF      "Unconfirmed"
 #define MSGS_TX_MODE_R12         "Confirmed 1/2"
 #define MSGS_TX_MODE_R34         "Confirmed 3/4"
-/* Екран «Діагностика» (2026-09-30): лічильники ланцюга квитанції. */
+/* Екран «Діагностика»: у будь-якій збірці -- одна сторінка (cleanup1). */
 #define MSGS_DIAG                "Diagnostics"
 #define MSGS_DG_ACK1_FMT         "Ack RX: seen %u q %u"
+#define MSGS_DG3_PDU_FMT         "PDU: ok %u CRC bad %u"
+#define MSGS_DG3_FIX1_FMT        "Fix: ok %u ambig %u"
+#define MSGS_DG_FIXNONE_FMT      "  none %u"
+#define MSGS_DG_HINT_MIN         "long GRN:reset RED:back"
+#if defined(ENABLE_SMS_DIAG)
+/* Екран «Діагностика» (2026-09-30): лічильники ланцюга квитанції. */
 #define MSGS_DG_ACK2_FMT         "  sent %u stale %u"
 #define MSGS_DG_ACK3_FMT         "  delay %u ms"
 #define MSGS_DG_DATA1_FMT        "Data: rej %u start %u"
@@ -119,7 +125,6 @@
 #define MSGS_DG_PAUSE_FMT        "%cAck pause: %u ms"
 /* diag5: сторінка 3 -- де гине вхідний PDU. */
 #define MSGS_DIAG3               "Diagnostics 3"
-#define MSGS_DG3_PDU_FMT         "PDU: ok %u CRC bad %u"
 #define MSGS_DG3_BLK1_FMT        "Blk: nohdr %u busy %u"
 #define MSGS_DG3_BLK2_FMT        "  ovf %u extra %u"
 #define MSGS_DG3_TICK_FMT        "Loop: notus %u bad %u"
@@ -134,8 +139,8 @@
 #define MSGS_DG4_HDR             "Hdr "
 #define MSGS_DG4_HINT            "U/D:scroll long GRN:reset"
 /* fix7: сторінка 3 -- корекція трибітів rate-3/4. */
-#define MSGS_DG3_FIX1_FMT        "Fix: ok %u ambig %u"
 #define MSGS_DG3_FIX2_FMT        "  none %u ms %u max %u"
+#endif /* ENABLE_SMS_DIAG */
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -179,9 +184,11 @@ static struct
 	int8_t   result;        // dmrSmsSend() return for the result screen
 	ticksTimer_t resultTimer;    // скільки ще показувати результат -- РЕАЛЬНИЙ час
 	ticksTimer_t resultGuard;    // поки не сплив -- клавіші не закривають екран (див. doSend)
+#if defined(ENABLE_SMS_DIAG)
 	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
 	uint8_t  diagScroll;    // diag6: перший видимий рядок сторінки 4 (знімок «CRC пог»)
+#endif
 } s_msg DMR_AES_CCM;
 
 static void homeUpdate(void);
@@ -391,9 +398,11 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 				break;
 			case 5:
 				s_msg.view = MSG_DIAG;
+#if defined(ENABLE_SMS_DIAG)
 				s_msg.diagPage = 0;
 				s_msg.diagScroll = 0;
 				s_msg.diagSel = 0;
+#endif
 				diagUpdate();
 				break;
 		}
@@ -402,6 +411,7 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 }
 
 /* ============================ DIAG ===================================== */
+#if defined(ENABLE_SMS_DIAG)
 /* Лічильники ланцюга квитанції одним поглядом, без USB-ПК (2026-09-30). Розшифровка
  * скорочень -- TESTING.md, блоки M і N. FONT_SIZE_1: 26 символів у рядок.
  * Сторінка 1 -- лічильники; DOWN -> сторінка 2 (fix3): лічильники ISR до фільтрів, фактична
@@ -597,16 +607,44 @@ static void diagToggle(int sel)
 		default: dmrSmsDiagAckPauseToggle();    break;   /* цільова пауза квитанції 80/50/20 мс */
 	}
 }
+#else
+/* cleanup1 (2026-10-05): звичайна збірка -- одна сторінка з мінімумом для польових скарг:
+ * чи бачили CONFIRMED і чи квитували, скільки PDU зібрано / з поганим CRC32, скільки виправила
+ * корекція трибітів (fix7). Довге GREEN -- скинути, RED -- назад. Усе інше -- ENABLE_SMS_DIAG. */
+static void diagUpdate(void)
+{
+	dmrSmsDiagScreen_t d;
+	char buf[40];
+	int y = 16;
+	dmrSmsDiagScreenGet(&d);
+
+	displayClearBuf();
+	menuDisplayTitle(MSGS_DIAG);
+	snprintf(buf, sizeof buf, MSGS_DG_ACK1_FMT, (unsigned)d.ackSeen, (unsigned)d.ackQueued);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 12;
+	snprintf(buf, sizeof buf, MSGS_DG3_PDU_FMT, (unsigned)d.pduOk, (unsigned)d.crcFail);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 12;
+	snprintf(buf, sizeof buf, MSGS_DG3_FIX1_FMT, (unsigned)d.fixOk, (unsigned)d.fixAmb);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG_FIXNONE_FMT, (unsigned)d.fixNone);
+	displayPrintAt(2, y, buf, FONT_SIZE_1);
+	displayPrintCentered(112, MSGS_DG_HINT_MIN, FONT_SIZE_1);
+	displayRender();
+
+	ticksTimerStart(&s_msg.resultTimer, MSGS_DIAG_REFRESH_MS);
+}
+#endif /* ENABLE_SMS_DIAG */
 
 static void diagEvent(uiEvent_t *ev)
 {
 	if ((ev->events & KEY_EVENT) == 0) { return; }
 	if (KEYCHECK_LONGDOWN(ev->keys, KEY_GREEN))
 	{
-		dmrSmsDiagScreenReset();   /* лічильники обох сторінок */
+		dmrSmsDiagScreenReset();   /* лічильники всіх сторінок */
 		diagUpdate();
 		return;
 	}
+#if defined(ENABLE_SMS_DIAG)
 	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
 		if (s_msg.diagPage == 0)                     { s_msg.diagPage = 1; s_msg.diagSel = 0; }
@@ -646,6 +684,7 @@ static void diagEvent(uiEvent_t *ev)
 		diagUpdate();
 		return;
 	}
+#endif
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
 		gotoHome();

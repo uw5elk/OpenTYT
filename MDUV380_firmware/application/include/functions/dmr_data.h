@@ -45,15 +45,17 @@ void dmrDataTxLoad(const uint8_t *bursts, uint8_t count);
 int  dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs);
 /* fastEnd=1: без термінатора й довгого TX_END, як dmrDataTxLoadFast(), але з delayMs. */
 int  dmrDataTxLoadDelayedEx(const uint8_t *bursts, uint8_t count, uint16_t delayMs, int fastEnd);
-/* Час (ticksGetMillis) першого burst-а останньої передачі, що реально почалась. */
-uint32_t dmrDataTxLastStartMs(void);
 /* Черга завантажена (ключування чекає таймера) або передача триває. */
 int      dmrDataTxBusy(void);
+#if defined(ENABLE_SMS_DIAG)
+/* Час (ticksGetMillis) першого burst-а останньої передачі, що реально почалась. */
+uint32_t dmrDataTxLastStartMs(void);
 /* Мітки часу (ticksGetMillis) останньої передачі: виклик dmrDataKeyTx() і старт
  * стартової послідовності HR-C6000 (TX_START_1). */
 uint32_t dmrDataTxLastKeyMs(void);
 uint32_t dmrDataTxLastSlotStartMs(void);
 void     dmrDataTxNoteSlotStart(void);   /* HR-C6000.c: data-передача переходить у TX_START_1 */
+#endif
 /* Те саме, але без термінатора й довгого TX_END -- передача гасне одразу після
  * останнього бургста, щоб встигнути почути відповідь (RCTL_COMPAT.md §5h). */
 void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count);
@@ -66,10 +68,12 @@ uint16_t dmrDataTxFinishMs(void);  /* скільки мс зайняло зав�
 int  dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payloadOut);  /* fills DMR_DATA_BURST_LEN bytes */
 void dmrDataTxEnd(void);   /* clear the data-call state (queue drained / TX ended) */
 
+#if defined(ENABLE_SMS_DIAG)
 /* Діагностика data-TX: out = [чергу відкинуто, передач почалось (перший burst у чипі),
  * вихід по таймауту, таймаут без жодного burst-а]. */
 void dmrDataTxDiag(uint16_t out[4]);
 void dmrDataTxDiagReset(void);
+#endif
 
 #endif // ENABLE_DMR_DATA
 #endif // _OPENGD77_DMR_DATA_H_

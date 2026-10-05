@@ -62,6 +62,10 @@ declare -A XFLAGS=(
 	[test_dmr_sms_replay]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 )
 
+# cleanup1 (2026-10-05): тести, які ще раз збираються з -DENABLE_SMS_DIAG (окремий бінарник
+# <назва>_smsdiag) -- діагностику SMS у CI не вмикають, тож інакше її код ніхто б не ганяв.
+SMSDIAG_TOO=(test_dmr_sms_replay)
+
 rm -rf "$BUILD" && mkdir -p "$BUILD"
 
 pass=0; fail=0
@@ -76,23 +80,29 @@ for src in "$TESTS_DIR"/test_*.c; do
 	extra="${SRCS[$name]}"   # може бути порожнім -> самодостатній тест (лінкуємо лише сам файл)
 	xflags="${XFLAGS[$name]:-}"
 
-	bin="$BUILD/$name"
-	# shellcheck disable=SC2086
-	if ! out="$("$CC" "${CFLAGS[@]}" $xflags "${INC[@]}" -o "$bin" "$src" $extra 2>&1)"; then
-		fail=$((fail + 1))
-		echo "ЗБІРКА ВПАЛА  $name"
-		printf '%s\n' "$out" | head -12
-		continue
-	fi
+	variants=("")
+	for d in "${SMSDIAG_TOO[@]}"; do [ "$d" = "$name" ] && variants+=("-DENABLE_SMS_DIAG"); done
+	for vflag in "${variants[@]}"; do
+		vname="$name"
+		[ -n "$vflag" ] && vname="${name}_smsdiag"
+		bin="$BUILD/$vname"
+		# shellcheck disable=SC2086
+		if ! out="$("$CC" "${CFLAGS[@]}" $xflags $vflag "${INC[@]}" -o "$bin" "$src" $extra 2>&1)"; then
+			fail=$((fail + 1))
+			echo "ЗБІРКА ВПАЛА  $vname"
+			printf '%s\n' "$out" | head -12
+			continue
+		fi
 
-	if out="$("$bin" 2>&1)"; then
-		pass=$((pass + 1))
-		echo "ok            $name"
-	else
-		fail=$((fail + 1))
-		echo "ПРОВАЛ        $name"
-		printf '%s\n' "$out" | tail -20
-	fi
+		if out="$("$bin" 2>&1)"; then
+			pass=$((pass + 1))
+			echo "ok            $vname"
+		else
+			fail=$((fail + 1))
+			echo "ПРОВАЛ        $vname"
+			printf '%s\n' "$out" | tail -20
+		fi
+	done
 done
 
 # Python-самоперевірка декодера ефірних записів (tools/dmr_data_rx.py). Потрібні numpy+scipy;

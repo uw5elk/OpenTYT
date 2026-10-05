@@ -67,6 +67,7 @@
  * символів у рядку з числами. Розшифровка -- TESTING.md, блок M. */
 #define MSGS_DIAG                "Діагностика"
 #define MSGS_DG_ACK1_FMT         "Квит RX: бач %u черг %u"
+#if defined(ENABLE_SMS_DIAG)
 #define MSGS_DG_ACK2_FMT         "  ефір %u простр %u"
 #define MSGS_DG_ACK3_FMT         "  пауза %u мс"
 #define MSGS_DG_DATA1_FMT        "Дані: відк %u старт %u"
@@ -76,7 +77,9 @@
 #define MSGS_DG_HDR_FMT          "Заг6 HW %u SW %u пог %u"
 #define MSGS_DG_FAST_FMT         "%cШв. кінець: %s"
 #define MSGS_DG_HINT             "DN:стор.2 дов.GRN:скид RED"
+#endif
 
+#if defined(ENABLE_SMS_DIAG)
 /* Екран «Діагностика», сторінка 2 (fix3, 2026-10-02): лічильники ISR до фільтрів і
  * перемикачі (GREEN на виділеному рядку). '%c' -- маркер виділення ('>' або пробіл). */
 #define MSGS_DIAG2               "Діагностика 2"
@@ -89,24 +92,32 @@
 #define MSGS_DG_YES              "так"
 #define MSGS_DG_NO               "ні"
 #define MSGS_DG_HINT2            "U/D GRN:змін дов:скид RED"
+#endif
 
+#if defined(ENABLE_SMS_DIAG)
 /* ui1/fix4 (2026-10-04): «Діагностика» стор. 2 -- етапи затримки квитанції (тиша->черга +
  * черга->ключування + ключування->старт TX + старт->перший burst) і перемикач цільової паузи. */
 #define MSGS_DG_STG_FMT          "Етапи: %u+%u+%u+%u"
 #define MSGS_DG_PAUSE_FMT        "%cКвит. пауза: %u мс"
+#endif
 
 /* diag5 (2026-10-04): «Діагностика» стор. 3 -- де гине вхідний PDU (TESTING.md, блок R).
  * PDU: зібрано з валідним CRC32 / блоків рівно як у заголовку, а CRC32 не зійшовся.
  * Блок: без заголовка / відкинуто, бо попередній PDU ще не забрано / переповнення / зайві.
  * Цикл: головний цикл відкинув -- не нам / зіпсований. Забір: найдовше «готовий -> забрано». */
+#if defined(ENABLE_SMS_DIAG)
 #define MSGS_DIAG3               "Діагностика 3"
+#endif
 #define MSGS_DG3_PDU_FMT         "PDU: ок %u CRC пог %u"
+#if defined(ENABLE_SMS_DIAG)
 #define MSGS_DG3_BLK1_FMT        "Блок: безЗаг %u зайн %u"
 #define MSGS_DG3_BLK2_FMT        "  переп %u зайві %u"
 #define MSGS_DG3_TICK_FMT        "Цикл: не нам %u зіпс %u"
 #define MSGS_DG3_PICK_FMT        "Забір макс: %u мс"
 #define MSGS_DG3_HINT            "U:стор.2 D:стор.4 дов:скид"
+#endif
 
+#if defined(ENABLE_SMS_DIAG)
 /* diag6 (2026-10-04): «Діагностика» стор. 4 -- знімок останнього PDU з «CRC пог»: сирі блоки,
  * мс від заголовка, '*' = HW CRC блока валідний; CRC32 очікуваний (о) / фактичний (ф);
  * DBSN пор -- блоки rate-3/4 з DBSN не за порядком; HW т8 ок -- блоки т8 з валідним HW CRC. */
@@ -117,11 +128,19 @@
 #define MSGS_DG4_CNT_FMT         "DBSN пор %u HW т8 ок %u"
 #define MSGS_DG4_HDR             "Заг "
 #define MSGS_DG4_HINT            "U/D:гортати дов.GRN:скид"
+#endif
 
 /* fix7 (2026-10-05): «Діагностика» стор. 3 -- програмна корекція 1-2 сусідніх трибітів у
  * вхідних rate-3/4 PDU: виправлено / кілька кандидатів (відкинуто); не знайдено, час
  * останньої корекції і найдовшої, мс. */
 #define MSGS_DG3_FIX1_FMT        "Корекц: ок %u неод %u"
+#if defined(ENABLE_SMS_DIAG)
 #define MSGS_DG3_FIX2_FMT        "  нема %u мс %u макс %u"
+#endif
+
+/* cleanup1 (2026-10-05): спрощений екран «Діагностика» (без ENABLE_SMS_DIAG) -- корекція
+ * «нема» окремим рядком і підказка без гортання сторінок. */
+#define MSGS_DG_FIXNONE_FMT      "  нема %u"
+#define MSGS_DG_HINT_MIN         "дов.GRN:скид  RED:назад"
 
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */
