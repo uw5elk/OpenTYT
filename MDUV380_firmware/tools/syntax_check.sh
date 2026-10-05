@@ -91,8 +91,12 @@ DEFS_MEMDIAG=("${DEFS_COMMON[@]}" -DENABLE_MEM_DIAG)                       # bui
 # messages/remote_control), але в CI (build.yml) УВІМКНЕНО лише разом із build-ukrainian --
 # тож перевіряємо саме ту реальну комбінацію прапорців, а не окрему "голу" основу.
 DEFS_CALLREPLAY=("${DEFS_UA[@]}" -DENABLE_CALL_REPLAY)                     # build-ukrainian + ENABLE_CALL_REPLAY
+# 2026-10-05 (cleanup1): ENABLE_SMS_DIAG -- уся діагностика SMS (екрани «Діагностика» 2-4,
+# перемикачі, знімок PDU, USB 0x93/0x94/0x95/0x97/0xB2/0xB3). У CI НЕ вмикається, тож без цієї
+# конфігурації діагностичний код ніхто б не компілював і він тихо згнив би до наступного розбору.
+DEFS_SMSDIAG=("${DEFS_CALLREPLAY[@]}" -DENABLE_SMS_DIAG)                    # build-ukrainian + CALL_REPLAY + ENABLE_SMS_DIAG
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY)
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

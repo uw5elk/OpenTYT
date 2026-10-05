@@ -1119,9 +1119,11 @@ static inline void hrc6000SysReceivedDataInt(void)
 	if ((hrc.transmissionEnabled == false) && (rxSyncClass == SYNC_CLASS_DATA) &&
 			(rxDataType >= 6) && (rxDataType <= 8))
 	{
+#if defined(ENABLE_SMS_DIAG)
 		bool rxStateDrops = ((slotState == DMR_STATE_RX_1) || (slotState == DMR_STATE_RX_2)) &&
 				((rxPrivacyIndicator != 0) || (hrc6000CrcIsValid() == false) || (hrc6000CheckColourCodeFilter() == false));
 		dmrSmsRxEarlyNote(rxDataType, rxStateDrops ? 1 : 0);
+#endif
 		if (dmrSmsRxBypass() && hrc6000CheckColourCodeFilter())
 		{
 			hrc6000SmsDataHook(rxDataType);
@@ -1647,7 +1649,9 @@ static void hrc6000TransitionToTx(void)
 	slotState = DMR_STATE_TX_START_1;
 	hrc.txSequence = 0;
 #if defined(ENABLE_DMR_DATA)
+#if defined(ENABLE_SMS_DIAG)
 	if (dmrDataTxActive()) { dmrDataTxNoteSlotStart(); }   // етап затримки квитанції (діагностика)
+#endif
 #endif
 }
 
@@ -2738,7 +2742,9 @@ static void hrc6000Tick(void)
 
 				slotState = DMR_STATE_TX_START_1;
 #if defined(ENABLE_DMR_DATA)
+#if defined(ENABLE_SMS_DIAG)
 				if (dmrDataTxActive()) { dmrDataTxNoteSlotStart(); }   // етап затримки квитанції (діагностика)
+#endif
 #endif
 			}
 			else

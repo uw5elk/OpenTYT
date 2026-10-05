@@ -78,11 +78,15 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *payload12);
 /* Drop any partial RX accumulation (call on Terminator / call end). */
 void dmrSmsRxReset(void);
 
-/* Diagnostic (bench bring-up). dmrSmsRxDiagBurst() is called for EVERY data-sync-class
- * burst the chip delivers (any type, any CRC). dmrSmsRxDiag() fills out[7]:
+/* dmrSmsRxDiagBurst() HR-C6000 кличе на КОЖЕН data-sync burst (будь-який тип/CRC). У будь-якій
+ * збірці ставить мітку «канал зайнятий» (гейт тиші квитанції); лічильники -- ENABLE_SMS_DIAG. */
+void dmrSmsRxDiagBurst(int rxDataType, int crcOk);
+
+#if defined(ENABLE_SMS_DIAG)
+/* ENABLE_SMS_DIAG (cleanup1, 2026-10-05): уся діагностика SMS -- для розборів, не для щоденної
+ * збірки. Diagnostic (bench bring-up). dmrSmsRxDiag() fills out[7]:
  *   [0]=all data bursts, [1]=hdr CRC-ok, [2]=hdr CRC-bad, [3]=blk CRC-ok,
  *   [4]=blk CRC-bad, [5]=PDUs reassembled, [6]=messages decoded. */
-void dmrSmsRxDiagBurst(int rxDataType, int crcOk);
 void dmrSmsRxDiag(uint32_t out[7]);
 void dmrSmsRxDiagTypes(uint32_t out[16]);   /* гістограма rxDataType (0..15) усіх data-sync бурстів */
 /* Діагностика link-layer квитанції на вхідне CONFIRMED SMS -- де саме рветься ланцюг:
@@ -92,7 +96,7 @@ void dmrSmsRxDiagTypes(uint32_t out[16]);   /* гістограма rxDataType (
  *   [10]=виміряна пауза до віддачі квитанції, мс (еталон стокової ~80),
  *   [11]=цільова пауза (підбірна), [12]=CSBK-преамбул перед квитанцією. */
 void dmrSmsAckDiag(uint32_t out[13]);
-/* Підбір подачі квитанції без перепрошивки (USB 0x95): скільки разів повторити заголовок
+/* Підбір подачі квитанції без перепрошивки (USB 0xB2): скільки разів повторити заголовок
  * (1..6), через скільки мс після тиші в каналі віддати і скільки CSBK-преамбул поставити
  * попереду (0..16). Типово 1 / 80 / 6 -- преамбули як у нашого SMS, яке стокова приймає. */
 void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles);
@@ -104,6 +108,7 @@ int  dmrSmsRxLastPdu(uint8_t *out, int maxlen);
  * out = [count, (len, bytes...) x count]. Еталон для реверсу CRC9 -- без нього не зібрати
  * власні CONFIRMED-блоки. Скидається разом з рештою лічильників (0x94). */
 int  dmrSmsRxRawBlocks(uint8_t *out, int maxlen);
+#endif /* ENABLE_SMS_DIAG */
 
 /* ---- RX (main-loop context) -------------------------------------------- *
  * Decrypt a completed PDU, store it to the Inbox, and pop a notification. Safe to
@@ -133,10 +138,12 @@ int  dmrSmsEncryptEnabled(void);
  * Returns 0 on success, <0 on error (busy / bad args). Also files the message into Sent. */
 int  dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId);
 
+#if defined(ENABLE_SMS_DIAG)
 /* DIAGNOSTIC (USB 0x97 A/B): make the next dmrSmsSend calls skip the store_add() Sent-folder
  * flash write, to isolate bug #3 (menu sends after the first fail; USB harness sends don't).
  * The menu path never sets this; it is toggled only around the 0x97 handler call. */
 void dmrSmsDiagSetSkipStore(int skip);
+#endif
 
 /* One-shot: повертає 1 якщо отримали Response-header (link-layer ACK, DPF=1) від адресата
  * нашого останнього CONFIRMED SMS, і скидає прапорець. 0 -- ще не отримали або нічого
@@ -154,14 +161,22 @@ void dmrSmsTxModeSet(uint8_t mode);
 
 /* ---- Прийом data-заголовка (HR-C6000 ISR) ------------------------------ *
  * Чи пускати data-заголовок (тип 6) далі у dmrSmsRxBurst/dmrRctlRxBurst: апаратний CRC ok,
- * АБО програмно CRC16 ^ 0xCCCC сходиться. Рахує обидва випадки для екрана діагностики. */
+ * АБО програмно CRC16 ^ 0xCCCC сходиться. З ENABLE_SMS_DIAG рахує обидва випадки. */
 int  dmrSmsRxHdrAccept(int hwCrcOk, const uint8_t *p12);
 
-/* ---- Екран «Діагностика» (меню Повідомлення) --------------------------- */
+/* ---- Екран «Діагностика» (меню Повідомлення) --------------------------- *
+ * Без ENABLE_SMS_DIAG -- одна сторінка з мінімумом для польових скарг; з ним -- 4 сторінки. */
 typedef struct
 {
+	/* будь-яка збірка: CONFIRMED-заголовків із проханням квитанції / квитанцій у черзі;
+	 * PDU з валідним CRC32 / зібрано під заголовок, а CRC32 не зійшовся; корекція трибітів
+	 * (fix7) -- виправлено / кілька кандидатів / жодного */
+	uint16_t ackSeen, ackQueued;
+	uint16_t pduOk, crcFail;
+	uint16_t fixOk, fixAmb, fixNone;
+#if defined(ENABLE_SMS_DIAG)
 	/* Квитанція на ВХІДНЕ CONFIRMED (ми квитуємо) */
-	uint16_t ackSeen, ackQueued, ackSent, ackStale, ackDelayMs;
+	uint16_t ackSent, ackStale, ackDelayMs;
 	/* dmr_data.c: черга відхилена (передача активна) / перший burst пішов у чип /
 	 * вихід по таймауту / таймаут без жодного burst-а */
 	uint16_t dataRejected, dataStarted, dataTimeout, dataNoStart;
@@ -175,18 +190,21 @@ typedef struct
 	/* ui1/fix4: етапи «Квит факт», мс: тиша->черга, черга->ключування, ключування->старт
 	 * TX_START_1, старт->перший burst квитанції в чипі */
 	uint16_t stgQ, stgK, stgS, stgB;
-	/* diag5, сторінка 3: де гине вхідний PDU -- зібрано / CRC32 не зійшовся на повній довжині /
-	 * блок без заголовка / блок відкинуто (попередній PDU не забрано) / переповнення / зайві
-	 * блоки / головний цикл: не нам / зіпсований; найбільша затримка «готовий -> забрано», мс */
-	uint16_t pduOk, crcFail, blkNoHdr, blkBusy, blkOvf, blkExtra, tickNotUs, tickBad, pickMaxMs;
+	/* diag5, сторінка 3: блок без заголовка / блок відкинуто (попередній PDU не забрано) /
+	 * переповнення / зайві блоки / головний цикл: не нам / зіпсований; найбільша затримка
+	 * «готовий -> забрано», мс */
+	uint16_t blkNoHdr, blkBusy, blkOvf, blkExtra, tickNotUs, tickBad, pickMaxMs;
 	/* diag6, сторінка 4: блоків rate-3/4 CONFIRMED з DBSN != порядковий номер (повтор або
 	 * перестановка); блоків т8, які HW позначив CRC-валідними */
 	uint16_t dbsnBad, hw8Ok;
-	/* fix7, сторінка 3: корекція трибітів -- виправлено / кілька кандидатів / жодного;
-	 * час останньої і найдовшої корекції, мс */
-	uint16_t fixOk, fixAmb, fixNone, fixLastMs, fixMaxMs;
+	/* fix7, сторінка 3: час останньої і найдовшої корекції, мс */
+	uint16_t fixLastMs, fixMaxMs;
+#endif
 } dmrSmsDiagScreen_t;
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
+void dmrSmsDiagScreenReset(void);
+
+#if defined(ENABLE_SMS_DIAG)
 /* diag6: знімок ОСТАННЬОГО повністю зібраного PDU з невалідним CRC32 («CRC пог»). */
 typedef struct
 {
@@ -201,8 +219,7 @@ typedef struct
 int            dmrSmsBadSnapInfo(dmrSmsBadSnapInfo_t *i);
 /* Сирий блок idx знімка (len байтів) і його час від заголовка, мс; NULL -- нема такого. */
 const uint8_t *dmrSmsBadSnapBlock(int idx, uint16_t *ms);
-void dmrSmsDiagScreenReset(void);
-/* Експеримент: наше CONFIRMED без термінатора (dmrDataTxLoadFast). Типово вимк, не зберігається. */
+/* Експеримент: наше CONFIRMED без термінатора (dmrDataTxLoadFast). Не зберігається. */
 int  dmrSmsDiagFastEnd(void);
 void dmrSmsDiagFastEndToggle(void);
 /* fix3: перемикачі 2-ї сторінки «Діагностики» (не зберігаються, типові -- DMR_SMS_DEFAULT_*). */
@@ -217,6 +234,11 @@ void dmrSmsDiagAckPauseToggle(void);
 /* ISR HR-C6000: облік data-переривання (тип 6/8) до фільтрів; filterDrops -- чи відкинув би
  * його фільтр RX-стану. */
 void dmrSmsRxEarlyNote(int rxDataType, int filterDrops);
+#else
+/* cleanup1: «RX обхід» перевірено на залізі (2026-10-05) -- завжди увімк
+ * (= DMR_SMS_DEFAULT_RX_BYPASS у dmr_sms_pdu.h). */
+#define dmrSmsRxBypass() (1)
+#endif /* ENABLE_SMS_DIAG */
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_SMS_H_ */

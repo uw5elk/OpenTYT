@@ -1793,6 +1793,9 @@ static void cpsHandleCommand(void)
 			replyLength = 1;
 			break;
 #if defined(ENABLE_AES)
+#if defined(ENABLE_SMS_DIAG)
+		// cleanup1 (2026-10-05): SMS-діагностика по USB (tools/sms_diag.py) -- 0x93/0xB3/0xB2/0x94/
+		// 0x95/0x97 -- лише з ENABLE_SMS_DIAG. Без нього ці коди отримують звичайну відповідь '-'.
 		case 0x93: // DIAGNOSTIC: dump the SMS RX diag counters -> [cmd, len_hi, len_lo, 7x uint32 LE +
 			   //  txActive byte]. Counters: d=all data bursts, hOk,hBad,bOk,bBad,pdu,msg.
 			{
@@ -1897,6 +1900,7 @@ static void cpsHandleCommand(void)
 				replyLength = 2;
 				return; // bypass the trailing generic '-' reply
 			}
+#endif // ENABLE_SMS_DIAG
 		case 0x98: // DIAG: arm/disarm сирого захоплення data-burst для реверсу стокового
 			   // протоколу керування (RCTL_COMPAT.md). [2]=1 arm / 0 disarm. Reply:[cmd,armed]
 			dmrRctlCapArm(com_requestbuffer[2] & 0x01);

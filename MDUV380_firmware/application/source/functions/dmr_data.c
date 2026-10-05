@@ -63,6 +63,10 @@ static volatile uint8_t s_dataTxActive; /* past the active=0 store the ISR gates
 static uint16_t         s_txFinishPolls;
 static volatile uint8_t s_fastEnd;      /* 1 = обірвати передачу відразу після останнього бургста */
 
+/* cleanup1 (2026-10-05): лічильники й мітки часу нижче потрібні лише діагностиці SMS
+ * (екран «Діагностика» стор. 1-2, розклад затримки квитанції) -- тільки з ENABLE_SMS_DIAG. */
+#if defined(ENABLE_SMS_DIAG)
+#define DATA_DG(x) do { x; } while (0)
 /* Діагностика (екран «Діагностика» меню Повідомлення, 2026-09-30): де саме губиться data-TX.
  * У CCM (main RAM на межі), секція .aes_ccmram -- вона стоїть ПІСЛЯ всього .ccmram, тож
  * нічого з наявного в CCM не зсуває. Скидає dmrDataTxDiagReset(), її кличе dmrSmsInit()
@@ -115,6 +119,9 @@ void dmrDataTxDiagReset(void)
 	s_dgKeyTxMs = 0;
 	s_dgSlotStartMs = 0;
 }
+#else
+#define DATA_DG(x) do { } while (0)
+#endif /* ENABLE_SMS_DIAG */
 
 /*
  * Форк: період опитування 25 -> 5 мс. Причина -- квитанція RCTL: після нашої команди
@@ -146,8 +153,8 @@ static void dmrDataTxFinishPoll(void)
 	}
 	if (s_txFinishPolls >= DMR_DATA_TX_FINISH_TIMEOUT)
 	{
-		s_dgTimeout++;
-		if (!s_dgBurstSeen) { s_dgNoStart++; }   /* ключували, а слот так і не віддав жодного burst-а */
+		DATA_DG(s_dgTimeout++);
+		DATA_DG(if (!s_dgBurstSeen) { s_dgNoStart++; });   /* ключували, а слот так і не віддав жодного burst-а */
 	}
 	dmrDataTxEnd();           // ensure the queue/flags are cleared (idempotent)
 	trxDisableTransmission(); // LED_RED off + trxActivateRx() -> back to RX, like PTT release
@@ -168,9 +175,9 @@ static void dmrDataTxFinishPoll(void)
 
 static void dmrDataKeyTx(void)
 {
-	s_dgKeyTxMs = ticksGetMillis();   /* етап затримки «черга -> ключування» */
+	DATA_DG(s_dgKeyTxMs = ticksGetMillis());   /* етап затримки «черга -> ключування» */
 	s_burstIndex = 0;
-	s_dgBurstSeen = 0;
+	DATA_DG(s_dgBurstSeen = 0);
 	s_dataTxActive = 1;
 	s_txFinishPolls = 0;
 	// hrc6000Tick() starts the DMR TX only when isWaking == NONE AND slotState == IDLE.
@@ -196,7 +203,7 @@ void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count)
 {
 	if (s_dataTxActive)
 	{
-		s_dgRejected++;
+		DATA_DG(s_dgRejected++);
 		return;
 	}
 	s_fastEnd = 1;
@@ -226,7 +233,7 @@ int dmrDataTxLoadDelayedEx(const uint8_t *bursts, uint8_t count, uint16_t delayM
 {
 	if (s_dataTxActive)
 	{
-		s_dgRejected++;
+		DATA_DG(s_dgRejected++);
 		return 0; // a data call is already keyed; ignore overlapping triggers
 	}
 	if (fastEnd) { s_fastEnd = 1; }   // знімає dmrDataTxEnd() наприкінці передачі
@@ -271,7 +278,7 @@ int dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payload12Out)
 	{
 		return 0;
 	}
-	if (!s_dgBurstSeen) { s_dgBurstSeen = 1; s_dgStarted++; s_dgFirstBurstMs = ticksGetMillis(); }   /* передача реально почалась */
+	DATA_DG(if (!s_dgBurstSeen) { s_dgBurstSeen = 1; s_dgStarted++; s_dgFirstBurstMs = ticksGetMillis(); });   /* передача реально почалась */
 	uint8_t *b = s_bursts[s_burstIndex++];
 	*dataTypeOut = b[0];
 	memcpy(payload12Out, b + 1, DMR_DATA_BURST_LEN);
