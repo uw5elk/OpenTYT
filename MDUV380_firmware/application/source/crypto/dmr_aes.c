@@ -504,6 +504,32 @@ void dmr_sms_ecb_decrypt(uint8_t *payload, int len, const uint8_t key[32]) {
 /* Extract the UTF-16LE message text from an already-PLAINTEXT IPv4/UDP/TMS SMS PDU
  * (the cleartext path uses this directly; the decrypt path calls it after ECB-decrypting).
  * Text runs from byte 38 to the IP total-length end. Returns text len, or -1 if not IPv4/UDP. */
+#if defined(ENABLE_AES)
+/* ui5: Z3DMR (через стокову рацію) шле UTF-16 зі ЗСУВОМ: старший байт символу k лежить у
+ * pdu[37 + 2k], а не в pdu[39 + 2k] (наче UTF-16BE, зсунутий на 1 байт; claude/sms-protocol.md,
+ * розділ 7). CRC32, IPv4 і UDP checksum при цьому сходяться -- псує відправник.
+ * Символ на позиції i (текст з байта 38): правильне читання -- pdu[i] | pdu[i+1] << 8,
+ * зсунуте -- pdu[i] | pdu[i-1] << 8 (для i = 38 це pdu[37], старший байт LF заголовка TMS). */
+static uint16_t sms_text_char(const uint8_t *pdu, int i, int shifted)
+{
+    return (uint16_t)(pdu[i] | ((shifted ? pdu[i - 1] : pdu[i + 1]) << 8));
+}
+
+/* Оцінка читання: (кількість U+0020) - (кількість символів < 0x20 або таких, що дають '?').
+ * Неправильне читання псує пробіли поруч із кирилицею (U+0020 -> U+0420 «Р») і символи на
+ * межах кирилиця/латиниця. */
+static int sms_text_score(const uint8_t *pdu, int tend, int shifted)
+{
+    int i, score = 0;
+    for (i = 38; i + 1 < tend; i += 2) {
+        uint16_t u = sms_text_char(pdu, i, shifted);
+        if (u == 0x0020) { score++; }
+        else if ((u < 0x20) || ((u != '?') && (dmrSmsUcs2ToCp1251(u) == '?'))) { score--; }
+    }
+    return score;
+}
+#endif
+
 int dmr_sms_text_from_plaintext(const uint8_t *pdu, int pdu_len, char *out, int out_max) {
     int i, n = 0, iptot, tend;
     if (pdu_len < 32 || out_max <= 0) return -1;
@@ -511,11 +537,24 @@ int dmr_sms_text_from_plaintext(const uint8_t *pdu, int pdu_len, char *out, int 
     iptot = ((int)pdu[2] << 8) | pdu[3];                   /* IP packet length */
     if (iptot > pdu_len) { iptot = pdu_len; }
     tend = iptot;                                          /* text runs [38, IP packet end) */
+#if defined(ENABLE_AES)
+    /* ui5: вибір читання. а) Заголовок TMS «0D 00 0A xx» з xx != 0: правильний відправник має
+     * тут 00 (старший байт LF), отже текст зсунутий -- безумовно. б) Інакше зсунуте -- лише якщо
+     * його оцінка СТРОГО більша (за рівності -- правильне: латиниця читається однаково). */
+    int shifted = 0;
+    if (tend > 39) {
+        if (pdu[34] == 0x0D && pdu[35] == 0x00 && pdu[36] == 0x0A && pdu[37] != 0x00) {
+            shifted = 1;
+        } else if (sms_text_score(pdu, tend, 1) > sms_text_score(pdu, tend, 0)) {
+            shifted = 1;
+        }
+    }
+#endif
     for (i = 38; i + 1 < tend && n < out_max - 1; i += 2) {
 #if defined(ENABLE_AES)
         /* ui4: UTF-16LE -> cp1251 (шрифт рації): кирилиця більше не відкидається; чого в cp1251
          * немає -> '?', керівні (CR/LF) -> пробіл, U+0000 пропускаємо. */
-        uint8_t c = dmrSmsUcs2ToCp1251((uint16_t)(pdu[i] | (pdu[i+1] << 8)));
+        uint8_t c = dmrSmsUcs2ToCp1251(sms_text_char(pdu, i, shifted));
         if (c != 0) out[n++] = (char)c;
 #else
         if (pdu[i+1] == 0 && pdu[i] >= 0x20 && pdu[i] < 0x7f) out[n++] = (char)pdu[i];

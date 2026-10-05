@@ -95,8 +95,13 @@ DEFS_CALLREPLAY=("${DEFS_UA[@]}" -DENABLE_CALL_REPLAY)                     # bui
 # перемикачі, знімок PDU, USB 0x93/0x94/0x95/0x97/0xB2/0xB3). У CI НЕ вмикається, тож без цієї
 # конфігурації діагностичний код ніхто б не компілював і він тихо згнив би до наступного розбору.
 DEFS_SMSDIAG=("${DEFS_CALLREPLAY[@]}" -DENABLE_SMS_DIAG)                    # build-ukrainian + CALL_REPLAY + ENABLE_SMS_DIAG
+# 2026-10-05 (ui5): ті самі функції форка (AES + DMR_DATA + CALL_REPLAY), але АНГЛІЙСЬКОЮ. Без цієї
+# конфігурації англійські відповідники рядків з languages/*_ua.h ніхто не компілював: з 8aab1f5
+# у menuRCTLRemote.c бракувало RCTL_WAITING / RCTL_HINT_CANCEL / RCTL_ACK_AGE_FMT, і така збірка
+# падала, а всі 6 конфігурацій вище були чисті.
+DEFS_ENDATA=("${DEFS_COMMON[@]}" -DENABLE_AES -DENABLE_DMR_DATA -DENABLE_CALL_REPLAY)  # англійська + AES + DMR_DATA
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG)
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

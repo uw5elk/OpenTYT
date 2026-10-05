@@ -59,6 +59,11 @@
 #define RCFG_ITEM_STUN           "Disable"
 #define RCFG_ITEM_REVIVE         "Enable"
 #define RCFG_ITEM_CALL_ALERT     "Call Alert"
+/* ui5: бракувало з 8aab1f5 (Radio Check з очікуванням квитанції) -- англійська збірка з
+ * ENABLE_AES + ENABLE_DMR_DATA не компілювалась. Значення -- відповідники rctl_ua.h. */
+#define RCTL_WAITING             "Checking..."
+#define RCTL_HINT_CANCEL         "RED:cancel"
+#define RCTL_ACK_AGE_FMT         "ID %lu, %lus ago"
 #endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
