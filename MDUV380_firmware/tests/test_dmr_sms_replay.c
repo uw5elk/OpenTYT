@@ -174,20 +174,38 @@ int main(void)
 	CHECK(s_flashInTxWindow == 0, "у вікні «черга -> ключування -> передача» флеш не пишеться");
 	CHECK(s_flashWrites > 0, "вхідне SMS записано у флеш після передачі квитанції");
 
-	/* ===== diag6: знімок PDU з «CRC пог» ===== */
-	printf("       diag6: спроба з одним зіпсованим бітом у блоці 2 (HW-ok лише в блока 1)\n");
+	/* ===== fix7: корекція трибітів; diag6: знімок лише невиправлених ===== */
+	printf("       fix7: спроба з одним зіпсованим трибітом у блоці 2 -> має виправитись\n");
 	dmrSmsDiagScreenReset();
 	{
 		uint8_t bad[4][18];
 		memcpy(bad, BLK, sizeof bad);
-		bad[2][10] ^= 0x04;                          /* один біт навантаження */
+		bad[2][10] ^= 0x04;                          /* один біт навантаження (один трибіт) */
+		int before = s_txLoads;
+		attemptEx((const uint8_t (*)[18])bad, 0x02);
+		mainLoopFor(600);
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		dmrSmsBadSnapInfo_t si;
+		printf("       стор.3: CRC пог %u, корекц ок %u неод %u нема %u, %u мс\n", g.crcFail, g.fixOk, g.fixAmb, g.fixNone, g.fixLastMs);
+		CHECK(g.crcFail == 1 && g.fixOk == 1 && g.fixAmb == 0 && g.fixNone == 0, "CRC пог 1 -> «Корекц ок» 1");
+		CHECK(s_txLoads == before + 1, "виправлений PDU квитовано (квитанція в ефір)");
+		CHECK(dmrSmsBadSnapInfo(&si) == 0, "виправлений PDU у знімок «Діагностики 4» НЕ потрапляє");
+		CHECK(g.hw8Ok == 1, "HW-ok т8 = 1");
+	}
+	printf("       diag6/fix7: помилки у двох блоках поза заголовком IPv4 (2 і 3) -> «нема», знімок\n");
+	{
+		uint8_t bad[4][18];
+		memcpy(bad, BLK, sizeof bad);
+		bad[2][10] ^= 0x04;
+		bad[3][5]  ^= 0x10;
+		int before = s_txLoads;
 		attemptEx((const uint8_t (*)[18])bad, 0x02);
 		mainLoopFor(600);
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
 		dmrSmsBadSnapInfo_t si;
 		int n = dmrSmsBadSnapInfo(&si);
-		CHECK(g.crcFail == 1 && g.pduOk == 0, "CRC пог = 1, PDU ок = 0");
-		CHECK(n == 4 && si.len == 18 && si.seq == 1 && si.hwOk == 0x02, "знімок: 4 блоки по 18 Б, №1, маска HW 02");
+		CHECK(g.crcFail == 2 && g.fixOk == 1 && g.fixNone == 1 && s_txLoads == before, "CRC пог 2, «нема» 1, квитанції немає");
+		CHECK(n == 4 && si.len == 18 && si.seq == 2 && si.hwOk == 0x02, "знімок: 4 блоки по 18 Б, №2, маска HW 02");
 		CHECK(memcmp(si.hdr, HDR, 12) == 0, "знімок: сирий заголовок = 434c26ea0f26ea298408a851");
 		int same = 1;
 		for (int b = 0; b < 4; b++)
@@ -196,10 +214,10 @@ int main(void)
 			const uint8_t *k = dmrSmsBadSnapBlock(b, &ms);
 			if (!k || memcmp(k, bad[b], 18) != 0 || ms != (uint16_t)(SLOT_MS * (b + 1))) { same = 0; }
 		}
-		CHECK(same, "знімок: сирі блоки байт-у-байт (разом зі службовими), час 60/120/180/240 мс");
+		CHECK(same, "знімок: сирі блоки байт-у-байт як прийнято (не «виправлені»), час 60/120/180/240 мс");
 		CHECK(si.crcWant == 0xecfc3cebu && si.crcGot != si.crcWant, "знімок: CRC32 очікуваний ecfc3ceb, фактичний інший (%08x)", (unsigned)si.crcGot);
 		CHECK(dmrSmsBadSnapBlock(4, NULL) == NULL, "блока 5 у знімку нема");
-		CHECK(g.dbsnBad == 0 && g.hw8Ok == 1, "DBSN по порядку, HW-ok т8 = 1");
+		CHECK(g.dbsnBad == 0, "DBSN по порядку");
 	}
 	printf("       diag6: спроба з переставленими блоками 1 і 2\n");
 	{
@@ -211,10 +229,33 @@ int main(void)
 		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
 		dmrSmsBadSnapInfo_t si;
 		dmrSmsBadSnapInfo(&si);
-		CHECK(g.crcFail == 2 && g.dbsnBad == 2 && si.seq == 2, "перестановка: CRC пог 2, DBSN пор 2, знімок оновився (№2)");
+		CHECK(g.crcFail == 3 && g.dbsnBad == 2 && g.fixNone == 2 && si.seq == 3, "перестановка: CRC пог 3, DBSN пор 2, не «виправлено», знімок №3");
 		dmrSmsDiagScreenReset();
 		CHECK(dmrSmsBadSnapInfo(&si) == 0, "довге GREEN (скидання) прибирає знімок");
 	}
+	/* fix7: знімок #12 з рації (2026-10-05) наскрізь через справжній збирач: дві помилки в
+	 * різних блоках (заголовок IPv4 + блок 2) -> виправлено, квитанція з N(S)=4. */
+	{
+		static const uint8_t H12[12] = { 0x43,0x48,0x26,0xea,0x0f,0x26,0xea,0x29,0x84,0x48,0x7c,0x7a };
+		static const char *const R12[4] = { "01d045000034000c001440118e280c26ea29", "03e60c26ea0f0fa70fa70020c0bc0016e000",
+		                                    "042f85040d000a006d0075d06d0031006100", "07366d006a000000000000000000292ac790" };
+		uint8_t b12[4][18];
+		for (int b = 0; b < 4; b++) { for (int i = 0; i < 18; i++) { unsigned v; sscanf(R12[b] + 2 * i, "%2x", &v); b12[b][i] = (uint8_t)v; } }
+		dmrSmsDiagScreenReset();
+		int before = s_txLoads;
+		for (int i = 0; i < 14; i++) { dmrSmsRxDiagBurst(3, 1); mainLoopFor(SLOT_MS); }
+		dmrSmsRxDiagBurst(6, 1);
+		if (dmrSmsRxHdrAccept(1, H12)) { dmrSmsRxBurst(6, H12); }
+		mainLoopFor(SLOT_MS);
+		for (int b = 0; b < 4; b++) { dmrSmsRxDiagBurst(8, 0); dmrSmsRxBurst(8, b12[b]); mainLoopFor(SLOT_MS); }
+		dmrSmsRxReset();
+		mainLoopFor(600);
+		dmrSmsDiagScreen_t g; dmrSmsDiagScreenGet(&g);
+		uint8_t exp[12]; dmrSmsPduAckHeader(0x26EA29, 0x26EA0F, 4, exp);
+		CHECK(g.crcFail == 1 && g.fixOk == 1 && s_txLoads == before + 1 && memcmp(s_txQ + 1, exp, 12) == 0,
+		      "знімок #12 наскрізь: «Корекц ок» 1, квитанція 01 40 26ea29 26ea0f 00 0c (N(S)=4)");
+	}
+
 	/* Після зіпсованих спроб чиста знову збирається з першого разу. */
 	{
 		int before = s_txLoads;

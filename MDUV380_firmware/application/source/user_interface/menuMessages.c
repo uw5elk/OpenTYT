@@ -133,6 +133,9 @@
 #define MSGS_DG4_CNT_FMT         "DBSN bad %u HW t8 ok %u"
 #define MSGS_DG4_HDR             "Hdr "
 #define MSGS_DG4_HINT            "U/D:scroll long GRN:reset"
+/* fix7: сторінка 3 -- корекція трибітів rate-3/4. */
+#define MSGS_DG3_FIX1_FMT        "Fix: ok %u ambig %u"
+#define MSGS_DG3_FIX2_FMT        "  none %u ms %u max %u"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -474,7 +477,7 @@ static void diagPage3(const dmrSmsDiagScreen_t *d)
 	snprintf(buf, sizeof buf, MSGS_DG_ISR_FMT, (unsigned)d->isr6, (unsigned)d->isr8);
 	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
 	snprintf(buf, sizeof buf, MSGS_DG_ACK1_FMT, (unsigned)d->ackSeen, (unsigned)d->ackQueued);
-	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 12;
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
 	snprintf(buf, sizeof buf, MSGS_DG3_PDU_FMT, (unsigned)d->pduOk, (unsigned)d->crcFail);
 	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
 	snprintf(buf, sizeof buf, MSGS_DG3_BLK1_FMT, (unsigned)d->blkNoHdr, (unsigned)d->blkBusy);
@@ -484,6 +487,11 @@ static void diagPage3(const dmrSmsDiagScreen_t *d)
 	snprintf(buf, sizeof buf, MSGS_DG3_TICK_FMT, (unsigned)d->tickNotUs, (unsigned)d->tickBad);
 	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
 	snprintf(buf, sizeof buf, MSGS_DG3_PICK_FMT, (unsigned)d->pickMaxMs);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	/* fix7: корекція трибітів -- виправлено / неоднозначно; не знайдено, час останньої і найдовшої */
+	snprintf(buf, sizeof buf, MSGS_DG3_FIX1_FMT, (unsigned)d->fixOk, (unsigned)d->fixAmb);
+	displayPrintAt(2, y, buf, FONT_SIZE_1); y += 10;
+	snprintf(buf, sizeof buf, MSGS_DG3_FIX2_FMT, (unsigned)d->fixNone, (unsigned)d->fixLastMs, (unsigned)d->fixMaxMs);
 	displayPrintAt(2, y, buf, FONT_SIZE_1);
 	displayPrintCentered(112, MSGS_DG3_HINT, FONT_SIZE_1);
 }

@@ -182,6 +182,9 @@ typedef struct
 	/* diag6, сторінка 4: блоків rate-3/4 CONFIRMED з DBSN != порядковий номер (повтор або
 	 * перестановка); блоків т8, які HW позначив CRC-валідними */
 	uint16_t dbsnBad, hw8Ok;
+	/* fix7, сторінка 3: корекція трибітів -- виправлено / кілька кандидатів / жодного;
+	 * час останньої і найдовшої корекції, мс */
+	uint16_t fixOk, fixAmb, fixNone, fixLastMs, fixMaxMs;
 } dmrSmsDiagScreen_t;
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
 /* diag6: знімок ОСТАННЬОГО повністю зібраного PDU з невалідним CRC32 («CRC пог»). */
