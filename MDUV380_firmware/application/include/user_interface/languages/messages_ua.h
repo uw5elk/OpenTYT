@@ -60,13 +60,18 @@
 /* Режим TX SMS (2026-09-29): рядок у головному меню «Повідомлення». */
 #define MSGS_TX_MODE_FMT         "TX: %s"
 #define MSGS_TX_MODE_UNCONF      "Без підтв."
-#define MSGS_TX_MODE_R12         "Підтв. 1/2"
-#define MSGS_TX_MODE_R34         "Підтв. 3/4"
+#if defined(ENABLE_SMS_DIAG)
+#define MSGS_TX_MODE_R12         "Підтв. 1/2"   /* ui2: режим rate-1/2 -- лише з ENABLE_SMS_DIAG */
+#endif
 
 /* Екран «Діагностика» (2026-09-30): лічильники ланцюга квитанції. FONT_SIZE_1 -- до 26
  * символів у рядку з числами. Розшифровка -- TESTING.md, блок M. */
+#if defined(ENABLE_SMS_DIAG)   /* ui2: екран «Діагностика» -- лише з діагностикою */
 #define MSGS_DIAG                "Діагностика"
+#endif
+#if defined(ENABLE_SMS_DIAG)   /* ui2: екран «Діагностика» -- лише з діагностикою */
 #define MSGS_DG_ACK1_FMT         "Квит RX: бач %u черг %u"
+#endif
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_DG_ACK2_FMT         "  ефір %u простр %u"
 #define MSGS_DG_ACK3_FMT         "  пауза %u мс"
@@ -108,7 +113,9 @@
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_DIAG3               "Діагностика 3"
 #endif
+#if defined(ENABLE_SMS_DIAG)   /* ui2: екран «Діагностика» -- лише з діагностикою */
 #define MSGS_DG3_PDU_FMT         "PDU: ок %u CRC пог %u"
+#endif
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_DG3_BLK1_FMT        "Блок: безЗаг %u зайн %u"
 #define MSGS_DG3_BLK2_FMT        "  переп %u зайві %u"
@@ -133,14 +140,15 @@
 /* fix7 (2026-10-05): «Діагностика» стор. 3 -- програмна корекція 1-2 сусідніх трибітів у
  * вхідних rate-3/4 PDU: виправлено / кілька кандидатів (відкинуто); не знайдено, час
  * останньої корекції і найдовшої, мс. */
+#if defined(ENABLE_SMS_DIAG)   /* ui2: екран «Діагностика» -- лише з діагностикою */
 #define MSGS_DG3_FIX1_FMT        "Корекц: ок %u неод %u"
+#endif
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_DG3_FIX2_FMT        "  нема %u мс %u макс %u"
 #endif
 
-/* cleanup1 (2026-10-05): спрощений екран «Діагностика» (без ENABLE_SMS_DIAG) -- корекція
- * «нема» окремим рядком і підказка без гортання сторінок. */
-#define MSGS_DG_FIXNONE_FMT      "  нема %u"
-#define MSGS_DG_HINT_MIN         "дов.GRN:скид  RED:назад"
+/* ui2 (2026-10-05): режим TX SMS «З підтв.» (CONFIRMED rate-3/4, перевірено на залізі) --
+ * замість колишнього «Підтв. 3/4» (MSGS_TX_MODE_R34 прибрано). */
+#define MSGS_TX_MODE_CONF        "З підтв."
 
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

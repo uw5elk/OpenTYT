@@ -192,6 +192,13 @@ const dmrSmsMessage_t *dmrSmsGet(int outgoing, int idx)
 	return &s_scratch;
 }
 
+/* ui2 (2026-10-05): вхідне, за яке ми щойно квитували, пишеться у флеш ВІДКЛАДЕНО (s_pendInbox,
+ * dmrSmsTxPersistTick) -- а банер «ще N непрочит.» і значок на головному екрані малюються раніше.
+ * Без цього показане повідомлення ще не в сховищі, і «-1» у банері віднімав його вдруге (поле:
+ * 10 SMS -> «ще 8»). Тепер відкладене непрочитане вхідне рахується одразу. */
+static int  pendInboxUnread(void);
+static void pendInboxMarkRead(void);
+
 int dmrSmsUnreadCount(void)
 {
 	store_ensure();
@@ -200,7 +207,7 @@ int dmrSmsUnreadCount(void)
 	{
 		if (((s_store.data[o] & DMR_SMS_FLAG_OUTGOING) == 0) && (s_store.data[o] & DMR_SMS_FLAG_UNREAD)) { n++; }
 	}
-	return n;
+	return n + pendInboxUnread();
 }
 
 void dmrSmsMarkRead(int outgoing, int idx)
@@ -226,6 +233,7 @@ void dmrSmsMarkAllRead(void)
 		}
 	}
 	if (changed) { store_save(); }
+	pendInboxMarkRead();   /* ui2: і ще не записане вхідне -- інакше воно «оживе» непрочитаним */
 }
 
 /* Remove the entry at byte offset o, compacting the block down. */
@@ -412,16 +420,28 @@ int dmrSmsEncryptEnabled(void)
 }
 
 /* ---- Режим TX SMS (Task #31): 0=Без підтв. 1=Підтв.½ 2=Підтв.¾ ------------------- */
+/* ui2 (2026-10-05): у меню два режими -- 0 «Без підтв.» і 2 «З підтв.» (CONFIRMED rate-3/4,
+ * перевірено на залізі). Режим 1 (CONFIRMED rate-1/2) стокова не приймає -- це експеримент, тож
+ * він є лише з ENABLE_SMS_DIAG; у звичайній збірці збережене 1 читається як 2. Блок не записаний
+ * (нова установка) або значення невідоме -> 2 «З підтв.». Довжина custom-data -- той самий 1 байт. */
 int dmrSmsTxMode(void)
 {
 	uint8_t buf = 0;
-	codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE, &buf, 1);
-	return (buf <= 2) ? (int)buf : 0;   /* 0=Unconf(типово) якщо блок порожній або неправильний */
+	if (!codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE, &buf, 1)) { return 2; }
+	if (buf == 0) { return 0; }
+#if defined(ENABLE_SMS_DIAG)
+	if (buf == 1) { return 1; }
+#endif
+	return 2;
 }
 
 void dmrSmsTxModeSet(uint8_t mode)
 {
-	if (mode > 2) { mode = 0; }
+#if defined(ENABLE_SMS_DIAG)
+	if (mode > 2) { mode = 2; }
+#else
+	if (mode != 0) { mode = 2; }
+#endif
 	codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE, &mode, 1);
 }
 
@@ -445,6 +465,8 @@ static uint8_t smsResolveTxKeyId(void)
 /* ============================ TX ======================================== */
 /* Контрольні суми, IPv4/UDP/TMS, черга burst-ів (stride 19) і режим «Без підтвердження»
  * -- у functions/dmr_sms_pdu.c (чистий код, спільний із хост-тестами). */
+#if defined(ENABLE_SMS_DIAG)
+/* ui2: CONFIRMED rate-1/2 (режим 1) стокова не приймає -- лише експеримент, тільки з ENABLE_SMS_DIAG. */
 /* CRC-9 для Rate-1/2 CONFIRMED data blocks (ETSI TS 102 361-1 §B.3.10).
  * Поліном 0x059, init=0. Дані: payload10[0..9] (MSB кожного байта вперед) + 7-бітний DBSN
  * (MSB вперед). Фінал: (~reg & 0x1FF) ^ 0x0F0 (маска Rate12DataContinuation).
@@ -487,6 +509,7 @@ static void confirmed_block_fill(uint8_t *p12, const uint8_t *payload10, uint8_t
 	p12[1] = b1;
 	memcpy(p12 + 2, payload10, 10);
 }
+#endif /* ENABLE_SMS_DIAG: rate-1/2 CONFIRMED */
 
 /* CRC-9 для Rate-3/4 CONFIRMED data blocks. Той самий poly=0x059, init=0, маска 0x1FF --
  * payload 16 байт.  ETSI TS 102 361-1 §B.3.12 (Rate34DataContinuation).
@@ -693,9 +716,9 @@ void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles)
  * де рветься ланцюг: чи бачили ми взагалі CONFIRMED-заголовок із проханням квитанції,
  * чи поставили її в чергу, чи реально віддали в ефір. s_ackLastHdr0/1 -- перші два байти
  * останнього вхідного data-заголовка (тобто що НАСПРАВДІ шле стокова). */
+#if defined(ENABLE_SMS_DIAG)
 static volatile uint32_t s_ackSeen;      /* заголовків CONFIRMED + біт A */
 static volatile uint32_t s_ackQueued;    /* разів поставили квитанцію в чергу */
-#if defined(ENABLE_SMS_DIAG)
 static volatile uint32_t s_ackSent;      /* разів реально віддали в ефір (dmrDataTxLoad) */
 static volatile uint32_t s_ackStale;     /* разів кинули, бо канал не звільнився */
 static volatile uint8_t  s_ackLastHdr0;  /* p[0] останнього вхідного data-заголовка */
@@ -852,14 +875,17 @@ void dmrSmsRxEarlyNote(int rxDataType, int filterDrops)
 #define SMS_ACK_AWAIT()  (0)
 #endif /* ENABLE_SMS_DIAG */
 
-/* Мінімум лічильників для польових скарг (екран «Діагностика» у будь-якій збірці). */
-static volatile uint16_t s_dgPduOk     DMR_AES_CCM;  /* PDU з валідним CRC32 зібрано (ISR) */
-static volatile uint16_t s_dgCrcFail   DMR_AES_CCM;  /* блоків стільки, скільки в заголовку, а CRC32 не зійшовся */
 /* fix7 (2026-10-05): програмна корекція 1-2 сусідніх трибітів у rate-3/4 PDU (dmr_sms_fix.c). */
 static volatile uint8_t  s_rxPeerFix   DMR_AES_CCM;  /* 1 = готовий PDU з невалідним CRC32 -- на корекцію */
+#if defined(ENABLE_SMS_DIAG)
+/* ui2: і ці лічильники (колишня спрощена «Діагностика») -- лише з ENABLE_SMS_DIAG; пункту
+ * «Діагностика» у звичайній збірці більше немає. */
+static volatile uint16_t s_dgPduOk     DMR_AES_CCM;  /* PDU з валідним CRC32 зібрано (ISR) */
+static volatile uint16_t s_dgCrcFail   DMR_AES_CCM;  /* блоків стільки, скільки в заголовку, а CRC32 не зійшовся */
 static volatile uint16_t s_dgFixOk     DMR_AES_CCM;  /* виправлено (рівно один кандидат) */
 static volatile uint16_t s_dgFixAmb    DMR_AES_CCM;  /* кілька кандидатів -- відкинуто */
 static volatile uint16_t s_dgFixNone   DMR_AES_CCM;  /* жодного -- відкинуто */
+#endif
 
 /* Рішення для data-заголовка (тип 6) з HR-C6000 ISR. Раніше брали лише з апаратним crcOk --
  * а запис BBD_0000 (2026-09-30) показав: стокова ШЛЕ квитанцію `01 40 ...` з валідним CRC через
@@ -875,6 +901,7 @@ int dmrSmsRxHdrAccept(int hwCrcOk, const uint8_t *p12)
 	return 0;
 }
 
+#if defined(ENABLE_SMS_DIAG)
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d)
 {
 	d->ackSeen      = (uint16_t)s_ackSeen;
@@ -968,6 +995,7 @@ void dmrSmsDiagScreenReset(void)
 	dmrDataTxDiagReset();
 #endif
 }
+#endif /* ENABLE_SMS_DIAG */
 
 /* Flush the deferred Sent-folder entry if one is queued and the radio has finished transmitting.
  * Called from the main loop (dmrSmsRxTick). Safe to call every tick; a no-op when idle. */
@@ -979,6 +1007,17 @@ static uint8_t  s_pendInboxFlags;
 static uint32_t s_pendInboxPeer;
 static int      s_pendInboxLen;
 static char     s_pendInboxText[DMR_SMS_TEXT_MAX + 1];
+
+static int pendInboxUnread(void)
+{
+	return (s_pendInbox && ((s_pendInboxFlags & DMR_SMS_FLAG_OUTGOING) == 0) &&
+			(s_pendInboxFlags & DMR_SMS_FLAG_UNREAD)) ? 1 : 0;
+}
+
+static void pendInboxMarkRead(void)
+{
+	if (s_pendInbox) { s_pendInboxFlags &= (uint8_t)~DMR_SMS_FLAG_UNREAD; }
+}
 
 static void dmrSmsTxPersistTick(void)
 {
@@ -1012,7 +1051,7 @@ static void queueSmsAck(uint32_t to)
 	s_ackAtMs = now;                    /* далі чекаємо не таймер, а ТИШУ в каналі */
 	s_ackDeadlineMs = now + SMS_ACK_MAX_WAIT_MS;
 	s_ackPending = 1;
-	s_ackQueued++;
+	SMS_DG(s_ackQueued++);
 }
 
 /* Резервний шлях: віддати відкладену квитанцію, коли канал звільниться.
@@ -1151,6 +1190,7 @@ static int buildConfirmedQueue(uint8_t *q, int txMode, const uint8_t *ct, int ct
 		n = dmrSmsPduAppendBurst(q, n, DTB_DATA_HEADER, p12, 12);
 	}
 	/* Data blocks: rate-1/2 (10 Б payload, DTB_RATE12_DATA) або rate-3/4 (16 Б, DTB_RATE34_DATA). */
+#if defined(ENABLE_SMS_DIAG)
 	if (txMode == 1)
 	{
 		/* Rate-1/2 CONFIRMED data blocks (ETSI §B.3.10): 12 Б = 2 Б hdr + 10 Б payload.
@@ -1175,6 +1215,7 @@ static int buildConfirmedQueue(uint8_t *q, int txMode, const uint8_t *ct, int ct
 		}
 	}
 	else
+#endif /* ENABLE_SMS_DIAG */
 	{
 		/* Rate-3/4 CONFIRMED блоки (режим 2): DTB_RATE34_DATA, 18 Б = 2 hdr + 16 payload.
 		 * Нормальні блоки: 16 Б навантаження кожен.
@@ -1239,11 +1280,16 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	int ctLen = ptLen;                       /* ct = whole enc blocks + clear tail (or all clear) */
 
 	/* 2) Черга burst-ів -- за режимом TX SMS (меню «Повідомлення», CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE):
-	 *   0 = Без підтвердження (ТИПОВО) -- рівно шлях 438ec23, що працював у полі:
-	 *       Unconfirmed, сирі 12-байтні rate-1/2 блоки (dmrSmsPduBuildUnconf);
-	 *   1 = CONFIRMED rate-1/2;  2 = CONFIRMED rate-3/4 (buildConfirmedQueue).
+	 *   0 = Без підтвердження -- рівно шлях 438ec23, що працював у полі:
+	 *       Unconfirmed, сирі 12-байтні rate-1/2 блоки (dmrSmsPduBuildUnconf); групові -- завжди так;
+	 *   2 = «З підтв.» (ТИПОВО з ui2) -- CONFIRMED rate-3/4 (buildConfirmedQueue);
+	 *   1 = CONFIRMED rate-1/2 -- лише з ENABLE_SMS_DIAG.
 	 * q -- у CCM: 40 x 19 = 760 байт, main RAM не зачеплено. */
 	int txMode = dmrSmsTxMode();
+	/* ui2: групові SMS -- завжди без підтвердження. Квитанцію на груповий CONFIRMED ніхто не шле
+	 * (ми самі групові не квитуємо, smsIsForUs/ackReq), тож A-біт там лише змушував би чекати.
+	 * Раніше в режимі «Підтв.» групові йшли CONFIRMED; тепер «З підтв.» типовий -- тому явно. */
+	if (group) { txMode = 0; }
 	static uint8_t q[DMR_DATA_MAX_BURSTS * BURST_STRIDE] DMR_AES_CCM;
 	int n;
 	if (txMode == 0)
@@ -1531,7 +1577,7 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			/* Діагностика: що НАСПРАВДІ прислала стокова (перші два байти заголовка). */
 			SMS_DG(s_ackLastHdr0 = p[0]);
 			SMS_DG(s_ackLastHdr1 = p[1]);
-			if (s_rxAckReq) { s_ackSeen++; }
+			if (s_rxAckReq) { SMS_DG(s_ackSeen++); }
 		}
 		return;
 	}
@@ -1603,7 +1649,7 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 				 * в заголовку, -- PDU мав скластися: рахуємо як «CRC32 не зійшовся». */
 				if ((expData > 0) && ((int)s_rxCount == expData))
 				{
-					s_dgCrcFail++;
+					SMS_DG(s_dgCrcFail++);
 					if (rxDataType == DT_RATE34_DATA)
 					{
 						/* fix7: зібрано рівно під заголовок, а CRC32 не зійшовся. Трелліс-декодер
@@ -1627,7 +1673,7 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 				return;
 			}
 			smsRxPublish(total, 0);
-			s_dgPduOk++;
+			SMS_DG(s_dgPduOk++);
 #if defined(ENABLE_SMS_DIAG)
 			s_diagPdu++;
 			/* snapshot raw (still-encrypted) PDU for USB inspection (clamped to the
@@ -1845,14 +1891,14 @@ void dmrSmsRxTick(void)
 #endif
 			if (r != DMR_SMS_FIX_OK)
 			{
-				if (r == DMR_SMS_FIX_AMBIG) { s_dgFixAmb++; }
-				else                        { s_dgFixNone++; }
+				if (r == DMR_SMS_FIX_AMBIG) { SMS_DG(s_dgFixAmb++); }
+				else                        { SMS_DG(s_dgFixNone++); }
 #if defined(ENABLE_SMS_DIAG)
 				smsSnapStore(pdu, pduLen / 16, 1, (const uint8_t (*)[2])fxSvc, fxMs, fxHw, fxHdr, want, got, fxSeq);
 #endif
 				return;
 			}
-			s_dgFixOk++;
+			SMS_DG(s_dgFixOk++);
 		}
 	}
 
@@ -1994,7 +2040,7 @@ static void runtimeReset(void)
 	s_txNS = 0; s_txNSSent = 0;     /* N(S) лічильник TX (Task #32) */
 	s_rxLastNS = 0;                  /* N(S) з останнього вхідного CONFIRMED (Task #33) */
 	s_dedupPeer = 0; s_dedupIpId = 0; s_dedupTmsSeq = 0; s_dedupTs = 0;  /* деdup (Task #34) */
-	dmrSmsDiagScreenReset();         /* лічильники екрана «Діагностика» (CCM, не .bss) */
+	SMS_DG(dmrSmsDiagScreenReset());   /* лічильники екрана «Діагностика» (CCM, не .bss) */
 	s_rxPeerFix = 0;
 #if defined(ENABLE_SMS_DIAG)
 	/* Перемикачі екрана «Діагностика» -- типові значення при старті (fix3), не зберігаються. */

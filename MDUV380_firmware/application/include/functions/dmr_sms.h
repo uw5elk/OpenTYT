@@ -164,8 +164,9 @@ void dmrSmsTxModeSet(uint8_t mode);
  * АБО програмно CRC16 ^ 0xCCCC сходиться. З ENABLE_SMS_DIAG рахує обидва випадки. */
 int  dmrSmsRxHdrAccept(int hwCrcOk, const uint8_t *p12);
 
+#if defined(ENABLE_SMS_DIAG)
 /* ---- Екран «Діагностика» (меню Повідомлення) --------------------------- *
- * Без ENABLE_SMS_DIAG -- одна сторінка з мінімумом для польових скарг; з ним -- 4 сторінки. */
+ * Лише з ENABLE_SMS_DIAG (ui2: у звичайній збірці пункту «Діагностика» немає). */
 typedef struct
 {
 	/* будь-яка збірка: CONFIRMED-заголовків із проханням квитанції / квитанцій у черзі;
@@ -203,6 +204,7 @@ typedef struct
 } dmrSmsDiagScreen_t;
 void dmrSmsDiagScreenGet(dmrSmsDiagScreen_t *d);
 void dmrSmsDiagScreenReset(void);
+#endif
 
 #if defined(ENABLE_SMS_DIAG)
 /* diag6: знімок ОСТАННЬОГО повністю зібраного PDU з невалідним CRC32 («CRC пог»). */
