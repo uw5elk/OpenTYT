@@ -156,4 +156,7 @@
 #define MSGS_DEL_ONE_Q           "Видалити SMS?"
 #define MSGS_HINT_YES_NO         "GREEN -- так, RED -- ні"
 
+/* ui4: підказка біля індикатора режиму набору («абв»/«АБВ»/«ABC»/«abc»/«123»). */
+#define MSGS_HINT_MODE           "#:режим"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

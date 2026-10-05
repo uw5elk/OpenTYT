@@ -35,7 +35,8 @@ void     dmrSmsPduHdrCrc(const uint8_t *h, int len, uint16_t mask, uint8_t out2[
 /* CRC32 data-PDU: len ВКЛЮЧАЄ 4 байти поля CRC (обробляється len*8-32 бітів). */
 uint32_t dmrSmsPduCrc32(const uint8_t *pdu, int len);
 /* IPv4/UDP/TMS відкритий текст у out (>= 360 Б). Повертає довжину. */
-int      dmrSmsPduBuildPlaintext(const char *text, int tlen, uint32_t src, uint32_t dst,
+/* text -- cp1251 (кирилиця -> UTF-16LE U+04xx); group: dst-IP 225.x (групове) або 12.x (приватне). */
+int      dmrSmsPduBuildPlaintext(const char *text, int tlen, uint32_t src, uint32_t dst, int group,
                                  uint8_t seq, uint16_t ipid, uint8_t *out);
 /* Додати burst у чергу; решта stride обнуляється. Повертає n+1. */
 int      dmrSmsPduAppendBurst(uint8_t *q, int n, uint8_t typeByte, const uint8_t *payload, int plen);

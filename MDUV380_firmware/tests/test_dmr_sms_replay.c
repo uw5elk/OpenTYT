@@ -318,7 +318,7 @@ int main(void)
 			char text[16];
 			int tl = snprintf(text, sizeof text, "SMS %d", k);
 			uint8_t pdu[128];
-			int pl = dmrSmsPduBuildPlaintext(text, tl, 0x26EA29, 0x26EA0F, (uint8_t)(0x90 | k), (uint16_t)(0x1000 + k), pdu);
+			int pl = dmrSmsPduBuildPlaintext(text, tl, 0x26EA29, 0x26EA0F, 0, (uint8_t)(0x90 | k), (uint16_t)(0x1000 + k), pdu);
 			int len = ((pl + 4 + 15) / 16) * 16;
 			memset(pdu + pl, 0, (size_t)(len - pl));
 			uint32_t c = dmrSmsPduCrc32(pdu, len);

@@ -79,12 +79,18 @@ static const uint8_t REF_ENC_PRIV[15][13] = {
 
 static int fails = 0;
 
+/* ui4 (2026-10-05): приватні SMS тепер ідуть на dst-IP 12.x.x.x (як шле стокова), а 438ec23 слав
+ * 225.x.x.x для всіх. dst-IP -- ЄДИНЕ, що в dmrSmsPduBuildPlaintext() залежить від group, тож
+ * еталони 438ec23 для приватних відтворюємо, будуючи відкритий текст з ptGroup=1 (dst 225.x), а
+ * Unconfirmed-заголовок -- зі справжнім group=0. Так доведено, що решта байтів (CSBK, заголовок,
+ * розкладка блоків, CRC32 за тим самим вмістом) не змінилась; новий 12.x перевіряє
+ * test_dmr_sms_text.c (побайтово проти IPv4-заголовка стокової з ефіру). */
 static void check(const char *name, const uint8_t (*ref)[13], int refN,
-                  const char *text, uint32_t src, uint32_t dst, int group,
+                  const char *text, uint32_t src, uint32_t dst, int group, int ptGroup,
                   uint16_t ipid, uint8_t tms, const uint8_t *key, uint8_t keyId)
 {
 	uint8_t pt[360];
-	int ptLen = dmrSmsPduBuildPlaintext(text, (int)strlen(text), src, dst, tms, ipid, pt);
+	int ptLen = dmrSmsPduBuildPlaintext(text, (int)strlen(text), src, dst, ptGroup, tms, ipid, pt);
 	if (key) { for (int i = 0; i + 16 <= ptLen; i += 16) { aes256_ecb_encrypt(key, pt + i); } }
 
 	static uint8_t q[DMR_DATA_MAX_BURSTS * BURST_STRIDE];
@@ -133,11 +139,11 @@ int main(void)
 	uint8_t key[32]; for (int i = 0; i < 32; i++) key[i] = (uint8_t)i;
 	check_fields();
 	check("REF_CLEAR_PRIV",  REF_CLEAR_PRIV,  (int)(sizeof REF_CLEAR_PRIV  / 13),
-	      "Test 123", 0x26EA3D, 0x26EA1B, 0, 0x1234, 0x94, NULL, 0);
+	      "Test 123", 0x26EA3D, 0x26EA1B, 0, 1 /* dst-IP 225.x як у 438ec23 */, 0x1234, 0x94, NULL, 0);
 	check("REF_CLEAR_GROUP", REF_CLEAR_GROUP, (int)(sizeof REF_CLEAR_GROUP / 13),
-	      "Hello OpenTYT, long message over several blocks!", 0x26EA3D, 0x0001F5, 1, 0xBEEF, 0x9F, NULL, 0);
+	      "Hello OpenTYT, long message over several blocks!", 0x26EA3D, 0x0001F5, 1, 1, 0xBEEF, 0x9F, NULL, 0);
 	check("REF_ENC_PRIV",    REF_ENC_PRIV,    (int)(sizeof REF_ENC_PRIV    / 13),
-	      "Encrypted SMS 42", 0x26EA3D, 0x26EA1B, 0, 0x0102, 0x93, key, 3);
+	      "Encrypted SMS 42", 0x26EA3D, 0x26EA1B, 0, 1 /* dst-IP 225.x як у 438ec23 */, 0x0102, 0x93, key, 3);
 
 	/* Задовге -> -4, як у 438ec23; замала черга -> -5. */
 	{
