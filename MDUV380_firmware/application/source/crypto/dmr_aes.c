@@ -515,18 +515,75 @@ static uint16_t sms_text_char(const uint8_t *pdu, int i, int shifted)
     return (uint16_t)(pdu[i] | ((shifted ? pdu[i - 1] : pdu[i + 1]) << 8));
 }
 
-/* Оцінка читання: (кількість U+0020) - (кількість символів < 0x20 або таких, що дають '?').
- * Неправильне читання псує пробіли поруч із кирилицею (U+0020 -> U+0420 «Р») і символи на
- * межах кирилиця/латиниця. */
-static int sms_text_score(const uint8_t *pdu, int tend, int shifted)
+/* ui5b: «неправдоподібність» читання (еталон -- tools/sms_shift_ref.py, той самий алгоритм).
+ * Класи: S пробіл; B керівні, 0x7F..0x9F і все, що в cp1251 стає '?'; D цифри; L латиниця;
+ * C кирилиця (U+0410..U+044F, Ё ё Є є І і Ї ї Ў ў Ґ ґ); O решта. */
+enum { SMS_CL_S = 0, SMS_CL_B, SMS_CL_D, SMS_CL_L, SMS_CL_C, SMS_CL_O };
+
+static uint8_t sms_char_class(uint16_t u)
 {
-    int i, score = 0;
+    if (u == 0x0020) { return SMS_CL_S; }
+    if ((u < 0x20) || ((u >= 0x7F) && (u <= 0x9F)) || ((u != '?') && (dmrSmsUcs2ToCp1251(u) == '?'))) { return SMS_CL_B; }
+    if ((u >= '0') && (u <= '9')) { return SMS_CL_D; }
+    if (((u >= 'A') && (u <= 'Z')) || ((u >= 'a') && (u <= 'z'))) { return SMS_CL_L; }
+    if ((u >= 0x0410) && (u <= 0x044F)) { return SMS_CL_C; }
+    switch (u)
+    {
+        case 0x401: case 0x451: case 0x404: case 0x454: case 0x406: case 0x456:
+        case 0x407: case 0x457: case 0x40E: case 0x45E: case 0x490: case 0x491:
+            return SMS_CL_C;
+    }
+    return SMS_CL_O;
+}
+
+static int sms_is_lower(uint16_t u)
+{
+    return ((u >= 'a') && (u <= 'z')) || ((u >= 0x0430) && (u <= 0x044F)) ||
+           (u == 0x451) || (u == 0x454) || (u == 0x456) || (u == 0x457) || (u == 0x45E) || (u == 0x491);
+}
+
+static int sms_is_upper(uint16_t u)
+{
+    return ((u >= 'A') && (u <= 'Z')) || ((u >= 0x0410) && (u <= 0x042F)) ||
+           (u == 0x401) || (u == 0x404) || (u == 0x406) || (u == 0x407) || (u == 0x40E) || (u == 0x490);
+}
+
+/* Суто російські літери: ы э ъ ё Ы Э Ъ Ё. */
+static int sms_is_russian(uint16_t u)
+{
+    return (u == 0x44B) || (u == 0x44D) || (u == 0x44A) || (u == 0x451) ||
+           (u == 0x42B) || (u == 0x42D) || (u == 0x42A) || (u == 0x401);
+}
+
+/* cost = 3 за кожен B, +1 за кожну суто російську літеру; для сусідньої пари (x, y): +1, якщо
+ * класи різні й жоден не S; +1, якщо x мала, а y велика; +1, якщо x -- C, а y -- < = > @;
+ * +2, якщо передостанній -- C, а останній -- L або D. ДОДАТКОВО до брифу ui5b: +1 за пробіл на
+ * початку або одразу після пробілу -- «Р» (U+0420, молодший байт 0x20) після символу зі старшим
+ * байтом 00 у зсунутому читанні правильного тексту стає пробілом («Рація?» -> « аціяп»).
+ * Потоково, без масивів: пам'ятаємо лише попередній символ і клас передостаннього. */
+static int sms_text_cost(const uint8_t *pdu, int tend, int shifted)
+{
+    int i, n = 0, cost = 0;
+    uint16_t prev = 0;
+    uint8_t prevCl = SMS_CL_S, prev2Cl = SMS_CL_S;
     for (i = 38; i + 1 < tend; i += 2) {
         uint16_t u = sms_text_char(pdu, i, shifted);
-        if (u == 0x0020) { score++; }
-        else if ((u < 0x20) || ((u != '?') && (dmrSmsUcs2ToCp1251(u) == '?'))) { score--; }
+        uint8_t cl = sms_char_class(u);
+        if (cl == SMS_CL_B) { cost += 3; }
+        if (sms_is_russian(u)) { cost += 1; }
+        if ((u == 0x0020) && ((n == 0) || (prev == 0x0020))) { cost += 1; }
+        if (n > 0) {
+            if ((cl != prevCl) && (cl != SMS_CL_S) && (prevCl != SMS_CL_S)) { cost += 1; }
+            if (sms_is_lower(prev) && sms_is_upper(u)) { cost += 1; }
+            if ((prevCl == SMS_CL_C) && ((u == '<') || (u == '=') || (u == '>') || (u == '@'))) { cost += 1; }
+        }
+        prev2Cl = prevCl;
+        prevCl = cl;
+        prev = u;
+        n++;
     }
-    return score;
+    if ((n >= 2) && (prev2Cl == SMS_CL_C) && ((prevCl == SMS_CL_L) || (prevCl == SMS_CL_D))) { cost += 2; }
+    return cost;
 }
 #endif
 
@@ -539,13 +596,13 @@ int dmr_sms_text_from_plaintext(const uint8_t *pdu, int pdu_len, char *out, int 
     tend = iptot;                                          /* text runs [38, IP packet end) */
 #if defined(ENABLE_AES)
     /* ui5: вибір читання. а) Заголовок TMS «0D 00 0A xx» з xx != 0: правильний відправник має
-     * тут 00 (старший байт LF), отже текст зсунутий -- безумовно. б) Інакше зсунуте -- лише якщо
-     * його оцінка СТРОГО більша (за рівності -- правильне: латиниця читається однаково). */
+     * тут 00 (старший байт LF), отже текст зсунутий -- безумовно. б) ui5b: інакше зсунуте -- лише
+     * якщо його «неправдоподібність» СТРОГО менша (за рівності -- правильне). */
     int shifted = 0;
     if (tend > 39) {
         if (pdu[34] == 0x0D && pdu[35] == 0x00 && pdu[36] == 0x0A && pdu[37] != 0x00) {
             shifted = 1;
-        } else if (sms_text_score(pdu, tend, 1) > sms_text_score(pdu, tend, 0)) {
+        } else if (sms_text_cost(pdu, tend, 1) < sms_text_cost(pdu, tend, 0)) {
             shifted = 1;
         }
     }
