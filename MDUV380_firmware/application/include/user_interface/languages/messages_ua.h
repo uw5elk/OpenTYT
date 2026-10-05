@@ -159,4 +159,14 @@
 /* ui4: підказка біля індикатора режиму набору («абв»/«АБВ»/«ABC»/«abc»/«123»). */
 #define MSGS_HINT_MODE           "#:режим"
 
+/* ui6: банер -- загальна кількість непрочитаних з правильною формою слова (sms_format.c,
+ * smsPluralForm: 0 -- 1/21/31..., 1 -- 2-4/22-24..., 2 -- решта). */
+#define MSGS_UNREAD1_FMT         "%d непрочитане"
+#define MSGS_UNREAD2_FMT         "%d непрочитані"
+#define MSGS_UNREAD5_FMT         "%d непрочитаних"
+/* ui6: налаштування шрифту тексту SMS (екран читання). */
+#define MSGS_FONT_FMT            "Шрифт SMS: %s"
+#define MSGS_FONT_BIG            "великий"
+#define MSGS_FONT_SMALL          "малий"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

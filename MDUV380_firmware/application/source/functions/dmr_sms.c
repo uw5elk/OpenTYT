@@ -25,6 +25,8 @@
 #include "user_interface/uiGlobals.h"    /* currentRxGroupData + *_ALL_CALL_VALUE: адресний фільтр RX */
 #include "hardware/HR-C6000.h"           /* PC_CALL_FLAG: тип виклику в старшому байті trxTalkGroupOrPcId */
 #include "functions/sound.h"             /* soundSetMelody: audible RX alert */
+#include "functions/sms_format.h"        /* ui6: SMS_TIME_VALID_MIN -- годинник не виставлено */
+#include "user_interface/uiUtilities.h"  /* ui6: getRtcTime_custom() -- час запису */
 #include <string.h>
 
 /* cleanup1 (2026-10-05): уся діагностика SMS (екрани «Діагностика» 2-4, перемикачі, знімок PDU,
@@ -50,12 +52,17 @@
  * (stock-like: many short messages OR a few long ones share the same fixed block). A CCM
  * working copy (DMR_AES_CCM -> no net-new main RAM) is the live store. Block stays 1352 B
  * (== the old fixed 24x56 array) so it drops into an existing codeplug slot.
- * Entry layout in data[]:  [0]=flags [1]=textLen [2..3]=seq(LE) [4..7]=peerId(LE) [8..]=text */
-#define SMS_ENTRY_HDR  8
+ * Entry layout in data[] (v3, ui6):
+ *   [0]=flags [1]=textLen [2..3]=seq(LE) [4..7]=peerId(LE) [8..11]=час(LE, с UTC; 0 = невідомо) [12..]=text
+ * v2 (до ui6) -- те саме без [8..11] (заголовок 8 Б); при завантаженні перетворюється на v3
+ * (store_upgrade_v2), довжина блока та сама -- 1352 Б. */
+#define SMS_ENTRY_HDR     12
+#define SMS_ENTRY_HDR_V2   8
+#define SMS_STORE_VERSION  3
 typedef struct
 {
-	char     magic[4];                 /* "MSGV" (v2 variable-length; old "MSGS" is ignored) */
-	uint8_t  version;                  /* 2 */
+	char     magic[4];                 /* "MSGV" (variable-length; old "MSGS" is ignored) */
+	uint8_t  version;                  /* 3 (ui6); 2 -- без часу, перетворюється при завантаженні */
 	uint8_t  rsvd;
 	uint16_t used;                     /* bytes in use in data[] */
 	uint16_t nextSeq;                  /* next message ordering id */
@@ -81,7 +88,7 @@ static void store_blank(void)
 {
 	memset(&s_store, 0, sizeof s_store);
 	memcpy(s_store.magic, "MSGV", 4);
-	s_store.version = 2;
+	s_store.version = SMS_STORE_VERSION;
 	s_store.used = 0;
 	s_store.nextSeq = 1;
 }
@@ -89,20 +96,63 @@ static void store_blank(void)
 /* Walk the packed entry chain: every entry must lie fully inside used[] with a sane
  * textLen, and the chain must tile data[] exactly up to used. Rejects a corrupted
  * flash block whose lengths would otherwise index garbage entry boundaries. */
-static int store_chain_valid(void)
+static int chain_valid_hdr(int hdr)
 {
 	int o = 0;
 	while (o < (int)s_store.used)
 	{
-		if ((o + SMS_ENTRY_HDR > (int)s_store.used) ||
+		if ((o + hdr > (int)s_store.used) ||
 				(s_store.data[o + 1] > DMR_SMS_TEXT_MAX) ||
-				(o + entry_size(o) > (int)s_store.used))
+				(o + hdr + s_store.data[o + 1] > (int)s_store.used))
 		{
 			return 0;
 		}
-		o += entry_size(o);
+		o += hdr + s_store.data[o + 1];
 	}
 	return 1;
+}
+static int store_chain_valid(void) { return chain_valid_hdr(SMS_ENTRY_HDR); }
+
+/* ui6: сховище v2 (заголовок запису 8 Б) -> v3 (12 Б, [8..11] = час, тут 0 = невідомо) на місці,
+ * без допоміжних масивів. Кожен запис росте на 4 Б; якщо все не влазить у DMR_SMS_STORE_DATA --
+ * спершу відкидаємо найстаріші (найменший seq), як store_add(). Потім розсуваємо з ОСТАННЬОГО
+ * запису до першого: k-й запис їде на 4*k Б праворуч, а ще не оброблені (0..k-1) лежать лівіше
+ * і не зачіпаються. Ланцюжок v2 уже перевірено chain_valid_hdr(SMS_ENTRY_HDR_V2). */
+static void store_upgrade_v2(void)
+{
+	int count = 0;
+	for (int o = 0; o + SMS_ENTRY_HDR_V2 <= (int)s_store.used; o += SMS_ENTRY_HDR_V2 + s_store.data[o + 1]) { count++; }
+
+	while ((count > 0) && ((int)s_store.used + 4 * count > DMR_SMS_STORE_DATA))
+	{
+		int oldest = -1; uint16_t lo = 0xFFFF;
+		for (int o = 0; o + SMS_ENTRY_HDR_V2 <= (int)s_store.used; o += SMS_ENTRY_HDR_V2 + s_store.data[o + 1])
+		{
+			uint16_t sq = entry_seq(o);
+			if (sq <= lo) { lo = sq; oldest = o; }
+		}
+		if (oldest < 0) { break; }
+		int sz = SMS_ENTRY_HDR_V2 + s_store.data[oldest + 1];
+		int tail = (int)s_store.used - (oldest + sz);
+		if (tail > 0) { memmove(&s_store.data[oldest], &s_store.data[oldest + sz], (size_t)tail); }
+		s_store.used = (uint16_t)(s_store.used - sz);
+		count--;
+	}
+
+	for (int k = count - 1; k >= 0; k--)
+	{
+		int o = 0;
+		for (int j = 0; j < k; j++) { o += SMS_ENTRY_HDR_V2 + s_store.data[o + 1]; }
+		int tl = s_store.data[o + 1];
+		int no = o + 4 * k;
+		memmove(&s_store.data[no + SMS_ENTRY_HDR], &s_store.data[o + SMS_ENTRY_HDR_V2], (size_t)tl);
+		memmove(&s_store.data[no], &s_store.data[o], SMS_ENTRY_HDR_V2);
+		s_store.data[no + 8] = s_store.data[no + 9] = s_store.data[no + 10] = s_store.data[no + 11] = 0;
+	}
+	s_store.used = (uint16_t)(s_store.used + 4 * count);
+	s_store.version = SMS_STORE_VERSION;
+	/* У флеш не пишемо: v3 збережеться з першою зміною (нове SMS, видалення, «прочитано»).
+	 * До того на флеші лишається v2 -- і стара прошивка, якщо до неї повернутись, його прочитає. */
 }
 
 void dmrSmsInit(void)
@@ -127,10 +177,17 @@ void dmrSmsReloadStore(void)
 	// сховище AES-ключів. Обмежену версію ми вже мали й застосували до ключів, MSGC і RCTL,
 	// але саме тут -- забули.
 	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_MESSAGES, blk, (int)sizeof s_store) &&
-			(memcmp(s_store.magic, "MSGV", 4) == 0) && (s_store.version == 2) &&
-			(s_store.used <= DMR_SMS_STORE_DATA) && store_chain_valid())
+			(memcmp(s_store.magic, "MSGV", 4) == 0) && (s_store.used <= DMR_SMS_STORE_DATA))
 	{
-		return;   /* valid variable-length store loaded from flash */
+		if ((s_store.version == SMS_STORE_VERSION) && store_chain_valid())
+		{
+			return;   /* valid variable-length store loaded from flash */
+		}
+		if ((s_store.version == 2) && chain_valid_hdr(SMS_ENTRY_HDR_V2))
+		{
+			store_upgrade_v2();   /* ui6: старі повідомлення лишаються, без часу */
+			return;
+		}
 	}
 	store_blank();      /* fresh, corrupted, or an old "MSGS" v1 block -> start empty */
 }
@@ -190,6 +247,28 @@ const dmrSmsMessage_t *dmrSmsGet(int outgoing, int idx)
 	int tl = s_scratch.textLen; if (tl > DMR_SMS_TEXT_MAX) { tl = DMR_SMS_TEXT_MAX; }
 	memcpy(s_scratch.text, &s_store.data[o + SMS_ENTRY_HDR], tl);
 	return &s_scratch;
+}
+
+/* ui6: час запису (с UTC, 0 = невідомо) -- прямо зі сховища, бо поля в dmrSmsMessage_t немає
+ * (s_scratch лежить у main RAM, туди нічого не додаємо). */
+static uint32_t entry_time(int o)
+{
+	return (uint32_t)s_store.data[o + 8] | ((uint32_t)s_store.data[o + 9] << 8) |
+	       ((uint32_t)s_store.data[o + 10] << 16) | ((uint32_t)s_store.data[o + 11] << 24);
+}
+
+uint32_t dmrSmsGetTime(int outgoing, int idx)
+{
+	store_ensure();
+	int o = off_for(outgoing, idx);
+	return (o < 0) ? 0 : entry_time(o);
+}
+
+/* ui6: поточний час для запису: 0, якщо годинник не виставлено (рік < 2025). */
+static uint32_t smsNowForStore(void)
+{
+	uint32_t t = (uint32_t)getRtcTime_custom();
+	return (t < SMS_TIME_VALID_MIN) ? 0 : t;
 }
 
 /* ui2 (2026-10-05): вхідне, за яке ми щойно квитували, пишеться у флеш ВІДКЛАДЕНО (s_pendInbox,
@@ -333,6 +412,15 @@ static void store_add(uint8_t flags, uint32_t peerId, const char *text, int text
 	s_store.data[o + 5] = (uint8_t)((peerId >> 8) & 0xFF);
 	s_store.data[o + 6] = (uint8_t)((peerId >> 16) & 0xFF);
 	s_store.data[o + 7] = (uint8_t)((peerId >> 24) & 0xFF);
+	{
+		/* ui6: час -- момент запису (вхідні: прийом; надіслані: відправлення). Відкладений
+		 * запис (s_pendInbox / s_pendSent) пізніший лише на тривалість передачі -- секунди. */
+		uint32_t t = smsNowForStore();
+		s_store.data[o + 8]  = (uint8_t)(t & 0xFF);
+		s_store.data[o + 9]  = (uint8_t)((t >> 8) & 0xFF);
+		s_store.data[o + 10] = (uint8_t)((t >> 16) & 0xFF);
+		s_store.data[o + 11] = (uint8_t)((t >> 24) & 0xFF);
+	}
 	memcpy(&s_store.data[o + SMS_ENTRY_HDR], text, (size_t)textLen);
 	s_store.used = (uint16_t)(o + need);
 	store_save();
@@ -1018,6 +1106,30 @@ static void pendInboxMarkRead(void)
 {
 	if (s_pendInbox) { s_pendInboxFlags &= (uint8_t)~DMR_SMS_FLAG_UNREAD; }
 }
+
+/* ui6: найновіше вхідне для банера -- відкладене (ще не у флеші), інакше перше у «Вхідних».
+ * *timeOut -- його час (для відкладеного -- зараз: у сховище воно ляже за секунди). */
+const dmrSmsMessage_t *dmrSmsNewestInbox(uint32_t *timeOut)
+{
+	if (s_pendInbox)
+	{
+		int tl = (s_pendInboxLen < DMR_SMS_TEXT_MAX) ? s_pendInboxLen : DMR_SMS_TEXT_MAX;
+		memset(&s_scratch, 0, sizeof s_scratch);
+		s_scratch.flags   = (uint8_t)(s_pendInboxFlags | DMR_SMS_FLAG_USED);
+		s_scratch.textLen = (uint8_t)tl;
+		s_scratch.peerId  = s_pendInboxPeer;
+		memcpy(s_scratch.text, s_pendInboxText, (size_t)tl);
+		if (timeOut) { *timeOut = smsNowForStore(); }
+		return &s_scratch;
+	}
+	if (timeOut) { *timeOut = dmrSmsGetTime(0, 0); }
+	return dmrSmsGet(0, 0);
+}
+
+/* ui6: адресат останнього прийнятого SMS -- для банера «ВІД -> КОМУ» (монітор, FOREIGN).
+ * У записі сховища його немає (формат v3 -- лише час), тож живе тільки до наступного SMS. */
+static uint32_t s_lastRxDst DMR_AES_CCM;
+uint32_t dmrSmsLastRxDst(void) { return s_lastRxDst; }
 
 static void dmrSmsTxPersistTick(void)
 {
@@ -1980,6 +2092,7 @@ void dmrSmsRxTick(void)
 	{
 		uint8_t flags = (uint8_t)(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0) |
 				(forUs ? 0 : DMR_SMS_FLAG_FOREIGN));
+		s_lastRxDst = dst;   /* ui6: для банера «ВІД -> КОМУ» */
 		if (ackedNow)
 		{
 			/* Квитанція ЗАРАЗ у польоті. store_add() -- блокуючий erase+write SPI-флеша на
@@ -2035,6 +2148,7 @@ static void runtimeReset(void)
 	s_rxReady = 0;                   /* don't process stray garbage as a PDU */
 	s_ackPending = 0;                /* не тягнути квитанцію через зміну каналу */
 	s_pendInbox = 0;                 /* і відкладений запис вхідного теж */
+	s_lastRxDst = 0;                 /* ui6: адресат останнього прийнятого (банер) */
 	s_txAcked = 0;                   /* скидаємо TX-ACK стан (CCM -- не .bss, не auto-zero) */
 	s_txPendingDst = 0;
 	s_txNS = 0; s_txNSSent = 0;     /* N(S) лічильник TX (Task #32) */

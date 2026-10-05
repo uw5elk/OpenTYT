@@ -73,6 +73,9 @@ void soundSetMelody(const int16_t *m) { (void)m; }
 int dmrAesEnsureCustomDataRegion(void) { return 1; }
 void dmrAesLoadKeys(void) { }
 uint8_t dmrAesTxKeyId(void) { return 0; }
+/* ui6: час запису SMS -- годинник рації (секунди UTC). */
+static time_t_custom s_rtc = 1791235800U;   /* 2026-10-05 21:30:00 UTC */
+time_t_custom getRtcTime_custom(void) { return s_rtc; }
 
 /* data-TX: лише фіксуємо, коли й що поставлено в ефір (квитанція). */
 static uint8_t  s_txQ[64];
@@ -347,13 +350,22 @@ int main(void)
 			dmrSmsRxReset();
 			mainLoopFor(600);
 		}
-		int more = unreadAtArrival - 1;   /* як у displaySmsFullScreen() (uiNotification.c) */
-		printf("       на 10-му: непрочит. %d (банер «ще %d»), записів у флеш до/під час банера %d/%d\n",
-		       unreadAtArrival, more, writesBefore, writesAtArrival);
+		/* ui6: банер показує ЗАГАЛЬНУ кількість разом із показаним -- dmrSmsUnreadCount() без «-1»
+		 * (displaySmsFullScreen(), uiNotification.c). До ui6 було «ще N» = N - 1. */
+		int shown = unreadAtArrival;
+		printf("       на 10-му: непрочит. %d (банер «%d непрочитаних»), записів у флеш до/під час банера %d/%d\n",
+		       unreadAtArrival, shown, writesBefore, writesAtArrival);
 		CHECK(writesAtArrival == writesBefore, "10-те ще у відкладеному записі (s_pendInbox), коли малюється банер");
-		CHECK(more == 9, "банер на 10-му: «ще 9» (було «ще 8»)");
+		CHECK(shown == 10, "банер на 10-му: «10 непрочитаних» (ui2: «ще 9», до ui2: «ще 8»)");
+		{
+			uint32_t tn = 0;
+			const dmrSmsMessage_t *nm = dmrSmsNewestInbox(&tn);
+			CHECK((nm != NULL) && (nm->textLen == 6) && (memcmp(nm->text, "SMS 10", 6) == 0) && (tn == s_rtc),
+					"ui6: банер бере найновіше вхідне з ВІДКЛАДЕНОГО запису (SMS 10) і час прийому");
+		}
 		CHECK(dmrSmsUnreadCount() == 10 && s_flashWrites > writesAtArrival, "після запису у флеш -- те саме число: 10 (значок головного екрана)");
 		CHECK(s_flashInTxWindow == 0, "запис у флеш і далі поза вікном квитанції");
+		CHECK(dmrSmsGetTime(0, 0) == s_rtc, "ui6: час прийому записано в сховище (v3)");
 		dmrSmsMarkAllRead();
 		CHECK(dmrSmsUnreadCount() == 0, "«Позначити все прочитаним» -> 0");
 	}

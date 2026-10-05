@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Піксельний рендер повноекранного банера вхідного SMS (uiNotification.c).
+"""Піксельний рендер банера вхідного SMS (uiNotification.c) і екрана читання (menuMessages.c), ui6.
 
-Нічого не вигадує: гліфи -- зі справжнього UA-набору (HX8353E_charset_UA.h), кольори --
-з таблиці themeDefaults у HX8353E_display.c, а логіка переносу по словах ПОВТОРЮЄ
-displaySmsFullScreen() рядок у рядок. Тобто якщо тут текст обрізало чи виліз за край --
-так само буде й на рації.
+Нічого не вигадує: гліфи -- зі справжнього UA-набору (HX8353E_charset_UA.h), кольори -- з таблиці
+themeDefaults у HX8353E_display.c, а перенесення за словами ПОВТОРЮЄ smsWrapLine()
+(functions/sms_format.c) рядок у рядок, розкладка -- displaySmsFullScreen() і readUpdate().
+Тобто якщо тут текст обрізало чи виліз за край -- так само буде й на рації.
 
-    python3 render_sms_banner.py            # -> sms_banner_preview.png
+    python3 render_sms_banner.py      # -> sms_banner_preview.png, sms_read_preview.png
 """
 import os, re
 from PIL import Image
 
 FW = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = os.path.dirname(os.path.abspath(__file__))
 W, H = 160, 128
 
 # ---------- теми з реального коду -------------------------------------------
@@ -36,30 +37,43 @@ def rgb565(c):
 # ---------- шрифти ----------------------------------------------------------
 fsrc = open(f'{FW}/application/include/hardware/HX8353E_charset_UA.h', encoding='latin-1').read()
 def load_font(name):
-    m = re.search(name + r'\s*\[\s*\]\s*=\s*\{(.*?)\};', fsrc, re.S)
+    m = re.search(r'\b' + name + r'\s*\[\s*\]\s*=\s*\{(.*?)\};', fsrc, re.S)
     body = re.sub(r'//[^\n]*', '', re.sub(r'/\*.*?\*/', '', m.group(1), flags=re.S))
     v = [int(x, 0) for x in re.findall(r'0x[0-9a-fA-F]+|\b\d+\b', body)]
     return dict(vals=v, start=v[2], end=v[3], w=v[4], h=v[5], bpc=v[7])
 
-F2 = load_font('font_8x8')     # FONT_SIZE_2 -- рядок «ще N непрочит.»
-F3 = load_font('font_8x16')    # FONT_SIZE_3 -- текст повідомлення (великий)
+F1 = load_font('font_6x8')     # FONT_SIZE_1 -- відправник, час, підказки
+F2 = load_font('font_8x8')     # FONT_SIZE_2 -- лічильник; «малий» шрифт читання
+F3 = load_font('font_8x16')    # FONT_SIZE_3 -- текст банера; «великий» шрифт читання
 
 class FB:
     def __init__(self, bg):
         self.px = [[bg] * W for _ in range(H)]
     def fill(self, x, y, w, h, c):
-        for yy in range(y, min(y + h, H)):
+        for yy in range(max(0, y), min(y + h, H)):
             for xx in range(max(0, x), min(x + w, W)):
-                if yy >= 0:
-                    self.px[yy][xx] = c
+                self.px[yy][xx] = c
     def rect(self, x, y, w, h, c):
         self.fill(x, y, w, 1, c); self.fill(x, y + h - 1, w, 1, c)
         self.fill(x, y, 1, h, c); self.fill(x + w - 1, y, 1, h, c)
+    def tri(self, pts, c):
+        (x0, y0), (x1, y1), (x2, y2) = pts
+        for yy in range(min(y0, y1, y2), max(y0, y1, y2) + 1):
+            xs = []
+            for (ax, ay), (bx, by) in (((x0, y0), (x1, y1)), ((x1, y1), (x2, y2)), ((x2, y2), (x0, y0))):
+                if ay != by and min(ay, by) <= yy <= max(ay, by):
+                    xs.append(ax + (yy - ay) * (bx - ax) / (by - ay))
+            if xs:
+                a, b = int(round(min(xs))), int(round(max(xs)))
+                self.fill(a, yy, b - a + 1, 1, c)
     def text(self, x, y, s, c, font, align='left'):
-        data = s.encode('cp1251')
+        data = s.encode('cp1251') if isinstance(s, str) else s
+        n = len(data)
+        if x + font['w'] * n > W:                     # як displayPrintCore: обрізає по краю
+            n = max(0, (W - x) // font['w'])
         if align == 'center':
-            x = (W - font['w'] * len(data)) // 2
-        for i, code in enumerate(data):
+            x = (W - font['w'] * n) // 2
+        for i, code in enumerate(data[:n]):
             if code == 0x20 or not (font['start'] <= code <= font['end']):
                 continue
             off = 8 + (code - font['start']) * font['bpc']
@@ -67,52 +81,113 @@ class FB:
             for cx in range(font['w']):
                 for cy in range(font['h']):
                     idx = cx + (cy // 8) * font['w']
-                    if idx >= len(cols):
-                        continue
-                    if (cols[idx] >> (cy % 8)) & 1:
+                    if idx < len(cols) and (cols[idx] >> (cy % 8)) & 1:
                         px, py = x + i * font['w'] + cx, y + cy
                         if 0 <= px < W and 0 <= py < H:
                             self.px[py][px] = c
 
-# ---------- дзеркало displaySmsFullScreen() ---------------------------------
-def render(theme, msg, more):
-    T = lambda k: rgb565(themes[theme][k])
-    charW, lineH, cntH = 8, F3['h'], F2['h']
-    perLine = (W - 6) // charW
-    reserved = (cntH + 2) if more > 0 else 0
-    maxLines = max(1, (H - 4 - reserved) // lineH)
+# ---------- дзеркало functions/sms_format.c ---------------------------------
+def wrap_line(s, start, w):
+    """smsWrapLine(): (lineStart, length, next)."""
+    p, n = start, len(s)
+    while p < n and s[p] == ' ':
+        p += 1
+    if p >= n or w <= 0:
+        return p, 0, n
+    if n - p <= w:
+        end = n
+    elif s[p + w] == ' ':
+        end = p + w
+    else:
+        sp = -1
+        for i in range(p + w - 1, p, -1):
+            if s[i] == ' ':
+                sp = i
+                break
+        end = sp if sp > 0 else p + w
+    nxt = end
+    while end > p and s[end - 1] == ' ':
+        end -= 1
+    return p, end - p, nxt
 
+def wrap_lines(s, w):
+    out, pos = [], 0
+    while pos < len(s):
+        ls, l, nx = wrap_line(s, pos, w)
+        if nx <= pos:
+            break
+        pos = nx
+        if l > 0:
+            out.append((s[ls:ls + l], pos))
+    return out
+
+def plural(n):
+    d, h = n % 10, n % 100
+    if d == 1 and h != 11:
+        return 0
+    if 2 <= d <= 4 and not (12 <= h <= 14):
+        return 1
+    return 2
+
+def draw_wrapped(fb, txt, cols, first, max_lines, x, y, line_h, font, ellipsis, c):
+    """uiSmsDrawWrapped()."""
+    lines = wrap_lines(txt, cols)
+    for idx, (line, pos_after) in enumerate(lines):
+        if first <= idx < first + max_lines:
+            if ellipsis and idx == first + max_lines - 1 and wrap_lines(txt[pos_after:], cols):
+                cut = min(len(line), cols - 3)
+                line = line[:cut] + '...'
+            fb.text(x, y + (idx - first) * line_h, line, c, font)
+    return len(lines)
+
+# ---------- дзеркало displaySmsFullScreen() (ui6) ----------------------------
+UNREAD = ('%d непрочитане', '%d непрочитані', '%d непрочитаних')
+
+def banner(theme, hdr, tm, txt, unread, foreign=False):
+    T = lambda k: rgb565(themes[theme][k])
+    line_h, cnt_h, text_y = 16, 8, 14
+    cols = (W - 6) // 8
+    reserved = (cnt_h + 2) if unread > 1 else 0
+    max_lines = max(1, (H - text_y - 2 - reserved) // line_h)
     fb = FB(T('THEME_ITEM_BG_NOTIFICATION'))
     fb.rect(0, 0, W, H, T('THEME_ITEM_FG_DECORATION'))
+    max_chars = (W - 6 - ((len(tm) * 6 + 6) if tm else 0)) // 6
+    fb.text(3, 3, hdr[:max_chars], T('THEME_ITEM_FG_WARNING_NOTIFICATION' if foreign else 'THEME_ITEM_FG_NOTIFICATION'), F1)
+    if tm:
+        fb.text(W - 3 - len(tm) * 6, 3, tm, T('THEME_ITEM_FG_NOTIFICATION'), F1)
+    fb.fill(3, 12, W - 6, 1, T('THEME_ITEM_FG_DECORATION'))
+    draw_wrapped(fb, txt, cols, 0, max_lines, 3, text_y, line_h, F3, True, T('THEME_ITEM_FG_NOTIFICATION'))
+    if unread > 1:
+        fb.text(0, H - cnt_h - 2, UNREAD[plural(unread)] % unread, T('THEME_ITEM_FG_WARNING_NOTIFICATION'), F2, 'center')
+    return fb
 
-    p, y, used = 0, 2, 0
-    fg = T('THEME_ITEM_FG_NOTIFICATION')
-    while p < len(msg) and used < maxLines:
-        while p < len(msg) and msg[p] == ' ':
-            p += 1
-        if p >= len(msg):
-            break
-        n, last = 0, -1
-        while p + n < len(msg) and msg[p + n] != '\n' and n < perLine:
-            if msg[p + n] == ' ':
-                last = n
-            n += 1
-        if p + n < len(msg) and msg[p + n] != '\n' and last > 0:
-            n = last
-        line = msg[p:p + n]
-        p += n
-        if p < len(msg) and msg[p] == '\n':
-            p += 1
-        used += 1
-        if used == maxLines and p < len(msg) and n > 0:
-            cut = n if n <= (perLine - 3) else (perLine - 3)
-            line = line[:cut] + '...'
-        fb.text(3, y, line, fg, F3)
-        y += lineH
-
-    if more > 0:
-        fb.text(0, H - cntH - 2, "ще %d непрочит." % more,
-                T('THEME_ITEM_FG_WARNING_NOTIFICATION'), F2, 'center')
+# ---------- дзеркало readUpdate() (ui6) --------------------------------------
+def read_screen(theme, title, hdr, tm, txt, big, scroll, hint):
+    T = lambda k: rgb565(themes[theme][k])
+    fb = FB(T('THEME_ITEM_BG'))
+    fb.fill(0, 0, W, 14, T('THEME_ITEM_BG_MENU_NAME'))
+    fb.fill(0, 13, W, 1, T('THEME_ITEM_FG_DECORATION'))
+    fb.text(0, 3, title, T('THEME_ITEM_FG_MENU_NAME'), F2, 'center')
+    fg = T('THEME_ITEM_FG_DEFAULT')
+    fb.text(2, 16, hdr, fg, F1)
+    text_y = 26
+    if tm:
+        if 2 + len(hdr.encode('cp1251')) * 6 + 6 + len(tm) * 6 <= W - 2:
+            fb.text(W - 2 - len(tm) * 6, 16, tm, fg, F1)
+        else:
+            fb.text(W - 2 - len(tm) * 6, 25, tm, fg, F1)
+            text_y = 35
+    font, glyph_h, line_h = (F3, 16, 16) if big else (F2, 8, 11)
+    rows = (111 - text_y - glyph_h) // line_h + 1
+    total = len(wrap_lines(txt, 20))
+    max_scroll = max(0, total - rows)
+    scroll = min(scroll, max_scroll)
+    draw_wrapped(fb, txt, 20, scroll, rows, 0, text_y, line_h, font, False, fg)
+    fb.text(0, 112, hint, fg, F1, 'center')
+    if scroll > 0:
+        fb.tri(((4, 112), (0, 119), (8, 119)), fg)
+    if scroll < max_scroll:
+        fb.tri(((W - 9, 112), (W - 1, 112), (W - 5, 119)), fg)
     return fb
 
 def to_img(fb, scale=3):
@@ -120,22 +195,35 @@ def to_img(fb, scale=3):
     im.putdata([c for row in fb.px for c in row])
     return im.resize((W * scale, H * scale), Image.NEAREST)
 
-CASES = [
-    ("SMS: Hello", 12),
-    ("SMS: Виходимо на позицію через десять хвилин, підтвердьте готовність", 3),
-    ("SMS: " + "Довге повідомлення на сто сорок чотири символи, щоб перевірити "
-     "обрізання тексту й трикрапку в кінці останнього рядка банера", 0),
-]
+def sheet(frames, cols, name, scale=3, pad=10):
+    rows = (len(frames) + cols - 1) // cols
+    img = Image.new('RGB', (cols * (W * scale + pad) + pad, rows * (H * scale + pad) + pad), (24, 24, 28))
+    for i, fb in enumerate(frames):
+        r, c = divmod(i, cols)
+        img.paste(to_img(fb, scale), (pad + c * (W * scale + pad), pad + r * (H * scale + pad)))
+    path = os.path.join(OUT, name)
+    img.save(path)
+    print('рендер збережено:', path)
 
-cols, rows = len(CASES), 2
-pad, scale = 10, 3
-sheet = Image.new('RGB', (cols * (W * scale + pad) + pad,
-                          rows * (H * scale + pad) + pad), (24, 24, 28))
-for r, theme in enumerate(('DAY', 'NIGHT')):
-    for c, (msg, more) in enumerate(CASES):
-        sheet.paste(to_img(render(theme, msg, more), scale),
-                    (pad + c * (W * scale + pad), pad + r * (H * scale + pad)))
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sms_banner_preview.png')
-sheet.save(out)
-print('рендер збережено:', out)
-print('верхній ряд -- ДЕННА тема, нижній -- НІЧНА; колонки: короткe / середнє / довге (обрізане)')
+LONG = ('Виходимо на позицію через десять хвилин, підтвердьте готовність і '
+        'перевірте батареї. Зв\'язок на другому каналі, позивний Ґанок. Їжак -- запасний.')
+TEST = 'Привіт. Тест кирилиці на OpenTYT. ІіЄєҐґЇї'
+
+if __name__ == '__main__':
+    frames = []
+    for theme in ('DAY', 'NIGHT'):
+        frames.append(banner(theme, 'Від UW5ELK', '21:30', TEST, 4))
+        frames.append(banner(theme, 'UR5EQF -> UT7UA', '09:05', 'Перевірка зв\'язку, прийом.', 1, foreign=True))
+        frames.append(banner(theme, 'Від UW5ELK Bohdan Melnyk', '', LONG, 22))
+    sheet(frames, 3, 'sms_banner_preview.png')
+
+    frames = []
+    hint = 'SK2+GRN:вид GRN:відпов'
+    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', TEST, True, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', LONG, True, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', LONG, True, 3, hint))
+    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', TEST, False, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK Bohdan (не вам)', '05.10 21:30', LONG, False, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '', LONG, False, 1, hint))
+    sheet(frames, 3, 'sms_read_preview.png')
+    print('банер: верхній ряд -- ДЕННА тема, нижній -- НІЧНА; читання: верхній ряд -- «великий», нижній -- «малий»')

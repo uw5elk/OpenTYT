@@ -39,6 +39,8 @@
 #include "crypto/dmr_aes.h"
 #include "io/keyboard.h"
 #include "functions/sms_multitap.h"   /* ui4: розкладки набору (кирилиця, регістр, цифри) */
+#include "functions/sms_format.h"     /* ui6: перенесення за словами, SMS_TIME_* */
+#include "user_interface/uiSms.h"     /* ui6: позивний/ім'я, місцевий час, малювання тексту */
 
 /*
  * Рядки цього екрана перемикаються на етапі компіляції, а не через stringsTable_t:
@@ -101,6 +103,10 @@
 #define MSGS_HINT_YES_NO         "GREEN: yes, RED: no"
 /* ui4: підказка біля індикатора режиму набору. */
 #define MSGS_HINT_MODE           "#:mode"
+/* ui6: шрифт тексту на екрані читання. */
+#define MSGS_FONT_FMT            "SMS font: %s"
+#define MSGS_FONT_BIG            "large"
+#define MSGS_FONT_SMALL          "small"
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_TX_MODE_R12         "Confirmed 1/2"
 /* Екран «Діагностика» -- лише з ENABLE_SMS_DIAG (ui2: пункту в звичайному меню немає). */
@@ -158,21 +164,11 @@
 
 /* Позивний/ім'я замість голого DMR ID: спершу список контактів кодплага, потім база DMR ID
  * (та сама логіка, що й для вхідного дзвінка -- uiPrivateCall.c). Якщо ніде не знайдено --
- * пишемо номер. out має бути >= 20 байт. */
-static void smsWhoStr(uint32_t id, char *out, int outsz)
+ * пишемо номер. out має бути >= 20 байт. ui6: сама логіка -- uiSmsWhoStr() (спільна з банером);
+ * у «Надісланих» груповому адресатові (TG) шукаємо TG-контакт. */
+static void smsWhoStr(const dmrSmsMessage_t *m, char *out, int outsz)
 {
-	if (contactIDLookup(id, CONTACT_CALLTYPE_PC, out))
-	{
-		return;
-	}
-	dmrIdDataStruct_t rec;
-	if (dmrIDLookup(id, &rec) && rec.text[0] != 0)
-	{
-		strncpy(out, rec.text, outsz - 1);
-		out[outsz - 1] = 0;
-		return;
-	}
-	snprintf(out, outsz, "%lu", (unsigned long)id);
+	uiSmsWhoStr(m->peerId, ((m->flags & DMR_SMS_FLAG_OUTGOING) && (m->flags & DMR_SMS_FLAG_GROUP)) ? 1 : 0, out, outsz);
 }
 
 enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG, MSG_CONFIRM };
@@ -199,6 +195,7 @@ static struct
 	smsMt_t  mt;            // ui4: символ, що гортається (клавіша + номер у циклі)
 	uint8_t  mtMode;        // ui4: режим набору (SMS_MT_*)
 	ticksTimer_t mtTimer;   // ui4: вікно ~1 с, у межах якого та сама клавіша гортає далі
+	uint8_t  readScroll;    // ui6: перший видимий рядок тексту на екрані читання (гортання U/D)
 #if defined(ENABLE_SMS_DIAG)
 	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
@@ -244,12 +241,13 @@ static void pickContactEvent(uiEvent_t *ev);
 static void diagUpdate(void);
 static void diagEvent(uiEvent_t *ev);
 
-/* Вхідні / Надіслані / Нове / Монітор / TX режим / Діагностика */
-#define MSGS_HOME_ITEMS   6
+/* Вхідні / Надіслані / Нове / Монітор / TX режим / Шрифт SMS (ui6) / Діагностика */
+#define MSGS_HOME_ITEMS   7
 #define MSGS_DIAG_REFRESH_MS 500   /* екран діагностики оновлюється сам -- лічильники живі */
 #else
-/* Вхідні / Надіслані / Нове / Монітор / TX режим (ui2: «Діагностика» -- лише з ENABLE_SMS_DIAG) */
-#define MSGS_HOME_ITEMS   5
+/* Вхідні / Надіслані / Нове / Монітор / TX режим / Шрифт SMS (ui6) (ui2: «Діагностика» -- лише з
+ * ENABLE_SMS_DIAG) */
+#define MSGS_HOME_ITEMS   6
 #endif
 
 static void gotoHome(void)
@@ -373,6 +371,11 @@ static void homeUpdate(void)
 				snprintf(buf, sizeof buf, MSGS_TX_MODE_FMT, name);
 				break;
 			}
+			// ui6: шрифт тексту на екрані читання -- великий (font_8x16, типово) / малий (font_8x8).
+			case 5:
+				snprintf(buf, sizeof buf, MSGS_FONT_FMT,
+						settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) ? MSGS_FONT_SMALL : MSGS_FONT_BIG);
+				break;
 #if defined(ENABLE_SMS_DIAG)
 			// Лічильники ланцюга квитанції -- окремий екран (2026-09-30).
 			default: snprintf(buf, sizeof buf, MSGS_DIAG); break;
@@ -481,8 +484,12 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 #endif
 				homeUpdate();
 				break;
+			case 5:   /* ui6: «Шрифт SMS: великий / малий» -- біт у nonVolatileSettings, як «Монітор» */
+				settingsSetOptionBit(BIT_SMS_FONT_SMALL, (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false));
+				homeUpdate();
+				break;
 #if defined(ENABLE_SMS_DIAG)
-			case 5:
+			case 6:
 				s_msg.view = MSG_DIAG;
 #if defined(ENABLE_SMS_DIAG)
 				s_msg.diagPage = 0;
@@ -754,6 +761,12 @@ static void diagEvent(uiEvent_t *ev)
 #endif /* ENABLE_SMS_DIAG: екран «Діагностика» */
 
 /* ============================ LIST ===================================== */
+/* ui6: рядок списку -- текст 8x16 від DISPLAY_X_POS_MENU_TEXT_OFFSET (8 px), час FONT_SIZE_1 праворуч
+ * (5 символів x 6 px = 30 px) з 2 px до краю підсвітки (DISPLAY_X_POS_MENU_OFFSET = 4).
+ * (160 - 4 - 2 - 30 - 8) / 8 = 14 символів тексту, коли час є. */
+#define LIST_TIME_X     ((int16_t)(DISPLAY_SIZE_X - DISPLAY_X_POS_MENU_OFFSET - 2 - 5 * 6))
+#define LIST_TEXT_COLS  ((LIST_TIME_X - 2 - DISPLAY_X_POS_MENU_TEXT_OFFSET) / 8)
+
 static void listUpdate(void)
 {
 	char buf[DMR_SMS_TEXT_MAX + 24];
@@ -774,6 +787,8 @@ static void listUpdate(void)
 		int mNum = menuGetMenuOffset(count + 1, i);
 		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY) { continue; }
 		if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)   { break; }
+		char ts[12];
+		ts[0] = 0;
 
 		if (mNum == count)
 		{
@@ -791,10 +806,25 @@ static void listUpdate(void)
 			// відправника, бо саме його оператор бачить першим і може прийняти за адресата.
 			const char *foreign = (m->flags & DMR_SMS_FLAG_FOREIGN) ? ">" : "";
 			char who[20];
-			smsWhoStr(m->peerId, who, sizeof who);   // позивний/ім'я замість номера
+			smsWhoStr(m, who, sizeof who);   // позивний/ім'я замість номера
 			snprintf(buf, sizeof buf, "%c%s%s:%s", mark, foreign, who, txt);
+			/* ui6: час праворуч у рядку -- «ГГ:ХХ», якщо сьогодні, інакше «ДД.ММ» (FONT_SIZE_1,
+			 * 5 x 6 px). Під нього текст рядка обрізається до LIST_TEXT_COLS символів 8x16. */
+			if (uiSmsTimeStr(dmrSmsGetTime(s_msg.folder, mNum), SMS_TIME_SHORT, ts, sizeof ts) > 0)
+			{
+				buf[LIST_TEXT_COLS] = 0;
+			}
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+		if (ts[0] != 0)
+		{
+			bool focused = (mNum == menuDataGlobal.currentItemIndex);
+			int16_t cy = (int16_t)(DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + (i * MENU_ENTRY_HEIGHT));
+			displayThemeApply(focused ? THEME_ITEM_BG : THEME_ITEM_FG_OPTIONS_VALUE,
+			                  focused ? THEME_ITEM_BG_MENU_ITEM_SELECTED : THEME_ITEM_BG);
+			displayPrintCore(LIST_TIME_X, (int16_t)(cy + 4), ts, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			displayThemeResetToDefault();
+		}
 
 		/* ui1 (2026-10-04): у «Надісланих» доставлене (квитанція отримана) -- маленька галочка
 		 * в першій клітинці рядка (там, де у «Вхідних» стоїть '*' непрочитаного; у
@@ -866,6 +896,7 @@ static void listEvent(uiEvent_t *ev)
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
 		s_msg.readIdx = (int16_t)idx;
+		s_msg.readScroll = 0;   /* ui6: нове повідомлення -- з першого рядка */
 		dmrSmsMarkRead(s_msg.folder, idx);
 		s_msg.view = MSG_READ;
 		readUpdate();
@@ -897,7 +928,7 @@ static void confirmUpdate(void)
 			char txt[DMR_SMS_TEXT_MAX + 1];
 			int n = (m->textLen < (int)sizeof txt - 1) ? m->textLen : (int)sizeof txt - 1;
 			memcpy(txt, m->text, n); txt[n] = 0;
-			smsWhoStr(m->peerId, who, sizeof who);
+			smsWhoStr(m, who, sizeof who);
 			char line[27];   /* «хто:текст», обрізано до 26 символів (рядок FONT_SIZE_1) */
 			int wl = (int)strlen(who);
 			if (wl > 24) { wl = 24; }
@@ -982,31 +1013,56 @@ static void readUpdate(void)
 	// "From 16777215 (not yours)" = 25).
 	char hdr[40];
 	char who[20];
-	smsWhoStr(m->peerId, who, sizeof who);   // позивний/ім'я, або номер якщо невідомий
+	smsWhoStr(m, who, sizeof who);   // позивний/ім'я, або номер якщо невідомий
 	snprintf(hdr, sizeof hdr, "%s %s%s", (m->flags & DMR_SMS_FLAG_OUTGOING) ? MSGS_TO : MSGS_FROM,
 			who, (m->flags & DMR_SMS_FLAG_FOREIGN) ? MSGS_FOREIGN : "");
 	displayPrintAt(2, 16, hdr, FONT_SIZE_1);
 
-	// word-free char wrap
-	char txt[DMR_SMS_TEXT_MAX + 1];
-	int n = (m->textLen < (int)sizeof txt - 1) ? m->textLen : (int)sizeof txt - 1;
-	memcpy(txt, m->text, n); txt[n] = 0;
-
-	/* ui4: БУЛО 21 символ від x = 2 через 12 px -- але font_8x8 має 8 px, і displayPrintCore
-	 * обрізав кожен рядок до (160 - 2) / 8 = 19: 20-й і 21-й символи кожного рядка зникали
-	 * (для кирилиці й латиниці однаково). Тепер 20 від x = 0, 8 рядків через 11 px --
-	 * 160 символів >= DMR_SMS_TEXT_MAX (144), останній рядок закінчується на y = 111. */
-	const int perLine = 20;
-	char line[perLine + 1];
-	int y = 26;
-	for (int i = 0; i < n && y < 104; i += perLine, y += 11)
+	/* ui6: час -- «ДД.ММ ГГ:ХХ» праворуч у тому ж рядку; не влазить -- окремим рядком нижче. */
+	int16_t textY = 26;
 	{
-		int len = ((n - i) < perLine) ? (n - i) : perLine;
-		memcpy(line, txt + i, len); line[len] = 0;
-		displayPrintAt(0, y, line, FONT_SIZE_2);
+		char ts[12];
+		int tl = uiSmsTimeStr(dmrSmsGetTime(s_msg.folder, s_msg.readIdx), SMS_TIME_FULL, ts, sizeof ts);
+		if (tl > 0)
+		{
+			if ((2 + (int)strlen(hdr) * 6 + 6 + tl * 6) <= (DISPLAY_SIZE_X - 2))
+			{
+				displayPrintCore((int16_t)(DISPLAY_SIZE_X - 2 - tl * 6), 16, ts, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			}
+			else
+			{
+				displayPrintCore((int16_t)(DISPLAY_SIZE_X - 2 - tl * 6), 25, ts, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+				textY = 35;
+			}
+		}
 	}
 
+	/* ui4: БУЛО 21 символ від x = 2 -- font_8x8 має 8 px, і 20-й та 21-й символи кожного рядка
+	 * зникали. ui6: 20 символів від x = 0, перенесення за словами (uiSmsDrawWrapped/smsWrapLine --
+	 * та сама функція, що й на банері), шрифт -- за налаштуванням «Шрифт SMS»: великий (font_8x16,
+	 * типово) або малий (font_8x8). Те, що не влазить, гортається U/D; є продовження -- трикутники
+	 * в рядку підказки (вгорі ліворуч -- є вище, праворуч -- є нижче). Текст -- до y = 111. */
+	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+	ucFont_t font = big ? FONT_SIZE_3 : FONT_SIZE_2;
+	int16_t glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;
+	int16_t lineH  = big ? FONT_SIZE_3_HEIGHT : 11;
+	int rows = ((111 - textY - glyphH) / lineH) + 1;
+	int total = smsWrapCount(m->text, m->textLen, UI_SMS_COLS);
+	int maxScroll = (total > rows) ? (total - rows) : 0;
+	if (s_msg.readScroll > maxScroll) { s_msg.readScroll = (uint8_t)maxScroll; }
+
+	/* m -- буфер dmrSmsGet(); uiSmsDrawWrapped лише читає його, нових dmrSmsGet() тут немає. */
+	uiSmsDrawWrapped(m->text, m->textLen, UI_SMS_COLS, s_msg.readScroll, rows, 0, textY, lineH, font, 0);
+
 	displayPrintCentered(112, s_msg.folder ? MSGS_HINT_SENT_ITEM : MSGS_HINT_INBOX_ITEM, FONT_SIZE_1);
+	if (s_msg.readScroll > 0)
+	{
+		displayFillTriangle(4, 112, 0, 119, 8, 119, true);                                 /* ▲ є вище */
+	}
+	if (s_msg.readScroll < maxScroll)
+	{
+		displayFillTriangle(DISPLAY_SIZE_X - 9, 112, DISPLAY_SIZE_X - 1, 112, DISPLAY_SIZE_X - 5, 119, true); /* ▼ є нижче */
+	}
 	displayRender();
 }
 
@@ -1066,6 +1122,17 @@ static void readEvent(uiEvent_t *ev)
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
 		openFolder(s_msg.folder);
+		return;
+	}
+	/* ui6: гортання тексту (межі -- у readUpdate: там відомо, скільки рядків влазить). */
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
+	{
+		if (s_msg.readScroll > 0) { s_msg.readScroll--; readUpdate(); }
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		if (s_msg.readScroll < 255) { s_msg.readScroll++; readUpdate(); }
 		return;
 	}
 }
