@@ -169,4 +169,18 @@
 #define MSGS_FONT_BIG            "великий"
 #define MSGS_FONT_SMALL          "малий"
 
+/* ui7: шпаргалка розкладки (D на екрані набору) і підказки набору. */
+#define MSGS_TITLE_LAYOUT_FMT    "Розкладка: %s"
+#define MSGS_HINT_LAYOUT         "будь-яка клавіша: назад"
+#define MSGS_HINT_PRESET_LAYOUT  "U:шаблон D:літ. L:стерти"
+#define MSGS_HINT_LAYOUT_DEL     "D:літери  L:стерти"
+/* ui7: пункти SMS у «Налаштуваннях» (Опції рації, Дисплей). Рядок пункту -- «підпис:значення»
+ * не довше 16 символів (SCREEN_LINE_BUFFER_SIZE); значення Увімк/Вимк -- currentLanguage->on/off. */
+#define MSGS_SET_MONITOR         "SMS монітор"
+#define MSGS_SET_TXCONF          "SMS підтв."
+#define MSGS_SET_TX_R12          "1/2"
+#define MSGS_SET_FONT            "Шрифт SMS"
+#define MSGS_SET_FONT_BIG        "велик."
+#define MSGS_SET_FONT_SMALL      "малий"
+
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

@@ -53,6 +53,39 @@ int smsWrapCount(const char *s, int len, int w)
 	return n;
 }
 
+void smsWrapPos(const char *s, int len, int w, int pos, int *row, int *col)
+{
+	int r = 0, p = 0, ls, nx;
+
+	if (w <= 0) { *row = 0; *col = 0; return; }
+	if (pos < 0) { pos = 0; }
+	if (pos > len) { pos = len; }
+
+	while (p < len)
+	{
+		int l = smsWrapLine(s, len, p, w, &ls, &nx);
+		if (l <= 0) { break; }             /* далі лише пробіли */
+
+		/* Кінець «зони» цього рядка: перший непробільний символ наступного (або кінець тексту). */
+		int zoneEnd = nx;
+		while ((zoneEnd < len) && (s[zoneEnd] == ' ')) { zoneEnd++; }
+
+		if ((pos < zoneEnd) || (zoneEnd >= len))
+		{
+			int c = pos - ls;
+			if (c < 0) { c = 0; }          /* пробіли перед першим рядком тексту */
+			if (c < w) { *row = r; *col = c; }
+			else       { *row = r + 1; *col = 0; }
+			return;
+		}
+		r++;
+		p = nx;
+	}
+	/* Порожній текст або самі пробіли: просто по w у рядок. */
+	*row = pos / w;
+	*col = pos % w;
+}
+
 int smsPluralForm(int n)
 {
 	if (n < 0) { n = -n; }

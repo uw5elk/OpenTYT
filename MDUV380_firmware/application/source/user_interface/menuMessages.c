@@ -41,6 +41,7 @@
 #include "functions/sms_multitap.h"   /* ui4: розкладки набору (кирилиця, регістр, цифри) */
 #include "functions/sms_format.h"     /* ui6: перенесення за словами, SMS_TIME_* */
 #include "user_interface/uiSms.h"     /* ui6: позивний/ім'я, місцевий час, малювання тексту */
+#include "functions/sound.h"          /* ui7: MELODY_ERROR_BEEP на краях при перемиканні повідомлень */
 
 /*
  * Рядки цього екрана перемикаються на етапі компіляції, а не через stringsTable_t:
@@ -107,6 +108,11 @@
 #define MSGS_FONT_FMT            "SMS font: %s"
 #define MSGS_FONT_BIG            "large"
 #define MSGS_FONT_SMALL          "small"
+/* ui7: шпаргалка розкладки (D на екрані набору) і підказки набору. */
+#define MSGS_TITLE_LAYOUT_FMT    "Keys: %s"
+#define MSGS_HINT_LAYOUT         "any key: back"
+#define MSGS_HINT_PRESET_LAYOUT  "U:preset D:keys L:del"
+#define MSGS_HINT_LAYOUT_DEL     "D:keys  L:del"
 #if defined(ENABLE_SMS_DIAG)
 #define MSGS_TX_MODE_R12         "Confirmed 1/2"
 /* Екран «Діагностика» -- лише з ENABLE_SMS_DIAG (ui2: пункту в звичайному меню немає). */
@@ -171,7 +177,7 @@ static void smsWhoStr(const dmrSmsMessage_t *m, char *out, int outsz)
 	uiSmsWhoStr(m->peerId, ((m->flags & DMR_SMS_FLAG_OUTGOING) && (m->flags & DMR_SMS_FLAG_GROUP)) ? 1 : 0, out, outsz);
 }
 
-enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG, MSG_CONFIRM };
+enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG, MSG_CONFIRM, MSG_LAYOUT };
 
 static struct
 {
@@ -196,6 +202,8 @@ static struct
 	uint8_t  mtMode;        // ui4: режим набору (SMS_MT_*)
 	ticksTimer_t mtTimer;   // ui4: вікно ~1 с, у межах якого та сама клавіша гортає далі
 	uint8_t  readScroll;    // ui6: перший видимий рядок тексту на екрані читання (гортання U/D)
+	uint8_t  readMaxScroll; // ui7: останнє значення readScroll, за яким тексту вже немає (з readUpdate)
+	uint8_t  swallowUpKey;  // ui7: клавіша, що закрила шпаргалку, -- її відпускання набір не обробляє
 #if defined(ENABLE_SMS_DIAG)
 	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
@@ -235,28 +243,36 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec);
 static void listEvent(uiEvent_t *ev);
 static void readEvent(uiEvent_t *ev);
 static void composeEvent(uiEvent_t *ev);
+static void layoutUpdate(void);
+static void layoutEvent(uiEvent_t *ev);
 static void recipientEvent(uiEvent_t *ev);
 static void pickContactEvent(uiEvent_t *ev);
 #if defined(ENABLE_SMS_DIAG)
 static void diagUpdate(void);
 static void diagEvent(uiEvent_t *ev);
 
-/* Вхідні / Надіслані / Нове / Монітор / TX режим / Шрифт SMS (ui6) / Діагностика */
-#define MSGS_HOME_ITEMS   7
+/* ui7: Нове / Вхідні / Надіслані / Діагностика. Монітор, режим TX і шрифт -- у «Налаштуваннях»
+ * (Опції рації, Дисплей); «Діагностика» лишається тут (лише з ENABLE_SMS_DIAG). */
+#define MSGS_HOME_ITEMS   4
 #define MSGS_DIAG_REFRESH_MS 500   /* екран діагностики оновлюється сам -- лічильники живі */
 #else
-/* Вхідні / Надіслані / Нове / Монітор / TX режим / Шрифт SMS (ui6) (ui2: «Діагностика» -- лише з
- * ENABLE_SMS_DIAG) */
-#define MSGS_HOME_ITEMS   6
+/* ui7: Нове / Вхідні / Надіслані. Монітор і режим TX -- у «Налаштування > Опції рації», шрифт --
+ * у «Налаштування > Дисплей» (ті самі біти/блоки). */
+#define MSGS_HOME_ITEMS   3
 #endif
 
-static void gotoHome(void)
+static void gotoHomeAt(int item)
 {
 	keypadAlphaEnable = false;
 	s_msg.view = MSG_HOME;
-	menuDataGlobal.currentItemIndex = 0;
+	menuDataGlobal.currentItemIndex = item;
 	menuDataGlobal.numItems = MSGS_HOME_ITEMS;
 	homeUpdate();
+}
+
+static void gotoHome(void)
+{
+	gotoHomeAt(0);
 }
 
 menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
@@ -329,6 +345,7 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 			case MSG_LIST:         listEvent(ev);            break;
 			case MSG_READ:         readEvent(ev);            break;
 			case MSG_COMPOSE:      composeEvent(ev);         break;
+			case MSG_LAYOUT:       layoutEvent(ev);          break;
 			case MSG_RECIPIENT:    recipientEvent(ev);       break;
 			case MSG_PICK_CONTACT: pickContactEvent(ev);     break;
 			case MSG_CONFIRM:      confirmEvent(ev);         break;
@@ -352,30 +369,10 @@ static void homeUpdate(void)
 
 		switch (mNum)
 		{
-			case 0:  snprintf(buf, sizeof buf, MSGS_INBOX_FMT, dmrSmsCount(0)); break;
-			case 1:  snprintf(buf, sizeof buf, MSGS_SENT_FMT,  dmrSmsCount(1)); break;
-			case 2:  snprintf(buf, sizeof buf, MSGS_NEW);                       break;
-			// Монітор: приймати чужі повідомлення (ті, де адресат -- не ми). Вимкнено за
-			// замовчуванням; докладніше -- у smsIsForUs() в dmr_sms.c.
-			case 3:  snprintf(buf, sizeof buf, MSGS_MONITOR_FMT,
-					settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? MSGS_MON_ON : MSGS_MON_OFF); break;
-			// Режим TX SMS (ui2): «Без підтв.» / «З підтв.» (CONFIRMED rate-3/4); rate-1/2 --
-			// лише з ENABLE_SMS_DIAG.
-			case 4:
-			{
-				int m = dmrSmsTxMode();
-				const char *name = (m == 0) ? MSGS_TX_MODE_UNCONF : MSGS_TX_MODE_CONF;
-#if defined(ENABLE_SMS_DIAG)
-				if (m == 1) { name = MSGS_TX_MODE_R12; }
-#endif
-				snprintf(buf, sizeof buf, MSGS_TX_MODE_FMT, name);
-				break;
-			}
-			// ui6: шрифт тексту на екрані читання -- великий (font_8x16, типово) / малий (font_8x8).
-			case 5:
-				snprintf(buf, sizeof buf, MSGS_FONT_FMT,
-						settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) ? MSGS_FONT_SMALL : MSGS_FONT_BIG);
-				break;
+			/* ui7: «Нове» -- першим; Монітор / TX / Шрифт переїхали в «Налаштування». */
+			case 0:  snprintf(buf, sizeof buf, MSGS_NEW);                       break;
+			case 1:  snprintf(buf, sizeof buf, MSGS_INBOX_FMT, dmrSmsCount(0)); break;
+			case 2:  snprintf(buf, sizeof buf, MSGS_SENT_FMT,  dmrSmsCount(1)); break;
 #if defined(ENABLE_SMS_DIAG)
 			// Лічильники ланцюга квитанції -- окремий екран (2026-09-30).
 			default: snprintf(buf, sizeof buf, MSGS_DIAG); break;
@@ -389,13 +386,18 @@ static void homeUpdate(void)
 	displayRender();
 }
 
-static void openFolder(int folder)
+static void openFolderAt(int folder, int idx)
 {
 	s_msg.folder = (uint8_t)folder;
 	s_msg.view = MSG_LIST;
-	menuDataGlobal.currentItemIndex = 0;
 	menuDataGlobal.numItems = dmrSmsCount(folder) + 1;   // +1 for "[Delete all]"
+	menuDataGlobal.currentItemIndex = ((idx >= 0) && (idx < menuDataGlobal.numItems)) ? idx : 0;
 	listUpdate();
+}
+
+static void openFolder(int folder)
+{
+	openFolderAt(folder, 0);
 }
 
 /* Показати екран набору (новий текст, Reply або повернення з RECIPIENT). ui4: стоковий
@@ -466,30 +468,11 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 	{
 		switch (menuDataGlobal.currentItemIndex)
 		{
-			case 0: openFolder(0);  break;
-			case 1: openFolder(1);  break;
-			case 2: startCompose(); break;
+			case 0: startCompose(); break;
+			case 1: openFolder(0);  break;
+			case 2: openFolder(1);  break;
+#if defined(ENABLE_SMS_DIAG)
 			case 3:
-				settingsSetOptionBit(BIT_SMS_MONITOR_ALL,
-						(settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false));
-				homeUpdate();
-				break;
-			case 4:
-#if defined(ENABLE_SMS_DIAG)
-				/* Цикл режимів TX SMS: Без підтв. → Підтв.½ → З підтв. → Без підтв. */
-				dmrSmsTxModeSet((uint8_t)((dmrSmsTxMode() + 1) % 3));
-#else
-				/* ui2: лише два режими -- «Без підтв.» (0) <-> «З підтв.» (2). */
-				dmrSmsTxModeSet((uint8_t)((dmrSmsTxMode() == 0) ? 2 : 0));
-#endif
-				homeUpdate();
-				break;
-			case 5:   /* ui6: «Шрифт SMS: великий / малий» -- біт у nonVolatileSettings, як «Монітор» */
-				settingsSetOptionBit(BIT_SMS_FONT_SMALL, (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false));
-				homeUpdate();
-				break;
-#if defined(ENABLE_SMS_DIAG)
-			case 6:
 				s_msg.view = MSG_DIAG;
 #if defined(ENABLE_SMS_DIAG)
 				s_msg.diagPage = 0;
@@ -865,7 +848,7 @@ static void listEvent(uiEvent_t *ev)
 		listUpdate();
 		return;
 	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED)) { gotoHome(); return; }
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED)) { gotoHomeAt(s_msg.folder ? 2 : 1); return; }   /* ui7: курсор -- на цій теці */
 
 	if (count == 0) { return; }
 
@@ -987,6 +970,7 @@ static void redrawCurrent(void)
 		case MSG_LIST:         listUpdate();        break;
 		case MSG_READ:         readUpdate();        break;
 		case MSG_COMPOSE:      composeUpdate();     break;
+		case MSG_LAYOUT:       layoutUpdate();      break;
 		case MSG_RECIPIENT:    recipientUpdate();   break;
 		case MSG_PICK_CONTACT: pickContactUpdate(); break;
 		case MSG_RESULT:       resultUpdate();      break;
@@ -1001,9 +985,13 @@ static void redrawCurrent(void)
 /* ============================ READ ===================================== */
 static void readUpdate(void)
 {
+	/* ui7: у заголовку -- номер «3/9» у поточній теці (1 = найновіше, як у списку). */
+	char title[24];
+	snprintf(title, sizeof title, "%s %d/%d", s_msg.folder ? MSGS_TITLE_SENT : MSGS_TITLE_INBOX,
+			s_msg.readIdx + 1, dmrSmsCount(s_msg.folder));
 	const dmrSmsMessage_t *m = dmrSmsGet(s_msg.folder, s_msg.readIdx);
 	displayClearBuf();
-	menuDisplayTitle(s_msg.folder ? MSGS_TITLE_SENT : MSGS_TITLE_INBOX);
+	menuDisplayTitle(title);
 
 	if (m == NULL) { displayRender(); return; }
 
@@ -1050,6 +1038,7 @@ static void readUpdate(void)
 	int total = smsWrapCount(m->text, m->textLen, UI_SMS_COLS);
 	int maxScroll = (total > rows) ? (total - rows) : 0;
 	if (s_msg.readScroll > maxScroll) { s_msg.readScroll = (uint8_t)maxScroll; }
+	s_msg.readMaxScroll = (uint8_t)((maxScroll < 255) ? maxScroll : 255);   /* ui7: для U/D у readEvent */
 
 	/* m -- буфер dmrSmsGet(); uiSmsDrawWrapped лише читає його, нових dmrSmsGet() тут немає. */
 	uiSmsDrawWrapped(m->text, m->textLen, UI_SMS_COLS, s_msg.readScroll, rows, 0, textY, lineH, font, 0);
@@ -1101,6 +1090,23 @@ static void startReplyOrResend(void)
 	}
 }
 
+/* ui7: сусіднє повідомлення в поточній теці: dir = +1 -- старіше (нижче у списку), -1 -- новіше.
+ * На краях -- нічого, лише сигнал помилки (без зациклення). Відкрите стає прочитаним, як і при
+ * відкритті зі списку (лічильник і значок рахуються наживо з dmrSmsUnreadCount()). */
+static void readGo(int dir)
+{
+	int next = s_msg.readIdx + dir;
+	if ((next < 0) || (next >= dmrSmsCount(s_msg.folder)))
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);
+		return;
+	}
+	s_msg.readIdx = (int16_t)next;
+	s_msg.readScroll = 0;
+	dmrSmsMarkRead(s_msg.folder, next);
+	readUpdate();
+}
+
 static void readEvent(uiEvent_t *ev)
 {
 	if ((ev->events & KEY_EVENT) == 0) { return; }
@@ -1121,79 +1127,189 @@ static void readEvent(uiEvent_t *ev)
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
-		openFolder(s_msg.folder);
+		openFolderAt(s_msg.folder, s_msg.readIdx);   /* ui7: курсор списку -- на останньому відкритому */
 		return;
 	}
-	/* ui6: гортання тексту (межі -- у readUpdate: там відомо, скільки рядків влазить). */
+	/* ui7: валкодер -- завжди сусіднє повідомлення. У меню він приходить як KEY_RIGHT (за
+	 * годинниковою, KEY_ROTARY_INCREMENT) / KEY_LEFT (проти, KEY_ROTARY_DECREMENT) --
+	 * menuSystemPreProcessEvent(), menuSystem.c. За годинниковою = старіше (вниз по списку). */
+	if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	{
+		readGo(+1);
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	{
+		readGo(-1);
+		return;
+	}
+	/* ui6/ui7: стрілки гортають текст; на початку/в кінці (або коли текст уміщується) --
+	 * перехід на попереднє/наступне повідомлення. Межі -- з readUpdate (readMaxScroll). */
 	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
 	{
 		if (s_msg.readScroll > 0) { s_msg.readScroll--; readUpdate(); }
+		else                      { readGo(-1); }
 		return;
 	}
 	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
-		if (s_msg.readScroll < 255) { s_msg.readScroll++; readUpdate(); }
+		if (s_msg.readScroll < s_msg.readMaxScroll) { s_msg.readScroll++; readUpdate(); }
+		else                                        { readGo(+1); }
 		return;
 	}
 }
 
 /* ============================ COMPOSE ================================== */
+/* ui7: рядок символів клавіші під час multitap -- замість «#:режим  N/144 симв.»: усі символи
+ * клавіші в поточному режимі, поточний -- інверсно. Пробіл показуємо як '_' (інакше його не видно).
+ * FONT_SIZE_2 (8 px) від x; вміщується 2n-1 клітинок -- через пробіл, n -- впритул, інакше
+ * вікно навколо поточного. */
+static void composeKeyHint(int16_t x, int16_t y)
+{
+	const char *map = smsMtKeyMap(s_msg.mtMode, s_msg.mt.key);
+	if (map == NULL) { return; }
+	int n = (int)strlen(map);
+	int cells = (DISPLAY_SIZE_X - x) / 8;
+	int step = ((2 * n - 1) <= cells) ? 2 : 1;
+	int start = 0;
+	if ((step == 1) && (n > cells))
+	{
+		start = (int)s_msg.mt.idx - cells / 2;
+		if (start > n - cells) { start = n - cells; }
+		if (start < 0) { start = 0; }
+	}
+	for (int k = start; (k < n) && (((k - start) * step) < cells); k++)
+	{
+		char one[2] = { (map[k] == ' ') ? '_' : map[k], 0 };
+		int16_t cx = (int16_t)(x + (k - start) * step * 8);
+		if (k == (int)s_msg.mt.idx)
+		{
+			displayFillRect(cx, y, 8, 8, false);
+			displayPrintCore(cx, y, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, true);
+		}
+		else
+		{
+			displayPrintCore(cx, y, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, false);
+		}
+	}
+}
+
 static void composeUpdate(void)
 {
 	displayClearBuf();
 	menuDisplayTitle(MSGS_TITLE_NEW);
 
-	/* ui4: font_8x8 -- 8 px на символ, екран 160 px -> рівно 20 у рядок від x = 0. БУЛО 21 від
-	 * x = 2: displayPrintCore обрізав рядок до (160 - 2) / 8 = 19, і кожен 20-й та 21-й символ
-	 * просто не малювався. 5 рядків -- 100 символів; довший текст прокручується за курсором. */
-	const int perLine = 20;
-	const int rows = 5;
+	/* ui7: шрифт -- за налаштуванням «Шрифт SMS» (типово великий 8x16), 20 символів у рядку від
+	 * x = 0, перенесення за словами тією ж smsWrapLine(), що й на екрані читання. Рядок із
+	 * курсором (або символом, що гортається) завжди видимий: вікно рядків іде за ним
+	 * (smsWrapPos). Великий -- 4 рядки по 16 px, малий -- 5 по 14 px; усе над рядком режиму (y 95). */
+	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+	ucFont_t font = big ? FONT_SIZE_3 : FONT_SIZE_2;
+	const int16_t glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;
+	const int16_t lineH  = big ? FONT_SIZE_3_HEIGHT : 14;
+	const int rows       = big ? 4 : 5;
+	const int16_t y0     = big ? 23 : 22;
 	const int cap = dmrSmsMaxLen();
 	int n = (int)strlen(s_msg.compose);
 	int cur = s_msg.composePos;                       /* клітинка курсора / символу перегляду */
-	int curCell = ((cur >= cap) && (cur > 0)) ? (cur - 1) : cur;   /* повний текст: без зайвого рядка */
-	int first = curCell / perLine - (rows - 1);
-	if (first < 0) { first = 0; }
-	char line[perLine + 1];
-
-	for (int r = 0; r < rows; r++)
+	if (cur > n) { cur = n; }
+	int curRow, curCol;
+	smsWrapPos(s_msg.compose, n, UI_SMS_COLS, cur, &curRow, &curCol);
+	int winRow = curRow;
+	if ((cur >= cap) && (cur > 0))                    /* повний текст: курсора немає, без зайвого рядка */
 	{
-		int i = (first + r) * perLine;
-		if (i >= n) { break; }
-		int len = ((n - i) < perLine) ? (n - i) : perLine;
-		memcpy(line, s_msg.compose + i, len); line[len] = 0;
-		displayPrintAt(0, (uint16_t)(22 + r * 14), line, FONT_SIZE_2);
+		int pr, pc;
+		smsWrapPos(s_msg.compose, n, UI_SMS_COLS, cur - 1, &pr, &pc);
+		winRow = pr;
+	}
+	int first = winRow - (rows - 1);
+	if (first < 0) { first = 0; }
+
+	uiSmsDrawWrapped(s_msg.compose, n, UI_SMS_COLS, first, rows, 0, y0, lineH, font, 0);
+
+	int16_t cx = (int16_t)(curCol * 8);
+	int16_t cy = (int16_t)(y0 + (curRow - first) * lineH);
+	if ((curRow - first) < rows)
+	{
+		if (s_msg.mt.key != 0)
+		{
+			/* Символ, що гортається, -- інверсно (поки не підтверджено). Пробіл -- суцільний блок. */
+			char one[2] = { s_msg.compose[cur], 0 };
+			displayFillRect(cx, cy, 8, glyphH, false);
+			displayPrintCore(cx, cy, one, font, TEXT_ALIGN_LEFT, true);
+		}
+		else if (cur < cap)
+		{
+			displayPrintCore(cx, cy, "_", font, TEXT_ALIGN_LEFT, false);
+		}
 	}
 
-	int cx = (cur % perLine) * 8;
-	int cy = 22 + (cur / perLine - first) * 14;
+	/* Індикатор режиму -- інверсна плашка в лівому нижньому куті. Поки триває multitap -- поруч
+	 * символи клавіші (ui7), інакше «#:режим» і лічильник праворуч. */
+	const char *lbl = smsMtModeLabel(s_msg.mtMode);
+	int16_t chipW = (int16_t)(strlen(lbl) * 6 + 4);
+	displayFillRect(0, 95, chipW, 10, false);
+	displayPrintCore(2, 96, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
 	if (s_msg.mt.key != 0)
 	{
-		/* Символ, що гортається, -- інверсно (поки не підтверджено). Пробіл -- суцільний блок. */
-		char one[2] = { s_msg.compose[cur], 0 };
-		displayFillRect((int16_t)cx, (int16_t)cy, 8, 8, false);
-		displayPrintCore((int16_t)cx, (int16_t)cy, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, true);
+		composeKeyHint((int16_t)(chipW + 4), 96);
 	}
-	else if (cur < cap)
+	else
 	{
-		displayPrintAt((uint16_t)cx, (uint16_t)cy, "_", FONT_SIZE_2);
+		displayPrintAt((uint16_t)(chipW + 4), 96, MSGS_HINT_MODE, FONT_SIZE_1);
+		char cnt[20];
+		snprintf(cnt, sizeof cnt, MSGS_CHARS_FMT, n, cap);
+		displayPrintCore(0, 96, cnt, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
 	}
-
-	/* Індикатор режиму -- інверсна плашка в лівому нижньому куті, лічильник -- праворуч. */
-	const char *lbl = smsMtModeLabel(s_msg.mtMode);
-	displayFillRect(0, 95, (int16_t)(strlen(lbl) * 6 + 4), 10, false);
-	displayPrintCore(2, 96, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
-	displayPrintAt((uint16_t)(strlen(lbl) * 6 + 8), 96, MSGS_HINT_MODE, FONT_SIZE_1);
-
-	char cnt[20];
-	snprintf(cnt, sizeof cnt, MSGS_CHARS_FMT, n, cap);
-	displayPrintCore(0, 96, cnt, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
-	if (dmrSmsPresetCount() > 0)
-	{
-		displayPrintCentered(106, MSGS_HINT_PRESET, FONT_SIZE_1);
-	}
+	/* ui7: D -- шпаргалка розкладки; U -- шаблон (якщо є); L (валкодер проти) -- стерти. */
+	displayPrintCentered(106, (dmrSmsPresetCount() > 0) ? MSGS_HINT_PRESET_LAYOUT : MSGS_HINT_LAYOUT_DEL, FONT_SIZE_1);
 	displayPrintCentered(116, MSGS_HINT_TO_CANCEL, FONT_SIZE_1);
 	displayRender();
+}
+
+/* ui7: шпаргалка розкладки поточного режиму -- усі клавіші 1..9, 0, * з їхніми символами
+ * (FONT_SIZE_1, 26 символів у рядку: «2 а б в г ґ 2»; довге -- впритул, ще довше -- обрізане
+ * з '>' в кінці). Пробіл -- '_'. Будь-яка клавіша -- назад до набору, текст не чіпається. */
+static void layoutUpdate(void)
+{
+	static const char keys[] = "1234567890*";
+	char title[24];
+	snprintf(title, sizeof title, MSGS_TITLE_LAYOUT_FMT, smsMtModeLabel(s_msg.mtMode));
+	displayClearBuf();
+	menuDisplayTitle(title);
+
+	for (int r = 0; keys[r] != 0; r++)
+	{
+		char line[28];
+		const char *map = smsMtKeyMap(s_msg.mtMode, keys[r]);
+		int n = (map != NULL) ? (int)strlen(map) : 0;
+		int step = ((2 + 2 * n - 1) <= 26) ? 2 : 1;
+		int p = 0, k = 0;
+		line[p++] = keys[r];
+		line[p++] = ' ';
+		for (; (k < n) && (p < 26); k++)
+		{
+			if ((step == 2) && (k > 0)) { line[p++] = ' '; }
+			line[p++] = (map[k] == ' ') ? '_' : map[k];
+		}
+		if (k < n) { line[25] = '>'; p = 26; }   /* не влізло -- позначка, що є ще */
+		line[p] = 0;
+		displayPrintCore(2, (int16_t)(15 + r * 9), line, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	}
+	displayPrintCentered(117, MSGS_HINT_LAYOUT, FONT_SIZE_1);
+	displayRender();
+}
+
+static void layoutEvent(uiEvent_t *ev)
+{
+	/* Лише нове НАТИСКАННЯ: відпускання D, якою шпаргалку відкрили, не має її закрити. */
+	if ((ev->events & KEY_EVENT) && (ev->keys.event & KEY_MOD_PRESS) && ((ev->keys.event & KEY_MOD_LONG) == 0))
+	{
+		/* Валкодер шле натискання й відпускання однією подією -- ковтати нічого. */
+		s_msg.swallowUpKey = (ev->keys.event & KEY_MOD_UP) ? 0 : (uint8_t)ev->keys.key;
+		s_msg.view = MSG_COMPOSE;
+		composeUpdate();
+	}
 }
 
 static void prefillRecipient(void)
@@ -1221,6 +1337,18 @@ static void composeEvent(uiEvent_t *ev)
 {
 	if ((ev->events & KEY_EVENT) == 0) { return; }
 
+	/* ui7: шпаргалку закрито НАТИСКАННЯМ; відпускання тієї ж клавіші приходить уже сюди -- і
+	 * RED/GREEN (вони діють на відпусканні) інакше вийшли б із набору або перейшли до адресата. */
+	if (s_msg.swallowUpKey != 0)
+	{
+		if ((ev->keys.key == s_msg.swallowUpKey) && (ev->keys.event & KEY_MOD_UP))
+		{
+			s_msg.swallowUpKey = 0;
+			return;
+		}
+		if (ev->keys.event & KEY_MOD_PRESS) { s_msg.swallowUpKey = 0; }   /* уже інша клавіша */
+	}
+
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
 		gotoHome(); return;
@@ -1246,6 +1374,13 @@ static void composeEvent(uiEvent_t *ev)
 	if (KEYCHECK_PRESS(ev->keys, KEY_UP))   // insert a CHIRP-configured quick-text preset
 	{
 		cyclePreset();
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))   /* ui7: шпаргалка розкладки поточного режиму */
+	{
+		smsMtCommit(&s_msg.mt, &s_msg.composePos);   /* символ перегляду -- у текст, таймер не потрібен */
+		s_msg.view = MSG_LAYOUT;
+		layoutUpdate();
 		return;
 	}
 

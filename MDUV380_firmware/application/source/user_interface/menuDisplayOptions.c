@@ -36,6 +36,16 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+/* ui7 (форк): «Шрифт SMS» переїхав сюди з меню «Повідомлення»; той самий біт BIT_SMS_FONT_SMALL. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/messages_ua.h"
+#else
+#define MSGS_SET_FONT            "SMS font"
+#define MSGS_SET_FONT_BIG        "large"
+#define MSGS_SET_FONT_SMALL      "small"
+#endif
+#endif
 
 
 static void updateScreen(bool isFirstRun);
@@ -109,6 +119,9 @@ enum
 	// у uiUtilities.c). Біт BIT_SHOW_SMETER_IN_HEADER і розкладка налаштувань -- без змін.
 	DISPLAY_SMETER_HEADER,
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	DISPLAY_SMS_FONT,   /* ui7: останнім -- індекси QuickKey стокових пунктів ті самі */
+#endif
 	NUM_DISPLAY_MENU_ITEMS
 };
 
@@ -179,6 +192,9 @@ static void updateScreen(bool isFirstRun)
 			}
 
 			buf[0] = 0;
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+			bool leftSideIsFork = false;   /* підпис -- не рядок currentLanguage: без голосової підказки */
+#endif
 			leftSide = NULL;
 			rightSideConst = NULL;
 			rightSideVar[0] = 0;
@@ -350,6 +366,15 @@ static void updateScreen(bool isFirstRun)
 					rightSideConst = settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) ? currentLanguage->on : currentLanguage->off;
 					break;
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				/* ui7: шрифт тексту SMS (читання й набір): великий 8x16 (типово) / малий 8x8. */
+				case DISPLAY_SMS_FONT:
+					leftSide = MSGS_SET_FONT;
+					leftSideIsFork = true;
+					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s",
+							settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) ? MSGS_SET_FONT_SMALL : MSGS_SET_FONT_BIG);
+					break;
+#endif
 			}
 
 			// workaround for non standard format of line for colour display
@@ -366,6 +391,9 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+					if (leftSideIsFork == false)   /* індекс підказки рахується від currentLanguage */
+#endif
 					voicePromptsAppendLanguageString(leftSide);
 				}
 
@@ -738,6 +766,14 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				case DISPLAY_SMS_FONT:   /* праворуч -- більший */
+					if (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL))
+					{
+						settingsSetOptionBit(BIT_SMS_FONT_SMALL, false);
+					}
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -946,6 +982,14 @@ static void handleEvent(uiEvent_t *ev)
 					if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER))
 					{
 						settingsSetOptionBit(BIT_SHOW_SMETER_IN_HEADER, false);
+					}
+					break;
+#endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				case DISPLAY_SMS_FONT:   /* ліворуч -- менший */
+					if (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false)
+					{
+						settingsSetOptionBit(BIT_SMS_FONT_SMALL, true);
 					}
 					break;
 #endif
