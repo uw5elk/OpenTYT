@@ -48,6 +48,7 @@ declare -A SRCS=(
 	[test_dmr_sms_replay]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # diag5: СПРАВЖНІЙ збирач SMS, залізо -- заглушки в тесті
 	[test_dmr_sms_shift]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui5: кирилиця від Z3DMR (зсув старших байтів UTF-16)
 	[test_dmr_sms_store]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # ui6: сховище v3 і перетворення v2 -> v3
+	[test_channel_vox]=""   # ui8: умова VOX на APRS-каналі (лише заголовок)
 	[test_sms_format]="$APP/source/functions/sms_format.c"   # ui6: перенесення за словами, форма слова, час
 	[test_sms_multitap]="$APP/source/functions/sms_multitap.c"   # ui4: розкладки й логіка multitap набору SMS
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею

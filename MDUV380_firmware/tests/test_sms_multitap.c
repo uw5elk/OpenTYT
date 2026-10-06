@@ -199,7 +199,11 @@ static void testUkrainian(void)
 	CHECK(strcmp(smsMtKeyMap(SMS_MT_UA_UP, '4'), "\xC8\xB2\xAF\xC9" "4") == 0, "4 ИІЇЙ");
 	CHECK(strcmp(smsMtKeyMap(SMS_MT_UA_LO, '9'), "\xFC\xFE\xFF" "'9") == 0, "9 ьюя'");
 	CHECK(strcmp(smsMtKeyMap(SMS_MT_UA_LO, '1'), ".,?!-1") == 0, "1 .,?!-1");
-	CHECK(strchr(smsMtKeyMap(SMS_MT_UA_LO, '*'), 0xB9) != NULL, "* має №");
+	/* ui8: «№» з «*» прибрано в усіх режимах (на клавіатурі його немає, у 6x8 гліф порожній). */
+	for (int m = 0; m < SMS_MT_MODES; m++)
+	{
+		CHECK(strchr(smsMtKeyMap((uint8_t)m, '*'), 0xB9) == NULL, "режим %d: * без №", m);
+	}
 
 	/* «Привіт, Ґанок! Їжак є.» -- регістр перемикаємо, як оператор ('#' у UI -- тут
 	 * просто інший режим для великих). */
