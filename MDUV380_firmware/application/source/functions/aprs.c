@@ -50,6 +50,9 @@
 #include "interfaces/gps.h"
 #endif
 #include "user_interface/menuSystem.h"
+#if defined(ENABLE_AES)
+#include "crypto/dmr_aes.h"   /* ui8: DMR_AES_CCM -- стан відкладеного PTT-бікона в CCM, не в main RAM */
+#endif
 
 #define AX25_PACKET_BUFFER_SIZE        256U
 #define SMART_BEACONING_SPEED_MIN       54U // more than 1km/h (0.5399568034557235 kn == 1km/h)
@@ -278,6 +281,17 @@ static AX25Encoder_t encoderData;
 static CodeplugAPRSConfig_t *aprsConfig;
 
 volatile aprsSendProgress_t aprsTxProgress = APRS_TX_IDLE; // used in the ISR
+#if defined(ENABLE_AES)
+/* ui8 (форк): відкладений PTT-бікон -- опис біля aprsBeaconingPttRequest(). */
+#define APRS_PTT_SETTLE_MS  500U
+static struct
+{
+	uint8_t      pending;   /* бікон замовлено, чекаємо кінця голосу й паузи */
+	uint8_t      active;    /* відкладений бікон зараз передається (від QSY до FINAL_STAGE) */
+	uint8_t      qsyNow;    /* aprsBeaconingSendBeacon(): у режимі PTT іти гілкою «Вручну» (QSY + TX) */
+	ticksTimer_t settle;    /* пауза після повернення в RX */
+} s_aprsPtt DMR_AES_CCM;
+#endif
 
 
 static bool aprsBeaconingStateEnabled(aprsBeaconingStates_t s);
@@ -1289,12 +1303,141 @@ static void aprsBeaconingTxStateTick(uiEvent_t *ev)
 
 			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
 			aprsTxProgress = APRS_TX_IDLE;
+#if defined(ENABLE_AES)
+			s_aprsPtt.active = 0;   /* ui8: відкладений PTT-бікон завершено, канал повернуто */
+#endif
 			break;
 	}
 }
 
+#if defined(ENABLE_AES)
+/* ui8 (форк): бікон у режимі PTT з QSY на частоту APRS-конфігу.
+ *
+ * Апстрім у режимі PTT слав пакет «у хвіст» голосу (uiTxScreen.c) БЕЗ QSY: в аналоговому каналі --
+ * на частоті каналу, а в цифровому -- взагалі нікуди (передавач не FM, AFSK не модулюється, хоча на
+ * екрані «APRS Tx»). Тепер, якщо в конфігу є TX-частота, голос завершується звичайно (DMR -- з
+ * термінатором), рація повертається в RX, а через APRS_PTT_SETTLE_MS бікон іде тим самим шляхом,
+ * що «Вручну»: QSY, FM, анти-колізія, TX, APRS_TX_FINAL_STAGE (повернення каналу й скид DMR, баг #7).
+ * Стан -- у CCM (main RAM не чіпаємо); обнуляється в aprsBeaconingInit() (CCM при старті -- сміття). */
+/* (стан s_aprsPtt і APRS_PTT_SETTLE_MS -- угорі файлу, біля aprsTxProgress) */
+
+aprsPttBeaconRequest_t aprsBeaconingPttRequest(bool isDigital)
+{
+	/* Ті самі умови, що на вході aprsBeaconingSendBeacon() для режиму PTT, -- без побічних дій. */
+	if ((aprsBcnData.settings.mode != APRS_BEACONING_MODE_PTT) || uiDataGlobal.Scan.active ||
+			settingsIsOptionBitSet(BIT_TX_INHIBIT) ||
+			(aprsBeaconingStateEnabled(APRS_BEACONING_STATE_ENABLED) == false) ||
+			(aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG) == false) ||
+			(aprsTxProgress != APRS_TX_IDLE) || s_aprsPtt.pending || s_aprsPtt.active ||
+			(ticksTimerHasExpired(&aprsBcnData.nextBeaconTimer) == false))   /* інтервал -- як і раніше */
+	{
+		return APRS_PTT_BEACON_NONE;
+	}
+
+	if (aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL].txFrequency != 0U)
+	{
+		s_aprsPtt.pending = 1;
+		ticksTimerStart(&s_aprsPtt.settle, APRS_PTT_SETTLE_MS);
+		return APRS_PTT_BEACON_DEFERRED;
+	}
+
+	if (isDigital)
+	{
+		/* Повідомлення -- не частіше, ніж міг би піти бікон: інакше воно вискакувало б на кожне PTT. */
+		ticksTimerStart(&aprsBcnData.nextBeaconTimer, (initialIntervalsInSecs[aprsBcnData.settings.initialInterval] * MILLISECS_PER_SEC));
+		return APRS_PTT_BEACON_NO_FREQ;
+	}
+
+	return APRS_PTT_BEACON_TAIL;
+}
+
+/* Викликається з aprsBeaconingTick(), поки бікон відкладено. true -- тік зайнятий цим (вийти). */
+static bool aprsBeaconingPttDeferredTick(uiEvent_t *ev)
+{
+	if (s_aprsPtt.pending == 0)
+	{
+		return false;
+	}
+
+	if ((ev->buttons & BUTTON_PTT) || (aprsBcnData.settings.mode != APRS_BEACONING_MODE_PTT))
+	{
+		s_aprsPtt.pending = 0;   /* голос має пріоритет; режим змінили -- теж скасувати */
+		return false;
+	}
+
+	/* Голос ще не завершився (DMR чекає термінатор, екран TX ще відкритий) -- пауза спочатку. */
+	if ((menuSystemGetCurrentMenuNumber() == UI_TX_SCREEN) || trxTransmissionEnabled || trxIsTransmitting)
+	{
+		ticksTimerStart(&s_aprsPtt.settle, APRS_PTT_SETTLE_MS);
+		return true;
+	}
+
+	if (ticksTimerHasExpired(&s_aprsPtt.settle) == false)
+	{
+		return true;
+	}
+
+	s_aprsPtt.pending = 0;
+
+	/* Канал могли змінити за паузу: без частоти APRS у новому конфігу QSY не буде -- не слати. */
+	if (aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL].txFrequency == 0U)
+	{
+		return true;
+	}
+
+	s_aprsPtt.active = 1;
+	s_aprsPtt.qsyNow = 1;
+	bool sent = aprsBeaconingSendBeacon(false, false);
+	s_aprsPtt.qsyNow = 0;
+
+	if ((sent == false) && (aprsTxProgress == APRS_TX_IDLE) && (aprsBcnData.hasDoneQSY == false))
+	{
+		s_aprsPtt.active = 0;   /* до QSY не дійшло -- повертати нічого */
+	}
+	/* Інакше (передається або анти-колізія не дочекалась тиші, APRS_TX_FAILED_WAITING_TO_BEACON) --
+	 * далі звичайний aprsBeaconingTxStateTick(): TERMINATE -> FINAL_STAGE повертає канал. */
+	return true;
+}
+
+void aprsBeaconingPttAbort(void)
+{
+	s_aprsPtt.pending = 0;
+
+	if (s_aprsPtt.active == 0)
+	{
+		return;
+	}
+
+	if (aprsTxProgress == APRS_TX_IN_PROGRESS)
+	{
+		/* Зупинити AFSK-переривання, як у кінці пакета (aprsBitStreamSender). */
+#if defined(CPU_MK22FN512VLL12)
+		FTM_StopTimer(FTM1);
+		DisableIRQ(FTM1_IRQn);
+#else
+		HAL_TIM_Base_Stop_IT(&htim6);
+#endif
+		aprsTxProgress = APRS_TX_FINISHED;
+	}
+
+	/* Прогнати звичайні стани завершення без очікування відпускання PTT: FINISHED/TERMINATE ->
+	 * WAIT_PTT_OFF -> FINAL_STAGE (повернення частоти/режиму каналу, скид DMR) -> IDLE. */
+	uiEvent_t ev = { .buttons = 0, .keys = NO_KEYCODE, .rotary = 0, .function = 0, .events = NO_EVENT, .hasEvent = false, .time = ticksGetMillis() };
+	bool pttLatched = PTTToggledDown;   /* TERMINATE скидає фіксацію PTT -- а це вже голос оператора */
+	for (int i = 0; (i < 4) && (aprsTxProgress != APRS_TX_IDLE); i++)
+	{
+		aprsBeaconingTxStateTick(&ev);
+	}
+	PTTToggledDown = pttLatched;
+	s_aprsPtt.active = 0;
+}
+#endif
+
 void aprsBeaconingInit(void)
 {
+#if defined(ENABLE_AES)
+	memset(&s_aprsPtt, 0, sizeof(s_aprsPtt));
+#endif
 	aprsBcnData.decayMult = APRS_BEACON_DECAY_MULT_MIN;
 	aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_ENABLED, false);
 	aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_HAS_GPS_FIX, false);
@@ -1580,7 +1723,12 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 		uint32_t txFrequency = (aprsConfigHasFrequencyQSY ? aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL].txFrequency : currentChannelData->txFreq);
 
 		// toggle xmit
+#if defined(ENABLE_AES)
+		/* ui8: відкладений PTT-бікон іде гілкою «Вручну» (QSY + анти-колізія + TX). */
+		switch (((aprsBcnData.settings.mode == APRS_BEACONING_MODE_PTT) && s_aprsPtt.qsyNow) ? APRS_BEACONING_MODE_MANUAL : aprsBcnData.settings.mode)
+#else
 		switch (aprsBcnData.settings.mode)
+#endif
 		{
 			case APRS_BEACONING_MODE_MANUAL:
 			case APRS_BEACONING_MODE_AUTO:
@@ -1802,6 +1950,13 @@ void aprsBeaconingTick(uiEvent_t *ev)
 		aprsBeaconingTxStateTick(ev);
 		return;
 	}
+
+#if defined(ENABLE_AES)
+	if (aprsBeaconingPttDeferredTick(ev))   /* ui8: відкладений PTT-бікон (до перевірки «екран TX») */
+	{
+		return;
+	}
+#endif
 
 	int currentMenu = menuSystemGetCurrentMenuNumber();
 

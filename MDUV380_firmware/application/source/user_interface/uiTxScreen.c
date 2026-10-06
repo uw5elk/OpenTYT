@@ -49,6 +49,8 @@
 #define TXERR_INHIBIT_LINE1 "INHIBITED"
 #define TXERR_INHIBIT_LINE2 "remotely"
 #define TXERR_INHIBIT_HINT  "Enable or cable"
+/* ui8: PTT-бікон APRS на цифровому каналі, а в APRS-конфігу немає частоти. */
+#define TXERR_APRS_NO_FREQ  "APRS:\nno frequency"
 #endif
 
 static void updateScreen(void);
@@ -79,6 +81,14 @@ static bool isSatelliteScreen;
 
 menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 {
+#if defined(ENABLE_AES) && !defined(PLATFORM_GD77S)
+	/* ui8: PTT під час відкладеного APRS-бікона -- голос головніший: бікон скасувати (якщо ще
+	 * чекав) або перервати й повернути частоту/режим каналу ДО того, як нижче ключимо голос. */
+	if (isFirstRun)
+	{
+		aprsBeaconingPttAbort();
+	}
+#endif
 	int radioMode = trxGetMode();
 
 	if (isFirstRun)
@@ -459,10 +469,30 @@ static void handleEvent(uiEvent_t *ev)
 			{
 				aprsPTTBeaconTriggered = true;
 
+#if defined(ENABLE_AES)
+				/* ui8: є частота APRS -- голос завершується звичайно, бікон потім із QSY
+				 * (aprsBeaconingTick); цифровий канал без частоти -- лише повідомлення; аналоговий
+				 * без частоти -- як в апстрімі, у хвіст голосу. */
+				switch (aprsBeaconingPttRequest(trxGetMode() == RADIO_MODE_DIGITAL))
+				{
+					case APRS_PTT_BEACON_TAIL:
+						if (aprsBeaconingSendBeacon(false, false))
+						{
+							return;
+						}
+						break;
+					case APRS_PTT_BEACON_NO_FREQ:
+						uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, TXERR_APRS_NO_FREQ, true);
+						break;
+					default:   /* DEFERRED / NONE -- звичайне завершення голосу нижче */
+						break;
+				}
+#else
 				if (aprsBeaconingSendBeacon(false, false))
 				{
 					return;
 				}
+#endif
 			}
 #endif
 

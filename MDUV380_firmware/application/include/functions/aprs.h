@@ -174,6 +174,22 @@ bool aprsBeaconingIsTransmitting(void);
 bool aprsBeaconingForcedManualBeaconingTriggered(void);
 bool aprsBeaconingOnDifferentFrequency(void);
 bool aprsBeaconingHasSatelliteConfiguration(void);
+#if defined(ENABLE_AES)
+/* ui8 (форк): бікон у режимі PTT. Що робити, коли відпустили PTT (uiTxScreen.c): */
+typedef enum
+{
+	APRS_PTT_BEACON_NONE = 0,   /* бікона не буде (ще не минув інтервал, не той режим, немає конфігу...) */
+	APRS_PTT_BEACON_TAIL,       /* як в апстрімі: аналоговий канал без частоти APRS -- у хвіст голосу */
+	APRS_PTT_BEACON_DEFERRED,   /* у конфігу є TX-частота: голос завершується звичайно, бікон -- потім,
+	                             * із QSY, як «Вручну» (aprsBeaconingTick) */
+	APRS_PTT_BEACON_NO_FREQ     /* цифровий канал без частоти APRS: AFSK у DMR не модулюється -- лише
+	                             * повідомлення, «APRS Tx» не показувати */
+} aprsPttBeaconRequest_t;
+aprsPttBeaconRequest_t aprsBeaconingPttRequest(bool isDigital);
+/* PTT натиснуто знову: скасувати бікон, що очікує, або ПЕРЕРВАТИ відкладений бікон, що вже
+ * передається, і повернути частоту/режим каналу -- синхронно, до ключування голосу. */
+void aprsBeaconingPttAbort(void);
+#endif
 
 #else //PLATFORM_GD77S
 

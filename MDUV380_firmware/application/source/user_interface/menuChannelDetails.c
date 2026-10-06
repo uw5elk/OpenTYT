@@ -33,6 +33,9 @@
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
 #include "interfaces/gps.h"
+#if defined(ENABLE_AES)
+#include "functions/channelVox.h"   /* ui8: одна умова «VOX доступний» для показу й обробників */
+#endif
 
 #if defined(CPU_MK22FN512VLL12)
 // On MK22, isnan macro has a bug, circumvent it
@@ -584,7 +587,11 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 						rightSideConst = ((codeplugChannelGetFlag(&tmpChannel, CHANNEL_FLAG_ALL_SKIP) != 0) ? currentLanguage->yes : currentLanguage->no);
 						break;
 					case CH_DETAILS_VOX:
+#if defined(ENABLE_AES)
+						if (channelVoxIsAllowed((tmpChannel.chMode == RADIO_MODE_DIGITAL), tmpChannel.aprsConfigIndex))
+#else
 						if (tmpChannel.chMode == RADIO_MODE_DIGITAL || tmpChannel.aprsConfigIndex == 0)
+#endif
 						{
 							rightSideConst = ((codeplugChannelGetFlag(&tmpChannel, CHANNEL_FLAG_VOX) != 0) ? currentLanguage->on : currentLanguage->off);
 						}
@@ -1337,6 +1344,10 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 				case CH_DETAILS_VOX:
+#if defined(ENABLE_AES)
+					/* ui8: на аналоговому APRS-каналі VOX «Н/Д» -- і змінювати прапорець не можна. */
+					if (channelVoxIsAllowed((tmpChannel.chMode == RADIO_MODE_DIGITAL), tmpChannel.aprsConfigIndex))
+#endif
 					codeplugChannelSetFlag(&tmpChannel, CHANNEL_FLAG_VOX, 1);
 					break;
 				case CH_DETAILS_POWER:
@@ -1603,6 +1614,9 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 				case CH_DETAILS_VOX:
+#if defined(ENABLE_AES)
+					if (channelVoxIsAllowed((tmpChannel.chMode == RADIO_MODE_DIGITAL), tmpChannel.aprsConfigIndex))   /* ui8 */
+#endif
 					codeplugChannelSetFlag(&tmpChannel, CHANNEL_FLAG_VOX, 0);
 					break;
 				case CH_DETAILS_POWER:

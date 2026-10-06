@@ -27,4 +27,8 @@
 #define TXERR_INHIBIT_LINE2      "дистанц≥йно"
 #define TXERR_INHIBIT_HINT       "Enable або кабель"
 
+/* ui8: PTT-б≥кон APRS на ÷»‘–ќ¬ќћ” канал≥, а в APRS-конф≥гу каналу немаЇ TX-частоти:
+ * AFSK у DMR не модулюЇтьс€, QSY н≥куди -- б≥кона не буде (ран≥ше: ЂAPRS Txї ≥ тиша в еф≥р≥). */
+#define TXERR_APRS_NO_FREQ       "APRS:\nнемаЇ частоти"
+
 #endif /* USER_INTERFACE_LANGUAGES_TXERR_UA_H_ */
