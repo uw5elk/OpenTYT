@@ -218,12 +218,12 @@ if __name__ == '__main__':
     sheet(frames, 3, 'sms_banner_preview.png')
 
     frames = []
-    hint = 'SK2+GRN:вид GRN:відпов'
-    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', TEST, True, 0, hint))
-    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', LONG, True, 0, hint))
-    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', LONG, True, 3, hint))
-    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '05.10 21:30', TEST, False, 0, hint))
-    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK Bohdan (не вам)', '05.10 21:30', LONG, False, 0, hint))
-    frames.append(read_screen('DAY', 'Вхідні', 'Від UW5ELK', '', LONG, False, 1, hint))
+    hint = 'SK2+GRN:вид GRN:відпов'   # ui7: у заголовку -- номер «3/9» у теці
+    frames.append(read_screen('DAY', 'Вхідні 3/9', 'Від UW5ELK', '05.10 21:30', TEST, True, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні 3/9', 'Від UW5ELK', '05.10 21:30', LONG, True, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні 3/9', 'Від UW5ELK', '05.10 21:30', LONG, True, 3, hint))
+    frames.append(read_screen('DAY', 'Вхідні 3/9', 'Від UW5ELK', '05.10 21:30', TEST, False, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні 3/9', 'Від UW5ELK Bohdan (не вам)', '05.10 21:30', LONG, False, 0, hint))
+    frames.append(read_screen('DAY', 'Вхідні 3/9', 'Від UW5ELK', '', LONG, False, 1, hint))
     sheet(frames, 3, 'sms_read_preview.png')
     print('банер: верхній ряд -- ДЕННА тема, нижній -- НІЧНА; читання: верхній ряд -- «великий», нижній -- «малий»')

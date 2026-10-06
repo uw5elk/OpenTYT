@@ -32,6 +32,23 @@
 #include "interfaces/wdog.h"
 #include "utils.h"
 #include "functions/rxPowerSaving.h"
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+/* ui7 (форк): пункти SMS («SMS монітор», «SMS підтв.») переїхали сюди з меню «Повідомлення».
+ * Збереження те саме: BIT_SMS_MONITOR_ALL (nonVolatileSettings) і custom-data SMS_TX_MODE. */
+#include "functions/dmr_sms.h"
+#include "crypto/dmr_aes.h"           /* DMR_AES_CCM */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/messages_ua.h"
+#else
+#define MSGS_SET_MONITOR         "SMS monitor"
+#define MSGS_SET_TXCONF          "SMS confirm"
+#define MSGS_SET_TX_R12          "1/2"
+#endif
+/* Режим TX SMS живе в окремому custom-data блоці (пишеться у флеш одразу), а не в
+ * nonVolatileSettings, тож «RED -- скасувати» його б не відкотив. Тому тут -- лише чернетка,
+ * у флеш вона йде в applySettings() (GREEN / тайм-аут QuickKey). CCM: main RAM не чіпаємо. */
+static uint8_t s_smsTxModePending DMR_AES_CCM;
+#endif
 
 static void updateScreen(bool isFirstRun);
 static void handleEvent(uiEvent_t *ev);
@@ -61,6 +78,10 @@ enum
 #if defined(PLATFORM_MDUV380) && !defined(PLATFORM_VARIANT_UV380_PLUS_10W)
 	RADIO_OPTIONS_MENU_FORCE_10W,
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	RADIO_OPTIONS_MENU_SMS_MONITOR,   /* ui7: останніми -- індекси QuickKey стокових пунктів ті самі */
+	RADIO_OPTIONS_MENU_SMS_TX_MODE,
+#endif
 	NUM_RADIO_OPTIONS_MENU_ITEMS
 };
 
@@ -72,6 +93,9 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 		menuDataGlobal.menuOptionsTimeout = 0;
 		menuDataGlobal.newOptionSelected = true;
 		menuDataGlobal.numItems = NUM_RADIO_OPTIONS_MENU_ITEMS;
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+		s_smsTxModePending = (uint8_t)dmrSmsTxMode();
+#endif
 
 		if (originalNonVolatileSettings.magicNumber == 0xDEADBEEF)
 		{
@@ -131,6 +155,9 @@ static void updateScreen(bool isFirstRun)
 
 			buf[0] = 0;
 			buf[2] = 0;
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+			bool leftSideIsFork = false;   /* підпис -- не рядок currentLanguage: без голосової підказки */
+#endif
 			leftSide = NULL;
 			rightSideConst = NULL;
 			rightSideVar[0] = 0;
@@ -227,6 +254,28 @@ static void updateScreen(bool isFirstRun)
 					rightSideUnitsStr = "W";
 					break;
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				/* ui7: приймати й чужі SMS (адресат -- не ми); див. smsIsForUs() у dmr_sms.c. */
+				case RADIO_OPTIONS_MENU_SMS_MONITOR:
+					leftSide = MSGS_SET_MONITOR;
+					leftSideIsFork = true;
+					rightSideConst = (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? currentLanguage->on : currentLanguage->off);
+					break;
+				/* ui7: режим TX SMS -- «З підтв.» (CONFIRMED rate-3/4) = On, «Без підтв.» = Off;
+				 * rate-1/2 (1) -- лише з ENABLE_SMS_DIAG. */
+				case RADIO_OPTIONS_MENU_SMS_TX_MODE:
+					leftSide = MSGS_SET_TXCONF;
+					leftSideIsFork = true;
+					if (s_smsTxModePending == 1)
+					{
+						snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", MSGS_SET_TX_R12);
+					}
+					else
+					{
+						rightSideConst = (s_smsTxModePending == 0) ? currentLanguage->off : currentLanguage->on;
+					}
+					break;
+#endif
 			}
 
 			snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s:%s", leftSide, (rightSideVar[0] ? rightSideVar : (rightSideConst ? rightSideConst : "")));
@@ -242,6 +291,9 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+					if (leftSideIsFork == false)   /* індекс підказки рахується від currentLanguage */
+#endif
 					voicePromptsAppendLanguageString(leftSide);
 				}
 
@@ -499,6 +551,21 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				case RADIO_OPTIONS_MENU_SMS_MONITOR:
+					if (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false)
+					{
+						settingsSetOptionBit(BIT_SMS_MONITOR_ALL, true);
+					}
+					break;
+				case RADIO_OPTIONS_MENU_SMS_TX_MODE:
+#if defined(ENABLE_SMS_DIAG)
+					if (s_smsTxModePending < 2) { s_smsTxModePending++; }   /* 0 -> 1 (1/2) -> 2 */
+#else
+					s_smsTxModePending = 2;                                 /* «З підтв.» */
+#endif
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -621,6 +688,21 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				case RADIO_OPTIONS_MENU_SMS_MONITOR:
+					if (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL))
+					{
+						settingsSetOptionBit(BIT_SMS_MONITOR_ALL, false);
+					}
+					break;
+				case RADIO_OPTIONS_MENU_SMS_TX_MODE:
+#if defined(ENABLE_SMS_DIAG)
+					if (s_smsTxModePending > 0) { s_smsTxModePending--; }
+#else
+					s_smsTxModePending = 0;                                 /* «Без підтв.» */
+#endif
+					break;
+#endif
 			}
 		}
 		else if ((ev->keys.event & KEY_MOD_PRESS) && (menuDataGlobal.menuOptionsTimeout > 0))
@@ -646,6 +728,13 @@ static void handleEvent(uiEvent_t *ev)
 
 static void applySettings(void)
 {
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	/* ui7: режим TX SMS -- у флеш лише тепер (і лише якщо змінився). */
+	if (s_smsTxModePending != (uint8_t)dmrSmsTxMode())
+	{
+		dmrSmsTxModeSet(s_smsTxModePending);
+	}
+#endif
 	settingsSaveIfNeeded(true);
 	resetOriginalSettingsData();
 }

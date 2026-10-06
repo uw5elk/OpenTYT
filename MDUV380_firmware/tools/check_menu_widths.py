@@ -273,5 +273,42 @@ for px, f, arg, font, text in sorted(wide, key=lambda x: -x[0]):
 print(f'  разом задовгих: {len(wide)}')
 fails += wide
 
+# ---------------------------------------------------------------------------
+# 5. ui7: пункти SMS у стокових меню «Налаштувань» (menuRadioOptions.c, menuDisplayOptions.c).
+#    Підпис там -- не currentLanguage, а MSGS_SET_* (messages_ua.h, cp1251; англійські -- #else у
+#    .c), тож частина 2 їх не бачить. Рядок той самий: snprintf("%s:%s", ...) у 17-байтовий буфер.
+print('\n=== 5. Пункти SMS у «Налаштуваннях» (MSGS_SET_*) ===')
+sms_over = []
+ua_msgs = {m.group(1): m.group(2) for m in re.finditer(
+    r'#define\s+(MSGS_SET_\w+)\s+"((?:[^"\\]|\\.)*)"',
+    open(os.path.join(LANG, 'messages_ua.h'), 'rb').read().decode('cp1251'))}
+en_msgs = {}
+for fn in ('menuRadioOptions.c', 'menuDisplayOptions.c'):
+    src = open(os.path.join(BASE, 'source', 'user_interface', fn), encoding='utf-8').read()
+    en_msgs.update({m.group(1): m.group(2) for m in re.finditer(
+        r'#define\s+(MSGS_SET_\w+)\s+"((?:[^"\\]|\\.)*)"', src)})
+SMS_ITEMS = [   # (підпис, можливі значення: ключі MSGS_SET_* або 'on'/'off' з мовної таблиці)
+    ('MSGS_SET_MONITOR', ['on', 'off']),
+    ('MSGS_SET_TXCONF',  ['on', 'off', 'MSGS_SET_TX_R12']),
+    ('MSGS_SET_FONT',    ['MSGS_SET_FONT_BIG', 'MSGS_SET_FONT_SMALL']),
+]
+for lang, msgs, table in (('UA', ua_msgs, ua), ('EN', en_msgs, en)):
+    for lab, vals in SMS_ITEMS:
+        if lab not in msgs:
+            sms_over.append((lang, lab, 'немає визначення', 0))
+            continue
+        for v in vals:
+            vt = msgs.get(v) if v.startswith('MSGS_') else table.get(v)
+            if vt is None:
+                sms_over.append((lang, lab, f'немає {v}', 0))
+                continue
+            line = f'{msgs[lab]}:{vt}'
+            if len(line) > LINE_CHARS:
+                sms_over.append((lang, lab, line, len(line)))
+for lang, lab, line, n in sms_over:
+    print(f'  {lang} {lab}: "{line}" = {n} > {LINE_CHARS}')
+print(f'  разом: {len(sms_over)}')
+fails += sms_over
+
 print(f'\n{"Є ПЕРЕПОВНЕННЯ" if fails else "Переповнень не знайдено"} (всього: {len(fails)})')
 sys.exit(1 if fails else 0)
