@@ -115,4 +115,15 @@ void I2SReset(void);
 void I2STerminateTransfers(void);
 void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen);
 
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+/* R2, «APRS проба» (functions/aprs_rx_probe.c): дуплексний DMA I2S у FM-прийомі без передачі.
+ * Start -- з тайм-аутом на такт WS (стоковий I2SStartDMA чекав би вічно); false -- I2S зайнятий
+ * або такту немає. Stop -- зупиняє лише передачу, запущену Start, і повертає прапорці в стан
+ * «вільно», навіть якщо такт зник і переривань більше не буде. */
+bool I2SProbeStart(void);
+void I2SProbeStop(void);
+/* Передача, запущена I2SProbeStart(), іще йде (її не зупинив і не підмінив інший код). */
+bool I2SProbeIsRunning(void);
+#endif
+
 #endif /* _OPENGD77_I2S_H_ */

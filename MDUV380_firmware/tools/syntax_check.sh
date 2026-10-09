@@ -101,7 +101,10 @@ DEFS_SMSDIAG=("${DEFS_CALLREPLAY[@]}" -DENABLE_SMS_DIAG)                    # bu
 # падала, а всі 6 конфігурацій вище були чисті.
 DEFS_ENDATA=("${DEFS_COMMON[@]}" -DENABLE_AES -DENABLE_DMR_DATA -DENABLE_CALL_REPLAY)  # англійська + AES + DMR_DATA
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA)
+DEFS_APRSPROBE=("${DEFS_CALLREPLAY[@]}" -DENABLE_APRS_RX_PROBE)             # build-ukrainian, як у CI з R2 (тимчасово)
+DEFS_APRSPROBEEN=("${DEFS_ENDATA[@]}" -DENABLE_APRS_RX_PROBE)               # англійська + прапорець: екран має зникнути без помилок
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.
