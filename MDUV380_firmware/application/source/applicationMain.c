@@ -56,6 +56,7 @@
 #include "functions/dmr_rctl_tx.h"
 #include "functions/dmr_rctl_cfg.h"   // dmrRctlIsInhibited (повний stun: сон рації)
 #include "functions/callReplay.h"     // "Переслухати" -- кільцевий буфер RX-голосу (ENABLE_CALL_REPLAY)
+#include "functions/aprs_rx_probe.h"  // R2: «APRS проба» (лише ENABLE_APRS_RX_PROBE + українська)
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -479,6 +480,10 @@ void applicationMainTask(void)
 	// custom-data блоку на флеші (callReplayPlayback.c) -- якщо блоку ще немає
 	// (нова/нечіпана рація), типове значення (Увімкнено) лишається як є.
 	callReplayConfigLoad();
+#endif
+
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+	aprsRxProbeInit();        // R2: стан «APRS проба» теж у .ccmram -- обнулити до першого menuSystemPushNewMenu()
 #endif
 
 	radioPostinit();

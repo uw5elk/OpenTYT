@@ -108,6 +108,15 @@ ifeq ($(ENABLE_CALL_REPLAY),1)
 DEFS += -DENABLE_CALL_REPLAY
 endif
 
+# R2 (2026-10-09), ТИМЧАСОВО: діагностичний екран «APRS проба» (Опції рації, останній пункт):
+# рівень і тони 1200/2200 Гц з I2S від HR-C6000 і з PC3/ADC2 -- чи доходить прийнятий FM-звук
+# до процесора без паяння (docs/aprs-rx-feasibility.md, розділ 3). Екран є лише в українській
+# збірці. У CI ввімкнено ЛИШЕ в build-ukrainian; прибрати після експерименту (STATUS.md).
+# Типова збірка без прапорця -- байт-у-байт без змін.
+ifeq ($(ENABLE_APRS_RX_PROBE),1)
+DEFS += -DENABLE_APRS_RX_PROBE
+endif
+
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -Os -g3 -ffunction-sections -fdata-sections -Wall -MMD -MP
 LDSCRIPT = STM32F405VGTX_FLASH.ld
 LDFLAGS = $(CPU) -T$(LDSCRIPT) --specs=nano.specs -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map -lc -lm -lnosys

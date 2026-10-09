@@ -29,6 +29,9 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "functions/aprs_rx_probe.h"   // R2: aprsRxProbeClose() у menuSystemPushNewMenu()
+#endif
 
 menuDataGlobal_t menuDataGlobal =
 {
@@ -273,6 +276,13 @@ void menuSystemRegisterExitCallback(menuExitCallback_t f, void *data)
 
 void menuSystemPushNewMenu(int menuNumber)
 {
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+	// R2: «APRS проба» -- режим усередині «Опцій рації», без власного ID меню, тож push
+	// поверх неї (PTT -> екран передачі, повідомлення тощо) нічого б їй не сказав. Закриваємо
+	// її тут: регістри HR-C6000, I2S, ADC2/TIM7 і еко-режим -- як до входу. Якщо проба не
+	// відкрита -- нічого не робить.
+	aprsRxProbeClose();
+#endif
 	if (menuDataGlobal.controlData.stackPosition < 15)
 	{
 		keyboardReset();

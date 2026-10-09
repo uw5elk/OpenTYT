@@ -27,6 +27,9 @@
  */
 #include "main.h"
 #include "interfaces/i2s.h"
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "functions/aprs_rx_probe.h"
+#endif
 
 volatile bool g_TX_SAI_in_use = false;
 volatile bool isSending = false;
@@ -62,6 +65,14 @@ void HAL_I2SEx_TxRxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 		{
 			soundReceiveRefillData(0);
 		}
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+		else
+		{
+			// R2: DMA без isSending/isReceiving запускає лише I2SProbeStart() («APRS проба»);
+			// звичайний код завжди ставить один із прапорців, тож сюди він не потрапляє.
+			aprsRxProbeI2SBlock(0);
+		}
+#endif
 	}
 	else
 	{
@@ -81,6 +92,14 @@ void HAL_I2SEx_TxRxCpltCallback(I2S_HandleTypeDef *hi2s)
 		{
 			soundReceiveRefillData(1);
 		}
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+		else
+		{
+			// R2: DMA без isSending/isReceiving запускає лише I2SProbeStart() («APRS проба»);
+			// звичайний код завжди ставить один із прапорців, тож сюди він не потрапляє.
+			aprsRxProbeI2SBlock(1);
+		}
+#endif
 	}
 	else
 	{
@@ -97,6 +116,76 @@ void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen)
 	stopOnNextI2SDMAInterrupt = false;
 	HAL_I2SEx_TransmitReceive_DMA(&hi2s3, txbuff, rxbuff, bufferLen);
 }
+
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+// R2: дочекатися рівня WS (PA15) не довше за timeoutMs. Стоковий I2SStartDMA чекає без
+// обмеження -- у FM-прийомі такту від HR-C6000 може й не бути, і рація зависла б.
+static bool probeWaitWs(GPIO_PinState level, uint32_t t0, uint32_t timeoutMs)
+{
+	while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) != level)
+	{
+		if ((HAL_GetTick() - t0) > timeoutMs)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool I2SProbeStart(void)
+{
+	if (g_TX_SAI_in_use || isSending || isReceiving)
+	{
+		return false;
+	}
+
+	// Той самий момент старту, що в I2SStartDMA(): одразу після фронту WS.
+	uint32_t t0 = HAL_GetTick();
+	if ((probeWaitWs(GPIO_PIN_SET, t0, 5) && probeWaitWs(GPIO_PIN_RESET, t0, 5) && probeWaitWs(GPIO_PIN_SET, t0, 5)) == false)
+	{
+		return false;
+	}
+
+	memset(i2s_Tx_Buffer, 0x00, sizeof(i2s_Tx_Buffer));   // у ЦАП -- тиша
+	isSending = false;
+	isReceiving = false;
+	stopOnNextI2SDMAInterrupt = false;
+	g_TX_SAI_in_use = true;                                 // soundSendData() не стартує поверх
+	if (HAL_I2SEx_TransmitReceive_DMA(&hi2s3, (uint16_t *)i2s_Tx_Buffer, (uint16_t *)i2s_Rx_Buffer, (NUM_I2S_BUFFERS * 2 * WAV_BUFFER_SIZE)) != HAL_OK)
+	{
+		g_TX_SAI_in_use = false;
+		return false;
+	}
+	return true;
+}
+
+bool I2SProbeIsRunning(void)
+{
+	return (g_TX_SAI_in_use && (isSending == false) && (isReceiving == false) && (stopOnNextI2SDMAInterrupt == false));
+}
+
+void I2SProbeStop(void)
+{
+	if ((g_TX_SAI_in_use == false) || isSending || isReceiving)
+	{
+		return;   // нічого не запущено, або це чужа (звичайна) передача
+	}
+
+	// Як I2STerminateTransfers(): найближче переривання (<= 20 мс) саме зупинить DMA й
+	// скине прапорці через clearI2SBuffersAndFlags().
+	stopOnNextI2SDMAInterrupt = true;
+	uint32_t t0 = HAL_GetTick();
+	while (g_TX_SAI_in_use && ((HAL_GetTick() - t0) < 60U))
+	{
+	}
+
+	if (g_TX_SAI_in_use)
+	{
+		// Переривань немає (такт WS зник посеред проби) -- зупиняємо самі.
+		clearI2SBuffersAndFlags();
+	}
+}
+#endif
 
 void I2SReset(void)
 {
