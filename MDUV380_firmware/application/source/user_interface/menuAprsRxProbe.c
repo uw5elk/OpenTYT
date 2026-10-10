@@ -12,6 +12,9 @@
  * регістрів (дослід: чи міняється формат від самого перезапуску); RED -- вихід.
  * R6: сторінка «регістри» -- регістри кодека HR-C6000, прочитані з чипа раз на секунду (поки її
  * видно), старт I2S (мкс від фронту WS, рівень WS, FRE) і події, що переписують регістри.
+ * R7: * -- авто / 10 біт / 11 біт / 16>>6; сторінка «фаза» (T_start: <> -- змінити на 2 мкс, 0 --
+ * перезапустити I2S, регістри SPI3/I2S3ext); 5 -- розгортка T_start і сторінка «скан» (таблиця
+ * результату: що вийшло за nbits на кожному T); детектор nbits -- рядок 1 і профіль на «фоні».
  * USB-запис на ПК (опкод 0xB5) іде, поки екран відкрито; стан -- у рядку 1.
  * Перемальовування -- раз на 250 мс і на кожну подію.
  */
@@ -31,9 +34,11 @@
 
 /* Стан екрана -- у CCM; ініціалізується в menuAprsRxProbeEnter() (до того не читається). */
 static uint32_t s_lastDrawMs PROBE_CCM;
-static uint8_t  s_page       PROBE_CCM;   /* 0 -- пакети, 1 -- фон, 2 -- потік, 3 -- кадр, 4 -- регістри */
-#define PROBE_PAGES          5U
+static uint8_t  s_page       PROBE_CCM;   /* 0 -- пакети, 1 -- фон, 2 -- потік, 3 -- кадр, 4 -- регістри, 5 -- фаза, 6 -- скан */
+#define PROBE_PAGES          7U
 #define PROBE_PAGE_REGS      4U
+#define PROBE_PAGE_PHASE     5U
+#define PROBE_PAGE_SCAN      6U
 #define PROBE_CAP(v, m)      ((unsigned long)(((v) > (m)) ? (m) : (v)))
 
 static void printRow(int row, const char *text)
@@ -41,67 +46,115 @@ static void printRow(int row, const char *text)
 	displayPrintAt(0, PROBE_ROW(row), text, FONT_SIZE_1);
 }
 
-/* R6: назва формату обробки -- «авто(16)» / «авто(10)» або ручні «10 біт!» / «16 біт!». */
+/* R7: ручний режим формату (*): «10 біт!» / «11 біт!» / «16>>6!». */
 static const char *fmtName(void)
 {
-	bool is16 = aprsRxProbeFormat16();
-	if (aprsRxProbeFormatMode() == APRS_PROBE_FMT_AUTO)
+	switch (aprsRxProbeFormatMode())
 	{
-		return is16 ? APRSPROBE_AUTO16 : APRSPROBE_AUTO10;
+		case APRS_PROBE_FMT_10:
+			return APRSPROBE_BITS10;
+		case APRS_PROBE_FMT_11:
+			return APRSPROBE_BITS11;
+		default:
+			return APRSPROBE_BITS16;
 	}
-	return is16 ? APRSPROBE_BITS16 : APRSPROBE_BITS10;
+}
+
+/* nbits вердикту: «?» -- вердикту ще нема. */
+static const char *nbitsStr(char *b, size_t n, uint8_t nb)
+{
+	if (nb == 0U)
+	{
+		return "?";
+	}
+	snprintf(b, n, "%u", (unsigned)nb);
+	return b;
 }
 
 static void drawPackets(const aprsProbeVar_t *st)
 {
 	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
+	char nb[8];
 
-	snprintf(buf, sizeof(buf), APRSPROBE_FMT_OK, (unsigned)st->ok);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_CNT, (unsigned)PROBE_CAP(st->ok, 999U), (unsigned)PROBE_CAP(st->bad, 999U),
+			(unsigned)PROBE_CAP(st->flagSeq, 999U));
 	printRow(2, buf);
-	snprintf(buf, sizeof(buf), APRSPROBE_FMT_BAD, (unsigned)st->bad);
-	printRow(3, buf);
-	snprintf(buf, sizeof(buf), APRSPROBE_FMT_FLAGS, (unsigned)st->flagSeq);
-	printRow(4, buf);
 
 	if (st->srcDst[0] != 0)
 	{
-		printRow(5, st->srcDst);
-		printRow(6, st->info);
+		printRow(3, st->srcDst);
+		printRow(4, st->info);
 	}
 	else
 	{
-		printRow(5, APRSPROBE_LAST_NONE);
+		printRow(3, APRSPROBE_LAST_NONE);
 	}
 
-	if (aprsRxProbeNotchAuto() == false)
+	/* R7: кадри окремо для кожного nbits («nbits:ок/помилка», до 4 слотів по 2 в рядку). */
 	{
-		printRow(7, APRSPROBE_NOTCH_OFF);
+		int rowOut = 5;
+		bool any = false;
+		for (uint8_t i = 0; i < APRS_PROBE_NB_SLOTS; i += 2)
+		{
+			char half[2][16];
+			int cnt = 0;
+			for (uint8_t k = 0; k < 2; k++)
+			{
+				uint8_t nbits;
+				uint16_t ok, bad;
+				if (aprsRxProbeNbSlot((uint8_t)(i + k), &nbits, &ok, &bad))
+				{
+					snprintf(half[cnt], sizeof(half[cnt]), APRSPROBE_FMT_NB, (unsigned)nbits, (unsigned)PROBE_CAP(ok, 999U),
+							(unsigned)PROBE_CAP(bad, 999U));
+					cnt++;
+				}
+			}
+			if (cnt > 0)
+			{
+				any = true;
+				snprintf(buf, sizeof(buf), (cnt == 2) ? "%s  %s" : "%s", half[0], half[1]);
+				printRow(rowOut++, buf);
+			}
+		}
+		if (any == false)
+		{
+			printRow(5, APRSPROBE_NB_NONE);
+		}
 	}
-	else if (aprsRxProbeNotchHz() != 0)
+
+	/* R7: рівень (RMS і пік після зведення до масштабу 10 біт) і режекція. */
 	{
-		snprintf(buf, sizeof(buf), APRSPROBE_FMT_NOTCH, (unsigned)aprsRxProbeNotchHz());
+		char nz[8];
+		if (aprsRxProbeNotchAuto() == false)
+		{
+			snprintf(nz, sizeof(nz), "%s", APRSPROBE_NOTCH_S_OFF);
+		}
+		else if (aprsRxProbeNotchHz() != 0)
+		{
+			snprintf(nz, sizeof(nz), "%u", (unsigned)aprsRxProbeNotchHz());
+		}
+		else
+		{
+			snprintf(nz, sizeof(nz), "%s", APRSPROBE_NOTCH_S_AUTO);
+		}
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_LEVEL, (unsigned)PROBE_CAP(st->rms, 9999U), (unsigned)PROBE_CAP(st->peak, 9999U), nz);
 		printRow(7, buf);
 	}
-	else
-	{
-		printRow(7, APRSPROBE_NOTCH_AUTO);
-	}
 
-	/* R6: що каже детектор (10 чи 16 -- і в ручному режимі) і скільки разів він перемикав (з GREEN). */
+	/* Що каже детектор (і в ручному режимі) і скільки разів він змінював уже відомий nbits (з GREEN). */
 	{
 		const apFmtDet_t *det = aprsRxProbeFormatDet();
-		snprintf(buf, sizeof(buf), APRSPROBE_FMT_DET, (det->is16 ? 16U : 10U), PROBE_CAP(det->switches, 9999U));
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_DET, nbitsStr(nb, sizeof(nb), det->nbits), PROBE_CAP(det->switches, 9999U));
 	}
 	printRow(8, buf);
 }
 
-/* R6: регістри кодека (прочитані з чипа), старт I2S і події. Рядки 2-6 -- регістри, 7 -- старт
- * I2S, 8 -- FRE і кількість стартів, 9 (замість підказки) -- події. */
+/* R6/R7: регістри кодека (прочитані з чипа), старт I2S і події. Рядки 2-3 -- E0..EF, 4-5 -- решта,
+ * 6 -- старт I2S, 7 -- FRE за секунду й кількість стартів, 8 -- події. */
 static void drawRegs(void)
 {
 	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
 	uint8_t addr, val;
-	uint32_t starts, us, ws, freRx, freTx;
 
 	aprsRxProbeRegsRefresh();
 
@@ -120,8 +173,8 @@ static void drawRegs(void)
 		}
 		printRow(2 + r, buf);
 	}
-	/* решта -- по 4: «06:20 10:80 25:0E 26:FD» */
-	for (int r = 0; r < 3; r++)
+	/* решта -- по 4: «06:20 10:80 26:FD 34:xx» */
+	for (int r = 0; r < 2; r++)
 	{
 		int o = 0;
 		for (int i = 0; i < 4; i++)
@@ -133,16 +186,128 @@ static void drawRegs(void)
 		printRow(4 + r, buf);
 	}
 
-	aprsRxProbeI2SDiag(&starts, &us, &ws, &freRx, &freTx);
-	snprintf(buf, sizeof(buf), APRSPROBE_FMT_START, PROBE_CAP(us, 99999U), (unsigned)ws);
-	printRow(7, buf);
-	snprintf(buf, sizeof(buf), APRSPROBE_FMT_FRE, PROBE_CAP(freRx, 9999U), PROBE_CAP(freTx, 9999U), PROBE_CAP(starts, 999U));
-	printRow(8, buf);
+	{
+		const aprsProbeDiag_t *g = aprsRxProbeDiag();
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_START, (unsigned)g->tSetUs, (unsigned)g->tMeasUs, (unsigned)g->wsAfter);
+		printRow(6, buf);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_FRE, (unsigned)PROBE_CAP(g->freRxSec, 999U), (unsigned)PROBE_CAP(g->freTxSec, 999U),
+				PROBE_CAP(g->starts, 999U));
+		printRow(7, buf);
+	}
 	{
 		uint32_t sqo, sqc, bp, pr;
 		aprsRxProbeEvents(&sqo, &sqc, &bp, &pr);
 		snprintf(buf, sizeof(buf), APRSPROBE_FMT_EVENTS, PROBE_CAP(sqo, 999U), PROBE_CAP(sqc, 999U), PROBE_CAP(bp, 999U), PROBE_CAP(pr, 99U));
-		printRow(9, buf);
+		printRow(8, buf);
+	}
+}
+
+/* R7: сторінка «фаза» -- детермінований старт I2S (T_start), вердикти на цьому T, регістри SPI3/I2S3ext. */
+static void drawPhase(void)
+{
+	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
+	char nb[8];
+	const aprsProbeDiag_t *g = aprsRxProbeDiag();
+
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_PH_T, (unsigned)g->tSetUs, (unsigned)g->tMeasUs);
+	printRow(2, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_PH_WS, (unsigned)g->wsAfter, nbitsStr(nb, sizeof(nb), aprsRxProbeFormatDet()->nbits));
+	printRow(3, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_PH_HAL, (unsigned)g->halUs, PROBE_CAP(g->starts, 9999U));
+	printRow(4, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_PH_CNT, (unsigned)PROBE_CAP(g->tCnt[0], 99U), (unsigned)PROBE_CAP(g->tCnt[1], 99U),
+			(unsigned)PROBE_CAP(g->tCnt[2], 99U), (unsigned)PROBE_CAP(g->tCnt[3], 99U));
+	printRow(5, buf);
+	if (g->regsValid)
+	{
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_PH_S3, (unsigned)g->regs[0], (unsigned)g->regs[1], (unsigned)(g->regs[2] & 0xFFU));
+		printRow(6, buf);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_PH_S3SR, (unsigned)g->sr[0], (unsigned)g->srErr[0]);
+		printRow(7, buf);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_PH_EXT, (unsigned)g->regs[3], (unsigned)g->sr[1], (unsigned)g->srErr[1]);
+		printRow(8, buf);
+	}
+	else
+	{
+		printRow(6, APRSPROBE_PH_WAIT);
+	}
+}
+
+/* Символ клітинки розгортки: цифра k = 16 - nbits, F -- 16, м -- різні, ? -- вердикту не було, . -- не міряли. */
+static const char *scanSym(uint8_t code, char *b)
+{
+	if (code == 0U)
+	{
+		return ".";
+	}
+	if (code == APRS_PROBE_SCAN_NONE)
+	{
+		return "?";
+	}
+	if (code == APRS_PROBE_SCAN_MIXED)
+	{
+		return APRSPROBE_SYM_MIX;
+	}
+	if (code >= AP_NBITS_TRUE16)
+	{
+		return "F";
+	}
+	b[0] = (char)('0' + (16 - code));
+	b[1] = 0;
+	return b;
+}
+
+/* R7: сторінка «скан» -- таблиця 4 рядки x 16 значень (T = 0..124 мкс крок 2, групи по 4). */
+static void drawScan(void)
+{
+	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
+
+	if (aprsRxProbeScanActive())
+	{
+		uint8_t idx, rep;
+		aprsRxProbeScanProgress(&idx, &rep);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_SC_RUN, (unsigned)(idx * APRS_PROBE_T_STEP_US), (unsigned)(rep + 1U), (unsigned)APRS_PROBE_SCAN_REPS);
+		printRow(2, buf);
+	}
+	else if (aprsRxProbeScanCode(0) != 0U)
+	{
+		printRow(2, APRSPROBE_SC_DONE);
+	}
+	else
+	{
+		printRow(2, APRSPROBE_SC_IDLE);
+	}
+
+	for (int r = 0; r < 4; r++)
+	{
+		char row[40];
+		int o = snprintf(row, sizeof(row), "%3u ", (unsigned)(r * 16 * APRS_PROBE_T_STEP_US));
+		for (int k = 0; k < 16; k++)
+		{
+			int idx = r * 16 + k;
+			char tmp[2];
+			const char *sym = (idx < (int)APRS_PROBE_SCAN_N) ? scanSym(aprsRxProbeScanCode((uint8_t)idx), tmp) : " ";
+			if (((k % 4) == 0) && (k != 0))
+			{
+				o += snprintf(&row[o], sizeof(row) - (size_t)o, " ");
+			}
+			o += snprintf(&row[o], sizeof(row) - (size_t)o, "%s", sym);
+		}
+		printRow(3 + r, row);
+	}
+	printRow(7, APRSPROBE_SC_LEGEND);
+	{
+		uint16_t from, to, centre;
+		uint8_t nb;
+		if (aprsRxProbeScanBest(&from, &to, &nb, &centre))
+		{
+			snprintf(buf, sizeof(buf), APRSPROBE_FMT_SC_BEST, (unsigned)from, (unsigned)to, (unsigned)nb);
+			printRow(8, buf);
+		}
+		else if (aprsRxProbeScanActive() == false)
+		{
+			printRow(8, (aprsRxProbeScanCode(0) != 0U) ? APRSPROBE_SC_NO_BEST : "");
+		}
 	}
 }
 
@@ -177,13 +342,21 @@ static void drawBackground(const aprsProbeVar_t *st)
 	}
 	printRow(6, buf);
 
-	/* R5: формат відліку на цьому варіанті (з останнього GREEN). У R4: біт 10 ~50 %, біти 10..15
-	 * завжди однакові, пік |s| ~360 з 512. */
+	/* R7: профіль детектора nbits -- c[15..1] останнього блока, шістнадцяткові цифри c/10 */
+	{
+		const apFmtDet_t *det = aprsRxProbeFormatDet();
+		char prof[20];
+		for (int j = 15; j >= 1; j--)
+		{
+			uint32_t d = ((uint32_t)det->c[j] + 5U) / 10U;
+			prof[15 - j] = (char)((d > 15U) ? 'F' : ((d > 9U) ? ('A' + (d - 10U)) : ('0' + d)));
+		}
+		prof[15] = 0;
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_PROFILE, prof);
+		printRow(7, buf);
+	}
 	{
 		const apFmt_t *f = &st->fmt;
-		uint32_t pct = (f->n > 0) ? (uint32_t)(((uint64_t)f->b10 * 100U + f->n / 2U) / f->n) : 0U;
-		snprintf(buf, sizeof(buf), APRSPROBE_FMT_B10, (unsigned long)pct, (unsigned long)((f->nonUni > 999999U) ? 999999U : f->nonUni));
-		printRow(7, buf);
 		snprintf(buf, sizeof(buf), APRSPROBE_FMT_NEAR, (unsigned long)((f->nearLim > 999999U) ? 999999U : f->nearLim), (unsigned)f->peak);
 		printRow(8, buf);
 	}
@@ -287,7 +460,7 @@ static void draw(void)
 	displayClearBuf();
 	{
 		static const char * const titles[PROBE_PAGES] = { APRSPROBE_TITLE_PKT, APRSPROBE_TITLE_BG, APRSPROBE_TITLE_STREAM, APRSPROBE_TITLE_FRAME,
-				APRSPROBE_TITLE_REGS };
+				APRSPROBE_TITLE_REGS, APRSPROBE_TITLE_PHASE, APRSPROBE_TITLE_SCAN };
 		menuDisplayTitle(titles[(s_page < PROBE_PAGES) ? s_page : 0]);
 	}
 
@@ -333,7 +506,15 @@ static void draw(void)
 	}
 	else
 	{
-		snprintf(buf, sizeof(buf), APRSPROBE_FMT_RUN, fmtName(), (unsigned long)aprsRxProbeBlocks());
+		if (aprsRxProbeFormatMode() == APRS_PROBE_FMT_AUTO)
+		{
+			char nb[8];
+			snprintf(buf, sizeof(buf), APRSPROBE_FMT_RUN_AUTO, nbitsStr(nb, sizeof(nb), aprsRxProbeFormatDet()->nbits), PROBE_CAP(aprsRxProbeBlocks(), 99999U));
+		}
+		else
+		{
+			snprintf(buf, sizeof(buf), APRSPROBE_FMT_RUN_MAN, fmtName(), PROBE_CAP(aprsRxProbeBlocks(), 99999U));
+		}
 		printRow(1, buf);
 	}
 
@@ -356,16 +537,34 @@ static void draw(void)
 	{
 		drawFrame(stats);
 	}
+	else if (s_page == PROBE_PAGE_REGS)
+	{
+		drawRegs();
+	}
+	else if (s_page == PROBE_PAGE_PHASE)
+	{
+		drawPhase();
+	}
 	else
 	{
-		drawRegs();   /* рядок 9 -- події замість підказки */
+		drawScan();
 	}
 
-	if (s_page != PROBE_PAGE_REGS)
+	if (s_page == PROBE_PAGE_PHASE)
+	{
+		printRow(9, APRSPROBE_FOOTER_PH1);
+		printRow(10, APRSPROBE_FOOTER_PH2);
+	}
+	else if (s_page == PROBE_PAGE_SCAN)
+	{
+		printRow(9, APRSPROBE_FOOTER_SC1);
+		printRow(10, APRSPROBE_FOOTER_SC2);
+	}
+	else
 	{
 		printRow(9, APRSPROBE_FOOTER1);
+		printRow(10, APRSPROBE_FOOTER2);
 	}
-	printRow(10, APRSPROBE_FOOTER2);
 	displayRender();
 }
 
@@ -391,7 +590,15 @@ bool menuAprsRxProbeTick(uiEvent_t *ev)
 			}
 			else if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
 			{
-				aprsRxProbeSelect(KEYCHECK_PRESS(ev->keys, KEY_RIGHT) ? 1 : -1);
+				int dir = KEYCHECK_PRESS(ev->keys, KEY_RIGHT) ? 1 : -1;
+				if (s_page == PROBE_PAGE_PHASE)
+				{
+					aprsRxProbeTAdjust(dir * (int)APRS_PROBE_T_STEP_US);   /* R7: на сторінці «фаза» <> міняють T_start */
+				}
+				else
+				{
+					aprsRxProbeSelect(dir);
+				}
 				redraw = true;
 			}
 			else if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
@@ -406,12 +613,18 @@ bool menuAprsRxProbeTick(uiEvent_t *ev)
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR))
 			{
-				aprsRxProbeToggleFormat();   /* R6: авто -> 10 біт -> 16 біт -> авто */
+				aprsRxProbeToggleFormat();   /* R7: авто -> 10 біт -> 11 біт -> 16>>6 -> авто */
 				redraw = true;
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_0))
 			{
-				aprsRxProbeRestartI2S();     /* R6: лише I2S, регістри не пишемо */
+				aprsRxProbeRestartI2S();     /* R6/R7: лише I2S з поточним T_start, регістри не пишемо */
+				redraw = true;
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_5))
+			{
+				aprsRxProbeScanToggle();     /* R7: розгортка T_start (повторно -- скасувати) */
+				s_page = PROBE_PAGE_SCAN;
 				redraw = true;
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH))

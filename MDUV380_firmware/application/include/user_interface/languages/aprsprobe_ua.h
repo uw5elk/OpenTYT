@@ -21,6 +21,8 @@
 #define APRSPROBE_TITLE_STREAM   "APRS проба: потік"
 #define APRSPROBE_TITLE_FRAME    "APRS проба: кадр"
 #define APRSPROBE_TITLE_REGS     "APRS проба: регістри"
+#define APRSPROBE_TITLE_PHASE    "APRS проба: фаза"
+#define APRSPROBE_TITLE_SCAN     "APRS проба: скан"
 
 /* DMR-канал: нічого не чіпаємо. */
 #define APRSPROBE_ONLY_FM        "Лише FM"
@@ -28,28 +30,29 @@
 /* Рядок 0: варіант (номер з R2, позиція з 6, регістри). */
 #define APRSPROBE_FMT_HDR        "А%u %u/%u E0=%02X 36=%02X 10=%02X"
 
-/* Рядок 1: стан I2S. */
-/* R6: формат обробки -- «авто(10)»/«авто(16)» (рішення детектора) або ручні «10 біт!»/«16 біт!». */
-#define APRSPROBE_FMT_RUN        "I2S %s, бл. %lu"
+/* Рядок 1: стан I2S. R7: «авто» -- nbits за вердиктом детектора (? -- вердикту ще нема); ручні
+ * режими (*): 10 біт!, 11 біт!, 16>>6! (справжні 16 біт, v >> 6). */
+#define APRSPROBE_FMT_RUN_AUTO   "I2S авто nbits=%s бл.%lu"
+#define APRSPROBE_FMT_RUN_MAN    "I2S %s бл.%lu"
 #define APRSPROBE_BITS10         "10 біт!"
-#define APRSPROBE_BITS16         "16 біт!"
-#define APRSPROBE_AUTO10         "авто(10)"
-#define APRSPROBE_AUTO16         "авто(16)"
+#define APRSPROBE_BITS11         "11 біт!"
+#define APRSPROBE_BITS16         "16>>6!"
 #define APRSPROBE_NO_WS          "I2S: немає такту WS"
 #define APRSPROBE_BUSY           "Пауза: голос. підказка"
 #define APRSPROBE_NO_DATA        "Немає даних > 1 с"
 #define APRSPROBE_WAIT           "Чекаю дані..."
 
-/* Сторінка «пакети» -- лічильники поточного варіанта. */
-#define APRSPROBE_FMT_OK         "Кадрів FCS ок: %u"
-#define APRSPROBE_FMT_BAD        "FCS помилка: %u"
-#define APRSPROBE_FMT_FLAGS      "Серій прапорців: %u"
+/* Сторінка «пакети» -- лічильники поточного варіанта. R7: кадри FCS ок / помилка / серії прапорців
+ * в одному рядку; нижче -- по слотах nbits «nbits:ок/помилка» (до 4); рівень (RMS і пік після
+ * зведення до 10 біт) і режекція; рядок 8 -- вердикт детектора (nbits) і число його перемикань. */
+#define APRSPROBE_FMT_CNT        "ок %u  пом. %u  сер. %u"
 #define APRSPROBE_LAST_NONE      "Правильних кадрів ще нема"
-#define APRSPROBE_FMT_NOTCH      "Режекція: %u Гц"
-#define APRSPROBE_NOTCH_AUTO     "Режекція: авто, не треба"
-#define APRSPROBE_NOTCH_OFF      "Режекція: вимкнена (#)"
-/* R6, рядок 8: що каже детектор формату (і в ручному режимі) і скільки разів він перемикав. */
-#define APRSPROBE_FMT_DET        "Детект. %u, перемик. %lu"
+#define APRSPROBE_FMT_NB         "%u:%u/%u"
+#define APRSPROBE_NB_NONE        "кадрів по nbits ще нема"
+#define APRSPROBE_FMT_LEVEL      "RMS %u пік %u реж.%s"
+#define APRSPROBE_NOTCH_S_AUTO   "авто"
+#define APRSPROBE_NOTCH_S_OFF    "викл"
+#define APRSPROBE_FMT_DET        "Детект. %s, перемик. %lu"
 
 /* Сторінка «фон» -- розгортка 100..3900 Гц на поточному варіанті. */
 #define APRSPROBE_FMT_RMS        "RMS %u  DC %d"
@@ -59,8 +62,10 @@
 #define APRSPROBE_BG_WAIT        "Розгортка... (0,5 с)"
 #define APRSPROBE_FMT_FS         "fs %lu (%lu с) втр. %lu"
 #define APRSPROBE_FS_WAIT        "fs вимір (5 с), втр. %lu"
-/* R5, сторінка «фон»: формат відліку (накопичено на варіанті з останнього GREEN). */
-#define APRSPROBE_FMT_B10        "б10 %lu%% 10-15 різн %lu"
+/* R7, сторінка «фон»: профіль детектора -- 15 цифр для j = 15..1: c[j]/10 (шістнадцяткова, F -- 150
+ * і більше), де c[j] -- слів останнього блока з 160, у яких біт j != біт j-1. Сміття над nbits бітами
+ * дає різкий пік (5-8) на j = nbits і нулі вище. R5: |s| >= 480 і пік (масштаб 10 біт, з GREEN). */
+#define APRSPROBE_FMT_PROFILE    "c15-1 %s"
 #define APRSPROBE_FMT_NEAR       "|s|>=480 %lu  пік %u"
 
 /* R4, сторінка «потік»: сталий тон 1200 Гц -- фаза на межах блоків по 160 (DMA-половин). */
@@ -80,12 +85,40 @@
 #define APRSPROBE_PLL_TITLE      "ФАПЧ, % на 1/8 біта:"
 #define APRSPROBE_FMT_PLL_N      "переходів: %lu"
 
-/* R6, сторінка «регістри»: регістри кодека -- рядками; старт I2S (мкс від фронту WS до кінця
- * HAL, рівень WS одразу після); FRE (опитувань із прапорцем: прийом/передача) і стартів I2S;
+/* R6/R7, сторінка «регістри»: регістри кодека -- рядками; старт I2S (T_start, виміряне T, рівень WS
+ * одразу після); FRE (опитувань із прапорцем ЗА ОСТАННЮ СЕКУНДУ: прийом/передача) і стартів I2S;
  * події: шумодав (ШД) відкрився/закрився, біпи, голосові підказки (пк). */
-#define APRSPROBE_FMT_START      "Старт I2S: %lu мкс, WS=%u"
-#define APRSPROBE_FMT_FRE        "FRE %lu/%lu, стартів %lu"
+#define APRSPROBE_FMT_START      "Старт T=%u вим.%u WS=%u"
+#define APRSPROBE_FMT_FRE        "FRE/с %u/%u, стартів %lu"
 #define APRSPROBE_FMT_EVENTS     "ШД +%lu/-%lu біп %lu пк %lu"
+
+/* R7, сторінка «фаза»: T_start (мкс від фронту WS 0->1 до вмикання I2SE), виміряне, рівень WS одразу
+ * після, nbits; HAL; скільки разів на цьому T вийшов кожен nbits; SPI3 (приймач) і I2S3ext. «ош» --
+ * накопичені за секунду UDR|OVR|FRE; CFG/PR/CR2 -- I2SCFGR/I2SPR/CR2. */
+#define APRSPROBE_FMT_PH_T       "T_start %u мкс, вим. %u"
+#define APRSPROBE_FMT_PH_WS      "WS після %u, nbits %s"
+#define APRSPROBE_FMT_PH_HAL     "HAL %u мкс, стартів %lu"
+#define APRSPROBE_FMT_PH_CNT     "T:10=%u 11=%u 16=%u ін=%u"
+#define APRSPROBE_FMT_PH_S3      "S3 CFG %04X PR %04X CR2 %02X"
+#define APRSPROBE_FMT_PH_S3SR    "S3 SR %04X ош %03X"
+#define APRSPROBE_FMT_PH_EXT     "ext CFG %04X SR %04X ош%03X"
+#define APRSPROBE_PH_WAIT        "Чекаю секунду..."
+#define APRSPROBE_FOOTER_PH1     "<> T-/+2 0 пуск 5 скан"
+#define APRSPROBE_FOOTER_PH2     "^v стор. RED вихід"
+
+/* R7, сторінка «скан»: T = 0, 2 ... 124 мкс по 6 перезапусків. Символ на T: цифра k = 16 - nbits
+ * (6 -- nbits 10, 5 -- nbits 11), F -- справжні 16, м -- різні nbits, ? -- вердикту не було,
+ * . -- ще не міряли. */
+#define APRSPROBE_SYM_MIX        "м"
+#define APRSPROBE_FMT_SC_RUN     "Скан T=%u мкс, прогін %u/%u"
+#define APRSPROBE_SC_IDLE        "5 - розгортка T_start"
+#define APRSPROBE_SC_DONE        "Скан завершено"
+#define APRSPROBE_FMT_SC_ROW     "%3u %s"
+#define APRSPROBE_SC_LEGEND      "6=10б 5=11б F=16 м=різн ?"
+#define APRSPROBE_FMT_SC_BEST    "Стаб.: T %u..%u nbits %u"
+#define APRSPROBE_SC_NO_BEST     "Стійкого ряду T немає"
+#define APRSPROBE_FOOTER_SC1     "5 стоп/пуск ^v стор."
+#define APRSPROBE_FOOTER_SC2     "GREEN скин. RED вихід"
 
 /* Значення регістрів на вході (їх і відновлюємо). «?» -- прочитати не вдалося, відновлюються
  * штатні FM-значення. */
