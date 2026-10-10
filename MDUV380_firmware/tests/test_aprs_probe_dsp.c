@@ -255,11 +255,154 @@ static void testFmt(void)
 		CHECK(f.n == 8 && f.b10 == 4 && f.nonUni == 1, "статистика: біт10=1 -- %lu з 8, біти 10..15 різні -- %lu (0x0400)",
 				(unsigned long)f.b10, (unsigned long)f.nonUni);
 		CHECK(f.nearLim == 3 && f.peak == 512, "|s| >= 480 -- %lu (480, 480, -512), пік %u", (unsigned long)f.nearLim, f.peak);
-		CHECK(out[0] == 5 && out[1] == 5 && out[2] == -2 && out[5] == 480 && raw[1] == (int16_t)0xFC05, "відліки: 10 біт / як є");
+		CHECK(out[0] == 5 && out[1] == 5 && out[2] == -2 && out[5] == 480 && raw[1] == -16,
+				"відліки: 10 біт / R6 «16» >> 6 (0xFC05 = -1019 -> -16)");
 		uint16_t lr[4] = { 0xFC07, 0x1234, 0x0003, 0x5678 };
 		int16_t l[2];
 		apFmtExtract(NULL, lr, 2, 2, false, l);
 		CHECK(l[0] == 7 && l[1] == 3, "L,R як у кадрі I2S: береться L (крок 2)");
+	}
+}
+
+/* ---- R6: автовизначення формату ---------------------------------------------------- *
+ * Генератор -- 16-бітний сигнал v (тон 1200/2200 по черзі, як AFSK, + гауссів шум). Упаковка:
+ *   «16»: слово = v;
+ *   «10»: слово = (v >> 6) у бітах 0..9 + випадковий біт, повторений у бітах 10..15 (запис R4:
+ *         біт 10 ~50 %, без зв'язку з сигналом).
+ * Рівні «10» задаються в одиницях 10 біт (A10), «16» -- у своїх (A16 = 64 * A10 за гіпотезою). */
+#define DET_BLK 160
+static double s_detT = 0.0;
+static void detBlock(uint16_t *u, bool fmt16, double amp16, double noise16, double dc16)
+{
+	for (int i = 0; i < DET_BLK; i++)
+	{
+		double f = (fmod(s_detT, 1600.0) < 800.0) ? 1200.0 : 2200.0;
+		double x = dc16 + amp16 * sin(2 * PI * f * s_detT / 8000.0) + noise16 * gauss();
+		s_detT += 1.0;
+		long v = lround(x);
+		v = (v > 32767) ? 32767 : ((v < -32768) ? -32768 : v);
+		if (fmt16)
+		{
+			u[i] = (uint16_t)(int16_t)v;
+		}
+		else
+		{
+			uint16_t held = (noise() < 0.0) ? 0xFC00U : 0U;
+			u[i] = (uint16_t)((((uint16_t)(int16_t)(v >> 6)) & 0x3FFU) | held);
+		}
+	}
+}
+
+/* Подати nb блоків одного формату; повертає номер блока (з 1), на якому детектор уперше дійшов
+ * формату fmt16 (0 -- не дійшов), і рахує перемикання в d. */
+static int detRun(apFmtDet_t *d, int nb, bool fmt16, double amp16, double noise16, double dc16, bool inFrame)
+{
+	uint16_t u[DET_BLK];
+	int first = 0;
+	for (int b = 1; b <= nb; b++)
+	{
+		detBlock(u, fmt16, amp16, noise16, dc16);
+		(void)apFmtDetBlock(d, u, 1, DET_BLK, inFrame);
+		if ((first == 0) && ((d->is16 != 0) == fmt16))
+		{
+			first = b;
+		}
+	}
+	return first;
+}
+
+static void testDet(void)
+{
+	printf(" R6: автовизначення формату (блоки по 160, рішення за %d блоки з доказом):\n", AP_DET_STREAK);
+	apFmtDet_t d;
+	int worst = 0;
+
+	/* 1. Рішення з протилежного формату -- за <= AP_DET_STREAK блоків (кожен блок має доказ). */
+	{
+		static const struct { bool f16; double a16, n16; const char *name; } c[] =
+		{
+			{ true,     0,     3, "«16» тиша (шум 3)" },
+			{ true,     0,   200, "«16» шум 200" },
+			{ true,  8000,   300, "«16» гучно (тон 8000)" },
+			{ true, 25000,  1000, "«16» дуже гучно (25000)" },
+			{ false,    0,  3*64, "«10» тиша (шум 3 у 10 бітах)" },
+			{ false,    0, 56*64, "«10» шум RMS 56 (як запис R4)" },
+			{ false, 300*64, 20*64, "«10» пакет: тон 300 + шум 20" },
+		};
+		bool all = true;
+		for (unsigned k = 0; k < sizeof(c) / sizeof(c[0]); k++)
+		{
+			apFmtDetInit(&d, !c[k].f16);
+			int first = detRun(&d, 50, c[k].f16, c[k].a16, c[k].n16, 0, false);
+			printf("      %-32s -> рішення на блоці %d, перемикань %lu\n", c[k].name, first, (unsigned long)d.switches);
+			all = all && (first >= 1) && (first <= AP_DET_STREAK) && (d.switches == 1);
+			worst = (first > worst) ? first : worst;
+		}
+		CHECK(all, "з протилежного формату -- правильне рішення не пізніше блока %d (%d мс), рівно одне перемикання",
+				worst, worst * 20);
+	}
+
+	/* 2. Без хибних перемикань: довгий потік правильного формату з різними рівнями. */
+	{
+		static const double lv10[][2] = { { 0, 1 }, { 0, 3 }, { 0, 56 }, { 300, 20 }, { 361, 0 }, { 400, 30 }, { 450, 40 }, { 0, 0 } };
+		static const double lv16[][2] = { { 0, 1 }, { 0, 50 }, { 400, 30 }, { 700, 50 }, { 900, 20 }, { 3000, 300 }, { 20000, 2000 }, { 0, 0 } };
+		uint32_t ev10 = 0, ev16 = 0;
+		apFmtDetInit(&d, false);
+		for (int rep = 0; rep < 20; rep++)
+		{
+			for (unsigned k = 0; k < 8; k++)
+			{
+				(void)detRun(&d, 20, false, lv10[k][0] * 64, lv10[k][1] * 64, 0, false);
+			}
+		}
+		bool ok10 = (d.switches == 0) && (d.is16 == 0);
+		ev10 = d.ev10; ev16 = d.ev16;
+		printf("      «10», 3200 блоків (тиша..пік 450): доказів 10/16 -- %lu/%lu, перемикань %lu\n",
+				(unsigned long)ev10, (unsigned long)ev16, (unsigned long)d.switches);
+		apFmtDetInit(&d, true);
+		for (int rep = 0; rep < 20; rep++)
+		{
+			for (unsigned k = 0; k < 8; k++)
+			{
+				(void)detRun(&d, 20, true, lv16[k][0], lv16[k][1], 0, false);
+			}
+		}
+		bool ok16 = (d.switches == 0) && (d.is16 != 0);
+		printf("      «16», 3200 блоків (тиша..20000): доказів 10/16 -- %lu/%lu, перемикань %lu\n",
+				(unsigned long)d.ev10, (unsigned long)d.ev16, (unsigned long)d.switches);
+		CHECK(ok10 && ok16 && (ev16 == 0) && (d.ev10 == 0), "довгі потоки правильного формату -- 0 хибних перемикань і 0 хибних доказів");
+	}
+
+	/* 3. Зміна формату посеред потоку (як перезапуск I2S): 16 -> 10 -> 16. */
+	{
+		apFmtDetInit(&d, true);
+		int a = detRun(&d, 40, true, 3000, 200, 0, false);
+		int b = detRun(&d, 40, false, 200 * 64, 10 * 64, 0, false);
+		int c = detRun(&d, 40, true, 0, 5, 0, false);
+		CHECK((a == 1) && (b >= 1) && (b <= AP_DET_STREAK) && (c >= 1) && (c <= AP_DET_STREAK) && (d.switches == 2),
+				"16 -> 10 -> 16 посеред потоку: рішення на блоці %d і %d після зміни, перемикань %lu", b, c, (unsigned long)d.switches);
+	}
+
+	/* 4. Посеред кадру демодулятора формат не міняється: чекаємо кінця кадру, але не довше за
+	 *    AP_DET_HOLD_MAX блоків. */
+	{
+		apFmtDetInit(&d, false);
+		int inF = detRun(&d, 30, true, 3000, 200, 0, true);    /* «кадр» триває: доказ 16, але чекаємо */
+		int after = detRun(&d, 5, true, 3000, 200, 0, false); /* кадр скінчився */
+		bool held = (inF == 0) && (after == 1) && (d.switches == 1);
+		apFmtDetInit(&d, false);
+		int capped = detRun(&d, AP_DET_HOLD_MAX + AP_DET_STREAK + 5, true, 3000, 200, 0, true);
+		CHECK(held && (capped == AP_DET_HOLD_MAX + AP_DET_STREAK),
+				"посеред кадру -- чекає (0 перемикань за 30 блоків), після кадру -- одразу; «вічний» кадр -- не довше за %d блоків (%d)",
+				AP_DET_HOLD_MAX, capped);
+	}
+
+	/* 5. Блоки без доказу (16 біт у смузі 512..1024 без тиші) не перемикають і не рвуть серію. */
+	{
+		apFmtDetInit(&d, true);
+		int f = detRun(&d, 200, true, 800, 20, 0, false);
+		CHECK((d.switches == 0) && (f == 1), "«16» з тоном 800 (неоднозначна смуга) -- перемикань %lu, доказів 10/16 %lu/%lu",
+				(unsigned long)d.switches, (unsigned long)d.ev10, (unsigned long)d.ev16);
 	}
 }
 
@@ -367,6 +510,7 @@ int main(void)
 	testSweep();
 	testStream();
 	testFmt();
+	testDet();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

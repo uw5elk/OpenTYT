@@ -20,6 +20,7 @@
 #define APRSPROBE_TITLE_BG       "APRS проба: фон"
 #define APRSPROBE_TITLE_STREAM   "APRS проба: потік"
 #define APRSPROBE_TITLE_FRAME    "APRS проба: кадр"
+#define APRSPROBE_TITLE_REGS     "APRS проба: регістри"
 
 /* DMR-канал: нічого не чіпаємо. */
 #define APRSPROBE_ONLY_FM        "Лише FM"
@@ -28,9 +29,12 @@
 #define APRSPROBE_FMT_HDR        "А%u %u/%u E0=%02X 36=%02X 10=%02X"
 
 /* Рядок 1: стан I2S. */
-#define APRSPROBE_FMT_RUN        "I2S %s, блоків %lu"
-#define APRSPROBE_BITS10         "10 біт"
+/* R6: формат обробки -- «авто(10)»/«авто(16)» (рішення детектора) або ручні «10 біт!»/«16 біт!». */
+#define APRSPROBE_FMT_RUN        "I2S %s, бл. %lu"
+#define APRSPROBE_BITS10         "10 біт!"
 #define APRSPROBE_BITS16         "16 біт!"
+#define APRSPROBE_AUTO10         "авто(10)"
+#define APRSPROBE_AUTO16         "авто(16)"
 #define APRSPROBE_NO_WS          "I2S: немає такту WS"
 #define APRSPROBE_BUSY           "Пауза: голос. підказка"
 #define APRSPROBE_NO_DATA        "Немає даних > 1 с"
@@ -44,6 +48,8 @@
 #define APRSPROBE_FMT_NOTCH      "Режекція: %u Гц"
 #define APRSPROBE_NOTCH_AUTO     "Режекція: авто, не треба"
 #define APRSPROBE_NOTCH_OFF      "Режекція: вимкнена (#)"
+/* R6, рядок 8: що каже детектор формату (і в ручному режимі) і скільки разів він перемикав. */
+#define APRSPROBE_FMT_DET        "Детект. %u, перемик. %lu"
 
 /* Сторінка «фон» -- розгортка 100..3900 Гц на поточному варіанті. */
 #define APRSPROBE_FMT_RMS        "RMS %u  DC %d"
@@ -73,6 +79,13 @@
 #define APRSPROBE_FMT_ADDR       "Адр.: %s"
 #define APRSPROBE_PLL_TITLE      "ФАПЧ, % на 1/8 біта:"
 #define APRSPROBE_FMT_PLL_N      "переходів: %lu"
+
+/* R6, сторінка «регістри»: регістри кодека -- рядками; старт I2S (мкс від фронту WS до кінця
+ * HAL, рівень WS одразу після); FRE (опитувань із прапорцем: прийом/передача) і стартів I2S;
+ * події: шумодав (ШД) відкрився/закрився, біпи, голосові підказки (пк). */
+#define APRSPROBE_FMT_START      "Старт I2S: %lu мкс, WS=%u"
+#define APRSPROBE_FMT_FRE        "FRE %lu/%lu, стартів %lu"
+#define APRSPROBE_FMT_EVENTS     "ШД +%lu/-%lu біп %lu пк %lu"
 
 /* Значення регістрів на вході (їх і відновлюємо). «?» -- прочитати не вдалося, відновлюються
  * штатні FM-значення. */

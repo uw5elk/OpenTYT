@@ -114,11 +114,35 @@ const apStream_t *aprsRxProbeStream(void);
 const uint16_t *aprsRxProbePllHist(void);
 void aprsRxProbeDmaCounters(uint32_t *half, uint32_t *full, uint32_t *order);
 
-/* R5: формат відліку для обробки -- 10 біт (типово, правильний) або «16 біт як є» (контроль),
- * кнопка *. Перемикання скидає демодулятор, розгортку й «потік», лічильники -- ні. USB-запис
- * завжди сирий. */
+/* R5/R6: формат відліку для обробки, кнопка * по колу: авто (типово) / 10 біт / 16 біт.
+ * «16» зводиться до масштабу «10» (apSample16). Перемикання скидає демодулятор, розгортку й
+ * «потік», лічильники -- ні. USB-запис завжди сирий. */
+#define APRS_PROBE_FMT_AUTO   0U
+#define APRS_PROBE_FMT_10     1U
+#define APRS_PROBE_FMT_16     2U
+#define APRS_PROBE_FMT_MODES  3U
 void aprsRxProbeToggleFormat(void);
+uint8_t aprsRxProbeFormatMode(void);
+/* Формат, яким обробляється зараз (в «авто» -- рішення детектора): true -- «16». */
 bool aprsRxProbeFormat16(void);
+/* R6: стан детектора (перемикань, блоків з доказом «10»/«16»). */
+const apFmtDet_t *aprsRxProbeFormatDet(void);
+
+/* R6: діагностика старту I2S: успішних стартів з відкриття; останній -- мкс від фронту WS до
+ * кінця HAL і рівень WS одразу після; скільки опитувань (раз на тік) бачили FRE на SPI3 (прийом)
+ * і I2S3ext (передача). */
+void aprsRxProbeI2SDiag(uint32_t *starts, uint32_t *startUs, uint32_t *startWs, uint32_t *freRx, uint32_t *freTx);
+/* R6: події, після яких стоковий код переписує регістри кодека: відкриття / закриття шумодава,
+ * біпи, голосові підказки (з відкриття проби). */
+void aprsRxProbeEvents(uint32_t *sqOpen, uint32_t *sqClose, uint32_t *beeps, uint32_t *prompts);
+/* R6: перезапустити I2S (кнопка 0) без запису регістрів -- дослід: чи змінює формат сам старт I2S. */
+void aprsRxProbeRestartI2S(void);
+/* R6: регістри кодека для сторінки «регістри». Refresh -- прочитати з чипа, не частіше ніж раз
+ * на секунду (викликає екран, поки сторінку видно). Reg -- i-й регістр: адреса, значення;
+ * false -- ще не читали або читання не вдалося. */
+#define APRS_PROBE_NUM_REGS   28U
+void aprsRxProbeRegsRefresh(void);
+bool aprsRxProbeReg(uint8_t i, uint8_t *addr, uint8_t *val);
 
 /* R4: USB-запис сирих відліків. Стан для екрана (false -- запису не було). */
 bool aprsRxProbeCapture(uint32_t *sent, uint32_t *total, uint32_t *lost);

@@ -120,8 +120,16 @@ void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen);
  * Start -- з тайм-аутом на такт WS (стоковий I2SStartDMA чекав би вічно); false -- I2S зайнятий
  * або такту немає. Stop -- зупиняє лише передачу, запущену Start, і повертає прапорці в стан
  * «вільно», навіть якщо такт зник і переривань більше не буде. */
-bool I2SProbeStart(void);
+/* R6: діагностика розсинхронізації приймача I2S з HR-C6000 (докладно -- docs/aprs-rx-feasibility.md,
+ * розділ 10). Errata STM32F405 (ES0182): ведений I2S (Philips) треба вмикати, поки WS = 1, інакше
+ * він до кінця сеансу розсинхронізований з ведучим. Після успішного старту: *startCycles -- тактів
+ * процесора від фронту WS 0->1 до повернення з HAL (I2SE вмикається в самому кінці HAL),
+ * *startWs -- рівень WS одразу після. */
+bool I2SProbeStart(uint32_t *startCycles, uint32_t *startWs);
 void I2SProbeStop(void);
+/* R6: SPI3->SR (молодші 16 біт) і I2S3ext->SR (старші 16 біт). Читання скидає прапорець FRE
+ * («WS змінився в неочікуваний момент» -- ознака розсинхронізації веденого). */
+uint32_t I2SProbeStatusRegs(void);
 /* Передача, запущена I2SProbeStart(), іще йде (її не зупинив і не підмінив інший код). */
 bool I2SProbeIsRunning(void);
 #endif
