@@ -32,6 +32,9 @@
 #include "user_interface/uiUtilities.h"
 #include "user_interface/menuSystem.h"
 #include "usb/usb_com.h"
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "functions/aprs_rx_probe.h"   // R4: опкод 0xB5 -- запис сирих відліків «APRS проби»
+#endif
 #ifdef ENABLE_AES
 #include "crypto/dmr_aes.h"
 #endif
@@ -1975,6 +1978,21 @@ static void cpsHandleCommand(void)
 				return; // bypass the trailing generic '-' reply
 			}
 #endif
+#endif
+#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+		case 0xB5: // R4, ТИМЧАСОВО: запис сирих відліків I2S RX з екрана «APRS проба» на ПК
+				   // (tools/aprs_capture.py, кнопка в tools/gui_flasher.py). Формат запиту й
+				   // відповіді -- aprsRxProbeUsb() у functions/aprs_rx_probe.c. Екран (меню) НЕ
+				   // чіпаємо: команда 0 «показати CPS» закрила б пробу.
+			{
+				int n = aprsRxProbeUsb(com_requestbuffer, COM_REQUESTBUFFER_SIZE, &usbComSendBuf[3], COM_BUFFER_SIZE - 3);
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
+				usbComSendBuf[2] = (uint8_t)(n & 0xFF);
+				hasToReply = true;
+				replyLength = n + 3;
+				return; // bypass the trailing generic '-' reply
+			}
 #endif
 #if defined(ENABLE_MEM_DIAG)
 		case 0xB4: // DIAGNOSTIC (2026-09-19, розвідка docs/recording-feasibility.md): вимірювання

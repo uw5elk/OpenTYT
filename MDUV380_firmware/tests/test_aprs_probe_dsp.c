@@ -213,6 +213,68 @@ static void testSweep(void)
 			"тон 500 у шумі 700: топ-1 %.1f Гц, частка %u %% (між вузьким і широким)", r.f1, r.share1);
 }
 
+
+/* ---- R4: безперервність потоку --------------------------------------------------- */
+/* 200 блоків тону f (амплітуда a, шум nz); на межі кожного блока викинути (d > 0) або
+ * продублювати (d < 0) |d| відліків -- як зробили б розриви DMA. */
+static apStream_t streamRun(double f, double a, double nz, int d)
+{
+	apStream_t st;
+	int16_t blk[160];
+	double t = 0.0;
+	apStreamInit(&st);
+	for (int b = 0; b < 200; b++)
+	{
+		for (int i = 0; i < 160; i++)
+		{
+			blk[i] = (int16_t)lround(a * sin(2 * PI * f * t / 8000.0 + 0.3) + nz * gauss());
+			t += 1.0;
+		}
+		t += (double)d;   /* d > 0: наступний блок починається пізніше (відліки загубились) */
+		apStreamBlock(&st, blk);
+	}
+	return st;
+}
+
+static void testStream(void)
+{
+	apStream_t st;
+	printf(" безперервність потоку (тон 1200 Гц, 200 блоків):\n");
+
+	CHECK(fabs(apAtan2Deg(1, 1) - 45) < 0.01 && fabs(apAtan2Deg(-1, -1) + 135) < 0.01 && fabs(apAtan2Deg(0, -1) - 180) < 0.01,
+			"apAtan2Deg: 45 / -135 / 180 град");
+
+	st = streamRun(1200, 600, 60, 0);
+	CHECK(st.blocks >= 199 && st.jumpsB == 0 && st.jumpsIn == 0 && st.maxB < 15 && fabs(apStreamOffsetHz(&st)) < 0.3,
+			"безперервний потік: стрибків на межі %lu, всередині %lu, макс %u град, розстройка %.2f Гц",
+			(unsigned long)st.jumpsB, (unsigned long)st.jumpsIn, st.maxB, apStreamOffsetHz(&st));
+
+	st = streamRun(1201, 600, 60, 0);
+	CHECK(st.jumpsB == 0 && fabs(apStreamOffsetHz(&st) - 1.0) < 0.3,
+			"тон 1201 Гц: стрибків немає, розстройка %.2f Гц (~+1)", apStreamOffsetHz(&st));
+
+	st = streamRun(1200, 600, 60, 1);
+	CHECK(st.jumpsB >= 190 && st.jumpsIn == 0 && st.maxB >= 45 && st.maxB <= 65,
+			"втрата 1 відліку на кожній межі: стрибків на межі %lu (з ~199), всередині %lu, макс %u град (~54)",
+			(unsigned long)st.jumpsB, (unsigned long)st.jumpsIn, st.maxB);
+
+	st = streamRun(1200, 600, 60, -2);
+	CHECK(st.jumpsB >= 190 && st.jumpsIn == 0 && st.maxB >= 95 && st.maxB <= 120,
+			"дубль 2 відліків: стрибків на межі %lu, макс %u град (~108)", (unsigned long)st.jumpsB, st.maxB);
+
+	st = streamRun(1200, 0, 700, 0);
+	CHECK(st.blocks <= 2, "лише шум RMS 700 (як фон R2): блоків з «тоном» -- %lu з 200", (unsigned long)st.blocks);
+
+	st = streamRun(1200, 1000, 500, 0);
+	CHECK(st.blocks >= 190 && st.jumpsB <= 4 && st.jumpsIn <= 4,
+			"тон 1000 у шумі 500, без розривів: стрибків на межі %lu, всередині %lu (шумові -- рівно в обох)",
+			(unsigned long)st.jumpsB, (unsigned long)st.jumpsIn);
+	st = streamRun(1200, 1000, 500, 1);
+	CHECK(st.jumpsB >= 150 && st.jumpsIn <= 4,
+			"тон 1000 у шумі 500, втрата 1 відліку: на межі %lu, всередині %lu -- різниця очевидна",
+			(unsigned long)st.jumpsB, (unsigned long)st.jumpsIn);
+}
+
 int main(void)
 {
 	printf("test_aprs_probe_dsp:\n");
@@ -276,6 +338,7 @@ int main(void)
 	testSource(&SRC_ADC, 800.0);
 	testSource(&SRC_ADC, 60.0);
 	testSweep();
+	testStream();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

@@ -2,6 +2,8 @@
  * aprs_rx_probe.h -- діагностика «APRS проба» (R2 -> R3): прийом APRS з I2S від HR-C6000.
  *
  * R2 показав, що прийнятий FM-звук іде по I2S3 без паяння (docs/aprs-rx-feasibility.md, розділ 6).
+ * R4: діагностика бітового рівня (сторінки «потік» і «кадр») і запис сирих відліків на ПК по
+ * USB (опкод 0xB5, tools/aprs_capture.py, кнопка в gui_flasher.py).
  * R3: лишилися 6 варіантів регістрів кодека, у яких тони розрізнялися й мікрофон вимкнено
  * (А1, А3, А7, А9, А10, А12); на I2S RX працює демодулятор Bell 202 + AX.25 (aprs_afsk.c) і
  * розгортка фону (aprs_probe_dsp.c). Для кожного варіанта -- свої лічильники кадрів і показники
@@ -49,6 +51,8 @@ typedef struct
 	uint16_t flagSeq;           /* серій прапорців (>= AFSK_FLAG_SEQ поспіль) */
 	char     srcDst[20];        /* останній правильний кадр: «SRC-n>DST-n» */
 	char     info[24];          /* ... і початок поля info */
+	uint16_t badLen;            /* R4: останній кадр з помилковим FCS -- довжина з FCS (0 -- не було) */
+	uint8_t  badHead[16];       /* ... і перші 16 байтів */
 	/* фон -- останнє вікно розгортки (480 мс) на цьому варіанті */
 	uint8_t  bgValid;
 	uint8_t  share1;            /* частка топ-1 у RMS, % */
@@ -102,6 +106,18 @@ uint32_t aprsRxProbeBlocks(void);
 uint32_t aprsRxProbeOverflows(void);
 /* Мілісекунди з останнього блока (для «немає даних»). */
 uint32_t aprsRxProbeMsSinceBlock(void);
+
+/* R4: сторінка «потік» -- безперервність тону 1200 Гц на межах блоків, гістограма фази тактів,
+ * лічильники колбеків DMA (половина / повний / порушення черговості). */
+const apStream_t *aprsRxProbeStream(void);
+const uint16_t *aprsRxProbePllHist(void);
+void aprsRxProbeDmaCounters(uint32_t *half, uint32_t *full, uint32_t *order);
+
+/* R4: USB-запис сирих відліків. Стан для екрана (false -- запису не було). */
+bool aprsRxProbeCapture(uint32_t *sent, uint32_t *total, uint32_t *lost);
+/* Обробник опкоду CPS 'C' 0xB5 (usb_com.c): req -- увесь запит, out -- місце для відповіді
+ * ПІСЛЯ [cmd, len_hi, len_lo]. Повертає довжину відповіді. Формат -- у aprs_rx_probe.c. */
+int aprsRxProbeUsb(const volatile uint8_t *req, int reqLen, volatile uint8_t *out, int outMax);
 
 /* З i2s.c, переривання DMA: половина буфера bufNum (160 стерео-кадрів, 20 мс). */
 void aprsRxProbeI2SBlock(uint32_t bufNum);

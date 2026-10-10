@@ -6,8 +6,8 @@
  *   1. смуговий фільтр 900-2500 Гц: 2 біквади Баттерворта (4-й порядок), прибирає й DC;
  *   2. режекторний біквад (необов'язково, r = 0,985, смуга ~38 Гц): частота -- з розгортки фону
  *      (aprs_probe_dsp.c, уточнення між точками сітки), якщо там вузька завада;
- *   3. два комплексні кореляційні фільтри (1200 і 2200 Гц) на вікні AFSK_CORR_LEN = 8 відліків
- *      (1 мс), потужність I^2 + Q^2;
+ *   3. аналітичний сигнал (FIR Гільберта, 15 відводів) і два комплексні кореляційні фільтри
+ *      (1200 і 2200 Гц) на вікні AFSK_CORR_LEN = 8 відліків (1 мс), потужність I^2 + Q^2;
  *   4. рішення з поправкою на перекіс рівнів тонів (деемфазис HR-C6000, «twist»): кожен тон
  *      ділиться на корінь зі свого середнього рівня (див. .c);
  *   5. цифрова ФАПЧ тактів 1200 бод (фазовий акумулятор int32, підтягування на кожному переході;
@@ -35,7 +35,11 @@
 
 #include "functions/aprs_probe_dsp.h"   /* apCos2() -- коефіцієнт режекції з таблиці розгортки */
 
-typedef void (*afskFrameCb_t)(const uint8_t *frame, uint16_t len, void *ctx);
+#define AFSK_HILB_LEN       15      /* відводів FIR Гільберта */
+
+/* Кадр між прапорцями (>= AFSK_FRAME_MIN байт, кратний 8 бітам). fcsOk -- len БЕЗ FCS;
+ * інакше -- len з FCS (для діагностики «що саме прийшло»). */
+typedef void (*afskFrameCb_t)(const uint8_t *frame, uint16_t len, bool fcsOk, void *ctx);
 
 typedef struct
 {
@@ -46,7 +50,10 @@ typedef struct
 	uint8_t  notchOn;
 	uint32_t pllStep;           /* 2^32 * 1200 / fs */
 	/* кореляція */
-	float    hist[AFSK_CORR_LEN];
+	float    hb[AFSK_HILB_LEN];    /* вхід FIR Гільберта */
+	uint8_t  hbpos;
+	float    hist[AFSK_CORR_LEN];  /* аналітичний сигнал: дійсна */
+	float    histQ[AFSK_CORR_LEN]; /* ... і уявна частина */
 	uint8_t  hpos;
 	/* середні рівні тонів (поправка на перекіс) */
 	float    envM, envS;
@@ -67,7 +74,9 @@ typedef struct
 	uint16_t nOk;               /* кадрів з правильним FCS */
 	uint16_t nBad;              /* кадрів (>= AFSK_FRAME_MIN байт, кратних 8 біт) з помилковим FCS */
 	uint16_t nFlagSeq;          /* серій прапорців (>= AFSK_FLAG_SEQ поспіль) -- преамбули пакетів */
-	afskFrameCb_t cb;           /* виклик на кожен кадр з правильним FCS (може бути NULL) */
+	uint16_t pllHist[8];        /* фаза тактів на переходах (лише в кадрі після >= 2 прапорців):
+	                             * бін i -- [i/8 - 1/2, (i+1)/8 - 1/2) біта; 3 і 4 -- біля ідеалу */
+	afskFrameCb_t cb;           /* виклик на кожен кадр (правильний чи ні; може бути NULL) */
 	void    *ctx;
 } afskDemod_t;
 
@@ -85,6 +94,9 @@ uint16_t ax25Crc(const uint8_t *p, int n);
 /* Підсумок кадру для екрана: «SRC-n>DST-n» (до 19 симв.) і початок поля info
  * (непридатні до друку -> '.'). false -- кадр не схожий на AX.25. */
 bool ax25Summary(const uint8_t *f, int len, char *srcDst, int sdSize, char *info, int infoSize);
+/* R4: «як є» -- адреси перших двох полів (байти >> 1, SSID) навіть з помилкового кадру:
+ * «SRC-n>DST-n», непридатні до друку символи -> '.'. Щоб на око бачити, чи адреса читається. */
+void ax25LooseAddr(const uint8_t *f, int len, char *out, int size);
 
 #endif /* ENABLE_APRS_RX_PROBE */
 #endif /* _OPENGD77_APRS_AFSK_H_ */

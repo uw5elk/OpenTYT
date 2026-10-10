@@ -35,19 +35,31 @@
 #define APRS_PROBE_MAGIC 0xA9A5C0DEUL
 
 #define APRS_PROBE_BLOCK            160U   /* відліків L у половині буфера I2S (20 мс) */
-#define APRS_PROBE_RING             12U    /* блоків у кільці: 240 мс запасу на повільний тік */
 #define APRS_PROBE_BLOCKS_PER_TICK  2U     /* обробка за один тік (~0,5 мс на блок при 72 МГц) */
-#define APRS_PROBE_REAPPLY_MS       250U
 #define APRS_PROBE_RETRY_MS         250U
 #define APRS_PROBE_NOTCH_QUIET      100U   /* блоків (2 с) без серій прапорців -- можна міняти режекцію */
 #define APRS_PROBE_FS_MIN_MS        5000U  /* частоту дискретизації показуємо після 5 с */
 
 /* Кільце блоків -- у буфері звуку AMBE/підказок/хотспоту (4800 Б, CCM). У FM-прийомі з
  * пробою він простоює: DMR немає, хотспот вимкнено, а на час голосової підказки I2S проби
- * зупиняється і кільце після неї починається спочатку. */
-#define APRS_PROBE_RING_BUF   ((int16_t (*)[APRS_PROBE_BLOCK])(void *)&audioAndHotspotDataBuffer)
-_Static_assert(sizeof(audioAndHotspotDataBuffer) >= (APRS_PROBE_RING * APRS_PROBE_BLOCK * sizeof(int16_t)),
-		"probe ring does not fit audioAndHotspotDataBuffer");   /* кільце не вміщається */
+ * зупиняється і кільце після неї починається спочатку.
+ * R4: два розклади. Звичайний -- лише канал L, 14 блоків по 160 (280 мс запасу). На час
+ * USB-запису «обидва канали, як є» -- уся половина DMA (160 кадрів L,R = 320 півслів), 7 блоків
+ * (140 мс). Демодулятор бере L з будь-якого розкладу. */
+#define APRS_PROBE_RING_BASE   ((uint16_t *)(void *)&audioAndHotspotDataBuffer)
+#define APRS_PROBE_SLOTS_MONO   14U
+#define APRS_PROBE_SLOTS_STEREO 7U
+#define APRS_PROBE_SLOTS_MAX    APRS_PROBE_SLOTS_MONO
+_Static_assert(sizeof(audioAndHotspotDataBuffer) >= (APRS_PROBE_SLOTS_MONO * APRS_PROBE_BLOCK * sizeof(uint16_t)),
+		"probe ring (mono) does not fit audioAndHotspotDataBuffer");     /* кільце не вміщається */
+_Static_assert(sizeof(audioAndHotspotDataBuffer) >= (APRS_PROBE_SLOTS_STEREO * 2U * APRS_PROBE_BLOCK * sizeof(uint16_t)),
+		"probe ring (stereo) does not fit audioAndHotspotDataBuffer");   /* кільце не вміщається */
+
+/* USB-запис (R4): відповідь -- заголовок і цілі блоки, скільки влазить у буфер відповіді. */
+#define APRS_PROBE_USB_VER      1U
+#define APRS_PROBE_USB_HDR      20U
+#define APRS_PROBE_USB_MAX_SECS 120U
+#define APRS_PROBE_USB_IDLE_MS  2000U  /* ПК мовчить довше -- стоп запису, щоб кільце не стояло */
 
 /* Штатні FM-значення -- на випадок, якщо прочитати не вдалося. */
 #define REG_E0_FM   0x89
@@ -78,8 +90,23 @@ typedef struct
 	uint8_t           savedE0, saved36, saved10;
 	int               savedEco;
 	uint32_t          lastApplyMs, lastTryMs;
-	/* кільце: пише переривання DMA, читає тік */
-	volatile uint8_t  head, tail;
+	/* кільце: пише переривання DMA, читають тік (tail) і USB-запис (usbTail) */
+	volatile uint8_t  head, tail, usbTail;
+	uint8_t           slots;        /* 14 (L) або 7 (L,R) */
+	uint8_t           stereo;       /* розклад кільця: 1 -- уся половина DMA */
+	uint32_t          slotSeq[APRS_PROBE_SLOTS_MAX];   /* номер блока від початку запису */
+	volatile uint32_t seqCounter;
+	/* колбеки DMA (R4): половина / повний і порушення черговості (дві однакові поспіль) */
+	volatile uint32_t cbHalf, cbFull, cbOrder;
+	volatile uint8_t  cbLast;
+	/* USB-запис */
+	volatile bool     capActive;
+	bool              capDone;
+	uint8_t           capStereo;
+	uint16_t          capTotal;     /* блоків замовлено */
+	uint32_t          capSent;
+	volatile uint32_t capLost;
+	uint32_t          capPollMs;    /* останній запит ПК: без запитів > 2 с запис зупиняється сам */
 	volatile uint32_t isrBlocks;    /* блоків від старту I2S (для частоти дискретизації) */
 	volatile uint32_t overflows;
 	volatile uint32_t lastBlockMs;
@@ -91,8 +118,10 @@ typedef struct
 	uint32_t          blocks;       /* оброблених з останнього старту */
 	uint16_t          quiet;        /* блоків без нових серій прапорців */
 	uint16_t          notchHz;
+	bool              lastPrompt;
 	afskDemod_t       demod;
 	apBg_t            bg;
+	apStream_t        stream;       /* R4: безперервність тону 1200 Гц на межах блоків */
 	aprsProbeVar_t    var[APRS_PROBE_NUM_VARIANTS];
 } aprsProbeState_t;
 
@@ -193,6 +222,35 @@ uint16_t aprsRxProbeNotchHz(void)
 	return stateValid() ? s_probe.notchHz : 0;
 }
 
+const apStream_t *aprsRxProbeStream(void)
+{
+	return &s_probe.stream;
+}
+
+const uint16_t *aprsRxProbePllHist(void)
+{
+	return s_probe.demod.pllHist;
+}
+
+void aprsRxProbeDmaCounters(uint32_t *half, uint32_t *full, uint32_t *order)
+{
+	*half = s_probe.cbHalf;
+	*full = s_probe.cbFull;
+	*order = s_probe.cbOrder;
+}
+
+bool aprsRxProbeCapture(uint32_t *sent, uint32_t *total, uint32_t *lost)
+{
+	if ((stateValid() == false) || ((s_probe.capActive == false) && (s_probe.capDone == false)))
+	{
+		return false;
+	}
+	*sent = s_probe.capSent;
+	*total = s_probe.capTotal;
+	*lost = s_probe.capLost;
+	return true;
+}
+
 /* ---- переривання DMA: лише скласти блок у кільце ---------------------------------- */
 
 void aprsRxProbeI2SBlock(uint32_t bufNum)
@@ -202,37 +260,74 @@ void aprsRxProbeI2SBlock(uint32_t bufNum)
 		return;
 	}
 
+	/* Колбеки DMA мають іти строго по черзі: половина (0), повний (1), половина... */
+	if (bufNum == 0U)
+	{
+		s_probe.cbHalf++;
+	}
+	else
+	{
+		s_probe.cbFull++;
+	}
+	if ((s_probe.cbHalf + s_probe.cbFull > 1U) && (bufNum == s_probe.cbLast))
+	{
+		s_probe.cbOrder++;
+	}
+	s_probe.cbLast = (uint8_t)bufNum;
+
 	uint8_t h = s_probe.head;
-	uint8_t next = (uint8_t)((h + 1U) % APRS_PROBE_RING);
+	uint8_t next = (uint8_t)((h + 1U) % s_probe.slots);
 	s_probe.isrBlocks++;
 	s_probe.lastBlockMs = ticksGetMillis();
-	if (next == s_probe.tail)
+	uint32_t seq = s_probe.seqCounter++;
+	if ((next == s_probe.tail) || (s_probe.capActive && (next == s_probe.usbTail)))
 	{
-		s_probe.overflows++;   /* тік не встигає -- блок губимо, демодулятор переживе як шум */
+		/* тік (або USB) не встигає -- блок губимо; демодулятор переживе як шум, запис -- як
+		 * пропуск номера блока (ПК-бік підставить тишу й порахує) */
+		s_probe.overflows++;
+		if (s_probe.capActive && (next == s_probe.usbTail))
+		{
+			s_probe.capLost++;
+		}
 		return;
 	}
 
 	/* Половина буфера: 2 x 160 півслів = 160 стерео-кадрів (L, R), 20 мс при 8 кГц.
-	 * Лівий канал -- парні (як у soundReceiveRefillData()); R2: L і R однакові. */
-	int16_t *dst = APRS_PROBE_RING_BUF[h];
-	int o = 0;
-	for (int j = 0; j < 2; j++)
+	 * Лівий канал -- парні (як у soundReceiveRefillData()); R2: L і R однакові.
+	 * Колбек -- від RX-DMA (HAL: hdmarx->XferHalfCpltCallback), тож ця половина вже вся записана,
+	 * а DMA тим часом пише іншу. */
+	const uint16_t *src = &i2s_Rx_Buffer[bufNum][0][0];
+	if (s_probe.stereo)
 	{
-		for (int i = 0; i < (WAV_BUFFER_SIZE / 2); i++)
+		memcpy(APRS_PROBE_RING_BASE + ((uint32_t)h * 2U * APRS_PROBE_BLOCK), src, 2U * APRS_PROBE_BLOCK * sizeof(uint16_t));
+	}
+	else
+	{
+		uint16_t *dst = APRS_PROBE_RING_BASE + ((uint32_t)h * APRS_PROBE_BLOCK);
+		for (uint32_t i = 0; i < APRS_PROBE_BLOCK; i++)
 		{
-			dst[o++] = (int16_t)i2s_Rx_Buffer[bufNum][j][2 * i];
+			dst[i] = src[2U * i];
 		}
 	}
+	s_probe.slotSeq[h] = seq;
 	__DMB();
 	s_probe.head = next;
 }
 
 /* ---- обробка (тік) ---------------------------------------------------------------- */
 
-static void onFrame(const uint8_t *frame, uint16_t len, void *ctx)
+static void onFrame(const uint8_t *frame, uint16_t len, bool fcsOk, void *ctx)
 {
 	(void)ctx;
 	aprsProbeVar_t *v = &s_probe.var[s_probe.variant];
+	if (fcsOk == false)
+	{
+		/* R4: що саме прийшло з помилкою -- довжина з FCS і перші 16 байтів */
+		v->badLen = len;
+		memset(v->badHead, 0, sizeof(v->badHead));
+		memcpy(v->badHead, frame, (len < sizeof(v->badHead)) ? len : sizeof(v->badHead));
+		return;
+	}
 	if (ax25Summary(frame, len, v->srcDst, sizeof(v->srcDst), v->info, sizeof(v->info)) == false)
 	{
 		strcpy(v->srcDst, "?");   /* FCS правильний, але адреси не схожі на AX.25 */
@@ -251,6 +346,7 @@ static void processBlock(const int16_t *x)
 	apBgResult_t br;
 
 	afskProcess(d, x, APRS_PROBE_BLOCK);
+	apStreamBlock(&s_probe.stream, x);
 
 	if (d->nFlagSeq != 0)
 	{
@@ -326,10 +422,22 @@ static void measureFs(void)
 	}
 }
 
-static void ringReset(void)
+static void ringLayout(bool stereo)
 {
+	s_probe.stereo = stereo ? 1 : 0;
+	s_probe.slots = stereo ? APRS_PROBE_SLOTS_STEREO : APRS_PROBE_SLOTS_MONO;
 	s_probe.head = 0;
 	s_probe.tail = 0;
+	s_probe.usbTail = 0;
+}
+
+static void ringReset(void)
+{
+	ringLayout(s_probe.capActive && s_probe.capStereo);
+	s_probe.cbLast = 1;   /* перший колбек -- половина (0) */
+	s_probe.cbHalf = 0;
+	s_probe.cbFull = 0;
+	s_probe.cbOrder = 0;
 	s_probe.isrBlocks = 0;
 	s_probe.overflows = 0;
 	s_probe.blocks = 0;
@@ -349,6 +457,7 @@ static void dspReset(void)
 		afskSetSampleRate(&s_probe.demod, s_probe.fsAppliedHz);
 	}
 	apBgInit(&s_probe.bg);
+	apStreamInit(&s_probe.stream);
 	s_probe.notchHz = 0;
 	s_probe.quiet = APRS_PROBE_NOTCH_QUIET;   /* серій прапорців ще не було */
 }
@@ -520,6 +629,11 @@ void aprsRxProbeResetCurrent(void)
 	if (stateValid())
 	{
 		memset(&s_probe.var[s_probe.variant], 0, sizeof(aprsProbeVar_t));
+		memset(s_probe.demod.pllHist, 0, sizeof(s_probe.demod.pllHist));
+		apStreamInit(&s_probe.stream);
+		s_probe.cbHalf = 0;
+		s_probe.cbFull = 0;
+		s_probe.cbOrder = 0;
 	}
 }
 
@@ -568,10 +682,11 @@ void aprsRxProbeService(void)
 	}
 	else
 	{
-		/* Стоковий код переписує 0x36/0x10 на початку прийому (trx.c) і на біпах (sound.c) --
-		 * повертаємо регістри варіанта: одразу після таких подій і раз на 250 мс. */
-		if ((melody == false) &&
-				((rf != s_probe.lastRf) || s_probe.lastMelody || ((now - s_probe.lastApplyMs) >= APRS_PROBE_REAPPLY_MS)))
+		/* Стоковий код переписує 0x36/0x10 на початку прийому (trx.c), на біпах (sound.c) і на
+		 * підказках (voicePrompts.c) -- повертаємо регістри варіанта одразу після таких подій.
+		 * R4: періодичне перезаписування раз на 250 мс прибрано -- [гіпотеза] запис 0x10 (режим)
+		 * посеред прийому може скидати тракт HR-C6000, а штатний А1 його й не потребує. */
+		if ((melody == false) && ((rf != s_probe.lastRf) || s_probe.lastMelody || s_probe.lastPrompt))
 		{
 			regsApplyVariant();
 		}
@@ -595,16 +710,169 @@ void aprsRxProbeService(void)
 	{
 		uint8_t t = s_probe.tail;
 		__DMB();
-		processBlock(APRS_PROBE_RING_BUF[t]);
-		s_probe.tail = (uint8_t)((t + 1U) % APRS_PROBE_RING);
+		if (s_probe.stereo)
+		{
+			int16_t l[APRS_PROBE_BLOCK];
+			const uint16_t *src = APRS_PROBE_RING_BASE + ((uint32_t)t * 2U * APRS_PROBE_BLOCK);
+			for (uint32_t i = 0; i < APRS_PROBE_BLOCK; i++)
+			{
+				l[i] = (int16_t)src[2U * i];
+			}
+			processBlock(l);
+		}
+		else
+		{
+			processBlock((const int16_t *)(APRS_PROBE_RING_BASE + ((uint32_t)t * APRS_PROBE_BLOCK)));
+		}
+		s_probe.tail = (uint8_t)((t + 1U) % s_probe.slots);
 	}
 	if (s_probe.i2sRunning)
 	{
 		measureFs();
 	}
 
+	/* ПК перестав забирати блоки (закрили програму, витягли кабель) -- запис зупиняємо, інакше
+	 * повне кільце (usbTail стоїть) губило б усі блоки й демодулятору. */
+	if (s_probe.capActive && ((now - s_probe.capPollMs) > APRS_PROBE_USB_IDLE_MS))
+	{
+		s_probe.capActive = false;
+		s_probe.capDone = true;
+	}
+
 	s_probe.lastRf = rf;
 	s_probe.lastMelody = melody;
+	s_probe.lastPrompt = prompt;
+}
+
+/* ---- USB-запис сирих відліків (R4) ---------------------------------------------------- *
+ * Опкод CPS 'C' 0xB5 (usb_com.c). Запит: [ 'C', 0xB5, sub, ... ]:
+ *   sub 0 -- стан; sub 1 -- старт: [3] = режим (0 -- L, 16 біт; 1 -- L,R як у кадрі I2S),
+ *            [4..5] = секунди (BE, 1..120); sub 2 -- читати блоки; sub 3 -- стоп.
+ * Відповідь (після [cmd, len_hi, len_lo] у usb_com.c), усе LE:
+ *   [0] версія, [1] стан (0 -- гаразд, 1 -- екран проби закрито, 2 -- не FM, 3 -- I2S не йде,
+ *   4 -- запису немає), [2] прапорці (біт0 -- йде, біт1 -- завершено, біт2 -- L,R),
+ *   [3] варіант (№ з R2), [4..5] блоків у відповіді, [6..9] надіслано блоків усього,
+ *   [10..13] втрачено блоків (кільце переповнилось), [14..15] замовлено блоків,
+ *   [16..17] виміряна fs, Гц (0 -- ще ні), [18..19] 0;
+ *   далі блоки: [номер блока u32][160 x int16 L] або [номер u32][320 x int16 L,R].
+ * Запис іде потоком через те саме кільце -- увесь запис ніде не зберігається. */
+static void put16(volatile uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+}
+
+static void put32(volatile uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+	p[2] = (uint8_t)(v >> 16);
+	p[3] = (uint8_t)(v >> 24);
+}
+
+int aprsRxProbeUsb(const volatile uint8_t *req, int reqLen, volatile uint8_t *out, int outMax)
+{
+	uint8_t sub = (reqLen > 2) ? req[2] : 0;
+	uint8_t status = 0;
+	uint32_t nBlocks = 0;
+	int n = APRS_PROBE_USB_HDR;
+
+	if (outMax < (int)APRS_PROBE_USB_HDR)
+	{
+		return 0;
+	}
+	if (stateValid())
+	{
+		s_probe.capPollMs = ticksGetMillis();
+	}
+
+	if (stateValid() == false)
+	{
+		status = 1;
+	}
+	else if (s_probe.status == APRS_PROBE_ST_NOT_FM)
+	{
+		status = 2;
+	}
+
+	if ((status == 0) && (sub == 1))
+	{
+		if (s_probe.i2sRunning == false)
+		{
+			status = 3;
+		}
+		else
+		{
+			uint32_t secs = (reqLen > 5) ? (((uint32_t)req[4] << 8) | req[5]) : 15U;
+			if (secs < 1U) { secs = 1U; }
+			if (secs > APRS_PROBE_USB_MAX_SECS) { secs = APRS_PROBE_USB_MAX_SECS; }
+			/* Новий розклад кільця: на час зміни переривання блок пропускає (i2sRunning). */
+			s_probe.i2sRunning = false;
+			__DMB();
+			s_probe.capStereo = ((reqLen > 3) && (req[3] & 1)) ? 1 : 0;
+			s_probe.capTotal = (uint16_t)(secs * 50U);
+			s_probe.capSent = 0;
+			s_probe.capLost = 0;
+			s_probe.capDone = false;
+			s_probe.capActive = true;
+			s_probe.seqCounter = 0;
+			ringLayout(s_probe.capStereo != 0);
+			__DMB();
+			s_probe.i2sRunning = true;
+		}
+	}
+	else if ((status == 0) && (sub == 2))
+	{
+		if ((s_probe.capActive == false) && (s_probe.capDone == false))
+		{
+			status = 4;
+		}
+		else
+		{
+			uint32_t words = s_probe.stereo ? (2U * APRS_PROBE_BLOCK) : APRS_PROBE_BLOCK;
+			uint32_t bsize = 4U + (words * 2U);
+			while (s_probe.capActive && (s_probe.usbTail != s_probe.head) && ((uint32_t)n + bsize <= (uint32_t)outMax))
+			{
+				uint8_t t = s_probe.usbTail;
+				const uint16_t *src = APRS_PROBE_RING_BASE + ((uint32_t)t * words);
+				put32(&out[n], s_probe.slotSeq[t]);
+				n += 4;
+				for (uint32_t i = 0; i < words; i++)
+				{
+					put16(&out[n], src[i]);
+					n += 2;
+				}
+				s_probe.usbTail = (uint8_t)((t + 1U) % s_probe.slots);
+				nBlocks++;
+				if (++s_probe.capSent >= s_probe.capTotal)
+				{
+					s_probe.capActive = false;
+					s_probe.capDone = true;
+				}
+			}
+		}
+	}
+	else if (sub == 3)
+	{
+		if (stateValid())
+		{
+			s_probe.capActive = false;
+			s_probe.capDone = true;
+		}
+	}
+
+	out[0] = APRS_PROBE_USB_VER;
+	out[1] = status;
+	out[2] = (uint8_t)((stateValid() && s_probe.capActive ? 1U : 0U) | (stateValid() && s_probe.capDone ? 2U : 0U) |
+			(stateValid() && s_probe.capStereo ? 4U : 0U));
+	out[3] = stateValid() ? s_variants[s_probe.variant][3] : 0;
+	put16(&out[4], nBlocks);
+	put32(&out[6], stateValid() ? s_probe.capSent : 0U);
+	put32(&out[10], stateValid() ? s_probe.capLost : 0U);
+	put16(&out[14], stateValid() ? s_probe.capTotal : 0U);
+	put16(&out[16], stateValid() ? s_probe.fsHz : 0U);
+	put16(&out[18], 0U);
+	return n;
 }
 
 #endif /* APRS_RX_PROBE */

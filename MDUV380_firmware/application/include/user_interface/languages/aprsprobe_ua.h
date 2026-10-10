@@ -7,7 +7,8 @@
  * Окремим файлом, а не полями stringsTable_t: таблицю читає CPS. Екран існує лише в
  * українській збірці з ENABLE_APRS_RX_PROBE, тож англійських відповідників немає.
  *
- * Ширина: FONT_SIZE_1 -- 6 px на символ, екран 160 px => максимум 26 символів;
+ * Ширина: FONT_SIZE_1 -- 6 px на символ, екран 160 px => максимум 26 символів (з найдовшими
+ * числами -- перевірено рендером R4; «Макс» -- градуси);
  * заголовок (FONT_SIZE_2) -- 20; пункт меню (FONT_SIZE_3, буфер 17) -- до 16.
  */
 #ifndef USER_INTERFACE_LANGUAGES_APRSPROBE_UA_H_
@@ -17,6 +18,8 @@
 #define APRSPROBE_TITLE          "APRS проба"
 #define APRSPROBE_TITLE_PKT      "APRS проба: пакети"
 #define APRSPROBE_TITLE_BG       "APRS проба: фон"
+#define APRSPROBE_TITLE_STREAM   "APRS проба: потік"
+#define APRSPROBE_TITLE_FRAME    "APRS проба: кадр"
 
 /* DMR-канал: нічого не чіпаємо. */
 #define APRSPROBE_ONLY_FM        "Лише FM"
@@ -49,6 +52,23 @@
 #define APRSPROBE_FMT_FS         "fs %lu Гц (за %lu с)"
 #define APRSPROBE_FS_WAIT        "fs: вимірюю (5 с)"
 #define APRSPROBE_FMT_LOST       "Втрачено блоків: %lu"
+
+/* R4, сторінка «потік»: сталий тон 1200 Гц -- фаза на межах блоків по 160 (DMA-половин). */
+#define APRSPROBE_FMT_TONE       "Тон 1200 A=%u бл.%lu"
+#define APRSPROBE_FMT_JUMP_B     "Стрибки >30: межа %lu"
+#define APRSPROBE_FMT_JUMP_IN    " всередині %lu (контр.)"
+#define APRSPROBE_FMT_JUMP_MAX   "Макс: межа %u, вн. %u"
+#define APRSPROBE_FMT_TONE_OFF   "Розстройка тону %s%lu.%lu Гц"
+#define APRSPROBE_FMT_DMA        "DMA пол/пов %lu/%lu"
+#define APRSPROBE_FMT_DMA_ORDER  "  порушень черги: %lu"
+#define APRSPROBE_FMT_USB        "USB %lu/%lu, втр. %lu"
+
+/* R4, сторінка «кадр»: останній кадр із помилковим FCS і фаза тактів. */
+#define APRSPROBE_FMT_BADLEN     "FCS-помилка: %u Б"
+#define APRSPROBE_BAD_NONE       "Помилкових кадрів ще нема"
+#define APRSPROBE_FMT_ADDR       "Адр.: %s"
+#define APRSPROBE_PLL_TITLE      "ФАПЧ, % на 1/8 біта:"
+#define APRSPROBE_FMT_PLL_N      "переходів: %lu"
 
 /* Значення регістрів на вході (їх і відновлюємо). «?» -- прочитати не вдалося, відновлюються
  * штатні FM-значення. */

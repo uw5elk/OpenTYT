@@ -1,11 +1,14 @@
 /*
- * menuAprsRxProbe.c -- екран «APRS проба» (R3): прийом APRS з I2S від HR-C6000 на 6 варіантах
- * регістрів кодека. Дві сторінки: «пакети» (лічильники кадрів і останній правильний кадр
- * поточного варіанта) і «фон» (розгортка 100..3900 Гц, частка топ-1, частота дискретизації).
+ * menuAprsRxProbe.c -- екран «APRS проба» (R3/R4): прийом APRS з I2S від HR-C6000 на 6 варіантах
+ * регістрів кодека. Сторінки (вгору/вниз по колу): «пакети» (лічильники кадрів і останній
+ * правильний кадр поточного варіанта), «фон» (розгортка 100..3900 Гц, частка топ-1, частота
+ * дискретизації), R4: «потік» (безперервність тону 1200 Гц на межах блоків, колбеки DMA) і
+ * «кадр» (останній кадр із помилковим FCS: довжина, hex, адреси «як є»; фаза тактів).
  * Джерело, демодулятор і відновлення стану -- functions/aprs_rx_probe.c; кроки -- TESTING.md, AE.
  *
  * Керування: вліво/вправо -- варіант; вгору/вниз -- сторінка; GREEN -- скинути лічильники
- * поточного варіанта; # -- режекція авто/вимк; RED -- вихід.
+ * поточного варіанта (і «потік», і фазу тактів); # -- режекція авто/вимк; RED -- вихід.
+ * USB-запис на ПК (опкод 0xB5) іде, поки екран відкрито; стан -- у рядку 1.
  * Перемальовування -- раз на 250 мс і на кожну подію.
  */
 #include "user_interface/menuAprsRxProbe.h"
@@ -24,7 +27,8 @@
 
 /* Стан екрана -- у CCM; ініціалізується в menuAprsRxProbeEnter() (до того не читається). */
 static uint32_t s_lastDrawMs PROBE_CCM;
-static uint8_t  s_page       PROBE_CCM;   /* 0 -- пакети, 1 -- фон */
+static uint8_t  s_page       PROBE_CCM;   /* 0 -- пакети, 1 -- фон, 2 -- потік, 3 -- кадр */
+#define PROBE_PAGES          4U
 
 static void printRow(int row, const char *text)
 {
@@ -101,6 +105,93 @@ static void drawBackground(const aprsProbeVar_t *st)
 	printRow(7, buf);
 }
 
+static void drawStream(void)
+{
+	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
+	const apStream_t *st = aprsRxProbeStream();
+	uint32_t half, full, order;
+
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_TONE, (unsigned)st->amp, (unsigned long)st->blocks);
+	printRow(2, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_JUMP_B, (unsigned long)st->jumpsB);
+	printRow(3, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_JUMP_IN, (unsigned long)st->jumpsIn);
+	printRow(4, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_JUMP_MAX, (unsigned)st->maxB, (unsigned)st->maxIn);
+	printRow(5, buf);
+	{
+		/* у printf прошивки немає float -- десяті вручну */
+		float off = apStreamOffsetHz(st);
+		bool neg = (off < 0.0f);
+		uint32_t t = (uint32_t)((neg ? -off : off) * 10.0f + 0.5f);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_TONE_OFF, (neg ? "-" : "+"), (unsigned long)(t / 10U), (unsigned long)(t % 10U));
+		printRow(6, buf);
+	}
+	aprsRxProbeDmaCounters(&half, &full, &order);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_DMA, (unsigned long)half, (unsigned long)full);
+	printRow(7, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_DMA_ORDER, (unsigned long)order);
+	printRow(8, buf);
+}
+
+static void drawFrame(const aprsProbeVar_t *st)
+{
+	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
+
+	if (st->badLen != 0)
+	{
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_BADLEN, (unsigned)st->badLen);
+		printRow(2, buf);
+		for (int r = 0; r < 2; r++)
+		{
+			int o = 0;
+			for (int i = 0; i < 8; i++)
+			{
+				int k = r * 8 + i;
+				if (k < (int)st->badLen)
+				{
+					o += snprintf(&buf[o], sizeof(buf) - o, (i == 0) ? "%02X" : " %02X", (unsigned)st->badHead[k]);
+				}
+			}
+			buf[o] = 0;
+			printRow(3 + r, buf);
+		}
+		{
+			char addr[24];
+			ax25LooseAddr(st->badHead, (st->badLen < 16) ? st->badLen : 16, addr, sizeof(addr));
+			snprintf(buf, sizeof(buf), APRSPROBE_FMT_ADDR, addr);
+			printRow(5, buf);
+		}
+	}
+	else
+	{
+		printRow(2, APRSPROBE_BAD_NONE);
+	}
+
+	{
+		const uint16_t *h = aprsRxProbePllHist();
+		uint32_t tot = 0;
+		for (int i = 0; i < 8; i++)
+		{
+			tot += h[i];
+		}
+		printRow(6, APRSPROBE_PLL_TITLE);
+		int o = 0;
+		for (int i = 0; i < 8; i++)
+		{
+			uint32_t pct = (tot > 0) ? ((h[i] * 100U + tot / 2U) / tot) : 0U;
+			if (pct > 99U)
+			{
+				pct = 99U;
+			}
+			o += snprintf(&buf[o], sizeof(buf) - o, (i == 0) ? "%2lu" : " %2lu", (unsigned long)pct);
+		}
+		printRow(7, buf);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_PLL_N, (unsigned long)tot);
+		printRow(8, buf);
+	}
+}
+
 static void draw(void)
 {
 	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
@@ -110,7 +201,10 @@ static void draw(void)
 	s_lastDrawMs = ticksGetMillis();
 
 	displayClearBuf();
-	menuDisplayTitle((s_page == 0) ? APRSPROBE_TITLE_PKT : APRSPROBE_TITLE_BG);
+	{
+		static const char * const titles[PROBE_PAGES] = { APRSPROBE_TITLE_PKT, APRSPROBE_TITLE_BG, APRSPROBE_TITLE_STREAM, APRSPROBE_TITLE_FRAME };
+		menuDisplayTitle(titles[(s_page < PROBE_PAGES) ? s_page : 0]);
+	}
 
 	if (st == APRS_PROBE_ST_NOT_FM)
 	{
@@ -129,8 +223,14 @@ static void draw(void)
 		printRow(0, buf);
 	}
 
-	/* Рядок 1: стан I2S. */
-	if (st == APRS_PROBE_ST_NO_WS)
+	/* Рядок 1: стан I2S (або USB-запис, якщо йде / щойно був). */
+	uint32_t cs, ct, cl;
+	if (aprsRxProbeCapture(&cs, &ct, &cl))
+	{
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_USB, (unsigned long)cs, (unsigned long)ct, (unsigned long)cl);
+		printRow(1, buf);
+	}
+	else if (st == APRS_PROBE_ST_NO_WS)
 	{
 		printRow(1, APRSPROBE_NO_WS);
 	}
@@ -157,12 +257,21 @@ static void draw(void)
 	{
 		drawPackets(stats);
 	}
-	else
+	else if (s_page == 1)
 	{
 		drawBackground(stats);
 	}
+	else if (s_page == 2)
+	{
+		drawStream();
+	}
+	else
+	{
+		drawFrame(stats);
+	}
 
-	/* Рядок 8: регістри на вході -- саме їх буде відновлено. */
+	/* Рядок 8: регістри на вході -- саме їх буде відновлено (на «потоці» й «кадрі» рядок зайнятий). */
+	if (s_page < 2)
 	{
 		uint8_t e0, r36, r10;
 		bool ok;
@@ -206,7 +315,7 @@ bool menuAprsRxProbeTick(uiEvent_t *ev)
 			}
 			else if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 			{
-				s_page ^= 1;
+				s_page = (uint8_t)((s_page + (KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1U : (PROBE_PAGES - 1U))) % PROBE_PAGES);
 				redraw = true;
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))

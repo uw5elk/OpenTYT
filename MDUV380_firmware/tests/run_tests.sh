@@ -121,6 +121,21 @@ for src in "$TESTS_DIR"/test_*.c; do
 	done
 done
 
+if [ -z "$FILTER" ] || [[ "test_aprs_capture aprs_offline" == *"$FILTER"* ]]; then
+	# R4: самоперевірки інструментів запису «APRS проби» (без рації): розбір відповідей 0xB5 і
+	# склеювання за номерами блоків; офлайн-аналіз еталонного WAV тим самим C-демодулятором.
+	if out="$(python3 "$TESTS_DIR/../tools/test_aprs_capture.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_aprs_capture (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_aprs_capture (python)"; printf '%s\n' "$out" | tail -10
+	fi
+	if out="$(python3 "$TESTS_DIR/../tools/aprs_offline.py" --selftest 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            aprs_offline --selftest (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        aprs_offline --selftest (python)"; printf '%s\n' "$out" | tail -10
+	fi
+fi
+
 # Python-самоперевірка декодера ефірних записів (tools/dmr_data_rx.py). Потрібні numpy+scipy;
 # якщо їх немає (напр. мінімальний CI) -- пропускаємо з попередженням, а не валимо прогін.
 if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
