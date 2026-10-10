@@ -444,4 +444,168 @@ float apBgNotchHz(const apBgResult_t *r)
 	return f;
 }
 
+/* ---- R4: безперервність потоку ------------------------------------------------- */
+
+/* cos/sin(2*pi*1200*n/8000) = cos/sin(2*pi*3n/20): період -- 20 відліків. */
+static const float s_c1200[20] =
+{
+	1.00000000f, 0.58778525f, -0.30901699f, -0.95105652f, -0.80901699f,
+	-0.00000000f, 0.80901699f, 0.95105652f, 0.30901699f, -0.58778525f,
+	-1.00000000f, -0.58778525f, 0.30901699f, 0.95105652f, 0.80901699f,
+	0.00000000f, -0.80901699f, -0.95105652f, -0.30901699f, 0.58778525f
+};
+static const float s_s1200[20] =
+{
+	0.00000000f, 0.80901699f, 0.95105652f, 0.30901699f, -0.58778525f,
+	-1.00000000f, -0.58778525f, 0.30901699f, 0.95105652f, 0.80901699f,
+	0.00000000f, -0.80901699f, -0.95105652f, -0.30901699f, 0.58778525f,
+	1.00000000f, 0.58778525f, -0.30901699f, -0.95105652f, -0.80901699f
+};
+
+float apAtan2Deg(float y, float x)
+{
+	float ax = (x < 0.0f) ? -x : x;
+	float ay = (y < 0.0f) ? -y : y;
+	if ((ax < 1e-20f) && (ay < 1e-20f))
+	{
+		return 0.0f;
+	}
+	float a = (ax > ay) ? (ay / ax) : (ax / ay);
+	float q = a * a;
+	float r = ((((0.0208351f * q - 0.0851330f) * q + 0.1801410f) * q - 0.3302995f) * q + 0.9998660f) * a;
+	if (ay > ax)
+	{
+		r = 1.57079633f - r;
+	}
+	if (x < 0.0f)
+	{
+		r = 3.14159265f - r;
+	}
+	if (y < 0.0f)
+	{
+		r = -r;
+	}
+	return r * 57.2957795f;
+}
+
+void apStreamInit(apStream_t *st)
+{
+	st->prevRe = st->prevIm = 0.0f;
+	st->havePrev = 0;
+	st->blocks = st->jumpsB = st->jumpsIn = 0;
+	st->maxB = st->maxIn = 0;
+	st->amp = 0;
+	st->sumDphi = 0.0f;
+	st->nDphi = 0;
+}
+
+static void halfPhasor(const int16_t *x, int n0, float *re, float *im)
+{
+	float r = 0.0f, i = 0.0f;
+	for (int n = n0; n < n0 + 80; n++)
+	{
+		int k = n % 20;
+		r += (float)x[n] * s_c1200[k];
+		i -= (float)x[n] * s_s1200[k];
+	}
+	*re = r;
+	*im = i;
+}
+
+/* Кут між фазорами (b відносно a), град, 0..180. */
+static float angleBetween(float aRe, float aIm, float bRe, float bIm)
+{
+	float re = bRe * aRe + bIm * aIm;   /* b * conj(a) */
+	float im = bIm * aRe - bRe * aIm;
+	float d = apAtan2Deg(im, re);
+	return (d < 0.0f) ? -d : d;
+}
+
+static uint16_t clampDeg(float d)
+{
+	return (uint16_t)((d > 180.0f) ? 180.0f : (d + 0.5f));
+}
+
+void apStreamBlock(apStream_t *st, const int16_t *x)
+{
+	float r1, i1, r2, i2;
+	halfPhasor(x, 0, &r1, &i1);
+	halfPhasor(x, 80, &r2, &i2);
+
+	/* амплітуда синусоїди: |X| = A * N / 2, N = 80 */
+	float m1 = r1 * r1 + i1 * i1, m2 = r2 * r2 + i2 * i2;
+	float a2 = (m1 < m2) ? m1 : m2;                 /* слабша половина */
+	uint32_t amp = (2U * apIsqrt64((uint64_t)a2)) / 80U;
+	st->amp = (uint16_t)((amp > 65535U) ? 65535U : amp);
+
+	/* Шум: дисперсія блока мінус потужність тону. Амплітуда DFT від білого шуму на 80 відліках --
+	 * ~2 * sigma / sqrt(80) = 0,22 * sigma; тон рахуємо, якщо він >= 4x цього (0,9 * sigma):
+	 * тоді шумовий розкид фази між половинами ~13 град і поріг 30 град майже не спрацьовує
+	 * сам. Для порівняння завжди є контроль -- стрибки всередині блока. */
+	float sum = 0.0f, sq = 0.0f;
+	for (int n = 0; n < 160; n++)
+	{
+		sum += (float)x[n];
+		sq += (float)x[n] * (float)x[n];
+	}
+	float var = sq / 160.0f - (sum / 160.0f) * (sum / 160.0f);
+	float resVar = var - 0.5f * (float)amp * (float)amp;
+	if (resVar < 0.0f)
+	{
+		resVar = 0.0f;
+	}
+	float minAmp = 0.9f * (float)apIsqrt64((uint64_t)resVar);
+	if (minAmp < (float)AP_STREAM_MIN_AMP)
+	{
+		minAmp = (float)AP_STREAM_MIN_AMP;
+	}
+
+	/* тон є і рівний в обох половинах (не початок/кінець передачі) */
+	bool tone = ((float)amp >= minAmp) && (m1 < 4.0f * m2) && (m2 < 4.0f * m1);
+	if (tone)
+	{
+		float dIn = angleBetween(r1, i1, r2, i2);
+		st->blocks++;
+		if (dIn > (float)AP_STREAM_JUMP_DEG)
+		{
+			st->jumpsIn++;
+		}
+		if (clampDeg(dIn) > st->maxIn)
+		{
+			st->maxIn = clampDeg(dIn);
+		}
+		/* розстройка: знаковий зсув фази за 10 мс */
+		{
+			float re = r2 * r1 + i2 * i1, im = i2 * r1 - r2 * i1;
+			st->sumDphi += apAtan2Deg(im, re);
+			st->nDphi++;
+		}
+		if (st->havePrev)
+		{
+			float dB = angleBetween(st->prevRe, st->prevIm, r1, i1);
+			if (dB > (float)AP_STREAM_JUMP_DEG)
+			{
+				st->jumpsB++;
+			}
+			if (clampDeg(dB) > st->maxB)
+			{
+				st->maxB = clampDeg(dB);
+			}
+		}
+	}
+	st->prevRe = r2;
+	st->prevIm = i2;
+	st->havePrev = tone ? 1 : 0;
+}
+
+float apStreamOffsetHz(const apStream_t *st)
+{
+	if (st->nDphi == 0)
+	{
+		return 0.0f;
+	}
+	/* град за 10 мс -> Гц: f = (deg / 360) / 0,01 с */
+	return (st->sumDphi / (float)st->nDphi) / 3.6f;
+}
+
 #endif /* ENABLE_APRS_RX_PROBE */

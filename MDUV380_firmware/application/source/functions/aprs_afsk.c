@@ -15,10 +15,10 @@
 #define AFSK_ENV_K          0.02f       /* швидкість середнього рівня тону (~50 відліків = 7,5 біта) */
 #endif
 #ifndef AFSK_PLL_LOCKED
-#define AFSK_PLL_LOCKED     0.74f       /* підтягування фази тактів на переході, коли йде кадр (як у Dire Wolf) */
+#define AFSK_PLL_LOCKED     0.65f       /* підтягування фази тактів на переході, коли йде кадр */
 #endif
 #ifndef AFSK_PLL_SEARCH
-#define AFSK_PLL_SEARCH     0.50f       /* ... і коли кадру немає (швидше захоплення) */
+#define AFSK_PLL_SEARCH     0.45f       /* ... і коли кадру немає (швидше захоплення) */
 #endif
 #ifndef AFSK_NOTCH_R
 #define AFSK_NOTCH_R        0.985f      /* радіус полюсів режекції: смуга -3 дБ ~ (1-r)*fs/pi ~ 38 Гц */
@@ -34,6 +34,16 @@ static const float s_bp[2][5] =
 {
 	{ 0.20657208f,  0.41314417f, 0.20657208f,  0.37236352f, 0.38656884f },
 	{ 1.00000000f, -2.00000000f, 1.00000000f, -1.05610092f, 0.50654810f }
+};
+
+/* FIR Гільберта, 15 відводів (вікно Геммінга, h[n] = 2/(pi n) для непарних n): уявна частина
+ * аналітичного сигналу; дійсна -- той самий відлік, затриманий на 7. АЧХ 900-3000 Гц: 0,98-1,01.
+ * R4: без нього короткий кореляційний фільтр дійсного сигналу має «дзеркало» на 2f, і модуль
+ * пульсує на +-15 % -- хост-тест: перекіс -12 дБ навіть без шуму декодувався лише на 17 %. */
+static const float s_hb[AFSK_HILB_LEN] =
+{
+	-0.00727565f, 0.0f, -0.03223775f, 0.0f, -0.13631295f, 0.0f, -0.60761899f, 0.0f,
+	 0.60761899f, 0.0f,  0.13631295f, 0.0f,  0.03223775f, 0.0f,  0.00727565f
 };
 
 /* Кореляційні фільтри: cos/sin(2*pi*f*k/8000), k = 0..AFSK_CORR_LEN-1 (M -- 1200, S -- 2200). */
@@ -100,17 +110,19 @@ static void frameEnd(afskDemod_t *d)
 		return;   /* закоротко або не кратно 8 бітам (7 бітів прапорця вже в bitbuf) */
 	}
 	uint16_t crc = ax25Crc(d->frame, d->len - 2);
-	if ((d->frame[d->len - 2] == (crc & 0xFF)) && (d->frame[d->len - 1] == (crc >> 8)))
+	bool ok = (d->frame[d->len - 2] == (crc & 0xFF)) && (d->frame[d->len - 1] == (crc >> 8));
+	if (ok)
 	{
 		d->nOk++;
-		if (d->cb != NULL)
-		{
-			d->cb(d->frame, (uint16_t)(d->len - 2), d->ctx);
-		}
 	}
 	else
 	{
 		d->nBad++;
+	}
+	if (d->cb != NULL)
+	{
+		/* правильний -- без FCS; помилковий -- як є, з FCS (для діагностики) */
+		d->cb(d->frame, (uint16_t)(ok ? (d->len - 2) : d->len), ok, d->ctx);
 	}
 }
 
@@ -256,25 +268,43 @@ void afskProcess(afskDemod_t *d, const int16_t *x, int n)
 			v = y;
 		}
 
-		/* 3. кореляція на вікні ~1 біта (найновіший відлік -- k = 0) */
-		d->hist[d->hpos] = v;
+		/* 3. аналітичний сигнал (Гільберт) і кореляція з 1200/2200 на вікні 8 відліків (1 мс) */
+		d->hb[d->hbpos] = v;
+		float hre = 0.0f, him = 0.0f;
+		{
+			int q = d->hbpos;
+			for (int k = 0; k < AFSK_HILB_LEN; k++)
+			{
+				him += s_hb[k] * d->hb[q];
+				if (k == (AFSK_HILB_LEN / 2))
+				{
+					hre = d->hb[q];
+				}
+				q = (q == 0) ? (AFSK_HILB_LEN - 1) : (q - 1);
+			}
+		}
+		d->hbpos = (uint8_t)((d->hbpos + 1 >= AFSK_HILB_LEN) ? 0 : (d->hbpos + 1));
+
+		d->hist[d->hpos] = hre;
+		d->histQ[d->hpos] = him;
 		float im = 0.0f, qm = 0.0f, is = 0.0f, qs = 0.0f;
 		int p = d->hpos;
 		for (int k = 0; k < AFSK_CORR_LEN; k++)
 		{
-			float h = d->hist[p];
-			im += h * s_cM[k];
-			qm += h * s_sM[k];
-			is += h * s_cS[k];
-			qs += h * s_sS[k];
+			/* (re + j im) * (cos + j sin) */
+			float a = d->hist[p], b = d->histQ[p];
+			im += a * s_cM[k] - b * s_sM[k];
+			qm += a * s_sM[k] + b * s_cM[k];
+			is += a * s_cS[k] - b * s_sS[k];
+			qs += a * s_sS[k] + b * s_cS[k];
 			p = (p == 0) ? (AFSK_CORR_LEN - 1) : (p - 1);
 		}
 		d->hpos = (uint8_t)((d->hpos + 1 >= AFSK_CORR_LEN) ? 0 : (d->hpos + 1));
 
 		/* 4. рішення з поправкою на перекіс: порівнюємо M/sqrt(eM) і S/sqrt(eS), де eM, eS --
 		 * середні рівні тонів, коли кожен «виграє». Без кореня: M^2*eS проти S^2*eM. Повне
-		 * нормування (M/eM проти S/eS) на слабшому тоні підсилює і його шум -- хост-тест показав
-		 * гірший поріг на перекосі -6 дБ; «половинне» -- найкраще з перевірених. */
+		 * нормування (M/eM проти S/eS) на слабшому тоні підсилює і його шум; хост-тест
+		 * (R3, R4): «половинне» -- найкраще з перевірених, з Гільбертом тримає перекіс +-12 дБ. */
 		float pm = im * im + qm * qm;
 		float ps = is * is + qs * qs;
 		float m = pm * (d->envS + 1e-3f);
@@ -300,6 +330,16 @@ void afskProcess(afskDemod_t *d, const int16_t *x, int n)
 		}
 		if (data != d->lastData)
 		{
+			/* Гістограма фази тактів на переході (0 -- ідеал, +-2^31 -- пів біта): лише всередині
+			 * кадру після >= 2 прапорців поспіль, тобто на справжньому пакеті, а не на шумі. */
+			if (d->inFrame && (d->flagRun >= 2))
+			{
+				uint32_t bin = ((uint32_t)d->pll + 0x80000000u) >> (32 - 3);
+				if (d->pllHist[bin] < 0xFFFF)
+				{
+					d->pllHist[bin]++;
+				}
+			}
 			d->pll = (int32_t)((float)d->pll * (d->inFrame ? AFSK_PLL_LOCKED : AFSK_PLL_SEARCH));
 		}
 		d->lastData = data;
@@ -391,6 +431,47 @@ bool ax25Summary(const uint8_t *f, int len, char *srcDst, int sdSize, char *info
 	}
 	info[ii] = 0;
 	return true;
+}
+
+static int looseOne(const uint8_t *a, char *out, int size)
+{
+	int n = 0;
+	int last = 5;
+	while ((last >= 0) && ((a[last] >> 1) == ' '))
+	{
+		last--;
+	}
+	for (int i = 0; (i <= last) && (n < size - 1); i++)
+	{
+		char c = (char)(a[i] >> 1);
+		out[n++] = ((c >= 0x21) && (c < 0x7F)) ? c : '.';
+	}
+	int ssid = (a[6] >> 1) & 0x0F;
+	if (ssid != 0)
+	{
+		if (n < size - 1) { out[n++] = '-'; }
+		if ((ssid >= 10) && (n < size - 1)) { out[n++] = '1'; }
+		if (n < size - 1) { out[n++] = (char)('0' + (ssid % 10)); }
+	}
+	out[n] = 0;
+	return n;
+}
+
+void ax25LooseAddr(const uint8_t *f, int len, char *out, int size)
+{
+	char dst[12], src[12];
+	out[0] = 0;
+	if ((len < 14) || (size < 4))
+	{
+		return;
+	}
+	looseOne(&f[0], dst, sizeof(dst));
+	looseOne(&f[7], src, sizeof(src));
+	int n = 0;
+	for (const char *p = src; *p && (n < size - 1); p++) { out[n++] = *p; }
+	if (n < size - 1) { out[n++] = '>'; }
+	for (const char *p = dst; *p && (n < size - 1); p++) { out[n++] = *p; }
+	out[n] = 0;
 }
 
 #endif /* ENABLE_APRS_RX_PROBE */

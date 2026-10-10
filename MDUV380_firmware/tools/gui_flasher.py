@@ -48,6 +48,7 @@ import custom_data as cd        # безпечний read/write custom-data бл
                                  # RCTL і т.д. в ОДНОМУ регіоні -- див. коментар у custom_data.py)
 import rctl_config as rctl      # формат блоку "RCTL" (allowlist віддаленого керування)
 import callreplay_config as crcfg  # формат блоку "CRPL" (перемикач "Запис RX" для "Переслухати")
+import aprs_capture             # R4: запис сирих відліків «APRS проби» (опкод 0xB5) -> WAV
 
 try:
     import serial  # той самий пакет, яким уже користується dmr_reboot_dfu.py
@@ -288,6 +289,11 @@ class FlasherApp(tk.Tk):
                                       command=self._open_call_replay_config)
         self.call_replay_button.pack(side="left", padx=8)
 
+        # R4 (ТИМЧАСОВО, поки йдуть досліди APRS): запис звуку з екрана «APRS проба» на ПК.
+        self.aprs_rec_button = ttk.Button(action_frame, text="Записати звук APRS (15 с)",
+                                          command=self._on_aprs_record_clicked)
+        self.aprs_rec_button.pack(side="left", padx=8)
+
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=12, pady=(0, 6))
 
@@ -403,6 +409,8 @@ class FlasherApp(tk.Tk):
                     self.progress["value"] = payload
                 elif kind == "done":
                     self._on_flash_finished(*payload)
+                elif kind == "aprs_done":
+                    self._on_aprs_record_finished(*payload)
         except queue.Empty:
             pass
         self.after(50, self._poll_queue)
@@ -513,6 +521,56 @@ class FlasherApp(tk.Tk):
             self.queue.put(("done", (ok, reason)))
 
     # --- AES-ключі (окреме вікно -- інший стан USB, рація НЕ в DFU) -----------
+
+    # --- R4: запис звуку APRS ------------------------------------------------------------
+
+    def _on_aprs_record_clicked(self):
+        if self.flashing or getattr(self, "_aprs_recording", False):
+            return
+        if serial is None:
+            messagebox.showerror("Немає pyserial", "Для запису потрібен пакет pyserial.")
+            return
+        if not messagebox.askokcancel(
+                "Запис звуку APRS",
+                "1. На рації: аналоговий (FM) канал, Налаштування -> Опції рації -> «APRS проба» "
+                "(екран має бути відкритий увесь час запису).\n"
+                "2. Рація підключена USB-кабелем (як для CPS).\n"
+                "3. Після «OK» обери теку -- запис 15 с почнеться одразу; під час запису хай "
+                "друга рація шле 3-5 пакетів APRS.\n\n"
+                "Результат: aprs_ДАТА_ЧАС.wav і .txt у вибраній теці -- надішли обидва."):
+            return
+        folder = filedialog.askdirectory(title="Куди зберегти запис APRS")
+        if not folder:
+            return
+        self._aprs_recording = True
+        self.aprs_rec_button.config(state="disabled")
+        self.progress["value"] = 0
+        threading.Thread(target=self._aprs_record_worker, args=(folder,), daemon=True).start()
+
+    def _aprs_record_worker(self, folder):
+        q = self.queue
+        try:
+            res = aprs_capture.capture(
+                15, stereo=False,
+                log=lambda t: q.put(("log", t)),
+                progress=lambda f: q.put(("progress", int(f * 100))))
+            path = os.path.join(folder, time.strftime("aprs_%Y%m%d_%H%M%S.wav"))
+            txt = aprs_capture.save(res, path)
+            q.put(("log", res["report"]))
+            q.put(("log", "*** Збережено: %s і %s" % (path, txt)))
+            q.put(("aprs_done", (True, path)))
+        except Exception as e:   # noqa: BLE001 -- будь-яку помилку показати користувачу
+            q.put(("log", "!!! Запис APRS: %s" % e))
+            q.put(("aprs_done", (False, str(e))))
+
+    def _on_aprs_record_finished(self, ok, info):
+        self._aprs_recording = False
+        self.aprs_rec_button.config(state="normal")
+        if ok:
+            self.progress["value"] = 100
+            messagebox.showinfo("Запис APRS", "Готово:\n%s\n\nНадішли цей .wav і .txt поруч." % info)
+        else:
+            messagebox.showerror("Запис APRS", "Не вдалося: %s" % info)
 
     def _open_aes_key_manager(self):
         AesKeyManagerWindow(self)

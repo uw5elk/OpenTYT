@@ -151,14 +151,21 @@ static int synth(const sig_t *p, const uint8_t *frame, int flen)
 }
 
 /* ---- приймач ---------------------------------------------------------------- */
-typedef struct { int good; int match; char sd[24]; char info[48]; } rx_t;
+typedef struct { int good; int match; int bad; int badLen; uint8_t badHead[16]; char sd[24]; char info[48]; } rx_t;
 
 static uint8_t s_ref[AFSK_FRAME_MAX];
 static int s_refLen;
 
-static void onFrame(const uint8_t *f, uint16_t len, void *ctx)
+static void onFrame(const uint8_t *f, uint16_t len, bool ok, void *ctx)
 {
 	rx_t *r = (rx_t *)ctx;
+	if (!ok)
+	{
+		r->bad++;
+		r->badLen = len;
+		memcpy(r->badHead, f, (len < 16) ? len : 16);
+		return;
+	}
 	r->good++;
 	if ((len == s_refLen - 2) && (memcmp(f, s_ref, len) == 0)) { r->match++; }
 	ax25Summary(f, len, r->sd, sizeof(r->sd), r->info, sizeof(r->info));
@@ -325,13 +332,28 @@ int main(void)
 	p.twistDb = 6;   double tp = rate(p, 20, NOTCH_OFF, NULL);
 	p.twistDb = -6;  double tm = rate(p, 20, NOTCH_OFF, NULL);
 	CHECK(tp >= 0.9 && tm >= 0.9, "перекіс +6/-6 дБ при SNR поріг+3: %.0f %% / %.0f %%", tp * 100, tm * 100);
+	/* R4: деемфазис HR-C6000 може дати більший перекіс -- до +-12 дБ при SNR 20 дБ. */
+	{
+		const double tw[] = { -12, -9, 9, 12 };
+		for (unsigned k = 0; k < 4; k++)
+		{
+			p.twistDb = tw[k]; p.snrDb = 20;
+			double r20 = rate(p, 20, NOTCH_OFF, NULL);
+			p.snrDb = 99;
+			double rc = rate(p, 10, NOTCH_OFF, NULL);
+			CHECK(r20 >= 0.9 && rc >= 0.99, "перекіс %+.0f дБ: без шуму %.0f %%, SNR 20 дБ %.0f %%", tw[k], rc * 100, r20 * 100);
+		}
+		p.snrDb = thr0 + 3;
+	}
 	p.twistDb = 0;
 	p.fOff = 50;     double fp = rate(p, 20, NOTCH_OFF, NULL);
 	p.fOff = -50;    double fm = rate(p, 20, NOTCH_OFF, NULL);
 	CHECK(fp >= 0.9 && fm >= 0.9, "розстройка +50/-50 Гц: %.0f %% / %.0f %%", fp * 100, fm * 100);
-	p.fOff = 0; p.baudErr = 0.01;  double bp = rate(p, 20, NOTCH_OFF, NULL);
+	p.fOff = 0; p.snrDb = thr0 + 6;
+	p.baudErr = 0.01;              double bp = rate(p, 20, NOTCH_OFF, NULL);
 	p.baudErr = -0.01;             double bm = rate(p, 20, NOTCH_OFF, NULL);
-	CHECK(bp >= 0.9 && bm >= 0.9, "швидкість +1/-1 %%: %.0f %% / %.0f %%", bp * 100, bm * 100);
+	CHECK(bp >= 0.9 && bm >= 0.9, "швидкість +1/-1 %% (SNR поріг+6): %.0f %% / %.0f %%", bp * 100, bm * 100);
+	p.snrDb = thr0 + 3;
 	/* Частота дискретизації 7805 Гц замість 8000 (-2,4 %): біти й тони «швидші» на 2,5 %.
 	 * Без поправки -- зрив, з afskSetSampleRate(виміряна) -- декодується. */
 	p.baudErr = 0.025; p.fOff = 42;
@@ -371,6 +393,63 @@ int main(void)
 		p.intF = 0; p.intRel = 0;
 		double ra = rate(p, 20, NOTCH_AUTO, NULL);
 		CHECK(ra >= 0.9 && s_lastNotch == 0.0f, "без завади: авто-режекція вимкнена, %.0f %%", ra * 100);
+	}
+
+	/* R4: розриви потоку на межах блоків по 160 (як DMA-половини): викинути / продублювати d
+	 * відліків кожні 160. Таблиця -- щоб знати, як це б'є по декодуванню (без шуму). Сторінка
+	 * «потік» на рації ловить такі розриви стрибком фази тону (test_aprs_probe_dsp, apStream). */
+	{
+		const int ds[] = { 0, 1, 2, 4, 8, -1, -2, -4, -8 };
+		static int16_t tmp[MAX_SAMPLES];
+		double res[9];
+		printf("    розриви кожні 160 відліків (без шуму, 10 записів по 2 кадри):");
+		for (unsigned k = 0; k < 9; k++)
+		{
+			int ok = 0, tot = 0;
+			sig_t q = base(); q.frames = 2;
+			s_rng = 31;
+			for (int t = 0; t < 10; t++)
+			{
+				int n = synth(&q, s_ref, s_refLen), o = 0;
+				for (int i = 0; i < n && o < MAX_SAMPLES - 16; i++)
+				{
+					if ((ds[k] > 0) && ((i % 160) >= 160 - ds[k])) { continue; }
+					tmp[o++] = s_buf[i];
+					if ((ds[k] < 0) && ((i % 160) == 159)) { for (int j = 0; j < -ds[k]; j++) { tmp[o++] = s_buf[i]; } }
+				}
+				memcpy(s_buf, tmp, (size_t)o * sizeof(int16_t));
+				rx_t r = runRx(o, NOTCH_OFF);
+				ok += r.match; tot += q.frames;
+			}
+			res[k] = (double)ok / tot;
+			printf(" %+d:%.0f%%", ds[k], res[k] * 100);
+		}
+		printf("\n");
+		CHECK(res[0] >= 0.99, "без розривів -- усі кадри");
+		CHECK(res[2] < 0.5 && res[3] < 0.5 && res[7] < 0.5, "розриви 2+ відліки кожні 160 -- кадри втрачаються (так і має бути видно на рації)");
+	}
+
+	/* R4: кадр із помилковим FCS приходить у зворотний виклик як є (довжина з FCS, перші байти). */
+	{
+		uint8_t bad[AFSK_FRAME_MAX];
+		memcpy(bad, s_ref, (size_t)s_refLen);
+		bad[30] ^= 0x10;   /* один біт в info */
+		p = base(); p.frames = 1;
+		s_rng = 41;
+		n = synth(&p, bad, s_refLen);
+		r = runRx(n, NOTCH_OFF);
+		CHECK(r.good == 0 && r.bad == 1 && r.badLen == s_refLen && memcmp(r.badHead, s_ref, 16) == 0,
+				"кадр з помилкою: FCS помилка 1, довжина %d (з FCS), перші 16 байт -- як надіслано", r.badLen);
+		{
+			char la[24];
+			ax25LooseAddr(r.badHead, 16, la, sizeof(la));
+			CHECK(strcmp(la, "UR5EAA-9>APDR16") == 0, "адреси «як є» з помилкового кадру: %s", la);
+			uint8_t junk[16] = { 0x00, 0xFF, 0x13, 0x88, 0x40, 0x40, 0x61, 0x7E, 0x02, 0x9A, 0x40, 0x40, 0x40, 0x40, 0xE0, 0x00 };
+			ax25LooseAddr(junk, 16, la, sizeof(la));
+			CHECK(strchr(la, '.') != NULL && strchr(la, '>') != NULL, "сміття: «%s» -- з крапками замість непридатних", la);
+		}
+		CHECK(s_d.pllHist[3] + s_d.pllHist[4] > 0, "гістограма фази тактів: є переходи біля ідеалу (біни 3/4: %u/%u)",
+				s_d.pllHist[3], s_d.pllHist[4]);
 	}
 
 	/* Негативні: шум, «голос» (суміш тонів 300-1100 Гц з амплітудною модуляцією), тиша. */
