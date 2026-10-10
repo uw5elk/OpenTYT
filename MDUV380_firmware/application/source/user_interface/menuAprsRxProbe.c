@@ -7,7 +7,8 @@
  * Джерело, демодулятор і відновлення стану -- functions/aprs_rx_probe.c; кроки -- TESTING.md, AE.
  *
  * Керування: вліво/вправо -- варіант; вгору/вниз -- сторінка; GREEN -- скинути лічильники
- * поточного варіанта (і «потік», і фазу тактів); # -- режекція авто/вимк; RED -- вихід.
+ * поточного варіанта (і «потік», і фазу тактів); # -- режекція авто/вимк; * (R5) -- формат
+ * відліку: 10 біт (типово) / 16 біт як є; RED -- вихід.
  * USB-запис на ПК (опкод 0xB5) іде, поки екран відкрито; стан -- у рядку 1.
  * Перемальовування -- раз на 250 мс і на кожну подію.
  */
@@ -94,15 +95,24 @@ static void drawBackground(const aprsProbeVar_t *st)
 
 	if (aprsRxProbeFs(&fs, &secs))
 	{
-		snprintf(buf, sizeof(buf), APRSPROBE_FMT_FS, (unsigned long)fs, (unsigned long)secs);
-		printRow(6, buf);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_FS, (unsigned long)fs, (unsigned long)secs, (unsigned long)aprsRxProbeOverflows());
 	}
 	else
 	{
-		printRow(6, APRSPROBE_FS_WAIT);
+		snprintf(buf, sizeof(buf), APRSPROBE_FS_WAIT, (unsigned long)aprsRxProbeOverflows());
 	}
-	snprintf(buf, sizeof(buf), APRSPROBE_FMT_LOST, (unsigned long)aprsRxProbeOverflows());
-	printRow(7, buf);
+	printRow(6, buf);
+
+	/* R5: формат відліку на цьому варіанті (з останнього GREEN). У R4: біт 10 ~50 %, біти 10..15
+	 * завжди однакові, пік |s| ~360 з 512. */
+	{
+		const apFmt_t *f = &st->fmt;
+		uint32_t pct = (f->n > 0) ? (uint32_t)(((uint64_t)f->b10 * 100U + f->n / 2U) / f->n) : 0U;
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_B10, (unsigned long)pct, (unsigned long)((f->nonUni > 999999U) ? 999999U : f->nonUni));
+		printRow(7, buf);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_NEAR, (unsigned long)((f->nearLim > 999999U) ? 999999U : f->nearLim), (unsigned)f->peak);
+		printRow(8, buf);
+	}
 }
 
 static void drawStream(void)
@@ -248,7 +258,8 @@ static void draw(void)
 	}
 	else
 	{
-		snprintf(buf, sizeof(buf), APRSPROBE_FMT_RUN, (unsigned long)aprsRxProbeBlocks());
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_RUN, (aprsRxProbeFormat16() ? APRSPROBE_BITS16 : APRSPROBE_BITS10),
+				(unsigned long)aprsRxProbeBlocks());
 		printRow(1, buf);
 	}
 
@@ -270,8 +281,9 @@ static void draw(void)
 		drawFrame(stats);
 	}
 
-	/* Рядок 8: регістри на вході -- саме їх буде відновлено (на «потоці» й «кадрі» рядок зайнятий). */
-	if (s_page < 2)
+	/* Рядок 8: регістри на вході -- саме їх буде відновлено (лише на «пакетах»; на інших сторінках
+	 * рядок зайнятий: R5 -- формат відліку на «фоні»). */
+	if (s_page == 0)
 	{
 		uint8_t e0, r36, r10;
 		bool ok;
@@ -321,6 +333,11 @@ bool menuAprsRxProbeTick(uiEvent_t *ev)
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 			{
 				aprsRxProbeResetCurrent();
+				redraw = true;
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR))
+			{
+				aprsRxProbeToggleFormat();   /* R5: 10 біт <-> 16 біт як є */
 				redraw = true;
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH))

@@ -161,6 +161,33 @@ float apStreamOffsetHz(const apStream_t *st);
 /* atan2 у градусах (наближення, похибка < 0,01 град) -- без libm. */
 float apAtan2Deg(float y, float x);
 
+/* ---- R5: формат відліку I2S RX у FM-прийомі ---------------------------------- *
+ * Запис R4 (А1, FT1D): у 16-бітному півслові каналу звук -- лише біти 0..9, доповнення до двох
+ * (знак у біті 9); біти 10..15 однакові між собою, а біт 10 випадковий (P ~ 0,5), не залежить
+ * від звуку й є й у тиші -- додає до «сирого» відліку +-1024 (той самий «фон» RMS ~700 у R2/R3).
+ * Демодулятор, розгортка, «потік» і Goertzel беруть 10-бітний відлік; USB-запис -- сирий. */
+#define AP_FMT_NEAR         480     /* |s| >= цього -- близько до межі +-512 (ризик «перекидання») */
+
+static inline int16_t apSample10(uint16_t u)
+{
+	return (int16_t)((int32_t)((u & 0x3FFU) ^ 0x200U) - 0x200);
+}
+
+typedef struct
+{
+	uint32_t n;                 /* відліків */
+	uint32_t b10;               /* з бітом 10 = 1 */
+	uint32_t nonUni;            /* біти 10..15 не однакові (у R4 -- 0) */
+	uint32_t nearLim;           /* |s| >= AP_FMT_NEAR (s -- 10-бітний) */
+	uint16_t peak;              /* найбільший |s| */
+} apFmt_t;
+
+void apFmtInit(apFmt_t *f);
+/* n сирих півслів через крок stride (1 -- лише L, 2 -- L,R як у кадрі I2S, береться L):
+ * статистика формату в *f (може бути NULL) і відліки для обробки в out: raw16 -- «16 біт як є»
+ * (для порівняння), інакше -- 10-бітні apSample10(). */
+void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, bool raw16, int16_t *out);
+
 /* Допоміжні (для тесту теж). */
 uint32_t apIsqrt64(uint64_t v);
 int16_t  apRatioDb(uint32_t a, uint32_t b);

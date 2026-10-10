@@ -20,7 +20,9 @@
   7. multimon-ng (якщо встановлено): той самий запис, передискретизований до 22050 Гц.
 
 Вжиток:
-    python3 tools/aprs_offline.py запис.wav [--channel 0|1]
+    python3 tools/aprs_offline.py запис.wav [--channel 0|1] [--bits 10|16]
+      --bits 10 (типово, R5) -- звук із бітів 0..9 (доповнення до двох), як у прошивці;
+      --bits 16 -- як є (контроль: запис R4 так дає 0 кадрів)
     python3 tools/aprs_offline.py --selftest      # еталонний кадр з tools/aprs_afsk_ref.py
 Потрібні лише стандартна бібліотека й C-компілятор; numpy/scipy -- для спектра і multimon-ng.
 """
@@ -37,6 +39,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FW = os.path.dirname(HERE)
 FS = 8000
 BLOCK = 160
+NEAR = 480     # R5: 10-бітний |s| >= цього -- близько до межі +-512
+
+
+def to_bits(x, bits):
+    """R5: відлік для обробки. 10 -- звук із бітів 0..9 (доповнення до двох), як у прошивці
+    (apSample10); 16 -- як є (контроль)."""
+    if bits == 16:
+        return list(x)
+    return [((v & 0x3FF) ^ 0x200) - 0x200 for v in x]
 
 
 # ---- читання ----------------------------------------------------------------------------
@@ -96,6 +107,15 @@ def format_report(x):
     out.append("  різних значень: %d з діапазону %d..%d (%d); заповненість %.2f "
                "(для 16-біт звуку з цим RMS -- близько 1; набагато менше -- компандування/зсув)"
                % (used, lo, hi, span, used / float(span)))
+    # R5: у FM-прийомі звук -- біти 0..9, біти 10..15 однакові, біт 10 випадковий
+    b10 = sum(1 for v in x if (v >> 10) & 1) / float(n)
+    nonuni = sum(1 for v in x if ((v >> 10) & 0x3F) not in (0, 0x3F))
+    s10 = to_bits(x, 10)
+    near = sum(1 for v in s10 if abs(v) >= NEAR)
+    out.append("  R5: біт 10 = 1: %.3f; біти 10..15 не однакові: %d; 10-бітний |s| >= %d: %d; пік |s| %d"
+               % (b10, nonuni, NEAR, near, max(abs(v) for v in s10)))
+    out.append("  (у R4: біт 10 ~0,5, біти 10..15 завжди однакові -- звук лише в бітах 0..9; |s| біля 512 --"
+               " ризик «перекидання»)")
     return out
 
 
@@ -313,12 +333,17 @@ def multimon_report(x):
     return ["multimon-ng: кадрів %d" % len(frames)] + ["    " + l for l in r.stdout.splitlines() if l.strip()][:20]
 
 
-def analyze(path, channel=0):
-    x, nch, fr = read_wav(path, channel)
+def analyze(path, channel=0, bits=10):
+    raw, nch, fr = read_wav(path, channel)
     lines = ["Файл: %s (каналів %d, %d Гц, аналізую канал %d)" % (path, nch, fr, channel)]
+    lv, _, _ = level_report(raw)
+    lines += ["Сирі 16 біт (як у записі):"] + ["  " + l for l in lv]
+    lines += format_report(raw)
+    # R5: далі -- відлік, який бачить обробка (типово 10 біт, як у прошивці)
+    x = to_bits(raw, bits)
+    lines.append("=== Далі -- обробка %s ===" % ("10 біт (біти 0..9, як у прошивці R5)" if bits == 10 else "16 біт як є (контроль)"))
     lv, _, _ = level_report(x)
     lines += lv
-    lines += format_report(x)
     lines += boundary_report(x)
     lines += spectrum_report(x)
     lines += packets_report(x)
@@ -328,13 +353,7 @@ def analyze(path, channel=0):
     return "\n".join(lines), raw
 
 
-def selftest():
-    sys.path.insert(0, HERE)
-    import aprs_afsk_ref as ref
-    fr, fcs = ref.frame()
-    s = [0] * 4000 + ref.afsk(fr, amp=6000) + [0] * 4000
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        path = f.name
+def _write_wav(path, s):
     with wave.open(path, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -343,10 +362,26 @@ def selftest():
         if sys.byteorder != "little":
             a.byteswap()
         w.writeframes(a.tobytes())
+
+
+def _run(s, bits):
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        path = f.name
+    _write_wav(path, s)
     try:
-        report, raw = analyze(path)
+        return analyze(path, 0, bits)
     finally:
         os.unlink(path)
+
+
+def selftest():
+    import random
+    sys.path.insert(0, HERE)
+    import aprs_afsk_ref as ref
+    fr, fcs = ref.frame()
+
+    # 1) чистий еталон (амплітуда 6000 -- тож «16 біт як є»)
+    report, raw = _run([0] * 4000 + ref.afsk(fr, amp=6000) + [0] * 4000, 16)
     print(report)
     if raw is None:
         print("ПРОПУЩЕНО: немає C-компілятора")
@@ -357,7 +392,26 @@ def selftest():
     tw = twist_short(ref.afsk(fr, amp=6000))
     tw_ok = (tw is not None) and abs(tw) < 1.5
     print("перекіс рівного еталона: %s дБ -- %s" % ("%.1f" % tw if tw is not None else "?", "гаразд" if tw_ok else "ПРОВАЛ"))
-    good = good and tw_ok
+
+    # 2) R5: той самий пакет «як на рації» -- 10 біт (амплітуда 300 + шум), біти 10..15 випадкові
+    #    однакові. --bits 10 -> 1 кадр, --bits 16 -> 0 (як запис R4: 8 ок проти 0 ок).
+    rnd = random.Random(5)
+    sig = [0] * 4000 + ref.afsk(fr, amp=300) + [0] * 4000
+    packed = []
+    for v in sig:
+        v = int(round(v + rnd.gauss(0, 20)))
+        lo = v & 0x3FF
+        u = lo | (0xFC00 if rnd.random() < 0.5 else 0)
+        packed.append(u - 0x10000 if u >= 0x8000 else u)
+    _, raw10 = _run(packed, 10)
+    _, raw16 = _run(packed, 16)
+    n10 = len([l for l in raw10.splitlines() if l.startswith("OK")])
+    n16 = len([l for l in raw16.splitlines() if l.startswith("OK")])
+    r5_ok = (n10 == 1) and (n16 == 0)
+    print("R5, 10-бітний пакет з випадковим бітом 10: --bits 10 -> %d кадр(ів), --bits 16 -> %d -- %s"
+          % (n10, n16, "гаразд" if r5_ok else "ПРОВАЛ"))
+
+    good = good and tw_ok and r5_ok
     print("САМОПЕРЕВІРКА: %s (еталонний кадр, FCS 0x%04X)" % ("ПРОЙДЕНО" if good else "ПРОВАЛ", fcs))
     return 0 if good else 1
 
@@ -370,7 +424,12 @@ def main():
     ch = 0
     if "--channel" in sys.argv:
         ch = int(sys.argv[sys.argv.index("--channel") + 1])
-    report, _ = analyze(sys.argv[1], ch)
+    bits = 10
+    if "--bits" in sys.argv:
+        bits = int(sys.argv[sys.argv.index("--bits") + 1])
+        if bits not in (10, 16):
+            sys.exit("--bits: 10 або 16")
+    report, _ = analyze(sys.argv[1], ch, bits)
     print(report)
 
 

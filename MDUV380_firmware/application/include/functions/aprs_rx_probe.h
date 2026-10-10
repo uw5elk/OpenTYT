@@ -52,6 +52,7 @@ typedef struct
 	char     srcDst[20];        /* останній правильний кадр: «SRC-n>DST-n» */
 	char     info[24];          /* ... і початок поля info */
 	uint16_t badLen;            /* R4: останній кадр з помилковим FCS -- довжина з FCS (0 -- не було) */
+	apFmt_t  fmt;               /* R5: формат відліку на цьому варіанті (біт 10, біти 10..15, межа +-512) */
 	uint8_t  badHead[16];       /* ... і перші 16 байтів */
 	/* фон -- останнє вікно розгортки (480 мс) на цьому варіанті */
 	uint8_t  bgValid;
@@ -112,6 +113,12 @@ uint32_t aprsRxProbeMsSinceBlock(void);
 const apStream_t *aprsRxProbeStream(void);
 const uint16_t *aprsRxProbePllHist(void);
 void aprsRxProbeDmaCounters(uint32_t *half, uint32_t *full, uint32_t *order);
+
+/* R5: формат відліку для обробки -- 10 біт (типово, правильний) або «16 біт як є» (контроль),
+ * кнопка *. Перемикання скидає демодулятор, розгортку й «потік», лічильники -- ні. USB-запис
+ * завжди сирий. */
+void aprsRxProbeToggleFormat(void);
+bool aprsRxProbeFormat16(void);
 
 /* R4: USB-запис сирих відліків. Стан для екрана (false -- запису не було). */
 bool aprsRxProbeCapture(uint32_t *sent, uint32_t *total, uint32_t *lost);

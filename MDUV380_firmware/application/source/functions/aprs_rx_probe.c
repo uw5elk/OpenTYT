@@ -12,6 +12,8 @@
  *   - I2S3: лише через I2SProbeStart/Stop (i2s.c), прапорці повертаються в «вільно»;
  *   - еко-режим приймача: рівень 0 на час проби, потім -- попередній.
  * R3 прибрав джерело Б (PC3/ADC2/TIM7): на Plus 10W там нічого немає.
+ * R5: у FM-прийомі звук у півслові I2S -- лише біти 0..9 (доповнення до двох), біт 10 --
+ * випадковий (+-1024 «фону»); обробка бере 10-бітний відлік (apSample10), USB-запис -- сирий.
  * Поза екраном проби (aprsRxProbeIsOn() == false) жоден шлях DMR/AMBE/FM не змінено.
  */
 #include "functions/aprs_rx_probe.h"
@@ -119,6 +121,7 @@ typedef struct
 	uint16_t          quiet;        /* блоків без нових серій прапорців */
 	uint16_t          notchHz;
 	bool              lastPrompt;
+	bool              fmt16;        /* R5: обробка «16 біт як є» (контроль); false -- 10 біт */
 	afskDemod_t       demod;
 	apBg_t            bg;
 	apStream_t        stream;       /* R4: безперервність тону 1200 Гц на межах блоків */
@@ -637,6 +640,20 @@ void aprsRxProbeResetCurrent(void)
 	}
 }
 
+void aprsRxProbeToggleFormat(void)
+{
+	if (stateValid())
+	{
+		s_probe.fmt16 = !s_probe.fmt16;
+		dspReset();   /* фільтри й такти, налаштовані на інший формат, -- з нуля */
+	}
+}
+
+bool aprsRxProbeFormat16(void)
+{
+	return stateValid() && s_probe.fmt16;
+}
+
 void aprsRxProbeToggleNotch(void)
 {
 	if (stateValid())
@@ -710,20 +727,12 @@ void aprsRxProbeService(void)
 	{
 		uint8_t t = s_probe.tail;
 		__DMB();
-		if (s_probe.stereo)
-		{
-			int16_t l[APRS_PROBE_BLOCK];
-			const uint16_t *src = APRS_PROBE_RING_BASE + ((uint32_t)t * 2U * APRS_PROBE_BLOCK);
-			for (uint32_t i = 0; i < APRS_PROBE_BLOCK; i++)
-			{
-				l[i] = (int16_t)src[2U * i];
-			}
-			processBlock(l);
-		}
-		else
-		{
-			processBlock((const int16_t *)(APRS_PROBE_RING_BASE + ((uint32_t)t * APRS_PROBE_BLOCK)));
-		}
+		/* R5: відлік для обробки -- 10 біт (або «16 біт як є» для контролю); кільце лишається
+		 * сирим, бо з нього ж читає USB-запис. */
+		int16_t x[APRS_PROBE_BLOCK];
+		const uint16_t *src = APRS_PROBE_RING_BASE + ((uint32_t)t * (s_probe.stereo ? (2U * APRS_PROBE_BLOCK) : APRS_PROBE_BLOCK));
+		apFmtExtract(&s_probe.var[s_probe.variant].fmt, src, s_probe.stereo ? 2 : 1, APRS_PROBE_BLOCK, s_probe.fmt16, x);
+		processBlock(x);
 		s_probe.tail = (uint8_t)((t + 1U) % s_probe.slots);
 	}
 	if (s_probe.i2sRunning)
