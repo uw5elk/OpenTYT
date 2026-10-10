@@ -608,4 +608,44 @@ float apStreamOffsetHz(const apStream_t *st)
 	return (st->sumDphi / (float)st->nDphi) / 3.6f;
 }
 
+/* ---- R5: формат відліку I2S RX ------------------------------------------------ */
+
+void apFmtInit(apFmt_t *f)
+{
+	f->n = f->b10 = f->nonUni = f->nearLim = 0;
+	f->peak = 0;
+}
+
+void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, bool raw16, int16_t *out)
+{
+	for (int i = 0; i < n; i++)
+	{
+		uint16_t w = u[i * stride];
+		int16_t s = apSample10(w);
+		if (f != NULL)
+		{
+			uint16_t hi = (uint16_t)(w >> 10);   /* біти 10..15 */
+			uint16_t a = (uint16_t)((s < 0) ? -s : s);
+			f->n++;
+			if (hi & 1U)
+			{
+				f->b10++;
+			}
+			if ((hi != 0U) && (hi != 0x3FU))
+			{
+				f->nonUni++;
+			}
+			if (a >= AP_FMT_NEAR)
+			{
+				f->nearLim++;
+			}
+			if (a > f->peak)
+			{
+				f->peak = a;
+			}
+		}
+		out[i] = raw16 ? (int16_t)w : s;
+	}
+}
+
 #endif /* ENABLE_APRS_RX_PROBE */

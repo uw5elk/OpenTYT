@@ -28,7 +28,9 @@
 #define APRSPROBE_FMT_HDR        "А%u %u/%u E0=%02X 36=%02X 10=%02X"
 
 /* Рядок 1: стан I2S. */
-#define APRSPROBE_FMT_RUN        "I2S: блоків %lu"
+#define APRSPROBE_FMT_RUN        "I2S %s, блоків %lu"
+#define APRSPROBE_BITS10         "10 біт"
+#define APRSPROBE_BITS16         "16 біт!"
 #define APRSPROBE_NO_WS          "I2S: немає такту WS"
 #define APRSPROBE_BUSY           "Пауза: голос. підказка"
 #define APRSPROBE_NO_DATA        "Немає даних > 1 с"
@@ -49,9 +51,11 @@
 #define APRSPROBE_FMT_SHARE      "  частка %u %% RMS"
 #define APRSPROBE_FMT_TOP2       "Топ-2 %u Гц  A=%u"
 #define APRSPROBE_BG_WAIT        "Розгортка... (0,5 с)"
-#define APRSPROBE_FMT_FS         "fs %lu Гц (за %lu с)"
-#define APRSPROBE_FS_WAIT        "fs: вимірюю (5 с)"
-#define APRSPROBE_FMT_LOST       "Втрачено блоків: %lu"
+#define APRSPROBE_FMT_FS         "fs %lu (%lu с) втр. %lu"
+#define APRSPROBE_FS_WAIT        "fs вимір (5 с), втр. %lu"
+/* R5, сторінка «фон»: формат відліку (накопичено на варіанті з останнього GREEN). */
+#define APRSPROBE_FMT_B10        "б10 %lu%% 10-15 різн %lu"
+#define APRSPROBE_FMT_NEAR       "|s|>=480 %lu  пік %u"
 
 /* R4, сторінка «потік»: сталий тон 1200 Гц -- фаза на межах блоків по 160 (DMA-половин). */
 #define APRSPROBE_FMT_TONE       "Тон 1200 A=%u бл.%lu"
@@ -75,7 +79,7 @@
 #define APRSPROBE_FMT_SAVED      "Було E0=%02X 36=%02X 10=%02X"
 #define APRSPROBE_FMT_SAVED_BAD  "Було? E0=%02X 36=%02X 10=%02X"
 
-#define APRSPROBE_FOOTER1        "^v стор.  GREEN скинути"
+#define APRSPROBE_FOOTER1        "^v стор. GREEN скин. *біт"
 #define APRSPROBE_FOOTER2        "<> варіант #реж RED вихід"
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSPROBE_UA_H_ */

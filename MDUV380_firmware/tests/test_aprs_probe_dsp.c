@@ -236,6 +236,33 @@ static apStream_t streamRun(double f, double a, double nz, int d)
 	return st;
 }
 
+/* ---- R5: формат відліку I2S RX --------------------------------------------------- */
+static void testFmt(void)
+{
+	printf(" формат відліку (10 біт):\n");
+	CHECK(apSample10(0x0000) == 0 && apSample10(0x01FF) == 511 && apSample10(0x0200) == -512 && apSample10(0x03FF) == -1,
+			"apSample10: 0 / 511 / -512 / -1");
+	CHECK(apSample10(0xFC05) == 5 && apSample10(0xFFFF) == -1 && apSample10(0x0400) == 0 && apSample10(0xFE00) == -512,
+			"apSample10 ігнорує біти 10..15: 0xFC05 -> 5, 0xFFFF -> -1, 0x0400 -> 0, 0xFE00 -> -512");
+	{
+		const uint16_t u[8] = { 0x0005, 0xFC05, 0x03FE, 0xFDE0, 0x0400, 0x01E0, 0x0200, 0xFFFF };
+		/* s:                   5       5      -2       480      0       480     -512    -1 */
+		int16_t out[8], raw[8];
+		apFmt_t f;
+		apFmtInit(&f);
+		apFmtExtract(&f, u, 1, 8, false, out);
+		apFmtExtract(NULL, u, 1, 8, true, raw);
+		CHECK(f.n == 8 && f.b10 == 4 && f.nonUni == 1, "статистика: біт10=1 -- %lu з 8, біти 10..15 різні -- %lu (0x0400)",
+				(unsigned long)f.b10, (unsigned long)f.nonUni);
+		CHECK(f.nearLim == 3 && f.peak == 512, "|s| >= 480 -- %lu (480, 480, -512), пік %u", (unsigned long)f.nearLim, f.peak);
+		CHECK(out[0] == 5 && out[1] == 5 && out[2] == -2 && out[5] == 480 && raw[1] == (int16_t)0xFC05, "відліки: 10 біт / як є");
+		uint16_t lr[4] = { 0xFC07, 0x1234, 0x0003, 0x5678 };
+		int16_t l[2];
+		apFmtExtract(NULL, lr, 2, 2, false, l);
+		CHECK(l[0] == 7 && l[1] == 3, "L,R як у кадрі I2S: береться L (крок 2)");
+	}
+}
+
 static void testStream(void)
 {
 	apStream_t st;
@@ -339,6 +366,7 @@ int main(void)
 	testSource(&SRC_ADC, 60.0);
 	testSweep();
 	testStream();
+	testFmt();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;
