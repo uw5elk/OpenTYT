@@ -1,17 +1,17 @@
 /*
- * aprs_rx_probe.c -- діагностика R2 «APRS проба»: джерела звуку для вимірювань.
- * Опис і обмеження -- у aprs_rx_probe.h, план перевірки -- docs/aprs-rx-feasibility.md
- * (розділ 3 і «Результати проби»), кроки -- TESTING.md, блок AD.
+ * aprs_rx_probe.c -- діагностика «APRS проба» (R3): I2S від HR-C6000 -> демодулятор AFSK 1200 +
+ * AX.25 і розгортка фону, окремі лічильники для 6 варіантів регістрів кодека.
+ * Опис -- у aprs_rx_probe.h, план і результати -- docs/aprs-rx-feasibility.md (розділи 6-7),
+ * кроки перевірки -- TESTING.md, блоки AD (R2) і AE (R3).
  *
- * Що чіпаємо і як повертаємо:
+ * Що чіпаємо і як повертаємо (як у R2):
  *   - регістри HR-C6000 0xE0, 0x36, 0x10 (сторінка 4): на вході ЧИТАЄМО поточні значення
  *     й на виході пишемо саме їх (якщо читання неправдоподібне -- штатні FM: 0x89/0x02/0x80);
  *     після цього, якщо зараз іде прийом (підсилювач RF увімкнено), -- radioSetAudioPath(true),
  *     як це робить trx.c на початку прийому;
  *   - I2S3: лише через I2SProbeStart/Stop (i2s.c), прапорці повертаються в «вільно»;
- *   - PC3 (MODER/PUPDR), ADC2, TIM7 (+ його переривання): на виході -- як було до входу,
- *     тактування ADC2/TIM7 вимикається;
  *   - еко-режим приймача: рівень 0 на час проби, потім -- попередній.
+ * R3 прибрав джерело Б (PC3/ADC2/TIM7): на Plus 10W там нічого немає.
  * Поза екраном проби (aprsRxProbeIsOn() == false) жоден шлях DMR/AMBE/FM не змінено.
  */
 #include "functions/aprs_rx_probe.h"
@@ -34,33 +34,35 @@
 #define APRS_PROBE_CCM   __attribute__((section(".aes_ccmram")))
 #define APRS_PROBE_MAGIC 0xA9A5C0DEUL
 
-/* Скільки блоків Goertzel в одному вікні показу: 12 x 20 мс = 240 мс (і для I2S, і для АЦП). */
-#define APRS_PROBE_BLOCKS_PER_WIN   12U
-#define APRS_PROBE_I2S_BLOCK        160U   /* відліків L (або R) у половині буфера I2S */
-#define APRS_PROBE_ADC_BLOCK        192U   /* 20 мс при 9600 Гц */
+#define APRS_PROBE_BLOCK            160U   /* відліків L у половині буфера I2S (20 мс) */
+#define APRS_PROBE_RING             12U    /* блоків у кільці: 240 мс запасу на повільний тік */
+#define APRS_PROBE_BLOCKS_PER_TICK  2U     /* обробка за один тік (~0,5 мс на блок при 72 МГц) */
 #define APRS_PROBE_REAPPLY_MS       250U
 #define APRS_PROBE_RETRY_MS         250U
+#define APRS_PROBE_NOTCH_QUIET      100U   /* блоків (2 с) без серій прапорців -- можна міняти режекцію */
+#define APRS_PROBE_FS_MIN_MS        5000U  /* частоту дискретизації показуємо після 5 с */
 
-#define APRS_PROBE_TIM7_IRQ_PRIO    6U
+/* Кільце блоків -- у буфері звуку AMBE/підказок/хотспоту (4800 Б, CCM). У FM-прийомі з
+ * пробою він простоює: DMR немає, хотспот вимкнено, а на час голосової підказки I2S проби
+ * зупиняється і кільце після неї починається спочатку. */
+#define APRS_PROBE_RING_BUF   ((int16_t (*)[APRS_PROBE_BLOCK])(void *)&audioAndHotspotDataBuffer)
+_Static_assert(sizeof(audioAndHotspotDataBuffer) >= (APRS_PROBE_RING * APRS_PROBE_BLOCK * sizeof(int16_t)),
+		"probe ring does not fit audioAndHotspotDataBuffer");   /* кільце не вміщається */
 
 /* Штатні FM-значення -- на випадок, якщо прочитати не вдалося. */
 #define REG_E0_FM   0x89
 #define REG_36_FM   0x02
 #define REG_10_FM   0x80
 
-/* Варіанти А: { 0xE0, 0x36, 0x10 }.
- * А1..А12 -- з R1: 0xE0 x 0x36, режим HR-C6000 FM (0x10 = 0x80).
- * А13..А14 -- додатково: 0x10 = 0x6E, як під час голосових підказок (radioSetAudioPath(false)).
- *   Якщо у FM-режимі такту WS немає взагалі, ці два варіанти покажуть, чи є він хоча б так.
- * У варіантах з 0xE0 = 0xC9 мікрофон увімкнено -- свист у СВІЙ мікрофон перевіряє, що сам
- * I2S-шлях живий (TESTING.md, AD2). */
-static const uint8_t s_variantsA[APRS_PROBE_NUM_I2S_VARIANTS][3] =
+/* Варіанти R3 (результати R2: тони розрізняються, мікрофон вимкнено): { 0xE0, 0x36, 0x10, № у R2 }. */
+static const uint8_t s_variants[APRS_PROBE_NUM_VARIANTS][4] =
 {
-	{ 0x89, 0x02, 0x80 }, { 0x89, 0x10, 0x80 }, { 0x89, 0x12, 0x80 },
-	{ 0xC9, 0x02, 0x80 }, { 0xC9, 0x10, 0x80 }, { 0xC9, 0x12, 0x80 },
-	{ 0x8B, 0x02, 0x80 }, { 0x8B, 0x10, 0x80 }, { 0x8B, 0x12, 0x80 },
-	{ 0x83, 0x02, 0x80 }, { 0x83, 0x10, 0x80 }, { 0x83, 0x12, 0x80 },
-	{ 0xC9, 0x00, 0x6E }, { 0x89, 0x00, 0x6E }
+	{ 0x89, 0x02, 0x80,  1 },   /* штатні регістри FM-прийому */
+	{ 0x89, 0x12, 0x80,  3 },
+	{ 0x8B, 0x02, 0x80,  7 },
+	{ 0x8B, 0x12, 0x80,  9 },
+	{ 0x83, 0x02, 0x80, 10 },
+	{ 0x83, 0x12, 0x80, 12 }
 };
 
 typedef struct
@@ -69,18 +71,29 @@ typedef struct
 	uint8_t           variant;
 	uint8_t           status;       /* aprsProbeStatus_t */
 	bool              engaged;      /* регістри збережено, джерело вибрано (лише у FM) */
-	bool              i2sRunning;
-	bool              adcRunning;
+	volatile bool     i2sRunning;
 	bool              readOk;
+	bool              notchAuto;
+	bool              lastRf, lastMelody;
 	uint8_t           savedE0, saved36, saved10;
 	int               savedEco;
-	uint32_t          savedModer, savedPupdr;   /* біти PC3 */
-	bool              lastRf, lastMelody;
 	uint32_t          lastApplyMs, lastTryMs;
-	volatile uint32_t lastResultMs;
-	apChan_t          ch[2];
-	volatile uint32_t seq;          /* непарне -- ISR саме пише res[] */
-	apResult_t        res[2];
+	/* кільце: пише переривання DMA, читає тік */
+	volatile uint8_t  head, tail;
+	volatile uint32_t isrBlocks;    /* блоків від старту I2S (для частоти дискретизації) */
+	volatile uint32_t overflows;
+	volatile uint32_t lastBlockMs;
+	/* частота дискретизації */
+	uint32_t          fsT0Ms, fsB0;
+	uint32_t          fsHz, fsSecs;
+	uint32_t          fsAppliedHz;
+	/* обробка */
+	uint32_t          blocks;       /* оброблених з останнього старту */
+	uint16_t          quiet;        /* блоків без нових серій прапорців */
+	uint16_t          notchHz;
+	afskDemod_t       demod;
+	apBg_t            bg;
+	aprsProbeVar_t    var[APRS_PROBE_NUM_VARIANTS];
 } aprsProbeState_t;
 
 static aprsProbeState_t s_probe APRS_PROBE_CCM;
@@ -105,21 +118,25 @@ uint8_t aprsRxProbeVariant(void)
 	return stateValid() ? s_probe.variant : 0;
 }
 
+uint8_t aprsRxProbeVariantR2(uint8_t v)
+{
+	return (v < APRS_PROBE_NUM_VARIANTS) ? s_variants[v][3] : 0;
+}
+
 aprsProbeStatus_t aprsRxProbeStatus(void)
 {
 	return stateValid() ? (aprsProbeStatus_t)s_probe.status : APRS_PROBE_ST_IDLE;
 }
 
-bool aprsRxProbeVariantRegs(uint8_t v, uint8_t *e0, uint8_t *r36, uint8_t *r10)
+void aprsRxProbeVariantRegs(uint8_t v, uint8_t *e0, uint8_t *r36, uint8_t *r10)
 {
-	if (v >= APRS_PROBE_NUM_I2S_VARIANTS)
+	if (v >= APRS_PROBE_NUM_VARIANTS)
 	{
-		return false;
+		v = 0;
 	}
-	*e0 = s_variantsA[v][0];
-	*r36 = s_variantsA[v][1];
-	*r10 = s_variantsA[v][2];
-	return true;
+	*e0 = s_variants[v][0];
+	*r36 = s_variants[v][1];
+	*r10 = s_variants[v][2];
 }
 
 bool aprsRxProbeSavedRegs(uint8_t *e0, uint8_t *r36, uint8_t *r10, bool *readOk)
@@ -135,84 +152,208 @@ bool aprsRxProbeSavedRegs(uint8_t *e0, uint8_t *r36, uint8_t *r10, bool *readOk)
 	return true;
 }
 
-/* ---- результати (ISR -> екран, seqlock) ---------------------------------- */
-
-static void publish(const apResult_t *r0, const apResult_t *r1)
+const aprsProbeVar_t *aprsRxProbeStats(uint8_t v)
 {
-	s_probe.seq++;
-	__DMB();
-	s_probe.res[0] = *r0;
-	if (r1 != NULL)
-	{
-		s_probe.res[1] = *r1;
-	}
-	else
-	{
-		memset(&s_probe.res[1], 0, sizeof(apResult_t));
-	}
-	__DMB();
-	s_probe.seq++;
-	s_probe.lastResultMs = ticksGetMillis();
+	return &s_probe.var[(v < APRS_PROBE_NUM_VARIANTS) ? v : 0];
 }
 
-bool aprsRxProbeResult(apResult_t out[2], uint32_t *seq)
+bool aprsRxProbeFs(uint32_t *hz, uint32_t *seconds)
 {
-	if (stateValid() == false)
+	if ((stateValid() == false) || (s_probe.fsHz == 0))
 	{
 		return false;
 	}
-	uint32_t s1 = s_probe.seq;
-	if ((s1 & 1U) || (s1 == *seq))
-	{
-		return false;
-	}
-	__DMB();
-	out[0] = s_probe.res[0];
-	out[1] = s_probe.res[1];
-	__DMB();
-	if (s_probe.seq != s1)
-	{
-		return false;   /* ISR переписав посеред копіювання -- візьмемо наступного разу */
-	}
-	*seq = s1;
+	*hz = s_probe.fsHz;
+	*seconds = s_probe.fsSecs;
 	return true;
 }
 
-uint32_t aprsRxProbeMsSinceResult(void)
+uint32_t aprsRxProbeBlocks(void)
 {
-	return ticksGetMillis() - s_probe.lastResultMs;
+	return s_probe.blocks;
 }
 
-/* ---- джерело А: I2S --------------------------------------------------------- */
+uint32_t aprsRxProbeOverflows(void)
+{
+	return s_probe.overflows;
+}
+
+uint32_t aprsRxProbeMsSinceBlock(void)
+{
+	return ticksGetMillis() - s_probe.lastBlockMs;
+}
+
+bool aprsRxProbeNotchAuto(void)
+{
+	return stateValid() && s_probe.notchAuto;
+}
+
+uint16_t aprsRxProbeNotchHz(void)
+{
+	return stateValid() ? s_probe.notchHz : 0;
+}
+
+/* ---- переривання DMA: лише скласти блок у кільце ---------------------------------- */
 
 void aprsRxProbeI2SBlock(uint32_t bufNum)
 {
-	apResult_t rl, rr;
-	bool doneL = false, doneR = false;
-
 	if ((stateValid() == false) || (s_probe.i2sRunning == false) || (bufNum >= NUM_I2S_BUFFERS))
 	{
 		return;
 	}
 
+	uint8_t h = s_probe.head;
+	uint8_t next = (uint8_t)((h + 1U) % APRS_PROBE_RING);
+	s_probe.isrBlocks++;
+	s_probe.lastBlockMs = ticksGetMillis();
+	if (next == s_probe.tail)
+	{
+		s_probe.overflows++;   /* тік не встигає -- блок губимо, демодулятор переживе як шум */
+		return;
+	}
+
 	/* Половина буфера: 2 x 160 півслів = 160 стерео-кадрів (L, R), 20 мс при 8 кГц.
-	 * Розкладка та сама, що читає soundReceiveRefillData() (лівий канал -- парні). */
+	 * Лівий канал -- парні (як у soundReceiveRefillData()); R2: L і R однакові. */
+	int16_t *dst = APRS_PROBE_RING_BUF[h];
+	int o = 0;
 	for (int j = 0; j < 2; j++)
 	{
 		for (int i = 0; i < (WAV_BUFFER_SIZE / 2); i++)
 		{
-			int16_t l = (int16_t)i2s_Rx_Buffer[bufNum][j][2 * i];
-			int16_t r = (int16_t)i2s_Rx_Buffer[bufNum][j][(2 * i) + 1];
-			doneL |= apChanPush(&s_probe.ch[0], l, &rl);
-			doneR |= apChanPush(&s_probe.ch[1], r, &rr);
+			dst[o++] = (int16_t)i2s_Rx_Buffer[bufNum][j][2 * i];
 		}
 	}
+	__DMB();
+	s_probe.head = next;
+}
 
-	if (doneL)
+/* ---- обробка (тік) ---------------------------------------------------------------- */
+
+static void onFrame(const uint8_t *frame, uint16_t len, void *ctx)
+{
+	(void)ctx;
+	aprsProbeVar_t *v = &s_probe.var[s_probe.variant];
+	if (ax25Summary(frame, len, v->srcDst, sizeof(v->srcDst), v->info, sizeof(v->info)) == false)
 	{
-		publish(&rl, doneR ? &rr : NULL);
+		strcpy(v->srcDst, "?");   /* FCS правильний, але адреси не схожі на AX.25 */
 	}
 }
+
+static uint16_t clip16(uint32_t v)
+{
+	return (v > 65535U) ? 65535U : (uint16_t)v;
+}
+
+static void processBlock(const int16_t *x)
+{
+	aprsProbeVar_t *v = &s_probe.var[s_probe.variant];
+	afskDemod_t *d = &s_probe.demod;
+	apBgResult_t br;
+
+	afskProcess(d, x, APRS_PROBE_BLOCK);
+
+	if (d->nFlagSeq != 0)
+	{
+		s_probe.quiet = 0;
+	}
+	else if (s_probe.quiet < 0xFFFF)
+	{
+		s_probe.quiet++;
+	}
+	v->ok = (uint16_t)(v->ok + d->nOk);
+	v->bad = (uint16_t)(v->bad + d->nBad);
+	v->flagSeq = (uint16_t)(v->flagSeq + d->nFlagSeq);
+	d->nOk = d->nBad = d->nFlagSeq = 0;
+
+	if (apBgBlock(&s_probe.bg, x, &br))
+	{
+		v->bgValid = 1;
+		v->f1 = (uint16_t)(br.f1 + 0.5f);
+		v->a1 = clip16(br.a1);
+		v->share1 = br.share1;
+		v->f2 = br.f2;
+		v->a2 = clip16(br.a2);
+		v->rms = clip16(br.rms);
+		v->dc = (int16_t)((br.mean > 32767) ? 32767 : ((br.mean < -32768) ? -32768 : br.mean));
+
+		/* Режекція -- лише поза пакетами (2 с без серій прапорців і не посеред кадру): інакше
+		 * розгортка бачила б тони самого APRS. Частоту дає розгортка (уточнена до ~1 Гц). */
+		if (s_probe.notchAuto && (s_probe.quiet >= APRS_PROBE_NOTCH_QUIET) && (d->inFrame == 0))
+		{
+			float hz = apBgNotchHz(&br);
+			uint16_t ihz = (uint16_t)(hz + 0.5f);
+			if (ihz != s_probe.notchHz)
+			{
+				afskSetNotchHz(d, hz);
+				s_probe.notchHz = ihz;
+			}
+		}
+	}
+	s_probe.blocks++;
+}
+
+static void measureFs(void)
+{
+	uint32_t b = s_probe.isrBlocks;
+
+	if (s_probe.fsT0Ms == 0)
+	{
+		if (b > 0)
+		{
+			s_probe.fsT0Ms = s_probe.lastBlockMs;
+			s_probe.fsB0 = b;
+			if (s_probe.fsT0Ms == 0)
+			{
+				s_probe.fsT0Ms = 1;
+			}
+		}
+		return;
+	}
+
+	uint32_t dt = s_probe.lastBlockMs - s_probe.fsT0Ms;   /* від блока до блока -- без похибки тіку */
+	if (dt >= APRS_PROBE_FS_MIN_MS)
+	{
+		uint64_t samples = (uint64_t)(b - s_probe.fsB0) * APRS_PROBE_BLOCK;
+		s_probe.fsHz = (uint32_t)((samples * 1000U + (dt / 2U)) / dt);
+		s_probe.fsSecs = dt / 1000U;
+		/* Поправка тактів демодулятора -- коли відхилення помітне (> 0,1 %) і правдоподібне. */
+		if ((s_probe.fsSecs >= 10U) && (s_probe.fsHz != s_probe.fsAppliedHz) &&
+				((s_probe.fsHz < 7992U) || (s_probe.fsHz > 8008U) || (s_probe.fsAppliedHz != 0U)))
+		{
+			afskSetSampleRate(&s_probe.demod, s_probe.fsHz);
+			s_probe.fsAppliedHz = s_probe.fsHz;
+		}
+	}
+}
+
+static void ringReset(void)
+{
+	s_probe.head = 0;
+	s_probe.tail = 0;
+	s_probe.isrBlocks = 0;
+	s_probe.overflows = 0;
+	s_probe.blocks = 0;
+	s_probe.lastBlockMs = ticksGetMillis();
+	s_probe.fsT0Ms = 0;
+	s_probe.fsB0 = 0;
+	s_probe.fsHz = 0;
+	s_probe.fsSecs = 0;
+}
+
+/* Демодулятор і розгортка -- з нуля (новий варіант / новий старт I2S). Режекція -- заново з фону. */
+static void dspReset(void)
+{
+	afskInit(&s_probe.demod, onFrame, NULL);
+	if (s_probe.fsAppliedHz != 0U)
+	{
+		afskSetSampleRate(&s_probe.demod, s_probe.fsAppliedHz);
+	}
+	apBgInit(&s_probe.bg);
+	s_probe.notchHz = 0;
+	s_probe.quiet = APRS_PROBE_NOTCH_QUIET;   /* серій прапорців ще не було */
+}
+
+/* ---- I2S ----------------------------------------------------------------------- */
 
 static void i2sStop(void)
 {
@@ -231,8 +372,8 @@ static void i2sTryStart(void)
 		return;
 	}
 
-	apChanInit(&s_probe.ch[0], AP_FS_I2S, APRS_PROBE_I2S_BLOCK, APRS_PROBE_BLOCKS_PER_WIN, 0);
-	apChanInit(&s_probe.ch[1], AP_FS_I2S, APRS_PROBE_I2S_BLOCK, APRS_PROBE_BLOCKS_PER_WIN, 0);
+	ringReset();
+	dspReset();
 	s_probe.i2sRunning = true;   /* до старту: перше переривання може прийти одразу */
 	if (I2SProbeStart())
 	{
@@ -245,101 +386,7 @@ static void i2sTryStart(void)
 	}
 }
 
-/* ---- джерело Б: PC3 / ADC2 / TIM7 ---------------------------------------------- */
-
-#define PC3_MODER_MASK  (3UL << (3 * 2))
-#define PC3_PUPDR_MASK  (3UL << (3 * 2))
-#define ADC_SMP13_POS   9U          /* SMPR1: канал 13 -- біти 11:9 */
-#define ADC_SMP_144CYC  6UL
-
-void TIM7_IRQHandler(void)
-{
-	TIM7->SR = ~TIM_SR_UIF;
-
-	if ((stateValid() == false) || (s_probe.adcRunning == false))
-	{
-		return;
-	}
-
-	if (ADC2->SR & ADC_SR_EOC)
-	{
-		apResult_t r;
-		int32_t x = (int32_t)(ADC2->DR & 0x0FFFU);   /* читання DR скидає EOC */
-		if (apChanPush(&s_probe.ch[0], x, &r))
-		{
-			publish(&r, NULL);
-		}
-	}
-	ADC2->CR2 |= ADC_CR2_SWSTART;   /* наступне перетворення; результат -- у наступному перериванні */
-}
-
-static void adcStart(void)
-{
-	apChanInit(&s_probe.ch[0], AP_FS_ADC, APRS_PROBE_ADC_BLOCK, APRS_PROBE_BLOCKS_PER_WIN, 2048);
-
-	/* PC3 -- аналоговий вхід без підтяжок (до цього -- як після скиду, ніде не налаштовано). */
-	s_probe.savedModer = GPIOC->MODER & PC3_MODER_MASK;
-	s_probe.savedPupdr = GPIOC->PUPDR & PC3_PUPDR_MASK;
-	GPIOC->PUPDR &= ~PC3_PUPDR_MASK;
-	GPIOC->MODER |= PC3_MODER_MASK;
-
-	/* ADC2: 12 біт, одне перетворення каналу 13, запуск програмно. Подільник тактів -- спільний
-	 * з ADC1 (ADC->CCR, MX_ADC1_Init), його не чіпаємо. */
-	__HAL_RCC_ADC2_CLK_ENABLE();
-	ADC2->CR1 = 0;
-	ADC2->CR2 = 0;
-	ADC2->SQR1 = 0;
-	ADC2->SQR2 = 0;
-	ADC2->SQR3 = 13;
-	ADC2->SMPR1 = (ADC2->SMPR1 & ~(7UL << ADC_SMP13_POS)) | (ADC_SMP_144CYC << ADC_SMP13_POS);
-	ADC2->CR2 = ADC_CR2_ADON;
-	for (volatile int i = 0; i < 200; i++)
-	{
-		/* tSTAB ~3 мкс */
-	}
-	ADC2->CR2 |= ADC_CR2_SWSTART;
-
-	/* TIM7: переривання 9600 разів на секунду. Такт таймерів APB1 = 2 x PCLK1, якщо APB1 ділиться. */
-	uint32_t pclk1 = HAL_RCC_GetPCLK1Freq();
-	uint32_t timClk = ((RCC->CFGR & RCC_CFGR_PPRE1) == RCC_CFGR_PPRE1_DIV1) ? pclk1 : (2U * pclk1);
-	__HAL_RCC_TIM7_CLK_ENABLE();
-	TIM7->CR1 = 0;
-	TIM7->PSC = 0;
-	TIM7->ARR = ((timClk + (APRS_PROBE_ADC_FS / 2U)) / APRS_PROBE_ADC_FS) - 1U;
-	TIM7->EGR = TIM_EGR_UG;
-	TIM7->SR = 0;
-	TIM7->DIER = TIM_DIER_UIE;
-	HAL_NVIC_SetPriority(TIM7_IRQn, APRS_PROBE_TIM7_IRQ_PRIO, 0);
-	HAL_NVIC_ClearPendingIRQ(TIM7_IRQn);
-	s_probe.adcRunning = true;
-	HAL_NVIC_EnableIRQ(TIM7_IRQn);
-	TIM7->CR1 = TIM_CR1_CEN;
-
-	s_probe.status = APRS_PROBE_ST_RUNNING;
-}
-
-static void adcStop(void)
-{
-	if (s_probe.adcRunning == false)
-	{
-		return;
-	}
-	TIM7->CR1 = 0;
-	TIM7->DIER = 0;
-	HAL_NVIC_DisableIRQ(TIM7_IRQn);
-	TIM7->SR = 0;
-	HAL_NVIC_ClearPendingIRQ(TIM7_IRQn);
-	s_probe.adcRunning = false;
-	__HAL_RCC_TIM7_CLK_DISABLE();
-
-	ADC2->CR2 = 0;
-	__HAL_RCC_ADC2_CLK_DISABLE();
-
-	GPIOC->MODER = (GPIOC->MODER & ~PC3_MODER_MASK) | s_probe.savedModer;
-	GPIOC->PUPDR = (GPIOC->PUPDR & ~PC3_PUPDR_MASK) | s_probe.savedPupdr;
-}
-
-/* ---- регістри HR-C6000 --------------------------------------------------- */
+/* ---- регістри HR-C6000 --------------------------------------------------------- */
 
 static void regsSave(void)
 {
@@ -376,40 +423,18 @@ static void regsRestore(void)
 
 static void regsApplyVariant(void)
 {
-	if (s_probe.variant < APRS_PROBE_NUM_I2S_VARIANTS)
-	{
-		regsWrite(s_variantsA[s_probe.variant][0], s_variantsA[s_probe.variant][1], s_variantsA[s_probe.variant][2]);
-	}
+	regsWrite(s_variants[s_probe.variant][0], s_variants[s_probe.variant][1], s_variants[s_probe.variant][2]);
 	s_probe.lastApplyMs = ticksGetMillis();
 }
 
-/* ---- керування ------------------------------------------------------------ */
-
-static void sourceStop(void)
-{
-	i2sStop();
-	adcStop();
-}
+/* ---- керування ------------------------------------------------------------------ */
 
 static void sourceStart(void)
 {
-	sourceStop();
-	s_probe.seq += 2;                 /* старі результати -- недійсні для екрана */
-	memset(s_probe.res, 0, sizeof(s_probe.res));
-	s_probe.lastResultMs = ticksGetMillis();
-
-	if (s_probe.variant < APRS_PROBE_NUM_I2S_VARIANTS)
-	{
-		regsApplyVariant();
-		s_probe.lastTryMs = ticksGetMillis();
-		i2sTryStart();
-	}
-	else
-	{
-		/* Б: регістри -- штатні (ті, що були на вході). */
-		regsWrite(s_probe.savedE0, s_probe.saved36, s_probe.saved10);
-		adcStart();
-	}
+	i2sStop();
+	regsApplyVariant();
+	s_probe.lastTryMs = ticksGetMillis();
+	i2sTryStart();
 }
 
 static void engage(void)
@@ -425,7 +450,7 @@ static void disengage(void)
 {
 	if (s_probe.engaged)
 	{
-		sourceStop();
+		i2sStop();
 		regsRestore();
 		s_probe.engaged = false;
 	}
@@ -444,6 +469,8 @@ void aprsRxProbeOpen(void)
 	s_probe.magic = APRS_PROBE_MAGIC;
 	s_probe.variant = 0;
 	s_probe.status = APRS_PROBE_ST_IDLE;
+	s_probe.notchAuto = true;
+	dspReset();
 
 	s_probe.savedEco = rxPowerSavingGetLevel();
 	rxPowerSavingSetLevel(0);   /* приймач не вимикається посеред пакета */
@@ -484,7 +511,28 @@ void aprsRxProbeSelect(int delta)
 
 	if (s_probe.engaged)
 	{
-		sourceStart();
+		sourceStart();   /* регістри нового варіанта; демодулятор і розгортка -- з нуля */
+	}
+}
+
+void aprsRxProbeResetCurrent(void)
+{
+	if (stateValid())
+	{
+		memset(&s_probe.var[s_probe.variant], 0, sizeof(aprsProbeVar_t));
+	}
+}
+
+void aprsRxProbeToggleNotch(void)
+{
+	if (stateValid())
+	{
+		s_probe.notchAuto = !s_probe.notchAuto;
+		if (s_probe.notchAuto == false)
+		{
+			afskSetNotchHz(&s_probe.demod, 0.0f);
+			s_probe.notchHz = 0;
+		}
 	}
 }
 
@@ -512,40 +560,47 @@ void aprsRxProbeService(void)
 	bool melody = soundMelodyIsPlaying();
 	bool rf = ((audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) != 0);
 
-	if (s_probe.variant < APRS_PROBE_NUM_I2S_VARIANTS)
+	/* Голосова підказка має пріоритет: віддаємо їй I2S і чекаємо. */
+	if (prompt)
 	{
-		/* Голосова підказка має пріоритет: віддаємо їй I2S і чекаємо. */
-		if (prompt)
+		i2sStop();
+		s_probe.status = APRS_PROBE_ST_BUSY;
+	}
+	else
+	{
+		/* Стоковий код переписує 0x36/0x10 на початку прийому (trx.c) і на біпах (sound.c) --
+		 * повертаємо регістри варіанта: одразу після таких подій і раз на 250 мс. */
+		if ((melody == false) &&
+				((rf != s_probe.lastRf) || s_probe.lastMelody || ((now - s_probe.lastApplyMs) >= APRS_PROBE_REAPPLY_MS)))
 		{
-			if (s_probe.i2sRunning)
-			{
-				i2sStop();
-			}
-			s_probe.status = APRS_PROBE_ST_BUSY;
+			regsApplyVariant();
 		}
-		else
+
+		/* I2S міг зупинити хтось інший (soundTerminateSound() тощо) -- тоді перезапуск. */
+		if (s_probe.i2sRunning && (I2SProbeIsRunning() == false))
 		{
-			/* Стоковий код переписує 0x36/0x10 на початку прийому (trx.c) і на біпах (sound.c) --
-			 * повертаємо регістри варіанта: одразу після таких подій і раз на 250 мс. */
-			if ((melody == false) &&
-					((rf != s_probe.lastRf) || s_probe.lastMelody || ((now - s_probe.lastApplyMs) >= APRS_PROBE_REAPPLY_MS)))
-			{
-				regsApplyVariant();
-			}
-
-			/* I2S міг зупинити хтось інший (soundTerminateSound() тощо) -- тоді перезапуск. */
-			if (s_probe.i2sRunning && (I2SProbeIsRunning() == false))
-			{
-				s_probe.i2sRunning = false;
-				s_probe.status = APRS_PROBE_ST_WAIT;
-			}
-
-			if ((s_probe.i2sRunning == false) && ((now - s_probe.lastTryMs) >= APRS_PROBE_RETRY_MS))
-			{
-				s_probe.lastTryMs = now;
-				i2sTryStart();
-			}
+			s_probe.i2sRunning = false;
+			s_probe.status = APRS_PROBE_ST_WAIT;
 		}
+
+		if ((s_probe.i2sRunning == false) && ((now - s_probe.lastTryMs) >= APRS_PROBE_RETRY_MS))
+		{
+			s_probe.lastTryMs = now;
+			i2sTryStart();
+		}
+	}
+
+	/* Обробка накопичених блоків. */
+	for (uint32_t k = 0; (k < APRS_PROBE_BLOCKS_PER_TICK) && s_probe.i2sRunning && (s_probe.tail != s_probe.head); k++)
+	{
+		uint8_t t = s_probe.tail;
+		__DMB();
+		processBlock(APRS_PROBE_RING_BUF[t]);
+		s_probe.tail = (uint8_t)((t + 1U) % APRS_PROBE_RING);
+	}
+	if (s_probe.i2sRunning)
+	{
+		measureFs();
 	}
 
 	s_probe.lastRf = rf;
