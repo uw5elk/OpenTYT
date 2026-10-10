@@ -52,7 +52,7 @@ typedef struct
 	char     srcDst[20];        /* останній правильний кадр: «SRC-n>DST-n» */
 	char     info[24];          /* ... і початок поля info */
 	uint16_t badLen;            /* R4: останній кадр з помилковим FCS -- довжина з FCS (0 -- не було) */
-	apFmt_t  fmt;               /* R5: формат відліку на цьому варіанті (біт 10, біти 10..15, межа +-512) */
+	apFmt_t  fmt;               /* R5/R7: на цьому варіанті: відліків, |s| >= 480, пік (масштаб 10 біт) */
 	uint8_t  badHead[16];       /* ... і перші 16 байтів */
 	/* фон -- останнє вікно розгортки (480 мс) на цьому варіанті */
 	uint8_t  bgValid;
@@ -63,6 +63,7 @@ typedef struct
 	uint16_t a2;
 	uint16_t rms;
 	int16_t  dc;
+	uint16_t peak;              /* R7: пік |s| у вікні розгортки (480 мс), масштаб 10 біт */
 } aprsProbeVar_t;
 
 /* Обнулити стан (CCM не обнуляється стартапом). Один раз при старті, до menuSystemInit(). */
@@ -114,33 +115,88 @@ const apStream_t *aprsRxProbeStream(void);
 const uint16_t *aprsRxProbePllHist(void);
 void aprsRxProbeDmaCounters(uint32_t *half, uint32_t *full, uint32_t *order);
 
-/* R5/R6: формат відліку для обробки, кнопка * по колу: авто (типово) / 10 біт / 16 біт.
- * «16» зводиться до масштабу «10» (apSample16). Перемикання скидає демодулятор, розгортку й
+/* R5/R6/R7: формат відліку для обробки, кнопка * по колу: авто (типово) / 10 біт / 11 біт / 16>>6.
+ * Відлік зводиться до масштабу «10 біт» (apSampleN). Перемикання скидає демодулятор, розгортку й
  * «потік», лічильники -- ні. USB-запис завжди сирий. */
 #define APRS_PROBE_FMT_AUTO   0U
 #define APRS_PROBE_FMT_10     1U
-#define APRS_PROBE_FMT_16     2U
-#define APRS_PROBE_FMT_MODES  3U
+#define APRS_PROBE_FMT_11     2U
+#define APRS_PROBE_FMT_16     3U
+#define APRS_PROBE_FMT_MODES  4U
 void aprsRxProbeToggleFormat(void);
 uint8_t aprsRxProbeFormatMode(void);
-/* Формат, яким обробляється зараз (в «авто» -- рішення детектора): true -- «16». */
-bool aprsRxProbeFormat16(void);
-/* R6: стан детектора (перемикань, блоків з доказом «10»/«16»). */
+/* nbits, яким обробляється зараз (в «авто» -- вердикт детектора; поки його нема -- 10). */
+uint8_t aprsRxProbeNbits(void);
+/* Стан детектора (nbits, перемикань, лічильники c[j] останнього блока). */
 const apFmtDet_t *aprsRxProbeFormatDet(void);
 
-/* R6: діагностика старту I2S: успішних стартів з відкриття; останній -- мкс від фронту WS до
- * кінця HAL і рівень WS одразу після; скільки опитувань (раз на тік) бачили FRE на SPI3 (прийом)
- * і I2S3ext (передача). */
-void aprsRxProbeI2SDiag(uint32_t *starts, uint32_t *startUs, uint32_t *startWs, uint32_t *freRx, uint32_t *freTx);
-/* R6: події, після яких стоковий код переписує регістри кодека: відкриття / закриття шумодава,
+/* R7: кадри (FCS ок / помилка) окремо для кожного nbits, з яким обробляли (до 4 значень, з GREEN
+ * і зміни варіанта). false -- слот порожній. */
+#define APRS_PROBE_NB_SLOTS   4U
+bool aprsRxProbeNbSlot(uint8_t i, uint8_t *nbits, uint16_t *ok, uint16_t *bad);
+
+/* R7: детермінований старт I2S (docs/aprs-rx-feasibility.md, розділ 11). T_start -- мкс від фронту
+ * WS 0->1 до вмикання I2SE; типово APRS_PROBE_T_START_US (112: виміряне R6 значення, при якому
+ * формат «10» вийшов 6 разів із 6). */
+#ifndef APRS_PROBE_T_START_US
+#define APRS_PROBE_T_START_US  112U
+#endif
+#define APRS_PROBE_T_MAX_US    124U
+#define APRS_PROBE_T_STEP_US   2U
+
+typedef struct
+{
+	uint32_t starts;            /* успішних стартів I2S з відкриття проби */
+	uint16_t tSetUs;            /* T_start: задане */
+	uint16_t tMeasUs;           /* ... виміряне останнього старту (кінець HAL ~ I2SE), за модулем 125 мкс */
+	uint16_t halUs;             /* тривалість HAL останнього старту, мкс */
+	uint8_t  wsAfter;           /* рівень WS одразу після старту */
+	uint8_t  tCnt[4];           /* вердиктів nbits на цьому T_start: 10 / 11 / 16 / інші (скидається при зміні T) */
+	/* FRE (прапорець «WS змінився в неочікуваний момент»): опитувань із прапорцем за останню секунду
+	 * (R6 рахував усю сесію -- завжди насичувалось) */
+	uint16_t freRxSec, freTxSec;
+	uint16_t freRxCur, freTxCur;
+	uint32_t secMs;             /* початок поточної секунди */
+	/* регістри SPI3/I2S3ext (I2S3 + I2S3ext) раз на секунду */
+	uint16_t regs[6];           /* I2SProbeRegs() (interfaces/i2s.h): SPI3 CFGR/PR/CR2, I2S3ext CFGR/PR/CR2 */
+	uint16_t sr[2];             /* SPI3->SR, I2S3ext->SR -- останнє опитування */
+	uint16_t srErr[2];          /* ... і накопичені за секунду UDR | OVR | FRE */
+	uint16_t srErrCur[2];
+	uint8_t  regsValid;
+} aprsProbeDiag_t;
+const aprsProbeDiag_t *aprsRxProbeDiag(void);
+/* Змінити T_start на delta мкс (з обмеженням 0..124); лічильники tCnt скидаються. Новий T діє
+ * з наступного (пере)запуску I2S. */
+void aprsRxProbeTAdjust(int delta);
+/* Події, після яких стоковий код переписує регістри кодека: відкриття / закриття шумодава,
  * біпи, голосові підказки (з відкриття проби). */
 void aprsRxProbeEvents(uint32_t *sqOpen, uint32_t *sqClose, uint32_t *beeps, uint32_t *prompts);
-/* R6: перезапустити I2S (кнопка 0) без запису регістрів -- дослід: чи змінює формат сам старт I2S. */
+/* Перезапустити I2S (кнопка 0) із поточним T_start без запису регістрів. */
 void aprsRxProbeRestartI2S(void);
+
+/* R7: розгортка T_start (кнопка 5): T = 0, 2, ... 124 мкс (63 значення), по APRS_PROBE_SCAN_REPS
+ * перезапусків на кожне, після кожного -- вердикт детектора (<= 400 мс). Регістри кодека під час
+ * розгортки не пишуться. Код T: 0 -- ще не міряли; 8..16 -- усі перезапуски дали цей nbits;
+ * APRS_PROBE_SCAN_MIXED -- різні; APRS_PROBE_SCAN_NONE -- вердикту не було. */
+#define APRS_PROBE_SCAN_N      63U
+#define APRS_PROBE_SCAN_REPS   6U
+#define APRS_PROBE_SCAN_WAIT_MS 400U
+#define APRS_PROBE_SCAN_MIXED  0xFEU
+#define APRS_PROBE_SCAN_NONE   0xFDU
+/* Почати розгортку; якщо вже йде -- скасувати (T_start повертається). */
+void aprsRxProbeScanToggle(void);
+bool aprsRxProbeScanActive(void);
+/* Прогрес: індекс T (0..62) і скільки перезапусків для нього зроблено. */
+void aprsRxProbeScanProgress(uint8_t *idx, uint8_t *rep);
+uint8_t aprsRxProbeScanCode(uint8_t idx);
+/* Найдовший ряд сусідніх T з однаковим стійким nbits (>= 3 поспіль): межі й nbits; centre -- T,
+ * на який «авто-фаза» ставить T_start. false -- ряду немає. */
+bool aprsRxProbeScanBest(uint16_t *tFrom, uint16_t *tTo, uint8_t *nbits, uint16_t *centre);
+
 /* R6: регістри кодека для сторінки «регістри». Refresh -- прочитати з чипа, не частіше ніж раз
  * на секунду (викликає екран, поки сторінку видно). Reg -- i-й регістр: адреса, значення;
  * false -- ще не читали або читання не вдалося. */
-#define APRS_PROBE_NUM_REGS   28U
+#define APRS_PROBE_NUM_REGS   24U
 void aprsRxProbeRegsRefresh(void);
 bool aprsRxProbeReg(uint8_t i, uint8_t *addr, uint8_t *val);
 

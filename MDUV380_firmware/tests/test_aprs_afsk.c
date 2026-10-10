@@ -432,7 +432,7 @@ int main(void)
 	/* R5: формат I2S RX у FM-прийомі -- звук у бітах 0..9 (доповнення до двох), біти 10..15 однакові
 	 * й випадкові (біт 10 ~50 %), тобто сирий відлік = s + {0, +-1024}. Запис R4: сирі 16 біт -- 0 ок,
 	 * 10 біт -- 8 ок. Тут те саме на синтетиці: AFSK у 10-бітному діапазоні, «упаковка» як на рації,
-	 * далі apFmtExtract() -- 10 біт або (R6) «16 біт», зведені зсувом >> 6 (контроль: на «10» це
+	 * далі apFmtExtract() -- nbits=10 або (контроль) nbits=16, тобто зсув >> 6 (на «10» це
 	 * однаково сміття). Плюс «перекидання» на +-512: що буде, якщо сигнал вийде за 10 біт (у R4 пік
 	 * був ~360). */
 	{
@@ -457,13 +457,13 @@ int main(void)
 				}
 				apFmt_t f;
 				apFmtInit(&f);
-				apFmtExtract(&f, u, 1, nn, false, s_buf);
+				apFmtExtract(&f, u, 1, nn, 10, s_buf);
 				if (f.nearLim > 0) { nearAny = 1; }
 				rx_t r = runRx(nn, NOTCH_OFF);
 				ok10 += r.match;
 				if (k == 1)
 				{
-					apFmtExtract(NULL, u, 1, nn, true, s_buf);
+					apFmtExtract(NULL, u, 1, nn, 16, s_buf);
 					r = runRx(nn, NOTCH_OFF);
 					ok16 += r.match;
 				}
@@ -482,59 +482,74 @@ int main(void)
 				res10[4] * 100);
 	}
 
-	/* R6: автовизначення формату. R5 на залізі: слово I2S буває «10» (як вище) і справжнім «16».
-	 * Той самий пакет AFSK: «10» з амплітудою A і «16» з амплітудою A * 64 (гіпотеза: «10» -- це
-	 * 16 біт, зсунуті на 6) -> блоками по 160: детектор (стартує з ПРОТИЛЕЖНОГО формату) і
-	 * apFmtExtract() за його рішенням -> демодулятор. Має декодуватися однаково в обох форматах. */
+	/* R7: детектор nbits і декодування. Той самий пакет AFSK, амплітуда A у масштабі 10 біт; слово I2S:
+	 *   nbits < 16: (k = 16 - nbits однакових випадкових біти) << nbits | ((A * 64) >> k)   -- k = 6, 5, 4;
+	 *   nbits = 16: A * 64 (справжні 16 біт).
+	 * Блоками по 160: apFmtDetBlock() -> apFmtExtract(nbits вердикту) -> демодулятор. Вердикт має збігтися, а
+	 * кадри декодуватися однаково в усіх форматах. Контролі: слово з nbits=11, оброблене як «16» (R6 на залізі:
+	 * v >> 6 брало сміття, 0 ок), і справжні 16 біт, оброблені як «10». */
 	{
 		static uint16_t u16[MAX_SAMPLES];
+		static const int fmts[4] = { 10, 11, 12, 16 };
 		const double amps[] = { 150, 300 };
 		for (unsigned k = 0; k < 2; k++)
 		{
-			int ok[2] = { 0, 0 }, wrong = 0, tot = 0, sw[2] = { 0, 0 }, badFmt[2] = { 0, 0 };
-			sig_t q = base(); q.frames = 2; q.snrDb = 20;
+			int ok[4] = { 0, 0, 0, 0 }, badFmt[4] = { 0, 0, 0, 0 }, tot = 0, wrong11as16 = 0, wrong16as10 = 0;
+			sig_t q = base(); q.frames = 2; q.snrDb = 20; q.amp = amps[k];
 			for (int t = 0; t < 10; t++)
 			{
-				for (int fmt = 0; fmt < 2; fmt++)   /* 0 -- «10», 1 -- «16» */
+				for (int f = 0; f < 4; f++)
 				{
-					s_rng = 61 + t;   /* той самий шум для обох форматів */
-					q.amp = amps[k] * (fmt ? 64.0 : 1.0);
+					s_rng = 61 + t;   /* той самий шум для всіх форматів */
 					int nn = synth(&q, s_ref, s_refLen);
+					int nbits = fmts[f];
 					for (int i = 0; i < nn; i++)
 					{
-						u16[i] = fmt ? (uint16_t)s_buf[i]
-								: (uint16_t)(((uint16_t)s_buf[i] & 0x3FFU) | ((urand() < 0.5) ? 0xFC00U : 0U));
+						int32_t v = (int32_t)s_buf[i] * 64;
+						if (nbits >= 16)
+						{
+							u16[i] = (uint16_t)(int16_t)v;
+						}
+						else
+						{
+							uint32_t garbage = (urand() < 0.5) ? ((0xFFFFU << nbits) & 0xFFFFU) : 0U;
+							u16[i] = (uint16_t)((((uint32_t)v >> (16 - nbits)) & ((1UL << nbits) - 1UL)) | garbage);
+						}
 					}
 					apFmtDet_t det;
-					apFmtDetInit(&det, (fmt == 0));   /* навмисно з протилежного */
+					apFmtDetInit(&det);
 					for (int i = 0; i + 160 <= nn; i += 160)
 					{
 						(void)apFmtDetBlock(&det, &u16[i], 1, 160, false);
-						apFmtExtract(NULL, &u16[i], 1, 160, (det.is16 != 0), &s_buf[i]);
+						apFmtExtract(NULL, &u16[i], 1, 160, det.nbits, &s_buf[i]);
 					}
-					rx_t r = runRx(nn, NOTCH_OFF);
-					ok[fmt] += r.match;
-					sw[fmt] += (int)det.switches;
-					badFmt[fmt] += ((det.is16 != 0) != (fmt == 1));
-					if (fmt == 1)
+					ok[f] += runRx(nn, NOTCH_OFF).match;
+					badFmt[f] += (det.nbits != nbits);
+					if (nbits == 11)
 					{
-						/* контроль: справжні 16 біт, оброблені як «10», -- сміття (R5, А1 «10 біт»: 0 ок) */
 						for (int i = 0; i + 160 <= nn; i += 160)
 						{
-							apFmtExtract(NULL, &u16[i], 1, 160, false, &s_buf[i]);
+							apFmtExtract(NULL, &u16[i], 1, 160, 16, &s_buf[i]);
 						}
-						wrong += runRx(nn, NOTCH_OFF).match;
+						wrong11as16 += runRx(nn, NOTCH_OFF).match;
+					}
+					if (nbits == 16)
+					{
+						for (int i = 0; i + 160 <= nn; i += 160)
+						{
+							apFmtExtract(NULL, &u16[i], 1, 160, 10, &s_buf[i]);
+						}
+						wrong16as10 += runRx(nn, NOTCH_OFF).match;
 					}
 				}
 				tot += q.frames;
 			}
-			printf("    R6 авто, амплітуда %.0f (10 біт) / %.0f (16 біт), SNR 20 дБ: %.0f / %.0f %%; перемикань %d / %d (з 10); «16» як «10» -- %.0f %%\n",
-					amps[k], amps[k] * 64, 100.0 * ok[0] / tot, 100.0 * ok[1] / tot, sw[0], sw[1], 100.0 * wrong / tot);
-			CHECK(ok[0] >= 0.9 * tot && ok[1] >= 0.9 * tot && abs(ok[0] - ok[1]) <= tot / 10,
-					"R6: авто -- «10» і «16» декодуються однаково (%d / %d з %d)", ok[0], ok[1], tot);
-			CHECK(sw[0] == 10 && sw[1] == 10 && badFmt[0] == 0 && badFmt[1] == 0,
-					"R6: детектор -- рівно одне перемикання на запис (з протилежного), формат у кінці правильний");
-			CHECK(wrong <= tot / 20, "R6: контроль -- справжні 16 біт як «10»: %d з %d", wrong, tot);
+			printf("    R7 авто, амплітуда %.0f (10 біт), SNR 20 дБ: nbits=10/11/12/16 -- %.0f/%.0f/%.0f/%.0f %%; «11» як «16» -- %.0f %%, «16» як «10» -- %.0f %%\n",
+					amps[k], 100.0 * ok[0] / tot, 100.0 * ok[1] / tot, 100.0 * ok[2] / tot, 100.0 * ok[3] / tot, 100.0 * wrong11as16 / tot, 100.0 * wrong16as10 / tot);
+			CHECK(ok[0] >= 0.9 * tot && ok[1] >= 0.9 * tot && ok[2] >= 0.9 * tot && ok[3] >= 0.9 * tot,
+					"R7: авто -- nbits 10/11/12/16 декодуються (%d/%d/%d/%d з %d)", ok[0], ok[1], ok[2], ok[3], tot);
+			CHECK(badFmt[0] == 0 && badFmt[1] == 0 && badFmt[2] == 0 && badFmt[3] == 0, "R7: вердикт детектора в кінці запису збігається з форматом (усі 4)");
+			CHECK(wrong11as16 <= tot / 20 && wrong16as10 <= tot / 20, "R7: контролі -- «11» як «16» %d, «16» як «10» %d з %d", wrong11as16, wrong16as10, tot);
 		}
 	}
 

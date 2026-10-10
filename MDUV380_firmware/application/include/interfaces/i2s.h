@@ -121,15 +121,27 @@ void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen);
  * або такту немає. Stop -- зупиняє лише передачу, запущену Start, і повертає прапорці в стан
  * «вільно», навіть якщо такт зник і переривань більше не буде. */
 /* R6: діагностика розсинхронізації приймача I2S з HR-C6000 (докладно -- docs/aprs-rx-feasibility.md,
- * розділ 10). Errata STM32F405 (ES0182): ведений I2S (Philips) треба вмикати, поки WS = 1, інакше
- * він до кінця сеансу розсинхронізований з ведучим. Після успішного старту: *startCycles -- тактів
- * процесора від фронту WS 0->1 до повернення з HAL (I2SE вмикається в самому кінці HAL),
- * *startWs -- рівень WS одразу після. */
-bool I2SProbeStart(uint32_t *startCycles, uint32_t *startWs);
+ * розділи 10-11). Errata STM32F405 (ES0182): ведений I2S (Philips) треба вмикати, поки WS = 1, інакше
+ * він до кінця сеансу розсинхронізований з ведучим.
+ * R7: ДЕТЕРМІНОВАНИЙ старт. Від фронту WS 0->1 до I2SE (останній суттєвий крок HAL) проходить рівно
+ * tStartCycles тактів процесора (за модулем періоду WS periodCycles): усе від пошуку фронту до
+ * повернення з HAL іде з вимкненими перериваннями (PRIMASK), лічильник -- DWT->CYCCNT.
+ *   - *halCycles (вхід) -- скільки тривав HAL у попередньому старті (0 -- ще не знаємо: затримки
+ *     немає, а старт лише міряє HAL); (вихід) -- тривалість HAL у цьому старті. Затримка після фронту =
+ *     (tStartCycles - halCycles) mod periodCycles, тож I2SE припадає на tStartCycles.
+ *   - *tActualCycles -- тактів від фронту до повернення з HAL (I2SE ~ на 10 тактів раніше), за
+ *     модулем periodCycles; *startWs -- рівень WS одразу після.
+ * false -- I2S зайнятий, такту WS немає (> 2 періодів) або HAL не стартував. */
+bool I2SProbeStart(uint32_t tStartCycles, uint32_t periodCycles, uint32_t *halCycles, uint32_t *tActualCycles, uint32_t *startWs);
 void I2SProbeStop(void);
 /* R6: SPI3->SR (молодші 16 біт) і I2S3ext->SR (старші 16 біт). Читання скидає прапорець FRE
  * («WS змінився в неочікуваний момент» -- ознака розсинхронізації веденого). */
 uint32_t I2SProbeStatusRegs(void);
+/* R7: регістри SPI3 (приймач) і I2S3ext (передавач) -- без SR (його читання скидає прапорці):
+ * r[0] SPI3->I2SCFGR, r[1] SPI3->I2SPR, r[2] SPI3->CR2, r[3] I2S3ext->I2SCFGR, r[4] I2S3ext->I2SPR,
+ * r[5] I2S3ext->CR2. */
+#define I2S_PROBE_NREGS 6U
+void I2SProbeRegs(uint16_t *r);
 /* Передача, запущена I2SProbeStart(), іще йде (її не зупинив і не підмінив інший код). */
 bool I2SProbeIsRunning(void);
 #endif

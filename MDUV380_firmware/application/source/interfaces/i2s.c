@@ -118,13 +118,34 @@ void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen)
 }
 
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
-// R2: дочекатися рівня WS (PA15) не довше за timeoutMs. Стоковий I2SStartDMA чекає без
-// обмеження -- у FM-прийомі такту від HR-C6000 може й не бути, і рація зависла б.
-static bool probeWaitWs(GPIO_PinState level, uint32_t t0, uint32_t timeoutMs)
+uint32_t I2SProbeStatusRegs(void)
 {
-	while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) != level)
+	return (SPI3->SR & 0xFFFFU) | ((I2S3ext->SR & 0xFFFFU) << 16);
+}
+
+void I2SProbeRegs(uint16_t *r)
+{
+	r[0] = (uint16_t)SPI3->I2SCFGR;
+	r[1] = (uint16_t)SPI3->I2SPR;
+	r[2] = (uint16_t)SPI3->CR2;
+	r[3] = (uint16_t)I2S3ext->I2SCFGR;
+	r[4] = (uint16_t)I2S3ext->I2SPR;
+	r[5] = (uint16_t)I2S3ext->CR2;
+}
+
+// R7: рівень WS (PA15) читаємо прямо з IDR -- швидше за HAL_GPIO_ReadPin (виклик + порівняння).
+static inline bool probeWsHigh(void)
+{
+	return ((GPIOA->IDR & GPIO_PIN_15) != 0U);
+}
+
+// Дочекатися рівня WS не довше за timeoutCycles тактів (DWT); переривання вимкнені викликачем.
+static bool probeWaitWsCycles(bool high, uint32_t timeoutCycles)
+{
+	uint32_t c0 = DWT->CYCCNT;
+	while (probeWsHigh() != high)
 	{
-		if ((HAL_GetTick() - t0) > timeoutMs)
+		if ((DWT->CYCCNT - c0) > timeoutCycles)
 		{
 			return false;
 		}
@@ -132,44 +153,64 @@ static bool probeWaitWs(GPIO_PinState level, uint32_t t0, uint32_t timeoutMs)
 	return true;
 }
 
-uint32_t I2SProbeStatusRegs(void)
+bool I2SProbeStart(uint32_t tStartCycles, uint32_t periodCycles, uint32_t *halCycles, uint32_t *tActualCycles, uint32_t *startWs)
 {
-	return (SPI3->SR & 0xFFFFU) | ((I2S3ext->SR & 0xFFFFU) << 16);
-}
-
-bool I2SProbeStart(uint32_t *startCycles, uint32_t *startWs)
-{
-	if (g_TX_SAI_in_use || isSending || isReceiving)
+	if (g_TX_SAI_in_use || isSending || isReceiving || (periodCycles == 0U))
 	{
 		return false;
 	}
 
-	// R6: лічильник тактів DWT (як у spectrum.c) -- щоб виміряти, коли саме ввімкнувся I2S.
+	// Лічильник тактів DWT (як у spectrum.c).
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
-	// Той самий момент старту, що в I2SStartDMA(): одразу після фронту WS.
-	uint32_t t0 = HAL_GetTick();
-	if ((probeWaitWs(GPIO_PIN_SET, t0, 5) && probeWaitWs(GPIO_PIN_RESET, t0, 5) && probeWaitWs(GPIO_PIN_SET, t0, 5)) == false)
-	{
-		return false;
-	}
-	uint32_t c0 = DWT->CYCCNT;
-
+	// R7: усе, що не залежить від фронту WS, -- ДО нього (раніше memset 1280 Б входив у «112 мкс»).
 	memset(i2s_Tx_Buffer, 0x00, sizeof(i2s_Tx_Buffer));   // у ЦАП -- тиша
 	isSending = false;
 	isReceiving = false;
 	stopOnNextI2SDMAInterrupt = false;
 	g_TX_SAI_in_use = true;                                 // soundSendData() не стартує поверх
-	if (HAL_I2SEx_TransmitReceive_DMA(&hi2s3, (uint16_t *)i2s_Tx_Buffer, (uint16_t *)i2s_Rx_Buffer, (NUM_I2S_BUFFERS * 2 * WAV_BUFFER_SIZE)) != HAL_OK)
+
+	uint32_t hal = *halCycles;
+	uint32_t delay = 0;
+	if (hal != 0U)
+	{
+		// I2SE має припасти на tStartCycles після фронту: HAL починається на (tStart - hal) mod період.
+		delay = ((tStartCycles % periodCycles) + periodCycles - (hal % periodCycles)) % periodCycles;
+	}
+
+	uint32_t primask = __get_PRIMASK();
+	__disable_irq();
+
+	// Фронт WS 0->1: чекаємо низький рівень, потім високий. Тайм-аут -- 2 періоди кожен: за відсутності
+	// такту переривання вимкнені не довше ~0,5 мс (WS справжній -- чекання < 1 періоду).
+	bool edge = probeWaitWsCycles(false, periodCycles * 2U) && probeWaitWsCycles(true, periodCycles * 2U);
+	if (edge == false)
+	{
+		__set_PRIMASK(primask);
+		g_TX_SAI_in_use = false;
+		return false;
+	}
+	uint32_t cEdge = DWT->CYCCNT;
+	while ((DWT->CYCCNT - cEdge) < delay)
+	{
+	}
+
+	uint32_t c0 = DWT->CYCCNT;
+	HAL_StatusTypeDef st = HAL_I2SEx_TransmitReceive_DMA(&hi2s3, (uint16_t *)i2s_Tx_Buffer, (uint16_t *)i2s_Rx_Buffer, (NUM_I2S_BUFFERS * 2 * WAV_BUFFER_SIZE));
+	// I2SE увімкнено в самому кінці HAL (ES0182 2.12.6: WS у цей момент має бути 1)
+	uint32_t c1 = DWT->CYCCNT;
+	uint32_t ws = probeWsHigh() ? 1U : 0U;
+	__set_PRIMASK(primask);
+
+	if (st != HAL_OK)
 	{
 		g_TX_SAI_in_use = false;
 		return false;
 	}
-	// R6: I2SE увімкнено в кінці HAL -- скільки минуло від фронту WS і який рівень WS зараз.
-	uint32_t c1 = DWT->CYCCNT;
-	*startWs = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_SET) ? 1U : 0U;
-	*startCycles = ((c1 - c0) != 0U) ? (c1 - c0) : 1U;
+	*halCycles = ((c1 - c0) != 0U) ? (c1 - c0) : 1U;
+	*tActualCycles = (c1 - cEdge) % periodCycles;
+	*startWs = ws;
 	return true;
 }
 

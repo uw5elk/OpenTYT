@@ -7,6 +7,7 @@
 #if defined(ENABLE_APRS_RX_PROBE)
 
 #include <stddef.h>
+#include <string.h>
 
 /* 2*cos(2*pi*f/fs). Константами, а не cosf(): так не тягнеться libm, а хост-тест звіряє їх
  * із math.h (tests/test_aprs_probe_dsp.c). */
@@ -608,33 +609,23 @@ float apStreamOffsetHz(const apStream_t *st)
 	return (st->sumDphi / (float)st->nDphi) / 3.6f;
 }
 
-/* ---- R5: формат відліку I2S RX ------------------------------------------------ */
+/* ---- R5/R7: формат відліку I2S RX (опис -- у .h) ---------------------------------- */
 
 void apFmtInit(apFmt_t *f)
 {
-	f->n = f->b10 = f->nonUni = f->nearLim = 0;
+	f->n = f->nearLim = 0;
 	f->peak = 0;
 }
 
-void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, bool is16, int16_t *out)
+void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, uint8_t nbits, int16_t *out)
 {
 	for (int i = 0; i < n; i++)
 	{
-		uint16_t w = u[i * stride];
-		int16_t s = apSample10(w);
+		int16_t s = apSampleN(u[i * stride], nbits);
 		if (f != NULL)
 		{
-			uint16_t hi = (uint16_t)(w >> 10);   /* біти 10..15 */
 			uint16_t a = (uint16_t)((s < 0) ? -s : s);
 			f->n++;
-			if (hi & 1U)
-			{
-				f->b10++;
-			}
-			if ((hi != 0U) && (hi != 0x3FU))
-			{
-				f->nonUni++;
-			}
 			if (a >= AP_FMT_NEAR)
 			{
 				f->nearLim++;
@@ -644,106 +635,125 @@ void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, bool is16, i
 				f->peak = a;
 			}
 		}
-		out[i] = is16 ? apSample16(w) : s;
+		out[i] = s;
 	}
 }
 
-/* ---- R6: автовизначення формату (опис -- у .h) ------------------------------------ */
+/* ---- R7: детектор nbits ----------------------------------------------------------- */
 
-void apFmtDetInit(apFmtDet_t *d, bool is16)
+void apFmtDetInit(apFmtDet_t *d)
 {
-	d->is16 = is16 ? 1U : 0U;
-	d->streak = 0;
-	d->hold = 0;
-	d->switches = 0;
-	d->ev10 = 0;
-	d->ev16 = 0;
+	memset(d, 0, sizeof(*d));
 }
 
-uint8_t apFmtEvidence(const uint16_t *u, int stride, int n)
+void apFmtDetRestart(apFmtDet_t *d)
 {
-	uint32_t nonUni = 0, small = 0, diff = 0, near = 0;
+	uint32_t sw = d->switches;
+	memset(d, 0, sizeof(*d));
+	d->switches = sw;
+}
 
+void apFmtCount(const uint16_t *u, int stride, int n, uint16_t *c)
+{
+	for (int j = 0; j < 16; j++)
+	{
+		c[j] = 0;
+	}
 	for (int i = 0; i < n; i++)
 	{
-		uint16_t w = u[i * stride];
-		uint16_t hi = (uint16_t)(w >> 10);
-		int16_t s = apSample10(w);
-		uint16_t a = (uint16_t)((s < 0) ? -s : s);
+		uint32_t w = u[i * stride];
+		uint32_t y = (w ^ (w << 1)) >> 1;   /* біт j-1 цього значення = (біт j != біт j-1) слова; j = 1..15 -> біти 0..14 */
+		for (int j = 1; j < 16; j++)
+		{
+			c[j] = (uint16_t)(c[j] + ((y >> (j - 1)) & 1U));
+		}
+	}
+}
 
-		if ((hi != 0U) && (hi != 0x3FU))
-		{
-			nonUni++;
-		}
-		if (a < AP_DET_SMALL)
-		{
-			small++;
-			if (((w >> 10) ^ (w >> 9)) & 1U)
-			{
-				diff++;
-			}
-		}
-		else if (a >= AP_DET_NEAR)
-		{
-			near++;
-		}
-	}
+uint8_t apFmtVoteCounts(const uint16_t *c, int n)
+{
+	uint32_t N = (uint32_t)n;
+	int top;
 
-	if (nonUni >= AP_DET_NONUNI)
+	/* старший j = 8..15, на якому біти «перемикаються» помітно (> 2 % блока) */
+	for (top = 15; top >= AP_NBITS_MIN; top--)
 	{
-		return AP_EV_16;
-	}
-	if (small >= AP_DET_MIN_SMALL)
-	{
-		if (((diff * 4U) >= small) && ((near * 10U) <= (uint32_t)n))
+		if ((uint32_t)c[top] * 100U > AP_DET_LO * N)
 		{
-			return AP_EV_10;
-		}
-		if ((diff * 32U) <= small)
-		{
-			return AP_EV_16;
+			break;
 		}
 	}
-	return AP_EV_NONE;
+	if (top >= AP_NBITS_MIN)
+	{
+		uint32_t ct = (uint32_t)c[top] * 100U;
+		if (ct >= AP_DET_HI * N)
+		{
+			/* різкий пік: під сміттєвим бітом лежить знаковий, який перемикається лише на гучному
+			 * звуці; інакше (гучний сигнал або гучний пакет у режимі зі сміттям) -- нейтрально */
+			return ((uint32_t)c[top - 1] * 100U <= AP_DET_MID * N) ? (uint8_t)top : 0U;
+		}
+		if (ct >= AP_DET_SMOOTH * N)
+		{
+			return 0U;   /* сіра зона між «плавним» і «піком» */
+		}
+		return AP_NBITS_TRUE16;   /* вершина профілю мала й плавна: справжні 16 біт */
+	}
+	/* усі c[8..15] майже нулі: справжні 16 біт, якщо молодші біти перемикаються; цифрова тиша -- нейтрально */
+	for (int i = 1; i < AP_NBITS_MIN; i++)
+	{
+		if ((uint32_t)c[i] * 100U > AP_DET_LO * N)
+		{
+			return AP_NBITS_TRUE16;
+		}
+	}
+	return 0U;
+}
+
+uint8_t apFmtVote(apFmtDet_t *d, const uint16_t *u, int stride, int n)
+{
+	uint16_t tmp[16];
+	uint16_t *c = (d != NULL) ? d->c : tmp;
+	apFmtCount(u, stride, n, c);
+	return apFmtVoteCounts(c, n);
 }
 
 bool apFmtDetBlock(apFmtDet_t *d, const uint16_t *u, int stride, int n, bool inFrame)
 {
-	uint8_t ev = apFmtEvidence(u, stride, n);
+	uint8_t v = apFmtVote(d, u, stride, n);
+	d->lastVote = v;
 
-	if (ev == AP_EV_10)
+	if (v != 0U)
 	{
-		d->ev10++;
-	}
-	else if (ev == AP_EV_16)
-	{
-		d->ev16++;
-	}
-
-	if (ev == AP_EV_NONE)
-	{
-		/* блок не голосує: серія не переривається */
-	}
-	else if ((ev == AP_EV_16) == (d->is16 != 0U))
-	{
-		d->streak = 0;   /* доказ поточного формату */
-		d->hold = 0;
-	}
-	else if (d->streak < AP_DET_STREAK)
-	{
-		d->streak++;
+		if (v == d->cand)
+		{
+			if (d->streak < 255U)
+			{
+				d->streak++;
+			}
+		}
+		else
+		{
+			d->cand = v;   /* інший голос -- серія з нуля */
+			d->streak = 1;
+		}
+		if (v == d->nbits)
+		{
+			d->hold = 0;   /* доказ поточного формату */
+		}
 	}
 
-	if (d->streak >= AP_DET_STREAK)
+	if ((d->cand != 0U) && (d->cand != d->nbits) && (d->streak >= AP_DET_STREAK))
 	{
-		if (inFrame && (d->hold < AP_DET_HOLD_MAX))
+		if ((d->nbits != 0U) && inFrame && (d->hold < AP_DET_HOLD_MAX))
 		{
 			d->hold++;   /* посеред кадру не міняємо -- чекаємо його кінця */
 			return false;
 		}
-		d->is16 = d->is16 ? 0U : 1U;
-		d->switches++;
-		d->streak = 0;
+		if (d->nbits != 0U)
+		{
+			d->switches++;
+		}
+		d->nbits = d->cand;
 		d->hold = 0;
 		return true;
 	}
