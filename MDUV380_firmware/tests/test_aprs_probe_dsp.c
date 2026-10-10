@@ -150,6 +150,69 @@ static void testSource(const src_t *s, double amp)
 			(unsigned long)r.a1200, (unsigned long)r.a2200, (unsigned long)r.rms, (unsigned)r.winner);
 }
 
+
+/* ---- R3: розгортка фону ---------------------------------------------------- */
+static double gauss(void)
+{
+	double u1 = (noise() + 0.5) * 0.999 + 0.0005, u2 = noise() + 0.5;
+	return sqrt(-2.0 * log(u1)) * cos(2 * PI * u2);
+}
+
+/* Подає вікно розгортки (24 блоки по 160) з тоном(ами) і шумом, повертає результат. */
+static apBgResult_t sweep(double f1, double a1, double f2, double a2, double noiseRms, double dc)
+{
+	apBg_t b;
+	apBgResult_t r = { 0 };
+	int16_t blk[AP_SWEEP_N];
+	long t = 0;
+	apBgInit(&b);
+	for (int k = 0; k < 200; k++)
+	{
+		for (int i = 0; i < AP_SWEEP_N; i++, t++)
+		{
+			double v = dc + a1 * sin(2 * PI * f1 * t / 8000.0 + 0.4) + a2 * sin(2 * PI * f2 * t / 8000.0 + 1.3) + noiseRms * gauss();
+			blk[i] = (int16_t)lround(v);
+		}
+		if (apBgBlock(&b, blk, &r))
+		{
+			return r;
+		}
+	}
+	return r;
+}
+
+static void testSweep(void)
+{
+	apBgResult_t r;
+	printf(" розгортка фону 100..3900 Гц:\n");
+
+	r = sweep(1712, 900, 0, 0, 50, 0);
+	CHECK(r.valid && fabs(r.f1 - 1712) < 3 && near(r.a1, 900, 5) && r.share1 >= 90,
+			"тон 1712 Гц (між точками сітки) + слабкий шум: топ-1 %.1f Гц, A=%lu, частка %u %%",
+			r.f1, (unsigned long)r.a1, r.share1);
+	CHECK(apBgNotchHz(&r) > 1700 && apBgNotchHz(&r) < 1725, "вузька завада 1712 у смузі -- режекція на %.1f Гц", apBgNotchHz(&r));
+
+	r = sweep(1200, 500, 0, 0, 30, -300);
+	CHECK(fabs(r.f1 - 1200) < 2 && r.share1 >= 90 && apBgNotchHz(&r) == 0.0f,
+			"тон 1200 (сам сигнал APRS) -- топ-1 %.1f Гц, але режекції немає (з'їла б тон)", r.f1);
+
+	r = sweep(600, 400, 0, 0, 30, 2000);
+	CHECK(fabs(r.f1 - 600) < 2 && apBgNotchHz(&r) == 0.0f && abs(r.mean - 2000) <= 2,
+			"тон 600 Гц (поза смугою) -- режекції немає (смуговий і так прибере); DC %ld", (long)r.mean);
+
+	r = sweep(1000, 0, 0, 0, 700, 0);
+	CHECK(r.share1 <= 20 && apBgNotchHz(&r) == 0.0f && near(r.rms, 700, 5),
+			"білий шум RMS 700: частка топ-1 %u %% (широкий шум), RMS %lu", r.share1, (unsigned long)r.rms);
+
+	r = sweep(2850, 600, 433, 300, 40, 0);
+	CHECK(fabs(r.f1 - 2850) < 3 && (r.f2 >= 400 && r.f2 <= 450) && near(r.a2, 300, 30),
+			"два тони 2850 і 433 Гц: топ-1 %.1f, топ-2 %u Гц (A2=%lu)", r.f1, r.f2, (unsigned long)r.a2);
+
+	r = sweep(1712, 500, 0, 0, 700, 0);
+	CHECK(fabs(r.f1 - 1712) < 6 && r.share1 >= 30 && r.share1 <= 60,
+			"тон 500 у шумі 700: топ-1 %.1f Гц, частка %u %% (між вузьким і широким)", r.f1, r.share1);
+}
+
 int main(void)
 {
 	printf("test_aprs_probe_dsp:\n");
@@ -212,6 +275,7 @@ int main(void)
 	testSource(&SRC_I2S, 300.0);
 	testSource(&SRC_ADC, 800.0);
 	testSource(&SRC_ADC, 60.0);
+	testSweep();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

@@ -244,4 +244,204 @@ bool apChanPush(apChan_t *c, int32_t x, apResult_t *out)
 	return false;
 }
 
+/* ---- R3: розгортка фону ------------------------------------------------------ */
+
+/* 2*cos(2*pi*f/8000), f = 100 + 50*i (згенеровано; хост-тест звіряє з math.h). */
+const float apSweepCoeff[AP_SWEEP_BINS] =
+{
+	 1.99383467f,  1.98613691f,  1.97537668f,  1.96157056f,  1.94473984f,  1.92491047f,  1.90211303f,
+	 1.87638267f,  1.84775907f,  1.81628635f,  1.78201305f,  1.74499201f,  1.70528033f,  1.66293922f,
+	 1.61803399f,  1.57063386f,  1.52081193f,  1.46864502f,  1.41421356f,  1.35760149f,  1.29889610f,
+	 1.23818790f,  1.17557050f,  1.11114047f,  1.04499713f,  0.97724248f,  0.90798100f,  0.83731948f,
+	 0.76536686f,  0.69223411f,  0.61803399f,  0.54288090f,  0.46689073f,  0.39018064f,  0.31286893f,
+	 0.23507479f,  0.15691819f,  0.07851963f,  0.00000000f, -0.07851963f, -0.15691819f, -0.23507479f,
+	-0.31286893f, -0.39018064f, -0.46689073f, -0.54288090f, -0.61803399f, -0.69223411f, -0.76536686f,
+	-0.83731948f, -0.90798100f, -0.97724248f, -1.04499713f, -1.11114047f, -1.17557050f, -1.23818790f,
+	-1.29889610f, -1.35760149f, -1.41421356f, -1.46864502f, -1.52081193f, -1.57063386f, -1.61803399f,
+	-1.66293922f, -1.70528033f, -1.74499201f, -1.78201305f, -1.81628635f, -1.84775907f, -1.87638267f,
+	-1.90211303f, -1.92491047f, -1.94473984f, -1.96157056f, -1.97537668f, -1.98613691f, -1.99383467f
+};
+
+float apCos2(float hz)
+{
+	float x = (hz - (float)AP_SWEEP_F0) / (float)AP_SWEEP_STEP;
+	if (x <= 0.0f)
+	{
+		return apSweepCoeff[0];
+	}
+	if (x >= (float)(AP_SWEEP_BINS - 1))
+	{
+		return apSweepCoeff[AP_SWEEP_BINS - 1];
+	}
+	int i = (int)x;
+	float t = x - (float)i;
+	return apSweepCoeff[i] + t * (apSweepCoeff[i + 1] - apSweepCoeff[i]);
+}
+
+void apBgInit(apBg_t *b)
+{
+	for (int i = 0; i < AP_SWEEP_BINS; i++)
+	{
+		b->pw[i] = 0.0f;
+	}
+	b->sumSq = 0.0f;
+	b->n = 0;
+	b->sum = 0;
+	b->part = 0;
+	b->rounds = 0;
+}
+
+static uint32_t sqrtF(float v)
+{
+	if (v <= 0.0f)
+	{
+		return 0;
+	}
+	if (v > 1.8e19f)
+	{
+		v = 1.8e19f;
+	}
+	return apIsqrt64((uint64_t)v);
+}
+
+static void bgClose(apBg_t *b, apBgResult_t *out)
+{
+	const float rounds = (float)AP_SWEEP_ROUNDS;
+	float *mean = b->pw;   /* середнє -- на місці сум (вікно однаково скидається після) */
+	float floorP = 0.0f;
+	int k1 = 0, k2 = -1;
+
+	for (int i = 0; i < AP_SWEEP_BINS; i++)
+	{
+		mean[i] /= rounds;
+		floorP += mean[i];
+		if (mean[i] > mean[k1])
+		{
+			k1 = i;
+		}
+	}
+	floorP /= (float)AP_SWEEP_BINS;
+	for (int i = 0; i < AP_SWEEP_BINS; i++)
+	{
+		if ((i >= k1 - 2) && (i <= k1 + 2))
+		{
+			continue;
+		}
+		if ((k2 < 0) || (mean[i] > mean[k2]))
+		{
+			k2 = i;
+		}
+	}
+
+	/* Уточнення топ-1: для прямокутного вікна |X(k+1)| / |X(k)| = d / (1 - d), де d -- зсув частоти
+	 * в бінах від k у бік сусіда, тобто d = |X(k+1)| / (|X(k)| + |X(k+1)|). Шум віднімаємо за
+	 * середнім рівнем (оцінка «підлоги»). */
+	int kn = k1;
+	if ((k1 > 0) && ((k1 + 1 >= AP_SWEEP_BINS) || (mean[k1 - 1] > mean[k1 + 1])))
+	{
+		kn = k1 - 1;
+	}
+	else if (k1 + 1 < AP_SWEEP_BINS)
+	{
+		kn = k1 + 1;
+	}
+	float ak = (float)sqrtF(mean[k1] - floorP);
+	float an = (kn != k1) ? (float)sqrtF(mean[kn] - floorP) : 0.0f;
+	float d = ((ak + an) > 0.0f) ? (an / (ak + an)) : 0.0f;
+	float f1 = (float)(AP_SWEEP_F0 + AP_SWEEP_STEP * k1) + ((kn > k1) ? d : -d) * (float)AP_SWEEP_STEP;
+
+	/* Амплітуда синусоїди з поправкою на sinc зсуву: A = 2|X(k)| / (N sinc d),
+	 * sinc d ~ 1 - (pi d)^2/6 + (pi d)^4/120 (d <= 0,5: похибка < 0,1 %). */
+	float pd2 = 9.8696044f * d * d;
+	float sinc = 1.0f - pd2 / 6.0f + (pd2 * pd2) / 120.0f;
+	float a1 = (2.0f * (float)sqrtF(mean[k1])) / ((float)AP_SWEEP_N * sinc);
+
+	uint32_t n = b->n;
+	float var = (n > 0) ? (b->sumSq / (float)n) : 0.0f;
+	uint32_t rms = sqrtF(var);
+
+	out->f1 = f1;
+	out->a1 = (uint32_t)(a1 + 0.5f);
+	{
+		/* RMS тону = A / sqrt(2) */
+		float sh = (rms > 0) ? ((a1 * 0.70710678f * 100.0f) / (float)rms) : 0.0f;
+		out->share1 = (uint8_t)((sh > 100.0f) ? 100.0f : (sh + 0.5f));
+	}
+	out->f2 = (uint16_t)(AP_SWEEP_F0 + AP_SWEEP_STEP * ((k2 < 0) ? 0 : k2));
+	out->a2 = (k2 < 0) ? 0 : ((2U * sqrtF(mean[k2])) / AP_SWEEP_N);
+	out->rms = rms;
+	out->mean = (n > 0) ? (int32_t)(b->sum / (int32_t)n) : 0;
+	out->valid = (n > 0) ? 1 : 0;
+}
+
+bool apBgBlock(apBg_t *b, const int16_t *x, apBgResult_t *out)
+{
+	/* Рівень: середнє блока й сума квадратів відхилень від нього (DC не псує точність float). */
+	int32_t s = 0;
+	for (int i = 0; i < AP_SWEEP_N; i++)
+	{
+		s += x[i];
+	}
+	int32_t m = s / AP_SWEEP_N;
+	int64_t sq = 0;
+	for (int i = 0; i < AP_SWEEP_N; i++)
+	{
+		int32_t dv = x[i] - m;
+		sq += (int64_t)dv * dv;
+	}
+	b->sumSq += (float)sq;
+	b->sum += s;
+	b->n += AP_SWEEP_N;
+
+	/* Своя група частот (Goertzel; частоти рівно на бінах -- DC не заважає). */
+	int k0 = b->part * AP_SWEEP_PER_BLOCK;
+	int k1 = k0 + AP_SWEEP_PER_BLOCK;
+	if (k1 > AP_SWEEP_BINS)
+	{
+		k1 = AP_SWEEP_BINS;
+	}
+	for (int k = k0; k < k1; k++)
+	{
+		float c = apSweepCoeff[k];
+		float q1 = 0.0f, q2 = 0.0f;
+		for (int i = 0; i < AP_SWEEP_N; i++)
+		{
+			float q0 = (float)(x[i] - m) + c * q1 - q2;
+			q2 = q1;
+			q1 = q0;
+		}
+		b->pw[k] += (q1 * q1) + (q2 * q2) - (c * q1 * q2);
+	}
+
+	if (k1 >= AP_SWEEP_BINS)
+	{
+		b->part = 0;
+		if (++b->rounds >= AP_SWEEP_ROUNDS)
+		{
+			bgClose(b, out);
+			apBgInit(b);
+			return true;
+		}
+	}
+	else
+	{
+		b->part++;
+	}
+	return false;
+}
+
+float apBgNotchHz(const apBgResult_t *r)
+{
+	float f = r->f1;
+	if ((r->valid == 0) || (r->share1 < 50) || (f < 900.0f) || (f > 2500.0f))
+	{
+		return 0.0f;
+	}
+	if (((f > 1100.0f) && (f < 1300.0f)) || ((f > 2100.0f) && (f < 2300.0f)))
+	{
+		return 0.0f;
+	}
+	return f;
+}
+
 #endif /* ENABLE_APRS_RX_PROBE */

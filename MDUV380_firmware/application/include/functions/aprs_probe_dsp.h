@@ -84,6 +84,53 @@ void apChanInit(apChan_t *c, uint32_t fs, uint16_t blockLen, uint16_t blocksPerW
 /* Один відлік. true -- вікно щойно закрилося, *out заповнено (out може бути NULL). */
 bool apChanPush(apChan_t *c, int32_t x, apResult_t *out);
 
+/* ---- R3: розгортка фону ------------------------------------------------------ *
+ * Goertzel 100..3900 Гц крок 50 Гц на блоках по 160 відліків (8000 Гц: кожна частота -- рівно
+ * на біні, роздільність 50 Гц). За блок -- AP_SWEEP_PER_BLOCK частот, повна розгортка -- 4 блоки,
+ * вікно -- AP_SWEEP_ROUNDS розгорток (24 блоки = 480 мс), потужності усереднюються.
+ * Результат: топ-1 (частота уточнюється між точками сітки за двома сусідніми бінами, з точністю
+ * до кількох Гц -- потрібно режекторному фільтру), топ-2 (не ближче 3 бінів до топ-1), частка
+ * топ-1 у загальному RMS (вузька завада -- десятки %, білий шум -- кілька %). */
+#define AP_SWEEP_F0         100
+#define AP_SWEEP_STEP       50
+#define AP_SWEEP_BINS       77
+#define AP_SWEEP_N          160
+#define AP_SWEEP_PER_BLOCK  20
+#define AP_SWEEP_ROUNDS     6
+extern const float apSweepCoeff[AP_SWEEP_BINS];   /* 2*cos(2*pi*f/8000) на сітці */
+
+/* 2*cos(2*pi*hz/8000) -- лінійна інтерполяція таблиці (похибка < 0,001, тобто < 0,5 Гц). */
+float apCos2(float hz);
+
+typedef struct
+{
+	float    pw[AP_SWEEP_BINS];  /* сума |X|^2 по блоках вікна */
+	float    sumSq;              /* сума квадратів відхилень від середнього блока */
+	uint32_t n;                  /* відліків у вікні */
+	int32_t  sum;                /* сума відліків вікна (DC) */
+	uint8_t  part;               /* наступна група частот */
+	uint8_t  rounds;             /* повних розгорток у вікні */
+} apBg_t;
+
+typedef struct
+{
+	float    f1;                 /* Гц, уточнена */
+	uint32_t a1;                 /* амплітуда (пік синусоїди), сирі одиниці */
+	uint8_t  share1;             /* % від RMS (RMS тону / RMS усього), 0..100 */
+	uint16_t f2;                 /* Гц, точка сітки */
+	uint32_t a2;
+	uint32_t rms;                /* RMS без DC */
+	int32_t  mean;               /* DC */
+	uint8_t  valid;
+} apBgResult_t;
+
+void apBgInit(apBg_t *b);
+/* x -- рівно AP_SWEEP_N відліків. true -- вікно закрилося, *out заповнено. */
+bool apBgBlock(apBg_t *b, const int16_t *x, apBgResult_t *out);
+/* Частота для режекторного фільтра або 0: топ-1 -- вузька (частка >= 50 %), у смузі
+ * 900-2500 Гц і не ближче 100 Гц до 1200/2200 (там режекція з'їла б сам тон). */
+float apBgNotchHz(const apBgResult_t *r);
+
 /* Допоміжні (для тесту теж). */
 uint32_t apIsqrt64(uint64_t v);
 int16_t  apRatioDb(uint32_t a, uint32_t b);
