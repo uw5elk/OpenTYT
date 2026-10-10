@@ -14,6 +14,10 @@
  * R3 прибрав джерело Б (PC3/ADC2/TIM7): на Plus 10W там нічого немає.
  * R5: у FM-прийомі звук у півслові I2S -- лише біти 0..9 (доповнення до двох), біт 10 --
  * випадковий (+-1024 «фону»); обробка бере 10-бітний відлік (apSample10), USB-запис -- сирий.
+ * R6: формат буває й справжнім 16-бітним (R5 на залізі) -- автовизначення на кожному блоці
+ * (apFmtDetBlock), «16» зводиться до масштабу «10»; сторінка «регістри» читає регістри кодека
+ * раз на секунду; лічильники подій, що переписують регістри (шумодав, біпи, підказки), і
+ * діагностика старту I2S (такти від фронту WS, рівень WS, прапорець FRE веденого I2S).
  * Поза екраном проби (aprsRxProbeIsOn() == false) жоден шлях DMR/AMBE/FM не змінено.
  */
 #include "functions/aprs_rx_probe.h"
@@ -62,6 +66,19 @@ _Static_assert(sizeof(audioAndHotspotDataBuffer) >= (APRS_PROBE_SLOTS_STEREO * 2
 #define APRS_PROBE_USB_HDR      20U
 #define APRS_PROBE_USB_MAX_SECS 120U
 #define APRS_PROBE_USB_IDLE_MS  2000U  /* ПК мовчить довше -- стоп запису, щоб кільце не стояло */
+
+/* R6: регістри HR-C6000 (сторінка 4) для сторінки «регістри» -- аудіокодек/I2S і все, що пишуть
+ * FM-прийом/передача, біпи й підказки (docs/aprs-rx-feasibility.md, розділ 10.3). Порядок -- як
+ * на екрані: E0..EF, далі по 4 у рядку. */
+static const uint8_t s_regAddr[APRS_PROBE_NUM_REGS] =
+{
+	0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7,
+	0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF,
+	0x06, 0x10, 0x25, 0x26,
+	0x34, 0x35, 0x36, 0x37,
+	0x21, 0x22, 0x2F, 0x60
+};
+#define APRS_PROBE_REGS_MS      1000U
 
 /* Штатні FM-значення -- на випадок, якщо прочитати не вдалося. */
 #define REG_E0_FM   0x89
@@ -121,7 +138,19 @@ typedef struct
 	uint16_t          quiet;        /* блоків без нових серій прапорців */
 	uint16_t          notchHz;
 	bool              lastPrompt;
-	bool              fmt16;        /* R5: обробка «16 біт як є» (контроль); false -- 10 біт */
+	uint8_t           fmtMode;      /* R6: APRS_PROBE_FMT_AUTO / _10 / _16 (кнопка *) */
+	apFmtDet_t        det;          /* R6: автовизначення формату */
+	/* R6: діагностика старту I2S і розсинхронізації */
+	uint32_t          i2sStarts;    /* успішних стартів I2S з відкриття проби */
+	uint32_t          startCycles;  /* останній старт: тактів від фронту WS до кінця HAL */
+	uint32_t          startWs;      /* ... і рівень WS одразу після */
+	uint32_t          freRx, freTx; /* опитувань, коли FRE (SPI3 / I2S3ext) був встановлений */
+	/* R6: події, після яких стоковий код переписує регістри кодека */
+	uint32_t          evSqOpen, evSqClose, evBeep, evPrompt;
+	/* R6: регістри кодека, прочитані з чипа (сторінка «регістри») */
+	uint8_t           regVal[APRS_PROBE_NUM_REGS];
+	uint32_t          regOkMask;    /* біт i -- regVal[i] прочитано */
+	uint32_t          regReadMs;    /* 0 -- ще не читали */
 	afskDemod_t       demod;
 	apBg_t            bg;
 	apStream_t        stream;       /* R4: безперервність тону 1200 Гц на межах блоків */
@@ -487,9 +516,14 @@ static void i2sTryStart(void)
 	ringReset();
 	dspReset();
 	s_probe.i2sRunning = true;   /* до старту: перше переривання може прийти одразу */
-	if (I2SProbeStart())
+	uint32_t cyc = 0, ws = 0;
+	if (I2SProbeStart(&cyc, &ws))
 	{
 		s_probe.status = APRS_PROBE_ST_RUNNING;
+		s_probe.i2sStarts++;
+		s_probe.startCycles = cyc;
+		s_probe.startWs = ws;
+		(void)I2SProbeStatusRegs();   /* скинути FRE, що лишився з попереднього сеансу */
 	}
 	else
 	{
@@ -582,6 +616,8 @@ void aprsRxProbeOpen(void)
 	s_probe.variant = 0;
 	s_probe.status = APRS_PROBE_ST_IDLE;
 	s_probe.notchAuto = true;
+	s_probe.fmtMode = APRS_PROBE_FMT_AUTO;
+	apFmtDetInit(&s_probe.det, false);   /* до першого рішення -- «10», як у R5 */
 	dspReset();
 
 	s_probe.savedEco = rxPowerSavingGetLevel();
@@ -637,6 +673,12 @@ void aprsRxProbeResetCurrent(void)
 		s_probe.cbHalf = 0;
 		s_probe.cbFull = 0;
 		s_probe.cbOrder = 0;
+		/* R6: лічильники детектора й FRE -- теж (поточний формат лишається) */
+		s_probe.det.switches = 0;
+		s_probe.det.ev10 = 0;
+		s_probe.det.ev16 = 0;
+		s_probe.freRx = 0;
+		s_probe.freTx = 0;
 	}
 }
 
@@ -644,14 +686,97 @@ void aprsRxProbeToggleFormat(void)
 {
 	if (stateValid())
 	{
-		s_probe.fmt16 = !s_probe.fmt16;
+		s_probe.fmtMode = (uint8_t)((s_probe.fmtMode + 1U) % APRS_PROBE_FMT_MODES);
 		dspReset();   /* фільтри й такти, налаштовані на інший формат, -- з нуля */
 	}
 }
 
+uint8_t aprsRxProbeFormatMode(void)
+{
+	return stateValid() ? s_probe.fmtMode : APRS_PROBE_FMT_AUTO;
+}
+
 bool aprsRxProbeFormat16(void)
 {
-	return stateValid() && s_probe.fmt16;
+	if (stateValid() == false)
+	{
+		return false;
+	}
+	if (s_probe.fmtMode == APRS_PROBE_FMT_AUTO)
+	{
+		return (s_probe.det.is16 != 0U);
+	}
+	return (s_probe.fmtMode == APRS_PROBE_FMT_16);
+}
+
+const apFmtDet_t *aprsRxProbeFormatDet(void)
+{
+	return &s_probe.det;
+}
+
+void aprsRxProbeI2SDiag(uint32_t *starts, uint32_t *startUs, uint32_t *startWs, uint32_t *freRx, uint32_t *freTx)
+{
+	uint32_t hclk = HAL_RCC_GetHCLKFreq();
+	uint32_t perUs = (hclk >= 1000000U) ? (hclk / 1000000U) : 1U;
+
+	*starts = s_probe.i2sStarts;
+	*startUs = s_probe.startCycles / perUs;
+	*startWs = s_probe.startWs;
+	*freRx = s_probe.freRx;
+	*freTx = s_probe.freTx;
+}
+
+void aprsRxProbeEvents(uint32_t *sqOpen, uint32_t *sqClose, uint32_t *beeps, uint32_t *prompts)
+{
+	*sqOpen = s_probe.evSqOpen;
+	*sqClose = s_probe.evSqClose;
+	*beeps = s_probe.evBeep;
+	*prompts = s_probe.evPrompt;
+}
+
+void aprsRxProbeRegsRefresh(void)
+{
+	if ((stateValid() == false) || (s_probe.engaged == false))
+	{
+		return;
+	}
+	uint32_t now = ticksGetMillis();
+	if ((s_probe.regReadMs != 0U) && ((now - s_probe.regReadMs) < APRS_PROBE_REGS_MS))
+	{
+		return;
+	}
+	s_probe.regReadMs = (now != 0U) ? now : 1U;
+	s_probe.regOkMask = 0;
+	for (uint32_t i = 0; i < APRS_PROBE_NUM_REGS; i++)
+	{
+		uint8_t v = 0;
+		if (SPI0ReadPageRegByte(0x04, s_regAddr[i], &v) == kStatus_Success)
+		{
+			s_probe.regVal[i] = v;
+			s_probe.regOkMask |= (1UL << i);
+		}
+	}
+}
+
+bool aprsRxProbeReg(uint8_t i, uint8_t *addr, uint8_t *val)
+{
+	if (i >= APRS_PROBE_NUM_REGS)
+	{
+		return false;
+	}
+	*addr = s_regAddr[i];
+	*val = s_probe.regVal[i];
+	return stateValid() && (s_probe.regReadMs != 0U) && ((s_probe.regOkMask & (1UL << i)) != 0U);
+}
+
+void aprsRxProbeRestartI2S(void)
+{
+	if (stateValid() && s_probe.engaged)
+	{
+		i2sStop();
+		s_probe.lastTryMs = ticksGetMillis();
+		i2sTryStart();   /* регістри не пишемо -- лише новий старт I2S */
+	}
 }
 
 void aprsRxProbeToggleNotch(void)
@@ -690,6 +815,25 @@ void aprsRxProbeService(void)
 	bool prompt = voicePromptsIsPlaying();
 	bool melody = soundMelodyIsPlaying();
 	bool rf = ((audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) != 0);
+
+	/* R6: події, після яких стоковий код переписує регістри кодека (розділ 10.3): відкриття
+	 * шумодава -- radioSetAudioPath(true) (0x36, 0x10); біп -- 0x36 і 0x06; підказка -- 0x36, 0x10. */
+	if (rf && (s_probe.lastRf == false))
+	{
+		s_probe.evSqOpen++;
+	}
+	else if ((rf == false) && s_probe.lastRf)
+	{
+		s_probe.evSqClose++;
+	}
+	if (melody && (s_probe.lastMelody == false))
+	{
+		s_probe.evBeep++;
+	}
+	if (prompt && (s_probe.lastPrompt == false))
+	{
+		s_probe.evPrompt++;
+	}
 
 	/* Голосова підказка має пріоритет: віддаємо їй I2S і чекаємо. */
 	if (prompt)
@@ -731,13 +875,33 @@ void aprsRxProbeService(void)
 		 * сирим, бо з нього ж читає USB-запис. */
 		int16_t x[APRS_PROBE_BLOCK];
 		const uint16_t *src = APRS_PROBE_RING_BASE + ((uint32_t)t * (s_probe.stereo ? (2U * APRS_PROBE_BLOCK) : APRS_PROBE_BLOCK));
-		apFmtExtract(&s_probe.var[s_probe.variant].fmt, src, s_probe.stereo ? 2 : 1, APRS_PROBE_BLOCK, s_probe.fmt16, x);
+		int stride = s_probe.stereo ? 2 : 1;
+		/* R6: детектор рахує завжди (і в ручних режимах -- щоб бачити, що він каже); посеред
+		 * кадру демодулятора формат не міняється. */
+		if (apFmtDetBlock(&s_probe.det, src, stride, APRS_PROBE_BLOCK, (s_probe.demod.inFrame != 0)) &&
+				(s_probe.fmtMode == APRS_PROBE_FMT_AUTO))
+		{
+			/* формат змінився: усе, що демодулятор і розгортка набрали досі, -- з іншого формату */
+			dspReset();
+		}
+		apFmtExtract(&s_probe.var[s_probe.variant].fmt, src, stride, APRS_PROBE_BLOCK, aprsRxProbeFormat16(), x);
 		processBlock(x);
 		s_probe.tail = (uint8_t)((t + 1U) % s_probe.slots);
 	}
 	if (s_probe.i2sRunning)
 	{
 		measureFs();
+
+		/* R6: FRE веденого I2S (WS змінився в неочікуваний момент) -- скидається читанням SR. */
+		uint32_t sr = I2SProbeStatusRegs();
+		if (sr & SPI_SR_FRE)
+		{
+			s_probe.freRx++;
+		}
+		if ((sr >> 16) & SPI_SR_FRE)
+		{
+			s_probe.freTx++;
+		}
 	}
 
 	/* ПК перестав забирати блоки (закрили програму, витягли кабель) -- запис зупиняємо, інакше

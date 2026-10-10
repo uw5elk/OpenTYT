@@ -132,12 +132,21 @@ static bool probeWaitWs(GPIO_PinState level, uint32_t t0, uint32_t timeoutMs)
 	return true;
 }
 
-bool I2SProbeStart(void)
+uint32_t I2SProbeStatusRegs(void)
+{
+	return (SPI3->SR & 0xFFFFU) | ((I2S3ext->SR & 0xFFFFU) << 16);
+}
+
+bool I2SProbeStart(uint32_t *startCycles, uint32_t *startWs)
 {
 	if (g_TX_SAI_in_use || isSending || isReceiving)
 	{
 		return false;
 	}
+
+	// R6: лічильник тактів DWT (як у spectrum.c) -- щоб виміряти, коли саме ввімкнувся I2S.
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
 	// Той самий момент старту, що в I2SStartDMA(): одразу після фронту WS.
 	uint32_t t0 = HAL_GetTick();
@@ -145,6 +154,7 @@ bool I2SProbeStart(void)
 	{
 		return false;
 	}
+	uint32_t c0 = DWT->CYCCNT;
 
 	memset(i2s_Tx_Buffer, 0x00, sizeof(i2s_Tx_Buffer));   // у ЦАП -- тиша
 	isSending = false;
@@ -156,6 +166,10 @@ bool I2SProbeStart(void)
 		g_TX_SAI_in_use = false;
 		return false;
 	}
+	// R6: I2SE увімкнено в кінці HAL -- скільки минуло від фронту WS і який рівень WS зараз.
+	uint32_t c1 = DWT->CYCCNT;
+	*startWs = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_SET) ? 1U : 0U;
+	*startCycles = ((c1 - c0) != 0U) ? (c1 - c0) : 1U;
 	return true;
 }
 

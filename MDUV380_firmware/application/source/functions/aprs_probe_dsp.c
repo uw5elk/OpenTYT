@@ -616,7 +616,7 @@ void apFmtInit(apFmt_t *f)
 	f->peak = 0;
 }
 
-void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, bool raw16, int16_t *out)
+void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, bool is16, int16_t *out)
 {
 	for (int i = 0; i < n; i++)
 	{
@@ -644,8 +644,110 @@ void apFmtExtract(apFmt_t *f, const uint16_t *u, int stride, int n, bool raw16, 
 				f->peak = a;
 			}
 		}
-		out[i] = raw16 ? (int16_t)w : s;
+		out[i] = is16 ? apSample16(w) : s;
 	}
+}
+
+/* ---- R6: автовизначення формату (опис -- у .h) ------------------------------------ */
+
+void apFmtDetInit(apFmtDet_t *d, bool is16)
+{
+	d->is16 = is16 ? 1U : 0U;
+	d->streak = 0;
+	d->hold = 0;
+	d->switches = 0;
+	d->ev10 = 0;
+	d->ev16 = 0;
+}
+
+uint8_t apFmtEvidence(const uint16_t *u, int stride, int n)
+{
+	uint32_t nonUni = 0, small = 0, diff = 0, near = 0;
+
+	for (int i = 0; i < n; i++)
+	{
+		uint16_t w = u[i * stride];
+		uint16_t hi = (uint16_t)(w >> 10);
+		int16_t s = apSample10(w);
+		uint16_t a = (uint16_t)((s < 0) ? -s : s);
+
+		if ((hi != 0U) && (hi != 0x3FU))
+		{
+			nonUni++;
+		}
+		if (a < AP_DET_SMALL)
+		{
+			small++;
+			if (((w >> 10) ^ (w >> 9)) & 1U)
+			{
+				diff++;
+			}
+		}
+		else if (a >= AP_DET_NEAR)
+		{
+			near++;
+		}
+	}
+
+	if (nonUni >= AP_DET_NONUNI)
+	{
+		return AP_EV_16;
+	}
+	if (small >= AP_DET_MIN_SMALL)
+	{
+		if (((diff * 4U) >= small) && ((near * 10U) <= (uint32_t)n))
+		{
+			return AP_EV_10;
+		}
+		if ((diff * 32U) <= small)
+		{
+			return AP_EV_16;
+		}
+	}
+	return AP_EV_NONE;
+}
+
+bool apFmtDetBlock(apFmtDet_t *d, const uint16_t *u, int stride, int n, bool inFrame)
+{
+	uint8_t ev = apFmtEvidence(u, stride, n);
+
+	if (ev == AP_EV_10)
+	{
+		d->ev10++;
+	}
+	else if (ev == AP_EV_16)
+	{
+		d->ev16++;
+	}
+
+	if (ev == AP_EV_NONE)
+	{
+		/* блок не голосує: серія не переривається */
+	}
+	else if ((ev == AP_EV_16) == (d->is16 != 0U))
+	{
+		d->streak = 0;   /* доказ поточного формату */
+		d->hold = 0;
+	}
+	else if (d->streak < AP_DET_STREAK)
+	{
+		d->streak++;
+	}
+
+	if (d->streak >= AP_DET_STREAK)
+	{
+		if (inFrame && (d->hold < AP_DET_HOLD_MAX))
+		{
+			d->hold++;   /* посеред кадру не міняємо -- чекаємо його кінця */
+			return false;
+		}
+		d->is16 = d->is16 ? 0U : 1U;
+		d->switches++;
+		d->streak = 0;
+		d->hold = 0;
+		return true;
+	}
+	return false;
 }
 
 #endif /* ENABLE_APRS_RX_PROBE */

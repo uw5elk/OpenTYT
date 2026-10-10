@@ -7,8 +7,11 @@
  * Джерело, демодулятор і відновлення стану -- functions/aprs_rx_probe.c; кроки -- TESTING.md, AE.
  *
  * Керування: вліво/вправо -- варіант; вгору/вниз -- сторінка; GREEN -- скинути лічильники
- * поточного варіанта (і «потік», і фазу тактів); # -- режекція авто/вимк; * (R5) -- формат
- * відліку: 10 біт (типово) / 16 біт як є; RED -- вихід.
+ * поточного варіанта (і «потік», і фазу тактів); # -- режекція авто/вимк; * (R5/R6) -- формат
+ * відліку по колу: авто (типово) / 10 біт / 16 біт; 0 (R6) -- перезапустити I2S без запису
+ * регістрів (дослід: чи міняється формат від самого перезапуску); RED -- вихід.
+ * R6: сторінка «регістри» -- регістри кодека HR-C6000, прочитані з чипа раз на секунду (поки її
+ * видно), старт I2S (мкс від фронту WS, рівень WS, FRE) і події, що переписують регістри.
  * USB-запис на ПК (опкод 0xB5) іде, поки екран відкрито; стан -- у рядку 1.
  * Перемальовування -- раз на 250 мс і на кожну подію.
  */
@@ -28,12 +31,25 @@
 
 /* Стан екрана -- у CCM; ініціалізується в menuAprsRxProbeEnter() (до того не читається). */
 static uint32_t s_lastDrawMs PROBE_CCM;
-static uint8_t  s_page       PROBE_CCM;   /* 0 -- пакети, 1 -- фон, 2 -- потік, 3 -- кадр */
-#define PROBE_PAGES          4U
+static uint8_t  s_page       PROBE_CCM;   /* 0 -- пакети, 1 -- фон, 2 -- потік, 3 -- кадр, 4 -- регістри */
+#define PROBE_PAGES          5U
+#define PROBE_PAGE_REGS      4U
+#define PROBE_CAP(v, m)      ((unsigned long)(((v) > (m)) ? (m) : (v)))
 
 static void printRow(int row, const char *text)
 {
 	displayPrintAt(0, PROBE_ROW(row), text, FONT_SIZE_1);
+}
+
+/* R6: назва формату обробки -- «авто(16)» / «авто(10)» або ручні «10 біт!» / «16 біт!». */
+static const char *fmtName(void)
+{
+	bool is16 = aprsRxProbeFormat16();
+	if (aprsRxProbeFormatMode() == APRS_PROBE_FMT_AUTO)
+	{
+		return is16 ? APRSPROBE_AUTO16 : APRSPROBE_AUTO10;
+	}
+	return is16 ? APRSPROBE_BITS16 : APRSPROBE_BITS10;
 }
 
 static void drawPackets(const aprsProbeVar_t *st)
@@ -69,6 +85,64 @@ static void drawPackets(const aprsProbeVar_t *st)
 	else
 	{
 		printRow(7, APRSPROBE_NOTCH_AUTO);
+	}
+
+	/* R6: що каже детектор (10 чи 16 -- і в ручному режимі) і скільки разів він перемикав (з GREEN). */
+	{
+		const apFmtDet_t *det = aprsRxProbeFormatDet();
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_DET, (det->is16 ? 16U : 10U), PROBE_CAP(det->switches, 9999U));
+	}
+	printRow(8, buf);
+}
+
+/* R6: регістри кодека (прочитані з чипа), старт I2S і події. Рядки 2-6 -- регістри, 7 -- старт
+ * I2S, 8 -- FRE і кількість стартів, 9 (замість підказки) -- події. */
+static void drawRegs(void)
+{
+	char buf[SCREEN_LINE_BUFFER_SIZE * 2];
+	uint8_t addr, val;
+	uint32_t starts, us, ws, freRx, freTx;
+
+	aprsRxProbeRegsRefresh();
+
+	/* E0..EF -- рядками по 8: «E0 89 0F 06 52 27 1A 00 00» */
+	for (int r = 0; r < 2; r++)
+	{
+		int o = 0;
+		for (int i = 0; i < 8; i++)
+		{
+			bool ok = aprsRxProbeReg((uint8_t)(r * 8 + i), &addr, &val);
+			if (i == 0)
+			{
+				o += snprintf(&buf[o], sizeof(buf) - o, "%02X", (unsigned)addr);
+			}
+			o += ok ? snprintf(&buf[o], sizeof(buf) - o, " %02X", (unsigned)val) : snprintf(&buf[o], sizeof(buf) - o, " --");
+		}
+		printRow(2 + r, buf);
+	}
+	/* решта -- по 4: «06:20 10:80 25:0E 26:FD» */
+	for (int r = 0; r < 3; r++)
+	{
+		int o = 0;
+		for (int i = 0; i < 4; i++)
+		{
+			bool ok = aprsRxProbeReg((uint8_t)(16 + r * 4 + i), &addr, &val);
+			o += ok ? snprintf(&buf[o], sizeof(buf) - o, (i == 0) ? "%02X:%02X" : " %02X:%02X", (unsigned)addr, (unsigned)val) :
+					snprintf(&buf[o], sizeof(buf) - o, (i == 0) ? "%02X:--" : " %02X:--", (unsigned)addr);
+		}
+		printRow(4 + r, buf);
+	}
+
+	aprsRxProbeI2SDiag(&starts, &us, &ws, &freRx, &freTx);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_START, PROBE_CAP(us, 99999U), (unsigned)ws);
+	printRow(7, buf);
+	snprintf(buf, sizeof(buf), APRSPROBE_FMT_FRE, PROBE_CAP(freRx, 9999U), PROBE_CAP(freTx, 9999U), PROBE_CAP(starts, 999U));
+	printRow(8, buf);
+	{
+		uint32_t sqo, sqc, bp, pr;
+		aprsRxProbeEvents(&sqo, &sqc, &bp, &pr);
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_EVENTS, PROBE_CAP(sqo, 999U), PROBE_CAP(sqc, 999U), PROBE_CAP(bp, 999U), PROBE_CAP(pr, 99U));
+		printRow(9, buf);
 	}
 }
 
@@ -212,7 +286,8 @@ static void draw(void)
 
 	displayClearBuf();
 	{
-		static const char * const titles[PROBE_PAGES] = { APRSPROBE_TITLE_PKT, APRSPROBE_TITLE_BG, APRSPROBE_TITLE_STREAM, APRSPROBE_TITLE_FRAME };
+		static const char * const titles[PROBE_PAGES] = { APRSPROBE_TITLE_PKT, APRSPROBE_TITLE_BG, APRSPROBE_TITLE_STREAM, APRSPROBE_TITLE_FRAME,
+				APRSPROBE_TITLE_REGS };
 		menuDisplayTitle(titles[(s_page < PROBE_PAGES) ? s_page : 0]);
 	}
 
@@ -258,11 +333,12 @@ static void draw(void)
 	}
 	else
 	{
-		snprintf(buf, sizeof(buf), APRSPROBE_FMT_RUN, (aprsRxProbeFormat16() ? APRSPROBE_BITS16 : APRSPROBE_BITS10),
-				(unsigned long)aprsRxProbeBlocks());
+		snprintf(buf, sizeof(buf), APRSPROBE_FMT_RUN, fmtName(), (unsigned long)aprsRxProbeBlocks());
 		printRow(1, buf);
 	}
 
+	/* R6: рядок 8 «пакетів» -- формат і перемикання (раніше там були регістри на вході; тепер
+	 * поточні значення регістрів -- на сторінці «регістри»). */
 	const aprsProbeVar_t *stats = aprsRxProbeStats(v);
 	if (s_page == 0)
 	{
@@ -276,26 +352,19 @@ static void draw(void)
 	{
 		drawStream();
 	}
-	else
+	else if (s_page == 3)
 	{
 		drawFrame(stats);
 	}
-
-	/* Рядок 8: регістри на вході -- саме їх буде відновлено (лише на «пакетах»; на інших сторінках
-	 * рядок зайнятий: R5 -- формат відліку на «фоні»). */
-	if (s_page == 0)
+	else
 	{
-		uint8_t e0, r36, r10;
-		bool ok;
-		if (aprsRxProbeSavedRegs(&e0, &r36, &r10, &ok))
-		{
-			snprintf(buf, sizeof(buf), (ok ? APRSPROBE_FMT_SAVED : APRSPROBE_FMT_SAVED_BAD),
-					(unsigned)e0, (unsigned)r36, (unsigned)r10);
-			printRow(8, buf);
-		}
+		drawRegs();   /* рядок 9 -- події замість підказки */
 	}
 
-	printRow(9, APRSPROBE_FOOTER1);
+	if (s_page != PROBE_PAGE_REGS)
+	{
+		printRow(9, APRSPROBE_FOOTER1);
+	}
 	printRow(10, APRSPROBE_FOOTER2);
 	displayRender();
 }
@@ -337,7 +406,12 @@ bool menuAprsRxProbeTick(uiEvent_t *ev)
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR))
 			{
-				aprsRxProbeToggleFormat();   /* R5: 10 біт <-> 16 біт як є */
+				aprsRxProbeToggleFormat();   /* R6: авто -> 10 біт -> 16 біт -> авто */
+				redraw = true;
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_0))
+			{
+				aprsRxProbeRestartI2S();     /* R6: лише I2S, регістри не пишемо */
 				redraw = true;
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH))
