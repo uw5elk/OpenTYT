@@ -202,6 +202,7 @@ static void drawMonitor(void)
 			case APRS_MODE_BCN_INHIBIT:  state = APRSM_ERR_INHIBIT; break;
 			case APRS_MODE_BCN_BAND:     state = APRSM_ERR_BAND; break;
 			case APRS_MODE_BCN_FAILED:   state = APRSM_ERR_FAILED; break;
+			case APRS_MODE_BCN_TOOBIG:   state = APRSM_ERR_TOOBIG; break;
 			default:                     state = (st->state == 2U) ? APRSM_M_ST_LISTEN : APRSM_M_ST_START; break;
 		}
 	}

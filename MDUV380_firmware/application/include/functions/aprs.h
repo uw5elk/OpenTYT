@@ -195,7 +195,8 @@ typedef enum
 	APRS_MODE_TX_NOT_FM,      /* рація не в аналоговому FM */
 	APRS_MODE_TX_BAND,        /* частота поза любительським діапазоном (обмеження TX) */
 	APRS_MODE_TX_NOPOS,
-	APRS_MODE_TX_NOCALL
+	APRS_MODE_TX_NOCALL,
+	APRS_MODE_TX_TOOBIG       /* R10-fix2: кадр AX.25 не влазить у буфер -- передачу скасовано */
 } aprsModeTxResult_t;
 aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e);
 void aprsModeAbortTx(void);   /* примусово обірвати маяк режиму (вихід посеред передачі) */

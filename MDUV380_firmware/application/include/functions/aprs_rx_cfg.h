@@ -31,10 +31,13 @@
 #define APRS_MODE_TRACE 1
 void aprsModeTrace(unsigned int n);
 void aprsModeTraceT(unsigned int n);
+void aprsModeTraceV(unsigned int n, unsigned int v);   /* номер + додаткове значення (R10-fix2) */
 #define AM_TRACE(n)    aprsModeTrace(n)
+#define AM_TRACE_V(n, v)  aprsModeTraceV((n), (unsigned int)(v))
 #define AM_TRACE_T(n)  aprsModeTraceT(n)
 #else
 #define AM_TRACE(n)    ((void)0)
+#define AM_TRACE_V(n, v)  ((void)0)
 #define AM_TRACE_T(n)  ((void)0)
 #endif
 
