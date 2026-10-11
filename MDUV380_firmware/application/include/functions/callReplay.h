@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include "functions/aprs_rx_cfg.h"   /* R10: ENABLE_APRS_RX (callReplayBorrow) */
 
 #if defined(ENABLE_CALL_REPLAY)
 
@@ -123,6 +125,18 @@ bool     callReplayPlaybackGroup(uint32_t playIndex, const uint8_t **outGroup, b
  * теж повертає 0 -- викликач (callReplayStartLastTransition() нижче) зобов'язаний
  * спершу перевірити callReplayIsEmpty(), як і для звичайного callReplayStart(). */
 uint32_t callReplayFindLastOverStart(void);
+
+#if defined(ENABLE_APRS_RX)
+/* R10 (форк): «Режим APRS» (functions/aprs_mode.c) на час своєї роботи позичає це кільце (CCM, 13500 Б) під стан:
+ * у режимі APRS (аналоговий FM) DMR-голос не приймається, "Переслухати" не потрібен, а вільного CCM у збірці
+ * лишається лише ~300 Б. Борг -- повний: callReplayBorrow() інвалідує запис (callReplayInit(): count = 0), вимикає
+ * захоплення й повертає базу кільця та розмір; callReplayRelease() знову інвалідує (у кільці сміття режиму),
+ * повертає справжній перемикач "Запис RX" і відновлює захоплення. Викликач ПЕРЕД позичанням сам зупиняє
+ * відтворення (callReplayStop()). Старий запис ВТРАЧАЄТЬСЯ -- це свідомо (TESTING.md, AM8). */
+void *callReplayBorrow(size_t *size);
+void  callReplayRelease(void);
+bool  callReplayIsBorrowed(void);
+#endif
 
 /* ВНУТРІШНЄ API для callReplayPlayback.c (окремий .c, апаратний рушій відтворення --
  * НЕ бере участі в хостовому тесті кільцевої логіки). Публічне лише тому, що обидва

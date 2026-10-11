@@ -54,6 +54,8 @@ declare -A SRCS=(
 	[test_aprs_probe_dsp]="$APP/source/functions/aprs_probe_dsp.c -lm"   # R2: рівень і тони 1200/2200 для екрана «APRS проба»
 	[test_aprs_afsk]="$APP/source/functions/aprs_afsk.c $APP/source/functions/aprs_probe_dsp.c -lm"   # R3: демодулятор Bell 202 + AX.25, поріг SNR, завади
 	[test_aprs_rx_parse]="$APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R8: розбір кадрів APRS, Mic-E, дедуплікація, список станцій, відстань
+	[test_aprs_mode]="$APP/source/functions/aprs_mode_cfg.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R10: налаштування «Режиму APRS» -- блок, типові значення, ефективні, збирання бікона, UTF-8 коментар
+	[test_aprs_mode_state]="$APP/source/functions/aprs_mode.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/callReplay.c"   # R10: вхід/вихід «Режиму APRS», налаштування, маяк -- РЕАЛЬНИЙ aprs_mode.c, залізо -- заглушки в тесті
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 
@@ -72,6 +74,8 @@ declare -A XFLAGS=(
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_afsk]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_rx_parse]="-DENABLE_APRS_RX"
+	[test_aprs_mode]="-DENABLE_APRS_RX"
+	[test_aprs_mode_state]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 	[test_dmr_sms_store]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 )
 

@@ -29,6 +29,7 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiGlobals.h"
 #include "user_interface/languages/aprsrx_ua.h"
+#include "functions/aprs_mode.h"   /* R10: у «Режимі APRS» приймач слухає власну частоту режиму */
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h"
 #endif
@@ -144,6 +145,14 @@ const aprsRxStats_t *aprsRxStats(void)
 bool aprsRxIsRunning(void)
 {
 	return stateValid() && s_rx.engaged && s_rx.i2sRunning;
+}
+
+bool aprsRxBusy(uint32_t ms)
+{
+	/* Блок -- 20 мс; «quiet» рахує блоки без серій прапорців. Кадр у розборі або прапорці за останні ms мс. */
+	uint32_t blocks = (ms + 19U) / 20U;
+
+	return stateValid() && s_rx.engaged && s_rx.i2sRunning && ((s_rx.demod.inFrame != 0) || (s_rx.quiet < blocks));
 }
 
 bool aprsRxOwnPosition(int32_t *latU, int32_t *lonU)
@@ -497,6 +506,12 @@ static aprsRxWhy_t evalWanted(uint32_t *freqOut)
 	{
 		return APRS_RX_WHY_NOT_FM;
 	}
+	if (aprsModeIsActive())
+	{
+		/* R10: «Режим APRS» -- слухаємо завжди, на частоті «каналу» режиму (currentChannelData вказує на нього) */
+		*freqOut = currentChannelData->rxFreq;
+		return APRS_RX_WHY_NONE;
+	}
 	if (uiDataGlobal.Scan.active)
 	{
 		return APRS_RX_WHY_SCAN;
@@ -514,6 +529,28 @@ static void refreshCfg(uint32_t now)
 	aprsRxInfo_t info;
 
 	s_rx.lastCfgMs = now;
+	if (aprsModeIsActive())
+	{
+		/* R10: власний позивний/SSID/позиція -- з налаштувань режиму */
+		char mc[8];
+		uint8_t mssid;
+		bool mpos;
+		int32_t mlat, mlon;
+
+		if (aprsModeOwnInfo(mc, &mssid, &mpos, &mlat, &mlon))
+		{
+			memset(s_rx.ownCall, 0, sizeof(s_rx.ownCall));
+			for (int i = 0; (i < 6) && (mc[i] != 0); i++)
+			{
+				s_rx.ownCall[i] = mc[i];
+			}
+			s_rx.ownSsid = mssid;
+			s_rx.ownHasPos = mpos;
+			s_rx.ownLatU = mlat;
+			s_rx.ownLonU = mlon;
+		}
+		return;
+	}
 	if (aprsBeaconingGetRxInfo(&info, true) == false)
 	{
 		return;
@@ -704,6 +741,15 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		s_rx.db.other++;
 	}
 	aprsStation_t *st = aprsDbUpdate(&s_rx.db, &ax, &pkt, now);
+
+	if (aprsModeIsActive())
+	{
+		uint32_t md = 0;
+		uint16_t mb = 0;
+		bool mg = aprsRxStationGeo(st, &md, &mb);
+
+		aprsModeOnFrame(&ax, &pkt, mg, md, mb);   /* R10: «останній пакет» на «Моніторі» */
+	}
 
 	/* Повідомлення нам: тільки справжнє (не ack/rej), раніше не віддане. ACK НЕ шлемо (R9). */
 	if ((pkt.type == APRS_T_MESSAGE) && (pkt.msgAck == false) && (s_rx.ownCall[0] != 0) &&

@@ -363,5 +363,66 @@ for name, t, n, lim in aprs_over:
 print(f'  разом: {len(aprs_over)}')
 fails += aprs_over
 
+print('\n=== 7. «Режим APRS»: екран, налаштування, редактор, сповіщення (languages/aprsmode_ua.h, R10) ===')
+# Рядок екрана FONT_SIZE_1 -- 26 символів; заголовок -- 16; значення поля налаштувань -- 15 (26 - маркер - мітка(9) - пробіл);
+# мітка поля -- 9; рядок сповіщення -- 16. Для шаблонів підставляємо НАЙГІРШЕ значення.
+mode_over = []
+mode_path = os.path.join(LANG, 'aprsmode_ua.h')
+if os.path.exists(mode_path):
+    am = {m.group(1): m.group(2) for m in re.finditer(
+        r'#define\s+(APRSM_\w+)\s+"((?:[^"\\]|\\.)*)"', open(mode_path, 'rb').read().decode('cp1251'))}
+    states = [am[k] for k in am if k.startswith('APRSM_M_ST_') or k.startswith('APRSM_ERR_')]
+    WORST_S = {
+        'APRSM_M_FREQ': '430.0750',
+        'APRSM_M_STATE': max(states, key=len),
+        'APRSM_M_FORMAT': '255',
+        'APRSM_M_BEACONS': '99д',
+        'APRSM_E_NOW': '-179.123456',
+        'APRSM_E_MODE': 'абв',
+        'APRSM_V_FREQ': '430.0750',
+        'APRSM_V_PATH_FMT': 'WIDE22',
+        'APRSM_V_CALL_FMT': 'UW5ELK',
+    }
+    def worst(name, val):
+        t = val.replace('%%', '\x01')
+        if name == 'APRSM_M_LAST':
+            t = t.replace('%.9s', 'X' * 9).replace('%.7s', 'X' * 7)
+        t = t.replace('%02u', '59').replace('%lu', '99999').replace('%d', '-120').replace('%c', '*').replace('%u', '65535')
+        if name == 'APRSM_TITLE_FMT':
+            t = val.replace('%u', '3')
+        if name == 'APRSM_M_FORMAT':
+            t = val.replace('%u', '16')   # станцій: не більше 16
+        if '%s' in t:
+            t = t.replace('%s', WORST_S.get(name, 'XXXXXXXXXXXXXXX'))
+        return t.replace('\x01', '%')
+    for name, val in am.items():
+        t = worst(name, val).replace('\\\\', '\\')
+        if name == 'APRSM_TITLE_FMT' or name == 'APRSM_MENU':
+            lim = LINE_CHARS
+        elif name.startswith('APRSM_L_'):
+            lim = 9
+        elif name.startswith('APRSM_V_'):
+            if name == 'APRSM_V_INT_FMT':
+                t = val.replace('%u', '60')
+            if name == 'APRSM_V_SQL_FMT':
+                t = val.replace('%u', '100').replace('%%', '%')
+            lim = 15
+        elif name.startswith('APRSM_ERR_') or name == 'APRSM_NOT_NOW':
+            lim = LINE_CHARS
+        elif name.startswith('APRSM_SYM_'):
+            lim = 13   # значення поля «Код сим.»: знак + пробіл + назва = 15 символів
+        else:
+            lim = 26
+        if len(t) > lim:
+            mode_over.append((name, t, len(t), lim))
+    # імена символів: у рядку «Код сим.» -- знак, пробіл, назва: 15 символів значення
+    # рядок налаштувань: маркер(1) + мітка(9) + пробіл(1) + значення(15) = 26
+    if 1 + 9 + 1 + 15 > 26:
+        mode_over.append(('рядок налаштувань', '', 26, 26))
+for name, t, n, lim in mode_over:
+    print(f'  {name}: "{t}" = {n} > {lim}')
+print(f'  разом: {len(mode_over)}')
+fails += mode_over
+
 print(f'\n{"Є ПЕРЕПОВНЕННЯ" if fails else "Переповнень не знайдено"} (всього: {len(fails)})')
 sys.exit(1 if fails else 0)

@@ -92,6 +92,7 @@ typedef struct
 	uint8_t   scroll;           /* перший видимий рядок списку */
 	uint32_t  lastDrawMs;
 	char      cardCall[APRS_CALL_LEN];   /* станція на картці (за позивним: порядок списку може змінитися) */
+	uint8_t   modeOn;           /* R10: «Режим APRS» активний (aprs_mode.c); у байті вирівнювання -- розмір структури не росте */
 } aprsRxUi_t;
 aprsRxUi_t *aprsRxUi(void);
 
@@ -102,6 +103,8 @@ void aprsRxI2SBlock(uint32_t bufNum);          /* з переривання DMA 
  * audioAndHotspotDataBuffer (голосова підказка, «Переслухати», екран проби). Безпечно, якщо не слухаємо. */
 void aprsRxSuspendForAudio(void);
 bool aprsRxIsRunning(void);
+/* R10: на частоті зараз іде AFSK (кадр або серія прапорців за останні ms мс) -- маяк «Режиму APRS» чекає. */
+bool aprsRxBusy(uint32_t ms);
 
 const aprsRxDb_t    *aprsRxDb(void);
 const aprsRxStats_t *aprsRxStats(void);
