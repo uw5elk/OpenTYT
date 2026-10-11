@@ -58,6 +58,7 @@
 #include "functions/callReplay.h"     // "Переслухати" -- кільцевий буфер RX-голосу (ENABLE_CALL_REPLAY)
 #include "functions/aprs_rx_probe.h"  // R2: «APRS проба» (лише ENABLE_APRS_RX_PROBE + українська)
 #include "functions/aprs_rx.h"        // R8: справжній фоновий приймач APRS (ENABLE_APRS_RX + українська)
+#include "functions/aprs_mode.h"      // R10: «Режим APRS» (PTT = маяк, тік режиму)
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -1188,6 +1189,17 @@ void applicationMainTask(void)
 
 			if ((buttons & BUTTON_PTT) != 0)
 			{
+#if defined(APRS_RX)
+				if (aprsModeIsActive())
+				{
+					// R10: у «Режимі APRS» PTT передає МАЯК, а не голос: екран передачі не відкривається.
+					aprsModeOnPtt();
+					PTTToggledDown = false;
+					buttons &= ~BUTTON_PTT;
+				}
+				else
+				{
+#endif
 				// Форк: якщо саме йде прихована передача мікрофона (RCTL Monitor як ціль),
 				// PTT власного оператора має її НЕГАЙНО обірвати — його передача головніша,
 				// і це аварійний вихід, якщо монітор увімкнули помилково.
@@ -1266,6 +1278,9 @@ void applicationMainTask(void)
 						}
 					}
 				}
+#if defined(APRS_RX)
+				}   // R10: else (не в «Режимі APRS»)
+#endif
 			}
 		}
 
@@ -1625,6 +1640,7 @@ void applicationMainTask(void)
 		aprsBeaconingTick(&ev);
 #if defined(APRS_RX)
 		aprsRxTick();     // R8: фоновий приймач APRS -- працює незалежно від відкритого екрана
+		aprsModeTick();   // R10: «Режим APRS» (маяк, збереження налаштувань, вихід при зміні екрана)
 #endif
 		settingsSaveIfNeeded(false);
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)

@@ -14,15 +14,16 @@
  * Буфер: buf[0..*pos-1] -- підтверджений текст. Якщо st->key != 0, у buf[*pos] стоїть
  * символ, що ще «гортається» (попередній перегляд), і buf[*pos + 1] == 0; інакше buf[*pos] == 0.
  *
- * Лише під ENABLE_AES && ENABLE_DMR_DATA (як і menuMessages.c).
+ * Лише під ENABLE_AES && ENABLE_DMR_DATA (як і menuMessages.c) або APRS_RX (R10: редактор «Режиму APRS»).
  */
 #ifndef _OPENGD77_SMS_MULTITAP_H_
 #define _OPENGD77_SMS_MULTITAP_H_
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "functions/aprs_rx_cfg.h"   /* R10: APRS_RX -- multitap потрібен і редактору «Режиму APRS» */
 
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX)
 
 /* Режими набору. Порядок -- порядок перемикання клавішею '#'. */
 #if defined(LANGUAGE_BUILD_UKRAINIAN)

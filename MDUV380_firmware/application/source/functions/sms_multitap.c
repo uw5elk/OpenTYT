@@ -7,7 +7,7 @@
  */
 #include "functions/sms_multitap.h"
 
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX)
 
 #include <stddef.h>
 

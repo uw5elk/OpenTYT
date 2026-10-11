@@ -17,6 +17,7 @@
 #include "user_interface/uiUtilities.h"
 #include "functions/ticks.h"
 #include "user_interface/languages/aprsrx_ua.h"
+#include "user_interface/languages/aprsmode_ua.h"   /* R10: підказка вбудованої сторінки */
 #include <stdio.h>
 #include <string.h>
 
@@ -408,6 +409,88 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 		draw();
 	}
 	return true;
+}
+
+/* ---- R10: сторінка «Станції» «Режиму APRS» -- той самий список і картка, але без власного заголовка/діагностики ---- */
+
+void menuAprsStationsDrawEmbedded(void)
+{
+	aprsRxUi_t *ui = aprsRxUi();
+
+	if (ui->view == APRS_RX_VIEW_DIAG)
+	{
+		ui->view = APRS_RX_VIEW_LIST;   /* діагностика лишається в екрані «APRS станції» */
+	}
+	if (ui->view == APRS_RX_VIEW_CARD)
+	{
+		drawCard();
+	}
+	else
+	{
+		drawList(ticksGetMillis());
+		printRow(10, APRSM_ST_HINT);
+	}
+}
+
+int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
+{
+	aprsRxUi_t *ui = aprsRxUi();
+
+	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
+	{
+		return 0;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		if (ui->view != APRS_RX_VIEW_CARD)
+		{
+			return -1;   // зі списку -- назад на «Монітор»
+		}
+		ui->view = APRS_RX_VIEW_LIST;
+		return 1;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		int dir = KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1;
+
+		if (ui->view == APRS_RX_VIEW_CARD)
+		{
+			cardGo(dir);
+		}
+		else
+		{
+			int count = aprsDbCount(aprsRxDb());
+			int n = (int)ui->sel + dir;
+
+			if (count > 0)
+			{
+				ui->sel = (uint8_t)((n < 0) ? (count - 1) : ((n >= count) ? 0 : n));   // по колу
+			}
+		}
+		return 1;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view != APRS_RX_VIEW_CARD))
+	{
+		const aprsStation_t *s = aprsDbNth(aprsRxDb(), ui->sel, ticksGetMillis());
+
+		if (s != NULL)
+		{
+			snprintf(ui->cardCall, sizeof(ui->cardCall), "%s", s->call);
+			ui->view = APRS_RX_VIEW_CARD;
+		}
+		return 1;
+	}
+	return 0;
+}
+
+const char *menuAprsStationsTypeStr(uint8_t type)
+{
+	return typeStr(type);
+}
+
+void menuAprsStationsAgeStr(char *b, size_t n, uint32_t sec)
+{
+	ageStr(b, n, sec);
 }
 
 #endif /* APRS_RX */

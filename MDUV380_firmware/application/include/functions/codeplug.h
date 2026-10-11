@@ -374,6 +374,12 @@ typedef enum
 	CODEPLUG_CUSTOM_DATA_TYPE_SMS_TX_MODE, /* Режим TX SMS: 0=Без підтвердження (типово),
 	                                        * 1=Підтв. rate-1/2, 2=Підтв. rate-3/4.
 	                                        * Малий блок (1 байт), пишеться прямо з рації. */
+#if defined(ENABLE_APRS_RX)
+	CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG, /* R10: оверрайди налаштувань «Режиму APRS» поверх конфігу кодплуга
+	                                        * (частота, позивний, SSID, шлях, символ, коментар, позиція, інтервал
+	                                        * маяка...). 72 Б, пишеться прямо з рації. Формат -- aprs_mode_cfg.h.
+	                                        * Номер = 13 (12-й -- SMS_TX_MODE). */
+#endif
 } CodeplugCustomDataType_t;
 
 

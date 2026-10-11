@@ -110,7 +110,11 @@ DEFS_APRSRX=("${DEFS_CALLREPLAY[@]}" -DENABLE_APRS_RX)                     # bui
 DEFS_APRSRXEN=("${DEFS_ENDATA[@]}" -DENABLE_APRS_RX)                       # англійська + прапорець: приймач має зникнути
 DEFS_APRSRXLITE=("${DEFS_COMMON[@]}" -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX)   # українська БЕЗ AES/DMR_DATA + приймач
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE)
+# R10: діагностична збірка CI (job build-diag) БЕЗ ENABLE_CALL_REPLAY -- «Режим APRS» тут тримає стан у статичній
+# структурі в CCM, а не в позиченому буфері "Переслухати" (aprs_mode.c).
+DEFS_APRSPROBENOCR=("${DEFS_UA[@]}" -DENABLE_APRS_RX_PROBE)                 # build-ukrainian + проба, без "Переслухати" (як у CI)
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

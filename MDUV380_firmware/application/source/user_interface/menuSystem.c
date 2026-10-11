@@ -30,6 +30,7 @@
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/menuAprsStations.h"   // R8: menuAprsStationsClose() (APRS_RX)
+#include "functions/aprs_mode.h"                // R10: aprsModeExit() (APRS_RX)
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "functions/aprs_rx_probe.h"   // R2: aprsRxProbeClose() у menuSystemPushNewMenu()
 #endif
@@ -281,6 +282,9 @@ void menuSystemPushNewMenu(int menuNumber)
 	// R8: «APRS станції» -- режим усередині «Опцій рації» (без власного ID меню): push поверх нього
 	// (PTT -> екран передачі тощо) закриває екран, інакше він лишився б «відкритим» у фоні.
 	menuAprsStationsClose();
+	// R10: «Режим APRS» -- теж усередині «Опцій рації»: будь-який push (PTT-екран, вхідний дзвінок, хотспот...)
+	// виходить з режиму (повертає канал, режим, еко, I2S). Ідемпотентно, якщо режим не активний.
+	aprsModeExit();
 #endif
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 	// R2: «APRS проба» -- режим усередині «Опцій рації», без власного ID меню, тож push

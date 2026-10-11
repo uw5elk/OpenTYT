@@ -37,7 +37,9 @@
 #include "user_interface/languages/aprsprobe_ua.h"
 #endif
 #include "user_interface/menuAprsStations.h"   /* R8: «APRS станції» (APRS_RX) */
+#include "user_interface/menuAprsMode.h"       /* R10: «Режим APRS» (APRS_RX) */
 #if defined(APRS_RX)
+#include "user_interface/languages/aprsmode_ua.h"
 #include "user_interface/languages/aprsrx_ua.h"
 #endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
@@ -92,6 +94,7 @@ enum
 #endif
 #if defined(APRS_RX)
 	RADIO_OPTIONS_MENU_APRS_STATIONS, /* R8: екран «APRS станції» -- останнім (перед пробою), індекси QuickKey інших ті самі */
+	RADIO_OPTIONS_MENU_APRS_MODE,     /* R10: «Режим APRS» -- після «APRS станції» */
 #endif
 #if defined(APRS_RX_PROBE)
 	RADIO_OPTIONS_MENU_APRS_RX_PROBE, /* R2: тимчасова діагностика -- останнім, індекси QuickKey інших ті самі */
@@ -128,6 +131,7 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 		aprsRxProbeClose();   /* повернення сюди -- проба вже закрита (menuSystemPushNewMenu); про всяк випадок */
 #endif
 #if defined(APRS_RX)
+		aprsModeExit();            /* R10: повернення сюди з активним режимом -- несумісно, виходимо з режиму */
 		menuAprsStationsClose();   /* R8: так само для «APRS станції» */
 #endif
 
@@ -139,6 +143,16 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 		menuOptionsExitCode = MENU_STATUS_SUCCESS;
 
 #if defined(APRS_RX)
+		/* R10: поки активний «Режим APRS», екран і всі події належать йому (раніше за R8: режим має власні сторінки). */
+		if (aprsModeIsActive())
+		{
+			if (menuAprsModeTick(ev) == false)
+			{
+				menuDataGlobal.newOptionSelected = true;
+				updateScreen(false);
+			}
+			return menuOptionsExitCode;
+		}
 		/* R8: поки відкрито «APRS станції», екран і всі події належать їй. */
 		if (aprsRxUi()->on)
 		{
@@ -327,6 +341,11 @@ static void updateScreen(bool isFirstRun)
 					leftSide = APRSRX_TITLE;
 					leftSideIsFork = true;
 					break;
+				/* R10: дія -- GREEN або вправо входить у «Режим APRS». */
+				case RADIO_OPTIONS_MENU_APRS_MODE:
+					leftSide = APRSM_MENU;
+					leftSideIsFork = true;
+					break;
 #endif
 #if defined(APRS_RX_PROBE)
 				/* R2: дія, а не налаштування -- GREEN або вправо відкриває екран проби. */
@@ -345,6 +364,7 @@ static void updateScreen(bool isFirstRun)
 #endif
 #if defined(APRS_RX)
 					(mNum == RADIO_OPTIONS_MENU_APRS_STATIONS) ||
+					(mNum == RADIO_OPTIONS_MENU_APRS_MODE) ||
 #endif
 					false)
 			{
@@ -490,6 +510,11 @@ static void handleEvent(uiEvent_t *ev)
 		else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (menuDataGlobal.currentItemIndex == RADIO_OPTIONS_MENU_APRS_STATIONS))
 		{
 			menuAprsStationsEnter();   /* R8: налаштування не застосовуються й не скидаються -- лише відкрити екран */
+			return;
+		}
+		else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (menuDataGlobal.currentItemIndex == RADIO_OPTIONS_MENU_APRS_MODE))
+		{
+			(void)menuAprsModeEnter();   /* R10: дія, а не налаштування. Не вдалося -- сповіщення, список лишається */
 			return;
 		}
 #endif
@@ -664,6 +689,13 @@ static void handleEvent(uiEvent_t *ev)
 					if (menuDataGlobal.menuOptionsTimeout == 0)   /* не з QuickKey -- там вправо означає «змінити значення» */
 					{
 						menuAprsStationsEnter();
+						return;
+					}
+					break;
+				case RADIO_OPTIONS_MENU_APRS_MODE:
+					if (menuDataGlobal.menuOptionsTimeout == 0)
+					{
+						(void)menuAprsModeEnter();
 						return;
 					}
 					break;
@@ -853,6 +885,7 @@ static void applySettings(void)
 static void exitCallback(void *data)
 {
 #if defined(APRS_RX)
+	aprsModeExit();            /* R10: вихід з «Опцій рації» будь-яким шляхом -- вийти з «Режиму APRS» (ідемпотентно) */
 	menuAprsStationsClose();   /* R8: вихід з «Опцій рації» будь-яким шляхом -- закрити «APRS станції» */
 #endif
 #if defined(APRS_RX_PROBE)

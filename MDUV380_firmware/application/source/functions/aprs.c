@@ -279,6 +279,13 @@ static volatile int bitPos = 0;
 static volatile uint8_t dataByte;
 static AX25Encoder_t encoderData;
 static CodeplugAPRSConfig_t *aprsConfig;
+#if defined(ENABLE_APRS_RX)
+/* R10 (форк): «Режим APRS» передає маяк зі СВОЇМ позивним і коментарем (UTF-8), а не з імені рації/конфігу кодплуга.
+ * Вказівники діють лише на час aprsSendPacket() з aprsModeTxBeacon(); поза ним NULL. Стан -- у CCM, main RAM +0. */
+#define APRS_MODE_CCM  __attribute__((section(".aes_ccmram")))
+static const char *s_modeCall APRS_MODE_CCM;
+static const char *s_modeComment APRS_MODE_CCM;
+#endif
 
 volatile aprsSendProgress_t aprsTxProgress = APRS_TX_IDLE; // used in the ISR
 #if defined(ENABLE_AES)
@@ -450,7 +457,13 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 	static const uint8_t DT_POS = '!';
 	uint8_t symbol = (aprsConfig->iconIndex + '!'); //'+'; // + = cross symbol. Y = yacht etc
 	uint8_t symTable = ((aprsConfig->iconTable == 0) ? '/' : '\\'); //' = secondary table
+#if defined(ENABLE_APRS_RX)
+	/* R10: коментар «Режиму APRS» -- UTF-8, довший за comment[24] конфігу кодплуга */
+	const char *commentStr = (s_modeComment != NULL) ? s_modeComment : aprsConfig->comment;
+	bool hasComment = (commentStr[0] != 0);
+#else
 	bool hasComment = (aprsConfig->comment[0] != 0);
+#endif
 
 	enqueueCharNrzi(encoderData, DT_POS, true);
 
@@ -519,7 +532,11 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 
 	if (hasComment)
 	{
+#if defined(ENABLE_APRS_RX)
+		enqueueString(encoderData, commentStr);
+#else
 		enqueueString(encoderData, aprsConfig->comment);
+#endif
 	}
 }
 
@@ -633,6 +650,14 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 
 	codeplugGetRadioName(myCall);
 	myCall[6] = 0; //truncate to 6 chars max
+#if defined(ENABLE_APRS_RX)
+	if (s_modeCall != NULL)
+	{
+		/* R10: позивний «Режиму APRS» (ASCII, до 6 символів) замість імені рації */
+		strncpy(myCall, s_modeCall, 6U);
+		myCall[6] = 0;
+	}
+#endif
 
 	bool usePosition = (aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_USE_POSITION);
 	if (usePosition)
@@ -1897,6 +1922,134 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 
 	return true;
 }
+
+#if defined(ENABLE_APRS_RX)
+/* R10 (форк): маяк «Режиму APRS». Рація вже стоїть на частоті APRS (аналоговий FM, 12,5 кГц, без CSS --
+ * режим сам запаркував її, currentChannelData вказує на його власний «канал»), тож, на відміну від
+ * aprsBeaconingSendBeacon(), тут НЕМАЄ QSY і повернення каналу. Усе інше -- той самий шлях, що в бікона
+ * «Вручну»: анти-колізія (чекаємо, поки частота вільна), trxSetTX(), затримка TX, aprsSendPacket() (той самий
+ * AFSK-модулятор у перериванні TIM6), а завершення -- aprsBeaconingTick() -> APRS_TX_FINISHED ... FINAL_STAGE,
+ * який повертає режим/смугу з currentChannelData (тобто з «каналу» режиму -- ті самі FM 12,5 кГц).
+ * Блокує лише на затримку TX (APRS_XMIT_TX_DELAY, 50 мс), як стоковий. */
+aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
+{
+	aprsModeRawCfg_t cfg;
+	aprsChannelSettingsInUse_t channelSettings;
+	aprsBeaconingLocation_t loc;
+	char comment[APRSM_COMMENT_AIR_MAX + 1U];
+	uint32_t txFrequency;
+
+	if ((aprsTxProgress != APRS_TX_IDLE) || trxTransmissionEnabled || trxIsTransmitting || uiDataGlobal.Scan.active)
+	{
+		return APRS_MODE_TX_BUSY;
+	}
+	if (settingsIsOptionBitSet(BIT_TX_INHIBIT))
+	{
+		return APRS_MODE_TX_INHIBIT;
+	}
+	if ((trxGetMode() != RADIO_MODE_ANALOG) || (currentChannelData->chMode != RADIO_MODE_ANALOG) || (currentChannelData->txFreq == 0U))
+	{
+		return APRS_MODE_TX_NOT_FM;
+	}
+	if (aprsModeCallValid(e->call) == false)
+	{
+		return APRS_MODE_TX_NOCALL;
+	}
+	if (e->hasPos == false)
+	{
+		return APRS_MODE_TX_NOPOS;
+	}
+	txFrequency = currentChannelData->txFreq;
+	if ((nonVolatileSettings.txFreqLimited != BAND_LIMITS_NONE) && (trxCheckFrequencyInAmateurBand(txFrequency) == false))
+	{
+		return APRS_MODE_TX_BAND;
+	}
+
+	rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
+
+#if defined(HAS_GPS)
+	if (SETTINGS_GPS_MODE_GET(nonVolatileSettings) > GPS_MODE_OFF)
+	{
+		gpsDataInputStartStop(false);
+	}
+#endif
+
+	// Анти-колізії тут немає: «частота вільна?» перевіряє сам режим (aprs_mode.c) НЕБЛОКУЮЧЕ, щоб на час очікування
+	// не глухнув приймач -- пакет, через який і зайнято частоту, якраз треба прийняти.
+
+	LedWrite(LED_GREEN, 0);
+	LedWrite(LED_RED, 1);
+
+	HRC6000ClearIsWakingState();
+	trxSetTX();
+
+	// TX Delay;
+	uint32_t m = ticksGetMillis();
+	while((ticksGetMillis() - m) < APRS_XMIT_TX_DELAY)
+	{
+		vTaskDelay((1U / portTICK_PERIOD_MS));
+	}
+
+	aprsModeToBeaconCfg(e, &cfg);
+	(void)aprsModeCommentToUtf8(e->comment, comment, sizeof(comment));
+
+	memset(&loc, 0, sizeof(loc));
+	loc.time = ticksGetMillis();
+	loc.bearing = UINT16_MAX;   // «позиція без курсу» -- aprsBeaconingLocationIsValid() == false
+	loc.speed = 0U;
+	loc.coords.latitude = (double)e->latU / 1000000.0;
+	loc.coords.longitude = (double)e->lonU / 1000000.0;
+
+	channelSettings.chMode = RADIO_MODE_ANALOG;
+	channelSettings.rxFreq = currentChannelData->rxFreq;
+	channelSettings.txFreq = currentChannelData->txFreq;
+	channelSettings.rxTone = CODEPLUG_CSS_TONE_NONE;
+	channelSettings.wideBW = false;
+
+	s_modeCall = e->call;
+	s_modeComment = comment;
+	_Static_assert(sizeof(aprsModeRawCfg_t) == sizeof(CodeplugAPRSConfig_t), "aprsModeRawCfg_t != CodeplugAPRSConfig_t");
+	/* aprsSendPacket() на самому початку читає flags ЩЕ ПОПЕРЕДНЬОГО aprsConfig (стокова особливість: присвоєння
+	 * нижче в тілі) -- підставляємо наш конфіг заздалегідь, щоб «безшумний» біт не залежав від сміття на стеку. */
+	aprsConfig = (CodeplugAPRSConfig_t *)(void *)&cfg;
+	(void)aprsSendPacket((CodeplugAPRSConfig_t *)(void *)&cfg, &loc, &loc, &channelSettings, false);
+	s_modeCall = NULL;       // aprsSendPacket() збирає кадр синхронно; далі їх не читають
+	s_modeComment = NULL;
+
+	return APRS_MODE_TX_OK;
+}
+#endif
+
+#if defined(ENABLE_APRS_RX)
+/* R10: примусово обірвати маяк «Режиму APRS» (вихід з режиму посеред передачі: вимкнення, push меню). Те саме, що
+ * aprsBeaconingPttAbort(): зупинити AFSK-переривання, як у кінці пакета, і прогнати стани завершення без очікування
+ * відпускання PTT (FINAL_STAGE повертає режим/смугу з currentChannelData -- «каналу» режиму, ще чинного). */
+void aprsModeAbortTx(void)
+{
+	if (aprsTxProgress == APRS_TX_IDLE)
+	{
+		return;
+	}
+	if (aprsTxProgress == APRS_TX_IN_PROGRESS)
+	{
+#if defined(CPU_MK22FN512VLL12)
+		FTM_StopTimer(FTM1);
+		DisableIRQ(FTM1_IRQn);
+#else
+		HAL_TIM_Base_Stop_IT(&htim6);
+#endif
+		aprsTxProgress = APRS_TX_FINISHED;
+	}
+
+	uiEvent_t ev = { .buttons = 0, .keys = NO_KEYCODE, .rotary = 0, .function = 0, .events = NO_EVENT, .hasEvent = false, .time = ticksGetMillis() };
+	bool pttLatched = PTTToggledDown;
+	for (int i = 0; (i < 4) && (aprsTxProgress != APRS_TX_IDLE); i++)
+	{
+		aprsBeaconingTxStateTick(&ev);
+	}
+	PTTToggledDown = pttLatched;
+}
+#endif
 
 bool aprsBeaconingIsTransmitting(void)
 {

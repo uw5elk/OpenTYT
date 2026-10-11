@@ -50,6 +50,13 @@ static __attribute__((section(".ccmram"))) callReplayCaptureState_t callReplayCa
  * синхронізує викликач (applicationMain.c) одразу після callReplayInit(). */
 static __attribute__((section(".ccmram"))) bool callReplayRecordingEnabled;
 
+#if defined(ENABLE_APRS_RX)
+/* R10: «Режим APRS» позичає це кільце (13500 Б) під свій стан. Поки позичено: захоплення мовчить, кільце порожнє
+ * (count == 0), тож відтворення нічого не бачить. Два байти стану -- теж у CCM. */
+static __attribute__((section(".ccmram"))) bool callReplayBorrowed;
+static __attribute__((section(".ccmram"))) bool callReplayBorrowSavedRec;
+#endif
+
 static inline void callReplayBitSet(uint8_t *bits, uint16_t idx)
 {
 	bits[idx >> 3] = (uint8_t)(bits[idx >> 3] | (uint8_t)(1U << (idx & 7U)));
@@ -99,6 +106,13 @@ void callReplayCaptureTick(const uint8_t group[CALL_REPLAY_GROUP_BYTES], bool ae
 {
 	uint16_t idx;
 	bool isNewOver;
+
+#if defined(ENABLE_APRS_RX)
+	if (callReplayBorrowed)
+	{
+		return;   // R10: кільце позичене «Режимом APRS» -- у нього писати не можна
+	}
+#endif
 
 	if (callReplayRecordingEnabled == false)
 	{
@@ -236,5 +250,37 @@ uint32_t callReplayFindLastOverStart(void)
 
 	return 0U; // жодного початку заходу в живому вікні -- дивись коментар вище
 }
+
+#if defined(ENABLE_APRS_RX)
+void *callReplayBorrow(size_t *size)
+{
+	if (callReplayBorrowed == false)
+	{
+		callReplayBorrowSavedRec = callReplayRecordingEnabled;
+		callReplayInit();   // запис у кільці -- недійсний: ЯВНО інвалідуємо (count = 0, біти «заходів» нуль)
+		callReplayBorrowed = true;
+	}
+	if (size != NULL)
+	{
+		*size = sizeof(callReplayRing);
+	}
+	return (void *)callReplayRing;
+}
+
+void callReplayRelease(void)
+{
+	if (callReplayBorrowed)
+	{
+		callReplayInit();                                   // кільце порожнє: у ньому лишилося сміття режиму
+		callReplayRecordingEnabled = callReplayBorrowSavedRec;   // callReplayInit() ставить «Увімкнено» -- повертаємо справжнє
+		callReplayBorrowed = false;
+	}
+}
+
+bool callReplayIsBorrowed(void)
+{
+	return callReplayBorrowed;
+}
+#endif
 
 #endif // ENABLE_CALL_REPLAY

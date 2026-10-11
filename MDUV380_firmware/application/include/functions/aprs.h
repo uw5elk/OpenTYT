@@ -33,6 +33,7 @@
 
 #include "functions/codeplug.h"
 #include "functions/aprs_rx_cfg.h"
+#include "functions/aprs_mode_cfg.h"   /* R10: aprsModeEff_t (ENABLE_APRS_RX) */
 
 //#define RATE_MESSAGE_FEATURE 1 // Enable this to enable the send a special beacon message each settings.messageInterval frame
 
@@ -183,6 +184,21 @@ typedef struct
 /* true -- APRS увімкнено (режим не «Вимкнено»), у каналу є конфіг із частотою APRS. false -- приймати не треба.
  * full == false -- лише freq (без читання EEPROM з іменем і без позиції): для частої перевірки «чи це канал APRS». */
 bool aprsBeaconingGetRxInfo(aprsRxInfo_t *info, bool full);
+
+/* R10 (форк): маяк «Режиму APRS» (functions/aprs_mode.c) -- без QSY, зі своїм позивним/шляхом/символом/
+ * коментарем/позицією. Деталі -- коментар біля реалізації в aprs.c. */
+typedef enum
+{
+	APRS_MODE_TX_OK = 0,
+	APRS_MODE_TX_BUSY,        /* вже йде передача / сканування */
+	APRS_MODE_TX_INHIBIT,     /* заборона TX у налаштуваннях */
+	APRS_MODE_TX_NOT_FM,      /* рація не в аналоговому FM */
+	APRS_MODE_TX_BAND,        /* частота поза любительським діапазоном (обмеження TX) */
+	APRS_MODE_TX_NOPOS,
+	APRS_MODE_TX_NOCALL
+} aprsModeTxResult_t;
+aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e);
+void aprsModeAbortTx(void);   /* примусово обірвати маяк режиму (вихід посеред передачі) */
 #endif
 bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing);
 bool aprsBeaconingIsTransmitting(void);
