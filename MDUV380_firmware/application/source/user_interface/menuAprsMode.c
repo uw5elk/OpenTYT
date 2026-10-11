@@ -897,6 +897,7 @@ static void draw(void)
 	aprsModeUi_t *u = aprsModeUi();
 	char title[24];
 
+	AM_TRACE_T(84);   /* draw(): початок */
 	u->lastDrawMs = ticksGetMillis();
 	if (u->edit.active)
 	{
@@ -906,6 +907,7 @@ static void draw(void)
 	displayClearBuf();
 	snprintf(title, sizeof(title), APRSM_TITLE_FMT, (unsigned)(u->page + 1U), (unsigned)APRS_MODE_PAGES);
 	menuDisplayTitle(title);
+	AM_TRACE_T(85);   /* draw(): перед малюванням сторінки */
 	switch (u->page)
 	{
 		case APRS_MODE_PAGE_MONITOR:
@@ -918,17 +920,20 @@ static void draw(void)
 			drawSettings();
 			break;
 	}
+	AM_TRACE_T(86);   /* draw(): сторінку намальовано, перед displayRender() */
 	displayRender();
 }
 
 bool menuAprsModeEnter(void)
 {
+	AM_TRACE(51);   /* menuAprsModeEnter: перед aprsModeEnter() (далі 1..19, 30..37) */
 	if (aprsModeEnter() == false)
 	{
 		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_NOT_NOW, true);
 		soundSetMelody(MELODY_ERROR_BEEP);
 		return false;
 	}
+	AM_TRACE(52);   /* aprsModeEnter() повернув true; перед першим draw() (далі 84..86) */
 	draw();
 	return true;
 }
@@ -939,6 +944,7 @@ bool menuAprsModeTick(uiEvent_t *ev)
 	uint32_t now = ticksGetMillis();
 	bool redraw = false;
 
+	AM_TRACE_T(80);   /* menuAprsModeTick: перший тік */
 	if (u->edit.active)
 	{
 		redraw = editEvent(ev);
@@ -951,7 +957,11 @@ bool menuAprsModeTick(uiEvent_t *ev)
 	}
 	else
 	{
-		int r = pageEvent(ev);
+		int r;
+
+		AM_TRACE_T(81);   /* перед pageEvent */
+		r = pageEvent(ev);
+		AM_TRACE_T(82);   /* після pageEvent */
 
 		if (r < 0)
 		{

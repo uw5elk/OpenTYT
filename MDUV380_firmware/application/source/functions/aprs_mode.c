@@ -63,6 +63,9 @@ typedef struct
 	/* монітор */
 	aprsModeLast_t         last;
 	aprsModeUi_t           ui;
+#if defined(APRS_MODE_TRACE)
+	uint32_t               trSeen;         /* R10-fix: які номери тік-трасування (60..91) уже показано після входу/маяка */
+#endif
 } aprsModeMem_t;
 
 #if defined(ENABLE_CALL_REPLAY)
@@ -74,10 +77,50 @@ static inline aprsModeMem_t *mem(void)
 }
 _Static_assert(sizeof(aprsModeMem_t) <= (500U * 27U), "aprsModeMem_t does not fit the call replay ring");
 #else
-static aprsModeMem_t s_modeMem __attribute__((section(".aes_ccmram")));
+static aprsModeMem_t s_modeMem __attribute__((section(".aes_ccmram"), aligned(8)));
 static inline aprsModeMem_t *mem(void)
 {
 	return &s_modeMem;
+}
+#endif
+
+#if defined(APRS_MODE_TRACE)
+/* R10-fix: ТИМЧАСОВЕ трасування на екран. Не залежить від сповіщень (displayRenderWithoutNotification) і не чіпає стан
+ * режиму; номер видно, поки екран не перемалюють. Якщо зависає САМ displayRender() -- на склі лишиться ПОПЕРЕДНІЙ номер. */
+void aprsModeTrace(unsigned int n)
+{
+	char b[12];
+
+	snprintf(b, sizeof(b), "%u", n);
+	displayClearBuf();
+	displayPrintCentered(8, "APRS TRACE", FONT_SIZE_2);
+	displayPrintCentered(48, b, FONT_SIZE_4);
+	displayRenderWithoutNotification();
+}
+
+void aprsModeTraceT(unsigned int n)
+{
+	aprsModeMem_t *m;
+
+	if ((aprsModeIsActive() == false) || (n < 60U) || (n > 91U))
+	{
+		return;
+	}
+	m = mem();
+	if ((m->trSeen & (1UL << (n - 60U))) == 0U)
+	{
+		m->trSeen |= (1UL << (n - 60U));
+		aprsModeTrace(n);
+	}
+}
+
+/* Новий «сеанс» тік-трасування (після входу в режим і перед маяком): усі номери 60..91 знову показуються один раз. */
+static void traceTickReset(void)
+{
+	if (aprsModeIsActive())
+	{
+		mem()->trSeen = 0U;
+	}
 }
 #endif
 
@@ -229,13 +272,21 @@ static void tune(const aprsModeMem_t *m)
 {
 	uint32_t f = m->eff.freq;
 
+	AM_TRACE(30);   /* перед radioSetTRxDevice */
 	radioSetTRxDevice(RADIO_DEVICE_PRIMARY);
+	AM_TRACE(31);   /* перед trxSetFrequency */
 	trxSetFrequency(f, f, DMR_MODE_AUTO);
+	AM_TRACE(32);   /* перед trxSetModeAndBandwidth */
 	trxSetModeAndBandwidth(RADIO_MODE_ANALOG, false);   /* 12,5 кГц -- як у бікона */
+	AM_TRACE(33);   /* перед trxSetRxCSS */
 	trxSetRxCSS(RADIO_DEVICE_PRIMARY, CODEPLUG_CSS_TONE_NONE);
+	AM_TRACE(34);   /* перед trxSetTxCSS */
 	trxSetTxCSS(CODEPLUG_CSS_TONE_NONE);
+	AM_TRACE(35);   /* перед vTaskDelay(40 мс) */
 	vTaskDelay((40U / portTICK_PERIOD_MS));
+	AM_TRACE(36);   /* перед trxPostponeReadRSSIAndNoise */
 	trxPostponeReadRSSIAndNoise(100);
+	AM_TRACE(37);   /* tune() завершено */
 }
 
 static void scheduleBeacons(aprsModeMem_t *m, uint32_t now)
@@ -290,6 +341,7 @@ bool aprsModeEnter(void)
 	int root = menuSystemGetRootMenuNumber();
 	void *base;
 
+	AM_TRACE(1);   /* вхід у aprsModeEnter */
 	if (aprsModeIsActive())
 	{
 		return true;
@@ -299,9 +351,11 @@ bool aprsModeEnter(void)
 	{
 		return false;
 	}
+	AM_TRACE(2);   /* перевірки пройдено */
 
 	if (uiDataGlobal.Scan.active)
 	{
+		AM_TRACE(3);   /* перед зупинкою сканування */
 		if (root == UI_VFO_MODE)
 		{
 			uiVFOModeStopScanning();
@@ -310,10 +364,14 @@ bool aprsModeEnter(void)
 		{
 			uiChannelModeStopScanning();
 		}
+		AM_TRACE(4);   /* сканування зупинено */
 	}
 
+	AM_TRACE(5);   /* перед callReplayStop */
 	callReplayStop();   /* відтворення йде з цього ж буфера; позичене кільце стане недійсним */
+	AM_TRACE(6);   /* перед aprsRxSuspendForAudio */
 	aprsRxSuspendForAudio();   /* приймач R8 (він зараз міг слухати канал) -- негайно, до перебудови радіо */
+	AM_TRACE(7);   /* перед callReplayBorrow */
 
 #if defined(ENABLE_CALL_REPLAY)
 	base = callReplayBorrow(&sz);
@@ -326,33 +384,53 @@ bool aprsModeEnter(void)
 	(void)sz;
 	base = &s_modeMem;
 #endif
+	/* R10-fix: захист -- невирівняний стан дав би UsageFault (LDM/STM/LDRD) і вічний while(1). Краще відмовити у вході. */
+	if ((((uintptr_t)base) & 7U) != 0U)
+	{
+#if defined(ENABLE_CALL_REPLAY)
+		callReplayRelease();
+#endif
+		return false;
+	}
+	AM_TRACE(8);   /* перед memset стану режиму */
 	m = (aprsModeMem_t *)base;
 	memset(m, 0, sizeof(*m));
 	m->magic = APRS_MODE_MAGIC;
 	m->savedChan = currentChannelData;
 
+	AM_TRACE(9);   /* перед loadCfg */
 	loadCfg(m);
+	AM_TRACE(10);  /* перед buildDefaults */
 	buildDefaults(m);
+	AM_TRACE(11);  /* перед aprsModeEffective */
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
+	AM_TRACE(12);  /* перед buildChan */
 	buildChan(m);
 
 	/* стоковий авто-бікон на час режиму -- призупинити (він би QSY-нув на частоту конфігу каналу) */
+	AM_TRACE(13);  /* перед aprsBeaconingGetMode/IsSuspended */
 	m->beaconWasRunning = ((aprsBeaconingGetMode() != APRS_BEACONING_MODE_OFF) && (aprsBeaconingIsSuspended() == false));
 	if (m->beaconWasRunning)
 	{
+		AM_TRACE(14);  /* перед aprsBeaconingSetSuspend(true) */
 		aprsBeaconingSetSuspend(true);
 	}
 
+	AM_TRACE(15);  /* перед підміною currentChannelData */
 	currentChannelData = &m->chan;
+	AM_TRACE(16);  /* перед tune() (далі 30..37) */
 	tune(m);
 
+	AM_TRACE(17);  /* перед scheduleBeacons */
 	scheduleBeacons(m, ticksGetMillis());
 	m->bcnState = APRS_MODE_BCN_NONE;
 	m->ui.page = APRS_MODE_PAGE_MONITOR;
 	aprsRxUi()->view = APRS_RX_VIEW_LIST;
 	aprsRxUi()->sel = 0;
 	aprsRxUi()->scroll = 0;
+	AM_TRACE(18);  /* перед modeOn = 1 */
 	aprsRxUi()->modeOn = 1U;   /* з цього моменту приймач R8 слухає частоту «каналу» режиму */
+	AM_TRACE(19);  /* aprsModeEnter завершено (return true) */
 	return true;
 }
 
@@ -367,27 +445,33 @@ void aprsModeExit(void)
 	{
 		return;
 	}
+	AM_TRACE(300);  /* aprsModeExit: вхід (режим активний) */
 	m = mem();
 	if (m->dirty)
 	{
+		AM_TRACE(301);  /* перед saveCfg */
 		saveCfg(m);
 	}
 	if (aprsTxProgress != APRS_TX_IDLE)
 	{
+		AM_TRACE(302);  /* перед aprsModeAbortTx */
 		aprsModeAbortTx();   /* примусовий вихід посеред маяка (вимкнення, push меню) */
 	}
+	AM_TRACE(303);  /* перед aprsRxSuspendForAudio */
 	aprsRxSuspendForAudio();   /* приймач -- негайно; далі радіо перебудовується */
 	aprsRxUi()->modeOn = 0U;
 
 	saved = m->savedChan;
 	wasRunning = m->beaconWasRunning;
 	currentChannelData = saved;
+	AM_TRACE(304);  /* перед callReplayRelease */
 #if defined(ENABLE_CALL_REPLAY)
 	callReplayRelease();   /* m недійсне; кільце знову порожнє, "Запис RX" повернуто */
 #endif
 	m = NULL;
 
 	root = menuSystemGetRootMenuNumber();
+	AM_TRACE(305);  /* перед перезавантаженням каналу/VFO */
 	if (root == UI_CHANNEL_MODE)
 	{
 		uiChannelModeLoadChannelData(true, false);
@@ -396,20 +480,27 @@ void aprsModeExit(void)
 	{
 		uiVFOModeLoadChannelData(false);
 	}
+	AM_TRACE(306);  /* перед aprsBeaconingResetTimers */
 	aprsBeaconingResetTimers();
 	if (wasRunning)
 	{
 		aprsBeaconingSetSuspend(false);
 	}
+	AM_TRACE(307);  /* aprsModeExit завершено */
 }
 
 /* ---- маяк ----------------------------------------------------------------------------------------------------- */
 
 void aprsModeRequestBeacon(void)
 {
+	AM_TRACE(200);  /* aprsModeRequestBeacon: вхід (GREEN на «Моніторі») */
 	if (aprsModeIsActive())
 	{
+#if defined(APRS_MODE_TRACE)
+		traceTickReset();   /* тік-трасування знову покаже кожен номер один раз */
+#endif
 		mem()->reqManual = true;
+		AM_TRACE(201);  /* reqManual виставлено; далі маяк піде з aprsModeTick() */
 	}
 }
 
@@ -427,8 +518,13 @@ void aprsModeOnPtt(void)
 	{
 		return;
 	}
+	AM_TRACE(205);  /* aprsModeOnPtt: PTT прийнято (після перевірки паузи 3 с) */
+#if defined(APRS_MODE_TRACE)
+	traceTickReset();
+#endif
 	m->lastPttMs = now;
 	m->reqPtt = true;
+	AM_TRACE(206);  /* reqPtt виставлено; далі маяк піде з aprsModeTick() */
 }
 
 static bool channelBusy(const aprsModeMem_t *m)
@@ -473,18 +569,21 @@ void aprsModeTick(void)
 	{
 		return;
 	}
+	AM_TRACE_T(60);   /* перший тік aprsModeTick після входу/маяка */
 	m = mem();
 	now = ticksGetMillis();
 
 	/* Режим живе лише всередині меню «APRS» і лише коли хотспот не вхопив рацію. */
 	if ((menuSystemGetCurrentMenuNumber() != MENU_APRS_HUB) || (settingsUsbMode == USB_MODE_HOTSPOT))
 	{
+		AM_TRACE(61);   /* aprsModeTick: меню не «APRS» (або хотспот) -- виходимо з режиму */
 		aprsModeExit();
 		return;
 	}
 
 	if (m->dirty && ((now - m->dirtyAtMs) >= APRS_MODE_SAVE_IDLE_MS))
 	{
+		AM_TRACE(62);   /* перед saveCfg у aprsModeTick */
 		saveCfg(m);
 	}
 
@@ -505,6 +604,7 @@ void aprsModeTick(void)
 		return;
 	}
 
+	AM_TRACE_T(63);   /* маяк замовлено: перед channelBusy() (тік: лише перший раз) */
 	if (channelBusy(m))
 	{
 		if (m->busySinceMs == 0U)
@@ -534,8 +634,12 @@ void aprsModeTick(void)
 	m->reqManual = m->reqPtt = false;
 
 	{
-		aprsModeTxResult_t r = aprsModeTxBeacon(&m->eff);
+		aprsModeTxResult_t r;
 		aprsModeBcnState_t st;
+
+		AM_TRACE(211);   /* частота вільна: перед aprsModeTxBeacon() (далі 220..) */
+		r = aprsModeTxBeacon(&m->eff);
+		AM_TRACE(212);   /* aprsModeTxBeacon() повернув керування */
 
 		switch (r)
 		{

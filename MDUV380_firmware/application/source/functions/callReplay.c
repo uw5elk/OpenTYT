@@ -37,7 +37,14 @@ typedef struct
 /* Усе -- у CCM (той самий буфер, що звільнила a2211ac/docs/notification-buffer.md):
  * основної RAM вільно лише ~212 Б (docs/recording-feasibility.md), туди не влазить
  * навіть службовий стан, не кажучи вже про сам кільцевий буфер. */
+#if defined(ENABLE_APRS_RX)
+/* R10-fix: кільце позичає «Режим APRS» під aprsModeMem_t (u32/double/структурні копії -> LDM/STM/LDRD, які на
+ * НЕвирівняній адресі дають UsageFault, а обробник -- while(1)). Без вирівнювання лінкер ставив кільце на 0x1000ab5f
+ * (виміряно nm у збірці R10). Без ENABLE_APRS_RX атрибута нема -- збірка байт-у-байт стокова. */
+static __attribute__((section(".ccmram"), aligned(8))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];
+#else
 static __attribute__((section(".ccmram"))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];
+#endif
 /* Один біт на групу: чи ця група -- перша в новому "заході". (CALL_REPLAY_GROUPS+7)/8 = 63 Б. */
 static __attribute__((section(".ccmram"))) uint8_t callReplayOverBit[(CALL_REPLAY_GROUPS + 7U) / 8U];
 static __attribute__((section(".ccmram"))) callReplayCaptureState_t callReplayCap;
