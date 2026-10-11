@@ -79,7 +79,8 @@ typedef enum
 	APRS_MODE_BCN_NOPOS,
 	APRS_MODE_BCN_INHIBIT,
 	APRS_MODE_BCN_BAND,
-	APRS_MODE_BCN_FAILED
+	APRS_MODE_BCN_FAILED,
+	APRS_MODE_BCN_TOOBIG      /* R10-fix2: кадр завеликий */
 } aprsModeBcnState_t;
 
 typedef struct

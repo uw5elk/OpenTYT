@@ -87,15 +87,37 @@ static inline aprsModeMem_t *mem(void)
 #if defined(APRS_MODE_TRACE)
 /* R10-fix: ТИМЧАСОВЕ трасування на екран. Не залежить від сповіщень (displayRenderWithoutNotification) і не чіпає стан
  * режиму; номер видно, поки екран не перемалюють. Якщо зависає САМ displayRender() -- на склі лишиться ПОПЕРЕДНІЙ номер. */
-void aprsModeTrace(unsigned int n)
+/* v != TRACE_NO_V: під номером ще й додаткове значення (лічильник/довжина). Нижче -- мінімальний залишок стека
+ * поточного завдання в БАЙТАХ (uxTaskGetStackHighWaterMark): якщо він близький до 0, зависання -- переповнення стека. */
+#define TRACE_NO_V  0xFFFFFFFFUL
+
+static void traceDraw(unsigned int n, unsigned long v)
 {
 	char b[12];
+	char c[24];
 
 	snprintf(b, sizeof(b), "%u", n);
 	displayClearBuf();
 	displayPrintCentered(8, "APRS TRACE", FONT_SIZE_2);
 	displayPrintCentered(48, b, FONT_SIZE_4);
+	if (v != TRACE_NO_V)
+	{
+		snprintf(c, sizeof(c), "v=%lu", v);
+		displayPrintCentered(86, c, FONT_SIZE_2);
+	}
+	snprintf(c, sizeof(c), "stk %lu B", (unsigned long)uxTaskGetStackHighWaterMark(NULL) * (unsigned long)sizeof(StackType_t));
+	displayPrintCentered(106, c, FONT_SIZE_2);
 	displayRenderWithoutNotification();
+}
+
+void aprsModeTrace(unsigned int n)
+{
+	traceDraw(n, TRACE_NO_V);
+}
+
+void aprsModeTraceV(unsigned int n, unsigned int v)
+{
+	traceDraw(n, (unsigned long)v);
 }
 
 void aprsModeTraceT(unsigned int n)
@@ -550,6 +572,7 @@ static void beaconFeedback(aprsModeBcnState_t st)
 		case APRS_MODE_BCN_BAND:    txt = APRSM_ERR_BAND; break;
 		case APRS_MODE_BCN_BUSY_CH: txt = APRSM_ERR_BUSYCH; break;
 		case APRS_MODE_BCN_FAILED:  txt = APRSM_ERR_FAILED; break;
+		case APRS_MODE_BCN_TOOBIG:  txt = APRSM_ERR_TOOBIG; break;
 		default: break;
 	}
 	if (txt != NULL)
@@ -648,6 +671,7 @@ void aprsModeTick(void)
 			case APRS_MODE_TX_NOPOS:   st = APRS_MODE_BCN_NOPOS; break;
 			case APRS_MODE_TX_INHIBIT: st = APRS_MODE_BCN_INHIBIT; break;
 			case APRS_MODE_TX_BAND:    st = APRS_MODE_BCN_BAND; break;
+			case APRS_MODE_TX_TOOBIG:  st = APRS_MODE_BCN_TOOBIG; break;
 			default:                   st = APRS_MODE_BCN_FAILED; break;
 		}
 		m->bcnState = st;

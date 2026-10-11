@@ -38,6 +38,7 @@
 #define APRSM_ERR_BAND        "Поза діапазоном"
 #define APRSM_ERR_BUSYCH      "Частота зайнята"
 #define APRSM_ERR_FAILED      "Маяк не вдався"
+#define APRSM_ERR_TOOBIG      "Кадр завеликий"
 
 /* ---- сторінка «Монітор» ---- */
 #define APRSM_M_NORX          "Прийом каналу вимкнено"

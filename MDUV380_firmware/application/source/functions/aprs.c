@@ -56,7 +56,9 @@
 #include "crypto/dmr_aes.h"   /* ui8: DMR_AES_CCM -- стан відкладеного PTT-бікона в CCM, не в main RAM */
 #endif
 
+#ifndef AX25_PACKET_BUFFER_SIZE   // хостовий тест test_aprs_frame_ovf.c підставляє малий буфер, щоб дістати гілку переповнення
 #define AX25_PACKET_BUFFER_SIZE        256U
+#endif
 #define SMART_BEACONING_SPEED_MIN       54U // more than 1km/h (0.5399568034557235 kn == 1km/h)
 #define APRS_DESTINATION            "APOG77" // MAX 6 char (excluding terminator)
 #define APRS_CONFIG_SATELLITE            0U
@@ -287,6 +289,32 @@ static CodeplugAPRSConfig_t *aprsConfig;
 #define APRS_MODE_CCM  __attribute__((section(".aes_ccmram")))
 static const char *s_modeCall APRS_MODE_CCM;
 static const char *s_modeComment APRS_MODE_CCM;
+
+/* R10-fix2: жорсткі межі кадру AX.25. Біт, що не влазить у packetBuffer, НЕ пишеться, а позиція стає сигнальним
+ * значенням AX25_BITS_OVERFLOW (окремого прапорця нема -- main RAM +0). aprsSendPacket() після складання перевіряє
+ * його й відмовляє. Найгірший кадр режиму: прапори 16+3 байти, заголовок 30, позиція 27 (разом з курсом/швидкістю),
+ * коментар APRSM_COMMENT_AIR_MAX (БАЙТ UTF-8), CRC 2; бітстаффінг додає не більше 1 біта на 5. */
+#define AX25_BITS_MAX        (AX25_PACKET_BUFFER_SIZE * 8U)
+#define AX25_BITS_OVERFLOW   0xFFFFU
+/* R10-fix2: поля CodeplugAPRSConfig_t (paths[].name -- char[6], comment -- char[24]) не мають гарантованого нуля в кінці:
+ * strlen() по них читає за межі поля. Скрізь -- strnlen() з розміром поля. Без ENABLE_APRS_RX -- стокове strlen(). */
+#define AX_STRLEN(s, n)      strnlen((s), (n))
+#if !defined(APRS_FRAME_TEST_SMALL_BUFFER)
+_Static_assert(((((30U + 27U + APRSM_COMMENT_AIR_MAX + 2U) * 8U) * 6U) / 5U) + ((16U + 3U) * 8U) + 8U <= (AX25_PACKET_BUFFER_SIZE * 8U),
+		"APRS mode frame with the longest comment does not fit packetBuffer");
+#endif
+#endif
+
+/* R10-fix2: ТИМЧАСОВЕ трасування складання кадру (лише в «Режимі APRS»: s_modeCall != NULL). Номери -- TESTING.md, блок AP. */
+#if defined(APRS_MODE_TRACE)
+#define AX_TR(n)       do { if (s_modeCall != NULL) { AM_TRACE(n); } } while (0)
+#define AX_TRV(n, v)   do { if (s_modeCall != NULL) { AM_TRACE_V(n, v); } } while (0)
+#else
+#define AX_TR(n)       ((void)0)
+#define AX_TRV(n, v)   ((void)0)
+#endif
+#if !defined(ENABLE_APRS_RX)
+#define AX_STRLEN(s, n)      strlen(s)
 #endif
 
 volatile aprsSendProgress_t aprsTxProgress = APRS_TX_IDLE; // used in the ISR
@@ -309,11 +337,24 @@ static void enqueueCharNrzi(AX25Encoder_t *encoderData, uint8_t data, bool useBi
 
 static void enqueueBit(AX25Encoder_t *encoderData, bool data)
 {
+#if defined(ENABLE_APRS_RX)
+	if (encoderData->packetBufferBitPosition >= AX25_BITS_MAX)
+	{
+		encoderData->packetBufferBitPosition = AX25_BITS_OVERFLOW;   // переповнення: не пишемо за межі буфера
+		return;
+	}
+#endif
 	if (data)
 	{
 		encoderData->packetBuffer[encoderData->packetBufferBitPosition / 8U] |= 0x01 << (encoderData->packetBufferBitPosition % 8U);
 	}
 	encoderData->packetBufferBitPosition++;
+#if defined(APRS_MODE_TRACE)
+	if ((encoderData->packetBufferBitPosition & 0x3FU) == 0U)
+	{
+		AX_TRV(455, encoderData->packetBufferBitPosition);   // кожні 64 біти: позиція в кадрі
+	}
+#endif
 }
 
 static void updateCRC(AX25Encoder_t *encoderData, bool dataBit)
@@ -380,6 +421,35 @@ static void enqueueCharNrzi(AX25Encoder_t *encoderData, uint8_t data, bool useBi
 	}
 }
 
+#if defined(ENABLE_APRS_RX)
+/* R10-fix2: рядок не довший за maxLen байт (поле без нуля в кінці не читається за межами). Лічильник раніше був uint8_t --
+ * на рядку від 256 байт він переходив через 0 і цикл не закінчувався б. Тепер: 16 біт, стеля = розмір буфера, вихід
+ * при переповненні кадру. */
+static void enqueueStringN(AX25Encoder_t *encoderData, const char *str, uint16_t maxLen)
+{
+	uint16_t i = 0;
+
+	if (maxLen > AX25_PACKET_BUFFER_SIZE)
+	{
+		maxLen = AX25_PACKET_BUFFER_SIZE;
+	}
+	AX_TRV(450, (unsigned int)strnlen(str, maxLen));   // довжина рядка, що йде в кадр
+	while ((i < maxLen) && (str[i] != 0) && (encoderData->packetBufferBitPosition != AX25_BITS_OVERFLOW))
+	{
+		enqueueCharNrzi(encoderData, str[i], true);
+		i++;
+		if ((i & 7U) == 0U)
+		{
+			AX_TRV(451, i);   // кожні 8 символів: індекс у рядку
+		}
+	}
+}
+
+static void enqueueString(AX25Encoder_t *encoderData, const char *str)
+{
+	enqueueStringN(encoderData, str, AX25_PACKET_BUFFER_SIZE);   // рядки з snprintf -- завжди з нулем
+}
+#else
 static void enqueueString(AX25Encoder_t *encoderData, const char *str)
 {
 	uint8_t i = 0;
@@ -390,6 +460,7 @@ static void enqueueString(AX25Encoder_t *encoderData, const char *str)
 		i++;
 	};
 }
+#endif
 
 static void enqueueFlagOfLength(AX25Encoder_t *encoderData, uint8_t len)
 {
@@ -414,8 +485,9 @@ static void enqueueHeader(AX25Encoder_t *encoderData)
 	//}
 
 	enqueueCharNrzi(encoderData, ('0' << 1), true);
+	AX_TR(430);   /* заголовок: призначення й його SSID записано */
 
-	uint8_t len = MIN(strlen(myCall), 6U);
+	uint8_t len = MIN(AX_STRLEN(myCall, 6U), 6U);
 
 	for (uint8_t i = 0; i < len; i++)
 	{
@@ -427,13 +499,15 @@ static void enqueueHeader(AX25Encoder_t *encoderData)
 		enqueuePadOfLength(encoderData, (6U - len));
 	}
 
+	AX_TR(431);   /* заголовок: позивний записано */
 	enqueueCharNrzi(encoderData, ((aprsConfig->senderSSID + '0') << 1), true);
+	AX_TR(432);   /* заголовок: SSID відправника записано */
 
-	uint8_t numPaths = ((strlen(aprsConfig->paths[1].name) == 0) ? 1U : 2U);
+	uint8_t numPaths = ((AX_STRLEN(aprsConfig->paths[1].name, 6U) == 0) ? 1U : 2U);
 
 	for (uint8_t p = 0; p < numPaths; p++)
 	{
-		len = MIN(strlen(aprsConfig->paths[p].name), 6U);
+		len = MIN(AX_STRLEN(aprsConfig->paths[p].name, 6U), 6U);
 
 		for (uint8_t i = 0; i < len; i++)
 		{
@@ -448,10 +522,12 @@ static void enqueueHeader(AX25Encoder_t *encoderData)
 		uint8_t isEnd = (p == (numPaths - 1)) ? 1U : 0U;
 
 		enqueueCharNrzi(encoderData, (((aprsConfig->paths[p].SSID + '0') << 1) + isEnd), true);
+		AX_TRV(433, p);   /* заголовок: ланку шляху p записано */
 	}
 
 	enqueueCharNrzi(encoderData, 0x03, true);
 	enqueueCharNrzi(encoderData, 0xF0, true);
+	AX_TR(435);   /* заголовок: завершено */
 }
 
 static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const char *lonStr, const char *courseAndSpeed, aprsChannelSettingsInUse_t *channelSettings, bool fromSatScreen)
@@ -468,6 +544,7 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 #endif
 
 	enqueueCharNrzi(encoderData, DT_POS, true);
+	AX_TR(440);   /* позиція: тип даних записано */
 
 	if (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_COMPRESSED_FORMAT))
 	{
@@ -490,6 +567,7 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 			enqueueString(encoderData, courseAndSpeed);
 		}
 	}
+	AX_TR(442);   /* позиція: координати, символ і курс записано */
 
 	if ((fromSatScreen == false) &&
 			(aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_TRANSMIT_QSY_INFO) && (aprsConfig->txFrequency != 0U))
@@ -532,14 +610,17 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 		enqueueString(encoderData, freqStr);
 	}
 
+	AX_TR(444);   /* позиція: перед коментарем */
 	if (hasComment)
 	{
 #if defined(ENABLE_APRS_RX)
-		enqueueString(encoderData, commentStr);
+		/* межа: коментар режиму -- локальний рядок з нулем (до APRSM_COMMENT_AIR_MAX байт), коментар кодплуга -- char[24] без нуля */
+		enqueueStringN(encoderData, commentStr, (s_modeComment != NULL) ? (uint16_t)APRSM_COMMENT_AIR_MAX : (uint16_t)sizeof(aprsConfig->comment));
 #else
 		enqueueString(encoderData, aprsConfig->comment);
 #endif
 	}
+	AX_TR(445);   /* позиція: коментар записано */
 }
 
 static void aprsTxEnded(void)
@@ -640,7 +721,13 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 	bool courseAndSpeed = false;
 	bool gpsAndLocationAreValid = (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_LOCATION_FROM_GPS) && aprsBeaconingLocationIsValid(previousLocation) && aprsBeaconingLocationIsValid(currentLocation));
 #if ! defined(PLATFORM_MD9600)
+#if defined(ENABLE_APRS_RX)
+	/* R10-fix2: стокова вада -- тут читався aprsConfig ЩЕ ПОПЕРЕДНЬОГО виклику (присвоєння нижче в тілі): після маяка
+	 * режиму це вказівник на мертвий стек. Читаємо з аргументу -- він і є поточним конфігом. */
+	bool beaconingSilently = (config->flags & CODEPLUG_APRS_CONFIG_FLAG_BEACONING_SILENTLY);
+#else
 	bool beaconingSilently = (aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_BEACONING_SILENTLY);
+#endif
 #endif
 
 #if defined(APRS_RX)
@@ -652,8 +739,11 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 	encoderData.currentBitNRZI = false; // clear
 	memset(encoderData.packetBuffer, 0, AX25_PACKET_BUFFER_SIZE);
 	encoderData.packetBufferBitPosition = 0;
+	AX_TR(400);   /* після memset буфера кадру */
 
+	AX_TR(401);   /* перед codeplugGetRadioName (читання SPI-флешу) */
 	codeplugGetRadioName(myCall);
+	AX_TR(402);   /* після codeplugGetRadioName */
 	myCall[6] = 0; //truncate to 6 chars max
 #if defined(ENABLE_APRS_RX)
 	if (s_modeCall != NULL)
@@ -663,6 +753,7 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		myCall[6] = 0;
 	}
 #endif
+	AX_TR(403);   /* позивний готовий */
 
 	bool usePosition = (aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_USE_POSITION);
 	if (usePosition)
@@ -680,6 +771,7 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		lat = currentLocation->coords.latitude;
 		lon = currentLocation->coords.longitude;
 	}
+	AX_TR(404);   /* широту/довготу отримано */
 
 	uint8_t ambiguity = (aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_AMBIGUITY_MASK) >> 5;
 	if (ambiguity != 0U)
@@ -721,11 +813,15 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		tmp = lon * ambCoeff;
 		lon = tmp / ambCoeff;
 	}
+	AX_TRV(405, ambiguity);   /* після неточності координат (v = неточність) */
 
 	if (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_COMPRESSED_FORMAT))
 	{
+		AX_TR(406);   /* стиснутий формат: перед aprsCompressLatitude */
 		aprsCompressLatitude(lat, latStr);
+		AX_TR(407);   /* після aprsCompressLatitude */
 		aprsCompressLongitude(lon, lonStr);
+		AX_TR(408);   /* після aprsCompressLongitude */
 
 		if (gpsAndLocationAreValid)
 		{
@@ -776,11 +872,16 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		lat = fabs(lat);
 		lon = fabs(lon);
 
+		AX_TR(410);   /* перед aprsConvertAndSplitCoord(lat) */
 		aprsConvertAndSplitCoord(lat, (ambiguity > 3), &latDeg, &latMinsInt, &latMinsDecimal);
+		AX_TR(411);   /* після aprsConvertAndSplitCoord(lat) */
 		aprsConvertAndSplitCoord(lon, (ambiguity > 3), &lonDeg, &lonMinsInt, &lonMinsDecimal);
+		AX_TR(412);   /* після aprsConvertAndSplitCoord(lon) */
 
 		snprintf(latStr, 16, "%02u%02u.%02u%c", latDeg, latMinsInt, latMinsDecimal, latHemisphere ? 'N' : 'S');
+		AX_TR(413);   /* після snprintf(latStr) */
 		snprintf(lonStr, 16, "%03u%02u.%02u%c", lonDeg, lonMinsInt, lonMinsDecimal, lonHemisphere ? 'E' : 'W');
+		AX_TR(414);   /* після snprintf(lonStr) */
 
 		if (gpsAndLocationAreValid)
 		{
@@ -794,13 +895,34 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		}
 	}
 
+	AX_TR(415);   /* рядки координат готові (перед складанням кадру) */
+	AX_TR(416);   /* перед enqueueFlagOfLength(16) */
 	enqueueFlagOfLength(&encoderData, 16U);
+	AX_TR(417);   /* після enqueueFlagOfLength(16) */
 
 	encoderData.crc = 0xFFFF; // Initialise CRC now, after data has been sent as CRC does is only for data bytes
+	AX_TR(418);   /* перед enqueueHeader */
 	enqueueHeader(&encoderData);
+	AX_TR(419);   /* після enqueueHeader */
+	AX_TR(420);   /* перед enqueuePayload */
 	enqueuePayload(&encoderData, latStr, lonStr, (courseAndSpeed ? courseSpeedStr : NULL), channelSettings, fromSatScreen);
+	AX_TR(421);   /* після enqueuePayload */
+	AX_TR(422);   /* перед enqueueCRC */
 	enqueueCRC(&encoderData);
+	AX_TR(423);   /* після enqueueCRC */
+	AX_TR(424);   /* перед enqueueFlagOfLength(3) */
 	enqueueFlagOfLength(&encoderData, 3U);
+	AX_TR(425);   /* після enqueueFlagOfLength(3) */
+#if defined(ENABLE_APRS_RX)
+	if (encoderData.packetBufferBitPosition == AX25_BITS_OVERFLOW)
+	{
+		/* R10-fix2: кадр не влазить у packetBuffer -- НЕ передаємо. Передавач уже ввімкнено викликачем, тож
+		 * переводимо передачу в «завершено»: стани завершення (aprsBeaconingTxStateTick) самі вимкнуть TX. */
+		AX_TR(426);   /* кадр завеликий: передачу скасовано */
+		aprsTxProgress = APRS_TX_FINISHED;
+		return false;
+	}
+#endif
 #if defined(APRS_RX)
 	if (s_modeCall != NULL) { AM_TRACE(241); }   /* кадр AX.25 зібрано */
 #endif
@@ -1253,7 +1375,7 @@ static void aprsBeaconingDecayTick(bool reset)
 	}
 }
 
-#if defined(APRS_RX)
+#if defined(APRS_MODE_TRACE)
 /* R10-fix: трасування завершення передачі -- лише поки активний «Режим APRS» (стоковий бікон не чіпаємо). */
 #define AM_TRACE_TX(n)  do { if (aprsModeIsActive()) { AM_TRACE(n); } } while (0)
 #else
@@ -2058,14 +2180,20 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	s_modeCall = e->call;
 	s_modeComment = comment;
 	_Static_assert(sizeof(aprsModeRawCfg_t) == sizeof(CodeplugAPRSConfig_t), "aprsModeRawCfg_t != CodeplugAPRSConfig_t");
-	/* aprsSendPacket() на самому початку читає flags ЩЕ ПОПЕРЕДНЬОГО aprsConfig (стокова особливість: присвоєння
-	 * нижче в тілі) -- підставляємо наш конфіг заздалегідь, щоб «безшумний» біт не залежав від сміття на стеку. */
-	aprsConfig = (CodeplugAPRSConfig_t *)(void *)&cfg;
+	/* R10-fix2: cfg -- ЛОКАЛЬНА змінна, а aprsSendPacket() кладе вказівник на неї в глобальний aprsConfig. Після виходу з
+	 * цієї функції він був би висячим (мертвий стек) -- нижче, одразу після виклику, його повертаємо на конфіг кодплуга. */
 	AM_TRACE(232);   /* перед aprsSendPacket (далі 240..) */
-	(void)aprsSendPacket((CodeplugAPRSConfig_t *)(void *)&cfg, &loc, &loc, &channelSettings, false);
+	bool frameOk = aprsSendPacket((CodeplugAPRSConfig_t *)(void *)&cfg, &loc, &loc, &channelSettings, false);
+	aprsConfig = &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL];   // R10-fix2: більше ніяких вказівників на стек
 	AM_TRACE(233);   /* aprsSendPacket повернув керування; TX у фоні (TIM6) */
 	s_modeCall = NULL;       // aprsSendPacket() збирає кадр синхронно; далі їх не читають
 	s_modeComment = NULL;
+	if (frameOk == false)
+	{
+		/* R10-fix2: кадр завеликий -- aprsSendPacket() поставив «завершено»; стани завершення вимикають TX */
+		aprsModeAbortTx();
+		return APRS_MODE_TX_TOOBIG;
+	}
 
 	return APRS_MODE_TX_OK;
 }
