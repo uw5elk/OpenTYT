@@ -8,6 +8,7 @@
  * «каналу» режиму. Модулятор AFSK і сам кадр маяка -- стокові (aprs.c: aprsModeTxBeacon()).
  */
 #include "functions/aprs_mode.h"
+#include "functions/aprs_fault.h"   /* R10-fix4: крок трасування -> backup-регістри, kick сторожа */
 
 #if defined(APRS_RX)
 
@@ -65,7 +66,6 @@ typedef struct
 	aprsModeUi_t           ui;
 #if defined(APRS_MODE_TRACE)
 	uint32_t               trSeen;         /* R10-fix: які номери тік-трасування (60..91) уже показано після входу/маяка */
-	uint32_t               trT0;           /* R10-fix3: мітка часу (мс) початку передачі -- trxSetTX(); рядок t= на екрані трасування */
 #endif
 } aprsModeMem_t;
 
@@ -102,6 +102,11 @@ static void traceDraw(unsigned int n, unsigned long v, bool hex)
 	char b[12];
 	char c[24];
 	bool dmaFixed = false;
+	/* R10-fix4: крок і час пишемо в backup-регістри ДО малювання (там же сторож і звіт збою читають «останній крок»), а t=
+	 * береться звідти ж, а не зі стану режиму: в r10fix3 рядок t= на залізі не з'являвся (залежав від mem()->trT0 і
+	 * aprsModeIsActive()) -- тепер він є на КОЖНОМУ кадрі, відлік від початку серії (мітка перед trxSetTX, або перший крок
+	 * після паузи > 3 с). */
+	uint32_t tMs = aprsFaultTraceNote((uint32_t)n, (uint32_t)((v == TRACE_NO_V) ? 0UL : v));
 
 	if (HAL_DMA_GetState(&hdma_memtomem_dma2_stream0) != HAL_DMA_STATE_READY)
 	{
@@ -110,12 +115,9 @@ static void traceDraw(unsigned int n, unsigned long v, bool hex)
 	}
 	snprintf(b, sizeof(b), "%u", n);
 	displayClearBuf();
-	displayPrintCentered(2, "APRS TRACE", FONT_SIZE_2);
-	if (aprsModeIsActive() && (mem()->trT0 != 0U))
-	{
-		snprintf(c, sizeof(c), "t=%lu ms", (unsigned long)(ticksGetMillis() - mem()->trT0));   /* від trxSetTX() */
-		displayPrintCentered(20, c, FONT_SIZE_2);
-	}
+	displayPrintCentered(2, "APRS TRACE F4", FONT_SIZE_2);   /* F4 -- маркер збірки R10-fix4 (видно, яка прошивка на залізі) */
+	snprintf(c, sizeof(c), "t=%lu ms", (unsigned long)tMs);
+	displayPrintCentered(20, c, FONT_SIZE_2);
 	displayPrintCentered(48, b, FONT_SIZE_4);
 	if (v != TRACE_NO_V)
 	{
@@ -149,6 +151,7 @@ static void traceDraw(unsigned int n, unsigned long v, bool hex)
 		}
 	}
 	vTaskDelay((30U / portTICK_PERIOD_MS));
+	APRS_FAULT_KICK();
 }
 
 void aprsModeTrace(unsigned int n)
@@ -169,10 +172,7 @@ void aprsModeTraceH(unsigned int n, unsigned long v)
 /* Мітка «передача почалась» (перед trxSetTX): далі кожен кадр трасування показує t= від неї. */
 void aprsModeTraceMark(void)
 {
-	if (aprsModeIsActive())
-	{
-		mem()->trT0 = (ticksGetMillis() != 0U) ? ticksGetMillis() : 1U;
-	}
+	aprsFaultTraceMark();   /* R10-fix4: t=0 у backup-регістрах (не залежить від стану режиму) */
 }
 
 void aprsModeTraceT(unsigned int n)

@@ -59,6 +59,7 @@
 #include "functions/aprs_rx_probe.h"  // R2: «APRS проба» (лише ENABLE_APRS_RX_PROBE + українська)
 #include "functions/aprs_rx.h"        // R8: справжній фоновий приймач APRS (ENABLE_APRS_RX + українська)
 #include "functions/aprs_mode.h"      // R10: «Режим APRS» (PTT = маяк, тік режиму)
+#include "functions/aprs_fault.h"     // R10-fix4: обробник збою, сторож, звіт після перезавантаження (лише APRS_RX)
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -410,6 +411,10 @@ void applicationMainTask(void)
 	displayLCD_Type = (3 | DIPLAYLCD_TYPE_RGB);
 #endif
 
+#if defined(APRS_RX)
+	aprsFaultInit();   // R10-fix4: backup-регістри RTC, сторож TIM7, дескриптор головного завдання
+#endif
+
 	spiFlashInitHasFailed = !SPI_Flash_init();
 	if (spiFlashInitHasFailed)
 	{
@@ -603,6 +608,14 @@ void applicationMainTask(void)
 	dmrSmsInit();   // load the encrypted-SMS store from flash
 #endif
 
+#if defined(APRS_RX)
+	// R10-fix4: якщо минулого разу рація впала (HardFault/сторож) -- показати збережений звіт (кнопка -- наступна сторінка)
+	if (aprsFaultBootReport())
+	{
+		menuSystemPopAllAndDisplayRootMenu();
+	}
+#endif
+
 	/* Infinite loop */
 	for(;;)
 	{
@@ -618,6 +631,9 @@ void applicationMainTask(void)
 		mainIsRunning = true;
 		keyOrButtonChanged = false;
 
+#if defined(APRS_RX)
+		APRS_FAULT_LOOP(aprsModeIsActive());   // R10-fix4: «головний цикл живий»; сторож діє лише поки активний «Режим APRS»
+#endif
 		tick_com_request();
 		handleTimerCallbacks();
 		batteryUpdate();

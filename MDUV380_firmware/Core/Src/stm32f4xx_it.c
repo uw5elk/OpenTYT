@@ -21,6 +21,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_it.h"
+#include "functions/aprs_rx_cfg.h"   /* R10-fix4: APRS_RX */
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "io/buttons.h"
@@ -94,6 +95,8 @@ void NMI_Handler(void)
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
+#if !defined(APRS_RX)
+/* R10-fix4: у збірці з APRS_RX ці чотири обробники замінено на functions/aprs_fault.c (зберігають і показують регістри збою). */
 /**
   * @brief This function handles Hard fault interrupt.
   */
@@ -153,6 +156,7 @@ void UsageFault_Handler(void)
     /* USER CODE END W1_UsageFault_IRQn 0 */
   }
 }
+#endif /* !APRS_RX */
 
 /**
   * @brief This function handles Debug monitor.
