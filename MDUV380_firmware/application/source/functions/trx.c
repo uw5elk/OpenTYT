@@ -38,6 +38,7 @@
 #include "functions/aprs.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
+#include "functions/aprs_rx.h"   // R8-fix: aprsRxStopForTx() (лише ENABLE_APRS_RX + українська)
 #include <FreeRTOS.h>
 #include <string.h>
 
@@ -790,6 +791,9 @@ void trxConfigurePA_DAC_ForFrequencyBand(void)
 
 void trxSetTX(void)
 {
+#if defined(APRS_RX)
+	aprsRxStopForTx();   // R8-fix: СИНХРОННО -- до зміни стану HR-C6000/AT1846S і до будь-яких прапорців передачі
+#endif
 	trxConfigurePA_DAC_ForFrequencyBand();
 
 	trxTransmissionEnabled = true;
@@ -818,6 +822,9 @@ void trxActivateRx(bool critical)
 void trxActivateTx(bool critical)
 {
 	UNUSED_PARAMETER(critical);
+#if defined(APRS_RX)
+	aprsRxStopForTx();   // R8-fix: DMR-передача (trxActivateDMRTx) іде повз trxSetTX() -- той самий захист
+#endif
 
 	if (currentRadioDevice->currentMode == RADIO_MODE_NONE)
 	{

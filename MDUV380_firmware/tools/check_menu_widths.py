@@ -310,7 +310,7 @@ for lang, lab, line, n in sms_over:
 print(f'  разом: {len(sms_over)}')
 fails += sms_over
 
-print('\n=== 6. Екран «APRS станції», банер і пункт меню (languages/aprsrx_ua.h, R8) ===')
+print('\n=== 6. Екран «APRS станції», банер і пункти меню «APRS» (languages/aprsrx_ua.h, R8 / R8-fix) ===')
 # Рядок екрана FONT_SIZE_1 -- 6 px на символ, екран 160 px => 26 символів; пункт меню -- 16
 # (SCREEN_LINE_BUFFER_SIZE); рядок банера -- 16. Для шаблонів з %s/%u/%lu підставляємо НАЙГІРШЕ значення.
 aprs_over = []
@@ -341,7 +341,7 @@ if os.path.exists(aprs_path):
                     if len(t) > LINE_CHARS:
                         aprs_over.append((name, t, len(t), LINE_CHARS))
             continue
-        limit = LINE_CHARS if name in ('APRSRX_TITLE', 'APRSRX_DIAG_TITLE') else 26
+        limit = LINE_CHARS if name in ('APRSRX_TITLE', 'APRSRX_DIAG_TITLE', 'APRSRX_DIAG2_TITLE', 'APRSRX_HUB_SETTINGS', 'APRSRX_HUB_PROBE') else 26
         t = val
         subs = WORST_S.get(name)
         for rx, rep in (('%lu', '99999'), ('%u', '65535')):

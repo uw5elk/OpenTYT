@@ -617,6 +617,43 @@ static void disengage(aprsRxWhy_t why)
 	}
 }
 
+void aprsRxStopForTx(void)
+{
+	if ((stateValid() == false) || (s_rx.i2sRunning == false))
+	{
+		return;
+	}
+	/* Як aprsRxSuspendForAudio(): I2S -- негайно. Решту (еко-рівень, стан «чекає») тік зробить сам, побачивши
+	 * передачу (hardBlock). Пауза HOLD не дає тіку перезапустити I2S у проміжку між стартом і прапорцями TX. */
+	i2sStop();
+	s_rx.holdUntilMs = ticksGetMillis() + APRS_RX_HOLD_MS;
+	if (s_rx.engaged)
+	{
+		s_rx.st.state = 1;
+	}
+	if (s_rx.st.syncStops < 0xFFFFU)
+	{
+		s_rx.st.syncStops++;
+	}
+}
+
+void aprsRxNoteI2sEvent(aprsRxI2sEvent_t ev)
+{
+	/* Може прийти з будь-якого контексту (в т.ч. з задачі HR-C6000): лише інкремент у вже ініціалізованому стані. */
+	if (stateValid() == false)
+	{
+		return;
+	}
+	if ((ev == APRS_RX_I2S_EV_WS_TIMEOUT) && (s_rx.st.wsTimeouts < 0xFFFFU))
+	{
+		s_rx.st.wsTimeouts++;
+	}
+	else if ((ev == APRS_RX_I2S_EV_ABORT_TIMEOUT) && (s_rx.st.abortTimeouts < 0xFFFFU))
+	{
+		s_rx.st.abortTimeouts++;
+	}
+}
+
 void aprsRxSuspendForAudio(void)
 {
 	if (stateValid() == false)

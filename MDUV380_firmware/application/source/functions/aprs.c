@@ -46,6 +46,7 @@
 #include "functions/aprs.h"
 #include "hardware/HR-C6000.h"
 #include "functions/satellite.h"
+#include "functions/aprs_rx.h"   // R8-fix: aprsRxStopForTx() (лише ENABLE_APRS_RX + українська)
 #if defined(HAS_GPS)
 #include "interfaces/gps.h"
 #endif
@@ -1818,6 +1819,9 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 						&&
 						aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG))
 				{
+#if defined(APRS_RX)
+					aprsRxStopForTx();   // R8-fix: приймач APRS -- СИНХРОННО, першим ділом (до QSY, анти-колізії і trxSetTX)
+#endif
 					rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
 
 #if defined(HAS_GPS)
@@ -1964,6 +1968,10 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	{
 		return APRS_MODE_TX_BAND;
 	}
+
+#if defined(APRS_RX)
+	aprsRxStopForTx();   // R8-fix2: приймач APRS -- СИНХРОННО, першим ділом (до еко-режиму і trxSetTX); маяк режиму R10 іде в обхід aprsBeaconingSendBeacon()
+#endif
 
 	rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
 

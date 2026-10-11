@@ -73,9 +73,12 @@ typedef struct
 	uint32_t  framesOk;        /* кадрів з правильним FCS */
 	uint32_t  framesBad;       /* кадрів з помилковим FCS */
 	uint32_t  stops[APRS_RX_WHY_MAX];   /* скільки разів зупинялися з цієї причини */
-	uint32_t  msgStored;       /* повідомлень нам, покладених у «Повідомлення» */
-	uint32_t  banners;         /* показаних банерів */
-	uint32_t  det_switches;    /* зміни вердикту детектора */
+	uint16_t  msgStored;       /* повідомлень нам, покладених у «Повідомлення» (R8-fix: u16, місце під лічильники нижче) */
+	uint16_t  banners;         /* показаних банерів */
+	uint16_t  det_switches;    /* зміни вердикту детектора */
+	uint16_t  wsTimeouts;      /* R8-fix: таймаутів очікування WS у I2SStartDMA() (DMA не стартовано) */
+	uint16_t  syncStops;       /* R8-fix: скільки разів приймач зупинено СИНХРОННО перед передачею/QSY */
+	uint16_t  abortTimeouts;   /* R8-fix: HAL_DMA_Abort() не дочекався зупинки потоку DMA (такту нема) */
 	uint32_t  fsHz;            /* виміряна частота дискретизації, Гц (0 -- ще не міряли) */
 	uint16_t  tMeasUs;         /* T від фронту WS до I2SE, виміряний при останньому старті, мкс */
 	uint16_t  halUs;           /* тривалість HAL_I2SEx_TransmitReceive_DMA, мкс */
@@ -83,7 +86,7 @@ typedef struct
 
 /* Стан екрана «APRS станції» (user_interface/menuAprsStations.c) -- у тому самому CCM-блоці, що й приймач
  * (окремі статичні змінні екрана коштували б main RAM, а її вільно ~212 Б). */
-enum { APRS_RX_VIEW_LIST = 0, APRS_RX_VIEW_CARD, APRS_RX_VIEW_DIAG };
+enum { APRS_RX_VIEW_LIST = 0, APRS_RX_VIEW_CARD, APRS_RX_VIEW_DIAG, APRS_RX_VIEW_DIAG2 };
 typedef struct
 {
 	uint8_t   on;               /* екран відкрито */
@@ -102,9 +105,19 @@ void aprsRxI2SBlock(uint32_t bufNum);          /* з переривання DMA 
 /* Негайно зупинити (з задачі), якщо слухаємо, -- ПЕРЕД тим, як код запускає свій I2S / пише в
  * audioAndHotspotDataBuffer (голосова підказка, «Переслухати», екран проби). Безпечно, якщо не слухаємо. */
 void aprsRxSuspendForAudio(void);
+/* R8-fix: СИНХРОННА зупинка ПЕРЕД початком передачі (PTT, бікон APRS, QSY): trxSetTX()/trxActivateTx() і
+ * aprsBeaconingSendBeacon() кличуть її першим ділом. Тік приймача тут запізнюється -- у головному циклі
+ * aprsBeaconingTick() іде РАНІШЕ за aprsRxTick(), тож передача встигала б стартувати з ще живим I2S.
+ * Безпечно викликати будь-коли (нічого не слухаємо -- нічого не робить, лічильник не росте). */
+void aprsRxStopForTx(void);
 bool aprsRxIsRunning(void);
 /* R10: на частоті зараз іде AFSK (кадр або серія прапорців за останні ms мс) -- маяк «Режиму APRS» чекає. */
 bool aprsRxBusy(uint32_t ms);
+
+/* R8-fix: події низького рівня з i2s.c -- у лічильники діагностичної сторінки (окремої змінної в main
+ * RAM немає: вона коштувала б байтів, яких нема). */
+typedef enum { APRS_RX_I2S_EV_WS_TIMEOUT = 0, APRS_RX_I2S_EV_ABORT_TIMEOUT } aprsRxI2sEvent_t;
+void aprsRxNoteI2sEvent(aprsRxI2sEvent_t ev);
 
 const aprsRxDb_t    *aprsRxDb(void);
 const aprsRxStats_t *aprsRxStats(void);

@@ -277,6 +277,29 @@ static void drawDiag(void)
 	printRow(10, APRSRX_HINT_DIAG);
 }
 
+/* R8-fix: друга діагностична сторінка -- лічильники I2S (повна розкладка: docs, розділ 12.2). */
+static void drawDiag2(void)
+{
+	const aprsRxStats_t *st = aprsRxStats();
+	char buf[40];
+
+	statusLine(buf, sizeof(buf));
+	printRow(0, buf);
+	snprintf(buf, sizeof(buf), APRSRX_D2_STARTS, ST_CAP(st->starts, 99999));
+	printRow(1, buf);
+	snprintf(buf, sizeof(buf), APRSRX_D2_FAILS, ST_CAP(st->startFails, 99999));
+	printRow(2, buf);
+	snprintf(buf, sizeof(buf), APRSRX_D2_WS, ST_CAP(st->wsTimeouts, 9999));
+	printRow(3, buf);
+	snprintf(buf, sizeof(buf), APRSRX_D2_SYNC, ST_CAP(st->syncStops, 9999));
+	printRow(4, buf);
+	snprintf(buf, sizeof(buf), APRSRX_D2_ABORT, ST_CAP(st->abortTimeouts, 9999));
+	printRow(5, buf);
+	snprintf(buf, sizeof(buf), APRSRX_D2_TICKTX, ST_CAP(st->stops[APRS_RX_WHY_TX], 99999));
+	printRow(6, buf);
+	printRow(10, APRSRX_HINT_DIAG);
+}
+
 static void draw(void)
 {
 	aprsRxUi_t *ui = aprsRxUi();
@@ -284,7 +307,7 @@ static void draw(void)
 
 	ui->lastDrawMs = now;
 	displayClearBuf();
-	menuDisplayTitle((ui->view == APRS_RX_VIEW_DIAG) ? APRSRX_DIAG_TITLE : APRSRX_TITLE);
+	menuDisplayTitle((ui->view == APRS_RX_VIEW_DIAG) ? APRSRX_DIAG_TITLE : ((ui->view == APRS_RX_VIEW_DIAG2) ? APRSRX_DIAG2_TITLE : APRSRX_TITLE));
 	switch (ui->view)
 	{
 		case APRS_RX_VIEW_CARD:
@@ -292,6 +315,9 @@ static void draw(void)
 			break;
 		case APRS_RX_VIEW_DIAG:
 			drawDiag();
+			break;
+		case APRS_RX_VIEW_DIAG2:
+			drawDiag2();
 			break;
 		default:
 			drawList(now);
@@ -389,7 +415,17 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 				ui->view = APRS_RX_VIEW_DIAG;
 				redraw = true;
 			}
-			else if (KEYCHECK_SHORTUP(ev->keys, KEY_0) && (ui->view == APRS_RX_VIEW_DIAG))
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_DIAG))
+			{
+				ui->view = APRS_RX_VIEW_DIAG2;   /* R8-fix: лічильники I2S */
+				redraw = true;
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_DIAG2))
+			{
+				ui->view = APRS_RX_VIEW_DIAG;
+				redraw = true;
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_0) && ((ui->view == APRS_RX_VIEW_DIAG) || (ui->view == APRS_RX_VIEW_DIAG2)))
 			{
 				aprsRxClear();   /* лічильники і список -- до нуля */
 				ui->sel = 0;
@@ -417,9 +453,9 @@ void menuAprsStationsDrawEmbedded(void)
 {
 	aprsRxUi_t *ui = aprsRxUi();
 
-	if (ui->view == APRS_RX_VIEW_DIAG)
+	if ((ui->view == APRS_RX_VIEW_DIAG) || (ui->view == APRS_RX_VIEW_DIAG2))
 	{
-		ui->view = APRS_RX_VIEW_LIST;   /* діагностика лишається в екрані «APRS станції» */
+		ui->view = APRS_RX_VIEW_LIST;   /* діагностика (обидві сторінки) лишається в екрані «APRS станції» */
 	}
 	if (ui->view == APRS_RX_VIEW_CARD)
 	{
