@@ -31,6 +31,7 @@
 #include "user_interface/uiUtilities.h"
 #include "user_interface/menuAprsStations.h"   // R8: menuAprsStationsClose() (APRS_RX)
 #include "functions/aprs_mode.h"                // R10: aprsModeExit() (APRS_RX)
+#include "user_interface/menuAprsHub.h"        // R8-fix: меню «APRS» (APRS_RX)
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "functions/aprs_rx_probe.h"   // R2: aprsRxProbeClose() у menuSystemPushNewMenu()
 #endif
@@ -164,6 +165,9 @@ static menuFunctionData_t menuFunctions[] =
 #if defined(ENABLE_CALL_REPLAY)
 		{ menuCallReplay,           NULL, NULL, 0 },
 #endif
+#if defined(APRS_RX)
+		{ menuAprsHub,              NULL, NULL, 0 },// R8-fix: меню «APRS»
+#endif
 		// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 		{ uiMessageBox,             NULL, NULL, 0 },
 		{ menuHotspotMode,          NULL, NULL, 0 },
@@ -279,15 +283,15 @@ void menuSystemRegisterExitCallback(menuExitCallback_t f, void *data)
 void menuSystemPushNewMenu(int menuNumber)
 {
 #if defined(APRS_RX)
-	// R8: «APRS станції» -- режим усередині «Опцій рації» (без власного ID меню): push поверх нього
-	// (PTT -> екран передачі тощо) закриває екран, інакше він лишився б «відкритим» у фоні.
+	// R8: «APRS станції» -- режим усередині меню «APRS» (menuAprsHub, R8-fix; раніше -- Опції рації): push поверх
+	// нього (PTT -> екран передачі тощо) закриває екран, інакше він лишився б «відкритим» у фоні.
 	menuAprsStationsClose();
-	// R10: «Режим APRS» -- теж усередині «Опцій рації»: будь-який push (PTT-екран, вхідний дзвінок, хотспот...)
+	// R10: «Режим APRS» -- теж усередині меню «APRS» (раніше -- Опції рації): будь-який push (PTT-екран, вхідний дзвінок, хотспот...)
 	// виходить з режиму (повертає канал, режим, еко, I2S). Ідемпотентно, якщо режим не активний.
 	aprsModeExit();
 #endif
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
-	// R2: «APRS проба» -- режим усередині «Опцій рації», без власного ID меню, тож push
+	// R2: «APRS проба» -- режим усередині меню «APRS» (раніше -- Опції рації), без власного ID меню, тож push
 	// поверх неї (PTT -> екран передачі, повідомлення тощо) нічого б їй не сказав. Закриваємо
 	// її тут: регістри HR-C6000, I2S, ADC2/TIM7 і еко-режим -- як до входу. Якщо проба не
 	// відкрита -- нічого не робить.
@@ -704,11 +708,25 @@ const menuItemNewData_t mainMenuItems[] =
 	// Раніше лежало в Options - перенесено в головне меню як самостійну функцію, а не
 	// налаштування (2026-08-31). stringOffset обчислюється, як і для aes_keys нижче.
 	{ (int)(offsetof(stringsTable_t, messages) / LANGUAGE_TEXTS_LENGTH), MENU_MESSAGES },
+#if defined(APRS_RX)
+	// R8-fix: меню «APRS» -- поруч із «Повідомленнями» (APRS-повідомлення - R11 - житимуть саме там).
+	// 257 -- той самий рядок «APRS», що в Options -> APRS (є і голосова підказка).
+	{ 257, MENU_APRS_HUB },
+#endif
 	// RCTL "Remote control" (2026-09-03) - дія, а не налаштування, тож поруч із Messages
 	// у головному меню; сам перемикач "приймати команди" лишається в Options нижче.
 	{ (int)(offsetof(stringsTable_t, remote_control) / LANGUAGE_TEXTS_LENGTH), MENU_RCTL_REMOTE },
 #endif
+#if defined(APRS_RX) && !(defined(ENABLE_AES) && defined(ENABLE_DMR_DATA))
+	{ 257, MENU_APRS_HUB },   // R8-fix: без «Повідомлень» (немає AES/DMR_DATA) -- в кінці списку
+#endif
 };
+
+#if defined(APRS_RX)
+// QuickKey зберігає ID меню в 5 бітах (QUICKKEY_MENUID): нове меню має влізти в 0..31, інакше швидкі клавіші на нього
+// (і, головне, на стокові меню після нього) ламалися б мовчки.
+_Static_assert(MENU_APRS_HUB <= 31, "MENU_APRS_HUB does not fit the 5-bit QuickKey menu ID");
+#endif
 
 const menuItemsList_t menuDataMainMenu =
 {

@@ -34,6 +34,7 @@
 #include "functions/voicePrompts.h"
 #include "functions/rxPowerSaving.h"
 #include "interfaces/interrupts.h"
+#include "functions/aprs_rx.h"    // R8-fix: aprsRxStopForTx() (лише ENABLE_APRS_RX + українська)
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h" // не рахувати відтворення "Переслухати" у статистику RX AGC нижче
 #endif
@@ -445,6 +446,9 @@ bool soundReceiveData(void)
 	{
 		return false;
 	}
+#if defined(APRS_RX)
+	aprsRxStopForTx();   // R8-fix: далі soundStartDMA() бере той самий I2S, що й приймач APRS
+#endif
     isSending = false;
     isReceiving = true;
 	soundStartDMA();

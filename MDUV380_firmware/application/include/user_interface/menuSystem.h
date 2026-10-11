@@ -33,6 +33,7 @@
 #include "functions/sound.h"
 #include "functions/settings.h"
 #include "functions/voicePrompts.h"
+#include "functions/aprs_rx_cfg.h"   /* R8-fix: APRS_RX -- MENU_APRS_HUB нижче */
 
 
 #if defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
@@ -380,6 +381,9 @@ enum MENU_SCREENS
 #endif
 #if defined(ENABLE_CALL_REPLAY)
 	MENU_CALL_REPLAY,// "Переслухати" -- кільцевий буфер RX-голосу (index-matched to menuFunctions[])
+#endif
+#if defined(APRS_RX)
+	MENU_APRS_HUB,// R8-fix: меню «APRS» (станції, налаштування, проба). Останнім у блоці QuickKey: ID менші лишаються тими самими
 #endif
 	// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 	UI_MESSAGE_BOX,

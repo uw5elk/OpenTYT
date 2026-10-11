@@ -476,8 +476,8 @@ void aprsModeTick(void)
 	m = mem();
 	now = ticksGetMillis();
 
-	/* Режим живе лише всередині «Опцій рації» і лише коли хотспот не вхопив рацію. */
-	if ((menuSystemGetCurrentMenuNumber() != MENU_RADIO) || (settingsUsbMode == USB_MODE_HOTSPOT))
+	/* Режим живе лише всередині меню «APRS» і лише коли хотспот не вхопив рацію. */
+	if ((menuSystemGetCurrentMenuNumber() != MENU_APRS_HUB) || (settingsUsbMode == USB_MODE_HOTSPOT))
 	{
 		aprsModeExit();
 		return;

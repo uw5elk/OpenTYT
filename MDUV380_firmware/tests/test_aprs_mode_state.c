@@ -39,7 +39,7 @@ static int s_checks = 0;
 /* ---- стан заглушок -------------------------------------------------------------------------------------- */
 static uint32_t s_now = 100000;
 static int s_rootMenu = UI_CHANNEL_MODE;
-static int s_curMenu = MENU_RADIO;
+static int s_curMenu = MENU_APRS_HUB;
 
 static int s_tuneCalls, s_loadChanCalls, s_loadVfoCalls, s_resetTimers, s_setSuspendTrue, s_setSuspendFalse, s_rxSuspend, s_abortTx, s_stopScanCh, s_stopScanVfo, s_replayStop;
 static uint32_t s_tuneFreq;
@@ -140,7 +140,7 @@ static CodeplugChannel_t s_userChan;
 static void resetWorld(void)
 {
 	s_now = 100000;
-	s_rootMenu = UI_CHANNEL_MODE; s_curMenu = MENU_RADIO;
+	s_rootMenu = UI_CHANNEL_MODE; s_curMenu = MENU_APRS_HUB;
 	s_tuneCalls = s_loadChanCalls = s_loadVfoCalls = s_resetTimers = s_setSuspendTrue = s_setSuspendFalse = 0;
 	s_rxSuspend = s_abortTx = s_stopScanCh = s_stopScanVfo = s_replayStop = s_txCalls = s_melody = s_notify = 0;
 	s_flashWrites = 0;

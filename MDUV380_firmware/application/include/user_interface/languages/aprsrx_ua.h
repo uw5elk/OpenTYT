@@ -48,7 +48,7 @@
 #define APRSRX_AGE_D          "%luд"
 #define APRSRX_HINT_LIST      "GREEN:картка #:діагн."
 #define APRSRX_HINT_CARD      "UP/DN:станція RED:назад"
-#define APRSRX_HINT_DIAG      "0:скинути RED:назад"
+#define APRSRX_HINT_DIAG      "0:скинути #:ще RED:назад"
 #define APRSRX_CARD_POS       "Поз: %s"
 #define APRSRX_CARD_NOPOS     "Позиції нема"
 #define APRSRX_CARD_DIST      "Відст: %s"
@@ -61,5 +61,18 @@
 #define APRSRX_CARD_PATH      "Шлях: %s"
 #define APRSRX_CARD_MICE      "Mic-E"
 #define APRSRX_DIAG_TITLE     "APRS приймач"
+
+/* ---- R8-fix: друга діагностична сторінка (лічильники I2S) ---- */
+#define APRSRX_DIAG2_TITLE    "APRS I2S"
+#define APRSRX_D2_STARTS      "Стартів I2S: %lu"
+#define APRSRX_D2_FAILS       "Невдалих стартів: %lu"
+#define APRSRX_D2_WS          "Таймаутів WS: %lu"
+#define APRSRX_D2_SYNC        "Зупинок перед TX: %lu"
+#define APRSRX_D2_ABORT       "Збоїв стопу DMA: %lu"
+#define APRSRX_D2_TICKTX      "Зупинок TX (тік): %lu"
+
+/* ---- R8-fix: меню «APRS» (menuAprsHub.c); назва меню -- currentLanguage->APRS ---- */
+#define APRSRX_HUB_SETTINGS   "Налаштування"
+#define APRSRX_HUB_PROBE      "APRS проба"
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSRX_UA_H_ */

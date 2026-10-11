@@ -2,7 +2,7 @@
  * menuAprsStations.h -- екран «APRS станції» (R8): список станцій, прийнятих фоновим приймачем APRS
  * (functions/aprs_rx.c), картка станції і діагностична сторінка приймача. Як і «APRS проба» (R2) --
  * не окреме меню (новий ID меню -- це +20 Б main RAM у menuFunctions[]/menuDataGlobal), а режим усередині
- * «Опцій рації»: menuRadioOptions.c передає сюди тіки й події, поки aprsRxUi()->on.
+ * меню «APRS»: menuAprsHub.c передає сюди тіки й події, поки aprsRxUi()->on.
  */
 #ifndef _OPENGD77_MENU_APRS_STATIONS_H_
 #define _OPENGD77_MENU_APRS_STATIONS_H_
@@ -14,9 +14,9 @@
 
 /* Відкрити екран (список). */
 void menuAprsStationsEnter(void);
-/* Закрити (з виходу з «Опцій рації», push іншого меню). Безпечно, якщо не відкрито. */
+/* Закрити (з виходу з меню «APRS», push іншого меню). Безпечно, якщо не відкрито. */
 void menuAprsStationsClose(void);
-/* Кожен тік «Опцій рації», поки екран відкрито. false -- користувач вийшов (RED зі списку), екран уже
+/* Кожен тік меню «APRS», поки екран відкрито. false -- користувач вийшов (RED зі списку), екран уже
  * закрито, треба перемалювати список опцій. */
 bool menuAprsStationsTick(uiEvent_t *ev);
 
