@@ -4,7 +4,7 @@
  */
 #include "functions/aprs_probe_dsp.h"
 
-#if defined(ENABLE_APRS_RX_PROBE)
+#if defined(ENABLE_APRS_RX)
 
 #include <stddef.h>
 #include <string.h>
@@ -760,4 +760,4 @@ bool apFmtDetBlock(apFmtDet_t *d, const uint16_t *u, int stride, int n, bool inF
 	return false;
 }
 
-#endif /* ENABLE_APRS_RX_PROBE */
+#endif /* ENABLE_APRS_RX */

@@ -57,6 +57,7 @@
 #include "functions/dmr_rctl_cfg.h"   // dmrRctlIsInhibited (повний stun: сон рації)
 #include "functions/callReplay.h"     // "Переслухати" -- кільцевий буфер RX-голосу (ENABLE_CALL_REPLAY)
 #include "functions/aprs_rx_probe.h"  // R2: «APRS проба» (лише ENABLE_APRS_RX_PROBE + українська)
+#include "functions/aprs_rx.h"        // R8: справжній фоновий приймач APRS (ENABLE_APRS_RX + українська)
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -484,6 +485,9 @@ void applicationMainTask(void)
 
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 	aprsRxProbeInit();        // R2: стан «APRS проба» теж у .ccmram -- обнулити до першого menuSystemPushNewMenu()
+#endif
+#if defined(APRS_RX)
+	aprsRxInit();             // R8: стан приймача APRS у CCM (.aes_ccmram) -- стартап його не обнуляє
 #endif
 
 	radioPostinit();
@@ -1619,6 +1623,9 @@ void applicationMainTask(void)
 		voxTick();
 		gpsTick();
 		aprsBeaconingTick(&ev);
+#if defined(APRS_RX)
+		aprsRxTick();     // R8: фоновий приймач APRS -- працює незалежно від відкритого екрана
+#endif
 		settingsSaveIfNeeded(false);
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
 		dmrSmsRxTick();   // decrypt + store + notify any received encrypted SMS

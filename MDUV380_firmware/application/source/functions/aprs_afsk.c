@@ -6,7 +6,7 @@
  */
 #include "functions/aprs_afsk.h"
 
-#if defined(ENABLE_APRS_RX_PROBE)
+#if defined(ENABLE_APRS_RX)
 
 #include <string.h>
 
@@ -474,4 +474,4 @@ void ax25LooseAddr(const uint8_t *f, int len, char *out, int size)
 	out[n] = 0;
 }
 
-#endif /* ENABLE_APRS_RX_PROBE */
+#endif /* ENABLE_APRS_RX */

@@ -174,6 +174,13 @@
  * у «Надісланих» груповому адресатові (TG) шукаємо TG-контакт. */
 static void smsWhoStr(const dmrSmsMessage_t *m, char *out, int outsz)
 {
+#if defined(ENABLE_APRS_RX)
+	if (m->flags & DMR_SMS_FLAG_APRS)
+	{
+		snprintf(out, (size_t)outsz, "APRS");   /* R8: повідомлення APRS -- відправник у тексті («CALL: ...») */
+		return;
+	}
+#endif
 	uiSmsWhoStr(m->peerId, ((m->flags & DMR_SMS_FLAG_OUTGOING) && (m->flags & DMR_SMS_FLAG_GROUP)) ? 1 : 0, out, outsz);
 }
 
@@ -1062,6 +1069,14 @@ static void startReplyOrResend(void)
 {
 	const dmrSmsMessage_t *m = dmrSmsGet(s_msg.folder, s_msg.readIdx);
 	if (m == NULL) { return; }
+
+#if defined(ENABLE_APRS_RX)
+	if (m->flags & DMR_SMS_FLAG_APRS)
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);   /* R8: відповісти в APRS не можемо (передачі APRS-повідомлень немає) */
+		return;
+	}
+#endif
 
 	uint32_t peer = m->peerId;
 	uint8_t  group = (m->flags & DMR_SMS_FLAG_GROUP) ? 1 : 0;

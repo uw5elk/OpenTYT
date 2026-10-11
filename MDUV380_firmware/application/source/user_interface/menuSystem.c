@@ -29,6 +29,7 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
+#include "user_interface/menuAprsStations.h"   // R8: menuAprsStationsClose() (APRS_RX)
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "functions/aprs_rx_probe.h"   // R2: aprsRxProbeClose() у menuSystemPushNewMenu()
 #endif
@@ -276,6 +277,11 @@ void menuSystemRegisterExitCallback(menuExitCallback_t f, void *data)
 
 void menuSystemPushNewMenu(int menuNumber)
 {
+#if defined(APRS_RX)
+	// R8: «APRS станції» -- режим усередині «Опцій рації» (без власного ID меню): push поверх нього
+	// (PTT -> екран передачі тощо) закриває екран, інакше він лишився б «відкритим» у фоні.
+	menuAprsStationsClose();
+#endif
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 	// R2: «APRS проба» -- режим усередині «Опцій рації», без власного ID меню, тож push
 	// поверх неї (PTT -> екран передачі, повідомлення тощо) нічого б їй не сказав. Закриваємо

@@ -36,6 +36,10 @@
 #if defined(APRS_RX_PROBE)
 #include "user_interface/languages/aprsprobe_ua.h"
 #endif
+#include "user_interface/menuAprsStations.h"   /* R8: «APRS станції» (APRS_RX) */
+#if defined(APRS_RX)
+#include "user_interface/languages/aprsrx_ua.h"
+#endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 /* ui7 (форк): пункти SMS («SMS монітор», «SMS підтв.») переїхали сюди з меню «Повідомлення».
  * Збереження те саме: BIT_SMS_MONITOR_ALL (nonVolatileSettings) і custom-data SMS_TX_MODE. */
@@ -86,6 +90,9 @@ enum
 	RADIO_OPTIONS_MENU_SMS_MONITOR,   /* ui7: останніми -- індекси QuickKey стокових пунктів ті самі */
 	RADIO_OPTIONS_MENU_SMS_TX_MODE,
 #endif
+#if defined(APRS_RX)
+	RADIO_OPTIONS_MENU_APRS_STATIONS, /* R8: екран «APRS станції» -- останнім (перед пробою), індекси QuickKey інших ті самі */
+#endif
 #if defined(APRS_RX_PROBE)
 	RADIO_OPTIONS_MENU_APRS_RX_PROBE, /* R2: тимчасова діагностика -- останнім, індекси QuickKey інших ті самі */
 #endif
@@ -120,6 +127,9 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 #if defined(APRS_RX_PROBE)
 		aprsRxProbeClose();   /* повернення сюди -- проба вже закрита (menuSystemPushNewMenu); про всяк випадок */
 #endif
+#if defined(APRS_RX)
+		menuAprsStationsClose();   /* R8: так само для «APRS станції» */
+#endif
 
 		updateScreen(true);
 		return (MENU_STATUS_LIST_TYPE | MENU_STATUS_SUCCESS);
@@ -128,6 +138,18 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 	{
 		menuOptionsExitCode = MENU_STATUS_SUCCESS;
 
+#if defined(APRS_RX)
+		/* R8: поки відкрито «APRS станції», екран і всі події належать їй. */
+		if (aprsRxUi()->on)
+		{
+			if (menuAprsStationsTick(ev) == false)
+			{
+				menuDataGlobal.newOptionSelected = true;
+				updateScreen(false);
+			}
+			return menuOptionsExitCode;
+		}
+#endif
 #if defined(APRS_RX_PROBE)
 		/* R2: поки відкрито «APRS проба», екран і всі події належать їй. */
 		if (aprsRxProbeIsOn())
@@ -178,7 +200,7 @@ static void updateScreen(bool isFirstRun)
 
 			buf[0] = 0;
 			buf[2] = 0;
-#if (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX_PROBE)
+#if (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX_PROBE) || defined(APRS_RX)
 			bool leftSideIsFork = false;   /* підпис -- не рядок currentLanguage: без голосової підказки */
 #endif
 			leftSide = NULL;
@@ -299,6 +321,13 @@ static void updateScreen(bool isFirstRun)
 					}
 					break;
 #endif
+#if defined(APRS_RX)
+				/* R8: дія, а не налаштування -- GREEN або вправо відкриває «APRS станції». */
+				case RADIO_OPTIONS_MENU_APRS_STATIONS:
+					leftSide = APRSRX_TITLE;
+					leftSideIsFork = true;
+					break;
+#endif
 #if defined(APRS_RX_PROBE)
 				/* R2: дія, а не налаштування -- GREEN або вправо відкриває екран проби. */
 				case RADIO_OPTIONS_MENU_APRS_RX_PROBE:
@@ -308,9 +337,16 @@ static void updateScreen(bool isFirstRun)
 #endif
 			}
 
-#if defined(APRS_RX_PROBE)
+#if defined(APRS_RX_PROBE) || defined(APRS_RX)
 			int optStart = (strlen(leftSide) + 1);
-			if (mNum == RADIO_OPTIONS_MENU_APRS_RX_PROBE)
+			if (
+#if defined(APRS_RX_PROBE)
+					(mNum == RADIO_OPTIONS_MENU_APRS_RX_PROBE) ||
+#endif
+#if defined(APRS_RX)
+					(mNum == RADIO_OPTIONS_MENU_APRS_STATIONS) ||
+#endif
+					false)
 			{
 				snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s", leftSide);   /* без «:» і значення */
 				optStart = 0;
@@ -330,7 +366,7 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
-#if (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX_PROBE)
+#if (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX_PROBE) || defined(APRS_RX)
 					if (leftSideIsFork == false)   /* індекс підказки рахується від currentLanguage */
 #endif
 					voicePromptsAppendLanguageString(leftSide);
@@ -377,7 +413,7 @@ static void updateScreen(bool isFirstRun)
 					strncat(buf, rightSideUnitsStr, SCREEN_LINE_BUFFER_SIZE);
 				}
 
-#if defined(APRS_RX_PROBE)
+#if defined(APRS_RX_PROBE) || defined(APRS_RX)
 				menuDisplayEntry(i, mNum, buf, optStart, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 #else
 				menuDisplayEntry(i, mNum, buf, (strlen(leftSide) + 1), THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
@@ -450,6 +486,13 @@ static void handleEvent(uiEvent_t *ev)
 			menuDataGlobal.newOptionSelected = true;
 			menuOptionsExitCode |= MENU_STATUS_LIST_TYPE;
 		}
+#if defined(APRS_RX)
+		else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (menuDataGlobal.currentItemIndex == RADIO_OPTIONS_MENU_APRS_STATIONS))
+		{
+			menuAprsStationsEnter();   /* R8: налаштування не застосовуються й не скидаються -- лише відкрити екран */
+			return;
+		}
+#endif
 #if defined(APRS_RX_PROBE)
 		else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (menuDataGlobal.currentItemIndex == RADIO_OPTIONS_MENU_APRS_RX_PROBE))
 		{
@@ -614,6 +657,15 @@ static void handleEvent(uiEvent_t *ev)
 #else
 					s_smsTxModePending = 2;                                 /* «З підтв.» */
 #endif
+					break;
+#endif
+#if defined(APRS_RX)
+				case RADIO_OPTIONS_MENU_APRS_STATIONS:
+					if (menuDataGlobal.menuOptionsTimeout == 0)   /* не з QuickKey -- там вправо означає «змінити значення» */
+					{
+						menuAprsStationsEnter();
+						return;
+					}
 					break;
 #endif
 #if defined(APRS_RX_PROBE)
@@ -800,6 +852,9 @@ static void applySettings(void)
 
 static void exitCallback(void *data)
 {
+#if defined(APRS_RX)
+	menuAprsStationsClose();   /* R8: вихід з «Опцій рації» будь-яким шляхом -- закрити «APRS станції» */
+#endif
 #if defined(APRS_RX_PROBE)
 	aprsRxProbeClose();   /* R2: вихід з «Опцій рації» будь-яким шляхом (PopAll тощо) -- закрити пробу */
 #endif

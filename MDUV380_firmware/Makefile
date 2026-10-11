@@ -117,6 +117,15 @@ ifeq ($(ENABLE_APRS_RX_PROBE),1)
 DEFS += -DENABLE_APRS_RX_PROBE
 endif
 
+# R8 (2026-10-11): справжній фоновий приймач APRS (aprs_rx.c) -- користувацька українська збірка.
+# На каналі APRS (аналоговий FM, RX-частота == частота APRS із налаштувань APRS) слухає ефір
+# у фоні й показує станції (Опції рації -> «APRS станції»), банер при прийомі та повідомлення
+# нам («Повідомлення»). ENABLE_APRS_RX_PROBE ВКЛЮЧАЄ приймач (діагностична збірка: проба + приймач).
+# Типова збірка без прапорців -- байт-у-байт без змін.
+ifeq ($(ENABLE_APRS_RX),1)
+DEFS += -DENABLE_APRS_RX
+endif
+
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -Os -g3 -ffunction-sections -fdata-sections -Wall -MMD -MP
 LDSCRIPT = STM32F405VGTX_FLASH.ld
 LDFLAGS = $(CPU) -T$(LDSCRIPT) --specs=nano.specs -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map -lc -lm -lnosys

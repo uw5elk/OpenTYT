@@ -426,6 +426,13 @@ static void store_add(uint8_t flags, uint32_t peerId, const char *text, int text
 	store_save();
 }
 
+#if defined(ENABLE_APRS_RX)
+void dmrSmsAddAprsInbox(const char *text, int len)
+{
+	store_add((uint8_t)(DMR_SMS_FLAG_UNREAD | DMR_SMS_FLAG_APRS), 0U, text, len);
+}
+#endif
+
 /* ============================ config (MSGC block) ======================= */
 /* Read-only from the firmware's side; written by the CHIRP module. Layout is
  * shared byte-for-byte (opengd77_aes.py MsgConfig). */

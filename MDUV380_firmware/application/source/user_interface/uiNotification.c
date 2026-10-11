@@ -714,6 +714,13 @@ static void displaySmsFullScreen(void)
 		int tl = uiSmsTimeStr(t, SMS_TIME_HM, tm, sizeof tm);
 		int maxChars = (DISPLAY_SIZE_X - 6 - (tl ? (tl * 6 + 6) : 0)) / 6;
 
+#if defined(ENABLE_APRS_RX)
+		if (m->flags & DMR_SMS_FLAG_APRS)
+		{
+			snprintf(who, sizeof who, "APRS");   /* R8: повідомлення APRS -- відправник уже в тексті («CALL: ...») */
+		}
+		else
+#endif
 		uiSmsWhoStr(m->peerId, 0, who, sizeof who);
 		if (m->flags & DMR_SMS_FLAG_FOREIGN)
 		{
