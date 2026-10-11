@@ -41,6 +41,7 @@
 #include "hardware/radioHardwareInterface.h"
 #include "interfaces/gps.h"
 #include "interfaces/settingsStorage.h"
+#include "functions/aprs_fault.h"   // R10-fix4: сторож вимикається перед сном/вимкненням (APRS_RX)
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h" // не зупиняти "Переслухати" на час очікування низько-батарейного сигналу нижче
 #endif
@@ -288,6 +289,7 @@ void batteryUpdate(void)
 
 void powerDown(bool doNotSavePowerOffState)
 {
+	APRS_FAULT_DISARM();   // R10-fix4: no-op без APRS_RX
 	if (!doNotSavePowerOffState)
 	{
 #if defined(PLATFORM_MD9600)
@@ -348,6 +350,7 @@ void powerDown(bool doNotSavePowerOffState)
 
 void die(bool usbMonitoring, bool maintainRTC, bool forceSuspend, bool safeBoot)
 {
+	APRS_FAULT_DISARM();   // R10-fix4: no-op без APRS_RX
 	int8_t batteryCriticalCount = 0;
 #if !defined(PLATFORM_RD5R) && !defined(PLATFORM_GD77S)
 	uint32_t lowBatteryCriticalCount = 0;
@@ -761,6 +764,8 @@ void wakeFromSleep(void)
 void powerOffFinalStage(bool maintainRTC, bool forceSuspend)
 {
 	uint32_t m;
+
+	APRS_FAULT_DISARM();   // R10-fix4: no-op без APRS_RX
 
 	// If TXing, get back to RX (this function can be called on low battery event).
 	if (trxTransmissionEnabled)

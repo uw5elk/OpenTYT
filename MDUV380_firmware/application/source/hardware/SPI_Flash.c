@@ -29,6 +29,7 @@
 #include "interfaces/gpio.h"
 #include <string.h>
 #include "main.h"
+#include "functions/aprs_fault.h"   // R10-fix4: kick сторожа в довгих очікуваннях (APRS_RX)
 
 // private functions
 static bool spi_flash_busy(void);
@@ -244,6 +245,7 @@ bool SPI_Flash_writePage(uint32_t addr_start,uint8_t *dataBuf)
 	do
 	{
 		osDelay(1);
+		APRS_FAULT_KICK();   // R10-fix4: no-op без APRS_RX
 		isBusy = spi_flash_busy();
 	} while ((waitCounter-- > 0) && isBusy);
 
@@ -266,6 +268,7 @@ bool SPI_Flash_eraseSector(uint32_t addr_start)
 	do
 	{
 		osDelay(1);
+		APRS_FAULT_KICK();   // R10-fix4: no-op без APRS_RX
 		isBusy = spi_flash_busy();
 	} while ((waitCounter-- > 0) && isBusy);
 

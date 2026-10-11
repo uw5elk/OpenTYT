@@ -126,6 +126,15 @@ ifeq ($(ENABLE_APRS_RX),1)
 DEFS += -DENABLE_APRS_RX
 endif
 
+# R10-fix4 (2026-10-11): ОПЦІЙНО апаратний сторож IWDG (~2 с) поверх програмного (TIM7) сторожа «Режиму APRS».
+# ЗА ТИПОВИМ ЗНАЧЕННЯМ ВИМКНЕНО й у CI не вмикається. Причина: запущений IWDG не зупиняється нічим, крім скидання, а
+# вимкнення/сон рації (HAL_PWR_EnterSTANDBYMode) може його не зупинити -- рація б «воскресала» після вимкнення.
+# Корисно лише для лабораторної перевірки зависань із вимкненими перериваннями (PRIMASK), яких TIM7-сторож не бачить.
+# Діє тільки разом з ENABLE_APRS_RX=1 і українською збіркою (APRS_RX).
+ifeq ($(ENABLE_APRS_IWDG),1)
+DEFS += -DAPRS_FAULT_IWDG
+endif
+
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -Os -g3 -ffunction-sections -fdata-sections -Wall -MMD -MP
 LDSCRIPT = STM32F405VGTX_FLASH.ld
 LDFLAGS = $(CPU) -T$(LDSCRIPT) --specs=nano.specs -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map -lc -lm -lnosys

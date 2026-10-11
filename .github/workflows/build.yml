@@ -161,9 +161,11 @@ jobs:
           path: |
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
+      # R10-fix4: для користувацької збірки .elf + .map вивантажуються ЗАВЖДИ (адреси зі звіту про збій розшифровуються
+      # лише за .map ТОГО САМОГО коміту: MDUV380_firmware/tools/fault_lookup.py). Окрім артефакту (квота!), .map і .elf
+      # кладуться ще й у GitHub Release (крок нижче) -- їх забирає `gh release download`.
       - uses: actions/upload-artifact@v4
         continue-on-error: true
-        if: github.event_name == 'workflow_dispatch'
         with:
           name: openuv380-10w-ukrainian-debug
           retention-days: 2
@@ -212,6 +214,10 @@ jobs:
               --notes "Автоматична CI-збірка коміту ${GITHUB_SHA}. Прошивка: українська, ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 (фоновий приймач APRS). Діагностична збірка з екраном «APRS проба» -- окремий файл openuv380-10w-ukrainian-diag-${SHORT}.bin. Windows-прошивальник (.exe) додається лише при ручному запуску workflow. НЕ перевірено на залізі."
           fi
           gh release upload "$TAG" "$ASSET" --clobber
+          # R10-fix4: .map (невеликий) і .elf (для addr2line) -- поруч із .bin того самого коміту
+          cp build/openuv380-10w.map "openuv380-10w-ukrainian-${SHORT}.map"
+          cp build/openuv380-10w.elf "openuv380-10w-ukrainian-${SHORT}.elf"
+          gh release upload "$TAG" "openuv380-10w-ukrainian-${SHORT}.map" "openuv380-10w-ukrainian-${SHORT}.elf" --clobber
           echo "OK: $ASSET -> реліз $TAG"
       # Автоочистка: лишаємо 5 найновіших ci-* релізів, старіші видаляємо разом із тегом.
       # continue-on-error: невдале прибирання не повинно червонити збірку.
