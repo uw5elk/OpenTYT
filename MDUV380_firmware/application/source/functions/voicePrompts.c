@@ -32,6 +32,7 @@
 #include "user_interface/uiLocalisation.h"
 #include "functions/rxPowerSaving.h"
 #include "hardware/radioHardwareInterface.h"
+#include "functions/aprs_rx.h"   // R8: aprsRxSuspendForAudio() (лише ENABLE_APRS_RX + українська)
 
 const uint32_t VOICE_PROMPTS_DATA_MAGIC = 0x5056;//'VP'
 const uint32_t VOICE_PROMPTS_DATA_VERSION =
@@ -362,6 +363,9 @@ void voicePromptsPlay(void)
 	if ((voicePromptIsActive == false) && (voicePromptsCurrentSequence.Length > 0))
 	{
 		rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
+#if defined(APRS_RX)
+		aprsRxSuspendForAudio();   // R8: приймач APRS віддає I2S і буфер звуку підказці (негайно, до критичної секції)
+#endif
 
 		if (nonVolatileSettings.dmrRxAGC != 0)
 		{

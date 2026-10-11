@@ -32,6 +32,7 @@
 #if !defined(PLATFORM_GD77S)
 
 #include "functions/codeplug.h"
+#include "functions/aprs_rx_cfg.h"
 
 //#define RATE_MESSAGE_FEATURE 1 // Enable this to enable the send a special beacon message each settings.messageInterval frame
 
@@ -169,6 +170,20 @@ bool aprsBeaconingIsSuspended(void);
 void aprsBeaconingSetSuspend(bool suspend);
 void aprsBeaconingToggles(void);
 aprsBeaconingMode_t aprsBeaconingGetMode(void);
+#if defined(ENABLE_APRS_RX)
+/* R8 (форк): дані конфігу APRS для фонового приймача (functions/aprs_rx.c). */
+typedef struct
+{
+	uint32_t freq;        /* частота APRS з конфігу каналу (txFrequency; ті самі одиниці, що rxFreq каналу) */
+	char     call[9];     /* власний позивний (радіо-ім'я з кодплага, до 6 симв.) */
+	uint8_t  ssid;        /* SSID відправника з конфігу APRS */
+	bool     hasPos;      /* власна позиція відома (з конфігу каналу або GPS) */
+	double   lat, lon;    /* градуси; значущі лише при hasPos */
+} aprsRxInfo_t;
+/* true -- APRS увімкнено (режим не «Вимкнено»), у каналу є конфіг із частотою APRS. false -- приймати не треба.
+ * full == false -- лише freq (без читання EEPROM з іменем і без позиції): для частої перевірки «чи це канал APRS». */
+bool aprsBeaconingGetRxInfo(aprsRxInfo_t *info, bool full);
+#endif
 bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing);
 bool aprsBeaconingIsTransmitting(void);
 bool aprsBeaconingForcedManualBeaconingTriggered(void);

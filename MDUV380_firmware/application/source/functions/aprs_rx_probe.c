@@ -25,6 +25,7 @@
  * Поза екраном проби (aprsRxProbeIsOn() == false) жоден шлях DMR/AMBE/FM не змінено.
  */
 #include "functions/aprs_rx_probe.h"
+#include "functions/aprs_rx.h"   /* R8: aprsRxSuspendForAudio() -- проба бере I2S і кільце у приймача */
 
 #if defined(APRS_RX_PROBE)
 
@@ -731,6 +732,7 @@ static bool isFmRx(void)
 void aprsRxProbeOpen(void)
 {
 	aprsRxProbeClose();
+	aprsRxSuspendForAudio();   /* R8: фоновий приймач APRS віддає I2S і кільце пробі (тік не відновить його, поки проба відкрита) */
 
 	memset(&s_probe, 0, sizeof(s_probe));
 	s_probe.magic = APRS_PROBE_MAGIC;

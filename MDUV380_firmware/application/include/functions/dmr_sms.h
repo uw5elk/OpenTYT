@@ -19,6 +19,7 @@
 #define _OPENGD77_DMR_SMS_H_
 
 #include <stdint.h>
+#include "functions/aprs_rx_cfg.h"   /* R8: ENABLE_APRS_RX (в т.ч. з ENABLE_APRS_RX_PROBE) */
 
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
 
@@ -38,6 +39,12 @@
 #define DMR_SMS_FLAG_DELIVERED 0x20   /* Надіслані: отримали link-layer квитанцію (Response DPF=1)
                                        * від адресата на наш CONFIRMED SMS. Записується у теку
                                        * «Надіслані» dmrSmsRxTick()-ом (не ISR). */
+
+#if defined(ENABLE_APRS_RX)
+#define DMR_SMS_FLAG_APRS      0x40   /* R8: вхідне -- повідомлення APRS (прийнято з ефіру AFSK 1200, а не DMR).
+                                       * Вільний біт прапорців запису v3; довжина записів і блоків не змінена.
+                                       * peerId = 0, відправник -- префікс тексту «CALL: ». */
+#endif
 
 typedef struct
 {
@@ -70,6 +77,12 @@ uint32_t dmrSmsGetTime(int outgoing, int idx);
 const dmrSmsMessage_t *dmrSmsNewestInbox(uint32_t *timeOut);
 /* ui6: адресат (DMR ID або TG) останнього прийнятого SMS -- банер «ВІД -> КОМУ» для монітора. */
 uint32_t dmrSmsLastRxDst(void);
+
+#if defined(ENABLE_APRS_RX)
+/* R8: покласти в «Вхідні» повідомлення APRS (text -- cp1251, вже з префіксом «ВІДПРАВНИК: »). Блокуючий
+ * запис у флеш (як у решти SMS) -- викликати з головної задачі, не з переривання і не під час передачі. */
+void dmrSmsAddAprsInbox(const char *text, int len);
+#endif
 
 /* ---- store mutate (UI) ------------------------------------------------- */
 void dmrSmsMarkRead(int outgoing, int idx);

@@ -1,0 +1,477 @@
+/*
+ * test_aprs_rx_parse.c -- R8: розбір кадрів APRS (functions/aprs_rx_parse.c).
+ *
+ * Усі кадри СИНТЕТИЧНІ: збираються власними кодувальниками цього файлу (адреси AX.25, звичайна й
+ * стиснута позиція, Mic-E за зворотним алгоритмом, повідомлення). Позивні -- вигадані (N0CALL,
+ * TEST-n), координати -- довільні (приклади зі специфікації APRS та рівники). Жодного реального
+ * ефірного кадра й нічиєї справжньої позиції.
+ *
+ * Перевіряє: AX.25 UI (SSID, цифіпітери, H-біт, відмова на не-UI), позиція (звичайна з відмітками
+ * часу й неоднозначністю, стиснута, Mic-E в усіх півкулях і діапазонах довготи), повідомлення
+ * (адресат, номер, ack, «нам / не нам»), статус, «інше», UTF-8 і не-UTF-8 текст, дедуплікацію 30 с,
+ * повтори повідомлень, список станцій (заміна найстарішого, порядок), відстань і азимут.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include "functions/aprs_rx_parse.h"
+
+static int fails = 0;
+#define CHECK(c, ...) do { if (c) { printf("  ok   "); } else { printf("  FAIL "); fails++; } printf(__VA_ARGS__); printf("\n"); } while (0)
+
+/* ---- кодувальники ------------------------------------------------------------------ */
+
+static int putAddr(uint8_t *p, const char *call, int ssid, int last, int hbit)
+{
+	int i = 0;
+
+	for (; (i < 6) && call[i]; i++) { p[i] = (uint8_t)(call[i] << 1); }
+	for (; i < 6; i++) { p[i] = (uint8_t)(' ' << 1); }
+	p[6] = (uint8_t)(0x60 | (ssid << 1) | (last ? 1 : 0) | (hbit ? 0x80 : 0));
+	return 7;
+}
+
+/* src-ssid > dst через digis (до 2: «WIDE1», ssid 1, та «WIDE2», ssid 1) */
+static int buildFrame(uint8_t *f, const char *dst, const char *src, int srcSsid, int nDigi, int firstDigiUsed, const uint8_t *info, int infoLen)
+{
+	int n = 0;
+
+	n += putAddr(&f[n], dst, 0, 0, 0);
+	n += putAddr(&f[n], src, srcSsid, nDigi == 0, 0);
+	if (nDigi >= 1) { n += putAddr(&f[n], "WIDE1", 1, nDigi == 1, firstDigiUsed); }
+	if (nDigi >= 2) { n += putAddr(&f[n], "WIDE2", 1, 1, 0); }
+	f[n++] = 0x03;
+	f[n++] = 0xF0;
+	memcpy(&f[n], info, (size_t)infoLen);
+	return n + infoLen;
+}
+
+static int parseInfo(const char *dst, const char *info, aprsAx25_t *ax, aprsPacket_t *pk, uint8_t *buf)
+{
+	int n = buildFrame(buf, dst, "N0CALL", 7, 0, 0, (const uint8_t *)info, (int)strlen(info));
+
+	if (!aprsAx25Parse(buf, (uint16_t)n, ax)) { return 0; }
+	aprsPacketParse(ax, pk);
+	return 1;
+}
+
+/* мікроградуси з градусів/хвилин/сотих */
+static int32_t dm(int deg, int min, int hun)
+{
+	return (int32_t)(deg * 1000000LL + (min * 100LL + hun) * 500LL / 3LL);
+}
+
+/* Mic-E: info[0..8] за зворотним алгоритмом (lat/lon у градусах, хвилинах, сотих хвилини). */
+static void encodeMicE(char *dst6, uint8_t *info, int latDeg, int latMin, int latHun, int north,
+		int lonDeg, int lonMin, int lonHun, int west)
+{
+	int d[6] = { latDeg / 10, latDeg % 10, latMin / 10, latMin % 10, latHun / 10, latHun % 10 };
+	int lonOff = (lonDeg >= 100);
+
+	for (int i = 0; i < 6; i++) { dst6[i] = (char)('0' + d[i]); }
+	if (north) { dst6[3] = (char)('P' + d[3]); }
+	if (lonOff) { dst6[4] = (char)('P' + d[4]); }
+	if (west) { dst6[5] = (char)('P' + d[5]); }
+	dst6[6] = 0;
+
+	info[0] = '`';
+	if (lonDeg >= 100) { info[1] = (uint8_t)(lonDeg - 100 + 28); }
+	else if (lonDeg < 10) { info[1] = (uint8_t)(190 + lonDeg + 28); }
+	else { info[1] = (uint8_t)(lonDeg + 28); }
+	info[2] = (uint8_t)((lonMin < 10 ? lonMin + 60 : lonMin) + 28);
+	info[3] = (uint8_t)(lonHun + 28);
+	info[4] = 28 + 12; info[5] = 28 + 3; info[6] = 28 + 40;   /* швидкість/курс -- не розбираються */
+	info[7] = '>'; info[8] = '/';
+}
+
+static void testMicE(const char *name, int latDeg, int latMin, int latHun, int north, int lonDeg, int lonMin, int lonHun, int west)
+{
+	uint8_t info[32], fr[120];
+	char dst[8];
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+
+	encodeMicE(dst, info, latDeg, latMin, latHun, north, lonDeg, lonMin, lonHun, west);
+	strcpy((char *)&info[9], "Mic-E test");
+	int n = buildFrame(fr, dst, "TEST", 9, 1, 1, info, 9 + 10);
+	int ok = aprsAx25Parse(fr, (uint16_t)n, &ax);
+	if (ok) { aprsPacketParse(&ax, &pk); }
+	int32_t wantLat = dm(latDeg, latMin, latHun) * (north ? 1 : -1);
+	int32_t wantLon = dm(lonDeg, lonMin, lonHun) * (west ? -1 : 1);
+	CHECK(ok && (pk.type == APRS_T_POSITION) && pk.micE && pk.hasPos && (pk.latU == wantLat) && (pk.lonU == wantLon),
+			"Mic-E %s: lat %d lon %d (чекаємо %d %d), текст «%s»", name, ok ? pk.latU : 0, ok ? pk.lonU : 0, wantLat, wantLon, ok ? pk.text : "");
+}
+
+/* стиснута позиція: base91 з чотирьох символів */
+static void b91(uint8_t *o, int64_t v)
+{
+	for (int i = 3; i >= 0; i--) { o[i] = (uint8_t)(33 + (v % 91)); v /= 91; }
+}
+
+int main(void)
+{
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	uint8_t fr[400];
+
+	printf("== AX.25 UI ==\n");
+	{
+		const char *inf = "!4903.50N/07201.75W-Test";
+		int n = buildFrame(fr, "APRS", "N0CALL", 7, 2, 1, (const uint8_t *)inf, (int)strlen(inf));
+		int ok = aprsAx25Parse(fr, (uint16_t)n, &ax);
+		CHECK(ok && !strcmp(ax.src, "N0CALL-7") && !strcmp(ax.dst, "APRS") && !strcmp(ax.path, "WIDE1-1*,WIDE2-1") &&
+				(ax.infoLen == strlen(inf)) && !memcmp(ax.info, inf, strlen(inf)),
+				"джерело «%s», призначення «%s», шлях «%s», info %u Б", ok ? ax.src : "", ok ? ax.dst : "", ok ? ax.path : "", ok ? ax.infoLen : 0);
+
+		n = buildFrame(fr, "APRS", "TEST", 0, 0, 0, (const uint8_t *)inf, (int)strlen(inf));
+		ok = aprsAx25Parse(fr, (uint16_t)n, &ax);
+		CHECK(ok && !strcmp(ax.src, "TEST") && (ax.path[0] == 0), "SSID 0 -- без суфікса; без цифіпітерів шлях порожній");
+
+		n = buildFrame(fr, "APRS", "TEST", 15, 0, 0, (const uint8_t *)inf, (int)strlen(inf));
+		ok = aprsAx25Parse(fr, (uint16_t)n, &ax);
+		CHECK(ok && !strcmp(ax.src, "TEST-15"), "SSID 15 -> «%s»", ok ? ax.src : "");
+
+		n = buildFrame(fr, "APRS", "TEST", 1, 0, 0, (const uint8_t *)inf, (int)strlen(inf));
+		fr[14] = 0x04;   /* контроль не 0x03 */
+		CHECK(!aprsAx25Parse(fr, (uint16_t)n, &ax), "контроль != 0x03 -- не UI");
+		n = buildFrame(fr, "APRS", "TEST", 1, 0, 0, (const uint8_t *)inf, (int)strlen(inf));
+		fr[15] = 0xCF;
+		CHECK(!aprsAx25Parse(fr, (uint16_t)n, &ax), "PID != 0xF0 -- відмова");
+		n = buildFrame(fr, "APRS", "TEST", 1, 0, 0, (const uint8_t *)inf, (int)strlen(inf));
+		fr[7] = (uint8_t)('#' << 1);
+		CHECK(!aprsAx25Parse(fr, (uint16_t)n, &ax), "сміття в позивному джерела -- відмова");
+		CHECK(!aprsAx25Parse(fr, 10, &ax), "закороткий кадр -- відмова");
+		/* немає біта «кінець адрес»: адреси не закінчуються */
+		n = buildFrame(fr, "APRS", "TEST", 1, 0, 0, (const uint8_t *)inf, (int)strlen(inf));
+		fr[13] &= 0xFE;
+		CHECK(!aprsAx25Parse(fr, (uint16_t)n, &ax), "без кінця адрес -- відмова (а не вихід за межі)");
+	}
+
+	printf("== позиція: звичайна ==\n");
+	{
+		uint8_t b[300];
+		parseInfo("APRS", "!4903.50N/07201.75W-Test 001234", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_POSITION) && pk.hasPos && !pk.micE && !pk.compressed &&
+				(pk.latU == dm(49, 3, 50)) && (pk.lonU == -dm(72, 1, 75)) && !strcmp(pk.text, "Test 001234"),
+				"«!» 49°03.50'N 072°01.75'W: %d %d, коментар «%s»", pk.latU, pk.lonU, pk.text);
+		parseInfo("APRS", "=3325.64S/11207.74E>", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_POSITION) && (pk.latU == -dm(33, 25, 64)) && (pk.lonU == dm(112, 7, 74)) && (pk.text[0] == 0),
+				"«=» півкулі S/E, довгота > 100: %d %d", pk.latU, pk.lonU);
+		parseInfo("APRS", "/092345z4903.50N/07201.75W>comment", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_POSITION) && (pk.latU == dm(49, 3, 50)) && !strcmp(pk.text, "comment"), "«/» з відміткою часу DDHHMMz");
+		parseInfo("APRS", "@092345z4903.50N/07201.75W>x", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_POSITION) && (pk.lonU == -dm(72, 1, 75)), "«@» з відміткою часу");
+		parseInfo("APRS", "!49  .  N/072  .  W-", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_POSITION) && (pk.latU == dm(49, 0, 0)) && (pk.lonU == -dm(72, 0, 0)), "неоднозначність (пробіли) = 0");
+		parseInfo("APRS", "!9100.00N/00000.00E-", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "широта > 90 -- відмова (інше)");
+		parseInfo("APRS", "!4960.00N/07201.75W-", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "хвилини > 59 -- відмова");
+		parseInfo("APRS", "!4903.50X/07201.75W-", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "півкуля не N/S -- відмова");
+		parseInfo("APRS", "!4903.50N/0720", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "обірваний пакет -- відмова");
+	}
+
+	printf("== позиція: стиснута ==\n");
+	{
+		/* lat 49.5, lon -72.75 -> base91 за специфікацією: v = 380926 * (90 - lat), 190463 * (180 + lon) */
+		uint8_t info[40], b[300];
+		double lat = 49.5, lon = -72.75;
+		int64_t vlat = (int64_t)(380926.0 * (90.0 - lat));
+		int64_t vlon = (int64_t)(190463.0 * (180.0 + lon));
+		info[0] = '!'; info[1] = '/';
+		b91(&info[2], vlat); b91(&info[6], vlon);
+		info[10] = '>'; info[11] = ' '; info[12] = 's'; info[13] = 'T';
+		memcpy(&info[14], "compressed", 11);
+		int n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14 + 10);
+		int ok = aprsAx25Parse(b, (uint16_t)n, &ax);
+		if (ok) { aprsPacketParse(&ax, &pk); }
+		CHECK(ok && (pk.type == APRS_T_POSITION) && pk.compressed && pk.hasPos &&
+				(abs(pk.latU - 49500000) <= 6) && (abs(pk.lonU + 72750000) <= 6) && !strcmp(pk.text, "compressed"),
+				"стиснута 49.5 / -72.75: %d %d, коментар «%s»", ok ? pk.latU : 0, ok ? pk.lonU : 0, ok ? pk.text : "");
+		/* символ у діапазоні A-Z таблиці (накладка) також стиснутий формат */
+		info[1] = 'A';
+		n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14 + 10);
+		aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+		CHECK((pk.type == APRS_T_POSITION) && pk.compressed, "стиснута з накладкою 'A'");
+		info[2] = 0x7F;   /* поза діапазоном base91 */
+		n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14 + 10);
+		aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+		CHECK(pk.type == APRS_T_OTHER, "символ поза base91 -- відмова");
+	}
+
+	printf("== позиція: Mic-E ==\n");
+	testMicE("N/W, довгота 72", 49, 3, 50, 1, 72, 1, 75, 1);
+	testMicE("N/E, довгота 112 (зсув +100)", 33, 25, 64, 1, 112, 7, 74, 0);
+	testMicE("S/E, довгота 151", 33, 51, 12, 0, 151, 12, 34, 0);
+	testMicE("N/E, довгота 5 (0-9°)", 52, 30, 7, 1, 5, 9, 99, 0);
+	testMicE("N/W, довгота 0", 51, 28, 0, 1, 0, 0, 1, 1);
+	testMicE("N/E, довгота 100..109", 10, 0, 0, 1, 105, 59, 99, 0);
+	testMicE("N/E, довгота 179", 64, 59, 59, 1, 179, 30, 15, 0);
+	testMicE("N/E, довгота 35 (десятки)", 50, 27, 0, 1, 30, 31, 0, 0);
+	{
+		/* Mic-E з поганим призначенням (не Mic-E символи) і закороткий info */
+		uint8_t info[16] = { '`', 30 + 28, 20 + 28, 5 + 28, 40, 40, 40, '>', '/' };
+		int n = buildFrame(fr, "ZZZZZZ", "TEST", 1, 0, 0, info, 9);
+		aprsAx25Parse(fr, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+		CHECK(pk.type == APRS_T_OTHER || pk.hasPos, "призначення з 'Z' -- без падіння");
+		n = buildFrame(fr, "?????1", "TEST", 1, 0, 0, info, 9);
+		aprsAx25Parse(fr, (uint16_t)n, &ax);   /* '?' -- не позивний: Ax25Parse відмовить */
+		n = buildFrame(fr, "ABCDEF", "TEST", 1, 0, 0, info, 5);
+		aprsAx25Parse(fr, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+		CHECK(pk.type == APRS_T_OTHER, "Mic-E з обірваним info -- відмова");
+	}
+
+	printf("== повідомлення ==\n");
+	{
+		uint8_t b[300];
+		parseInfo("APRS", ":N0CALL-7 :Hello there{123", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_MESSAGE) && !strcmp(pk.msgTo, "N0CALL-7") && !strcmp(pk.msgId, "123") && !strcmp(pk.text, "Hello there") && !pk.msgAck,
+				"адресат «%s», номер «%s», текст «%s»", pk.msgTo, pk.msgId, pk.text);
+		CHECK(aprsMsgIsForUs(pk.msgTo, "N0CALL", 7), "це нам: N0CALL-7");
+		CHECK(!aprsMsgIsForUs(pk.msgTo, "N0CALL", 9), "не нам: інший SSID");
+		CHECK(!aprsMsgIsForUs(pk.msgTo, "N0CALX", 7), "не нам: інший позивний");
+		CHECK(aprsMsgIsForUs(pk.msgTo, "n0call  ", 7), "регістр і хвостові пробіли власного позивного ігноруються");
+		parseInfo("APRS", ":N0CALL   :no id here", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_MESSAGE) && (pk.msgId[0] == 0) && !strcmp(pk.msgTo, "N0CALL"), "без номера; адресат без SSID");
+		CHECK(aprsMsgIsForUs(pk.msgTo, "N0CALL", 0), "SSID 0: «N0CALL» -- нам");
+		CHECK(!aprsMsgIsForUs(pk.msgTo, "N0CALL", 7), "адресат без SSID -- не для N0CALL-7");
+		parseInfo("APRS", ":N0CALL-0 :zero", &ax, &pk, b);
+		CHECK(aprsMsgIsForUs(pk.msgTo, "N0CALL", 0), "SSID 0: «N0CALL-0» -- теж нам");
+		parseInfo("APRS", ":N0CALL-7 :ack123", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_MESSAGE) && pk.msgAck, "ack -- msgAck");
+		parseInfo("APRS", ":N0CALL-7 :rej9", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_MESSAGE) && pk.msgAck, "rej -- msgAck");
+		parseInfo("APRS", ":N0CALL-7 :acknowledged the thing{5", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_MESSAGE) && !pk.msgAck, "звичайний текст на 'ack...' з номером -- не ack");
+		parseInfo("APRS", ":BLN1     :Bulletin text", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_MESSAGE) && !strcmp(pk.msgTo, "BLN1") && !aprsMsgIsForUs(pk.msgTo, "N0CALL", 7), "бюлетень -- не нам");
+		parseInfo("APRS", ":N0CALL-7 text without colon-position", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "формат повідомлення зіпсований -- інше");
+		parseInfo("APRS", ":N0CALL-7 :x{123456", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_MESSAGE) && (pk.msgId[0] == 0), "номер довший за 5 -- не номер");
+	}
+
+	printf("== статус, інше ==\n");
+	{
+		uint8_t b[300];
+		parseInfo("APRS", ">On the air", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_STATUS) && !strcmp(pk.text, "On the air"), "статус");
+		parseInfo("APRS", ">092345zOn the air", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_STATUS) && !strcmp(pk.text, "On the air"), "статус з відміткою часу");
+		parseInfo("APRS", ";LEADER   *092345z4903.50N/07201.75W-", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "об'єкт -- «інше»");
+		parseInfo("APRS", "_10090556c220s004g005t077", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "погода -- «інше»");
+		parseInfo("APRS", "T#005,199,000,255,073,123,01101001", &ax, &pk, b);
+		CHECK(pk.type == APRS_T_OTHER, "телеметрія -- «інше»");
+		parseInfo("APRS", "", &ax, &pk, b);   /* порожній info */
+		CHECK(pk.type == APRS_T_OTHER, "порожній info");
+	}
+
+	printf("== текст: UTF-8 і cp1251 ==\n");
+	{
+		char out[80];
+		/* «Привіт» у UTF-8 */
+		const uint8_t u8[] = { 0xD0, 0x9F, 0xD1, 0x80, 0xD0, 0xB8, 0xD0, 0xB2, 0xD1, 0x96, 0xD1, 0x82 };
+		CHECK(aprsIsUtf8(u8, sizeof(u8)), "«Привіт» в UTF-8 -- коректний UTF-8");
+		aprsDecodeText(u8, sizeof(u8), out, sizeof(out));
+		/* cp1251: П=CF р=F0 и=E8 в=E2 і=B3 т=F2 */
+		const uint8_t want[] = { 0xCF, 0xF0, 0xE8, 0xE2, 0xB3, 0xF2, 0 };
+		CHECK(!strcmp(out, (const char *)want), "UTF-8 «Привіт» -> байти cp1251");
+
+		/* те саме, уже в cp1251 (не коректний UTF-8: 0xCF 0xF0 ...) */
+		const uint8_t c1[] = { 0xCF, 0xF0, 0xE8, 0xE2, 0xB3, 0xF2 };
+		CHECK(!aprsIsUtf8(c1, sizeof(c1)), "cp1251-байти -- не UTF-8");
+		aprsDecodeText(c1, sizeof(c1), out, sizeof(out));
+		CHECK(!strcmp(out, (const char *)want), "cp1251 проходить як є");
+
+		/* ґ Ґ є ї в UTF-8 */
+		const uint8_t spec[] = { 0xD2, 0x91, 0xD2, 0x90, 0xD1, 0x94, 0xD1, 0x97 };
+		aprsDecodeText(spec, sizeof(spec), out, sizeof(out));
+		const uint8_t wantS[] = { 0xB4, 0xA5, 0xBA, 0xBF, 0 };
+		CHECK(!strcmp(out, (const char *)wantS), "ґ Ґ є ї: UTF-8 -> cp1251 (0xB4 0xA5 0xBA 0xBF)");
+
+		/* змішано: ASCII + UTF-8 + керівні */
+		const uint8_t mix[] = { 'H', 'i', ' ', 0xD0, 0x96, '\r', '\n', 'x', ' ', ' ' };
+		aprsDecodeText(mix, sizeof(mix), out, sizeof(out));
+		CHECK(!strcmp(out, "Hi \xC6  x"), "ASCII + «Ж» + CR LF -> пробіли, хвостові пробіли знято (%s)", out);
+
+		/* емодзі (4 байти) -> '?', символ поза cp1251 (U+20AC €) -> '?' або символ таблиці */
+		const uint8_t emo[] = { 'o', 'k', ' ', 0xF0, 0x9F, 0x98, 0x80 };
+		CHECK(aprsIsUtf8(emo, sizeof(emo)), "емодзі -- коректний UTF-8");
+		aprsDecodeText(emo, sizeof(emo), out, sizeof(out));
+		CHECK(!strcmp(out, "ok ?"), "емодзі -> «?» (%s)", out);
+
+		/* недійсний UTF-8: обірвана послідовність, надмірне кодування, сурогат, 0xC0/0xFF */
+		const uint8_t bad1[] = { 0xD0 };
+		const uint8_t bad2[] = { 0xC0, 0x80 };
+		const uint8_t bad3[] = { 0xED, 0xA0, 0x80 };
+		const uint8_t bad4[] = { 0xFF };
+		const uint8_t bad5[] = { 0xE0, 0x80, 0x80 };
+		CHECK(!aprsIsUtf8(bad1, 1) && !aprsIsUtf8(bad2, 2) && !aprsIsUtf8(bad3, 3) && !aprsIsUtf8(bad4, 1) && !aprsIsUtf8(bad5, 3),
+				"обірваний / надмірний / сурогат / 0xFF -- не UTF-8");
+		CHECK(aprsIsUtf8((const uint8_t *)"plain ASCII", 11), "чистий ASCII -- UTF-8");
+
+		/* повідомлення з кирилицею цілим кадром */
+		uint8_t b[300];
+		uint8_t info[60];
+		int il = 0;
+		memcpy(info, ":N0CALL-7 :", 11); il = 11;
+		memcpy(&info[il], u8, sizeof(u8)); il += (int)sizeof(u8);
+		memcpy(&info[il], "{7", 2); il += 2;
+		int n = buildFrame(b, "APRS", "TEST", 2, 0, 0, info, il);
+		aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+		CHECK((pk.type == APRS_T_MESSAGE) && !strcmp(pk.text, (const char *)want) && !strcmp(pk.msgId, "7"), "повідомлення «Привіт{7» UTF-8 -> cp1251, номер 7");
+		il = 11;
+		memcpy(&info[il], c1, sizeof(c1)); il += (int)sizeof(c1);
+		n = buildFrame(b, "APRS", "TEST", 2, 0, 0, info, il);
+		aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+		CHECK((pk.type == APRS_T_MESSAGE) && !strcmp(pk.text, (const char *)want), "повідомлення «Привіт» у cp1251 -- читається");
+	}
+
+	printf("== дедуплікація ==\n");
+	{
+		static aprsRxDb_t db;
+		uint8_t b[300];
+		aprsAx25_t a1, a2;
+		uint8_t b2[300];
+		aprsDbInit(&db);
+		int n = buildFrame(b, "APRS", "TEST", 1, 0, 0, (const uint8_t *)"!4903.50N/07201.75W-A", 21);
+		aprsAx25Parse(b, (uint16_t)n, &a1);
+		CHECK(!aprsDbIsDuplicate(&db, &a1, 1000), "перший пакет -- не дублікат");
+		CHECK(aprsDbIsDuplicate(&db, &a1, 1000 + 29999), "той самий через 29,999 с -- дублікат");
+		CHECK(!aprsDbIsDuplicate(&db, &a1, 1000 + 30001), "через 30,001 с від першого -- знову новий (вікно не продовжується дублікатом)");
+		n = buildFrame(b2, "APRS", "TEST", 1, 0, 0, (const uint8_t *)"!4903.50N/07201.75W-B", 21);
+		aprsAx25Parse(b2, (uint16_t)n, &a2);
+		CHECK(!aprsDbIsDuplicate(&db, &a2, 1000 + 30002), "інший info -- не дублікат");
+		/* той самий info, інша станція */
+		n = buildFrame(b2, "APRS", "TEST", 2, 0, 0, (const uint8_t *)"!4903.50N/07201.75W-B", 21);
+		aprsAx25Parse(b2, (uint16_t)n, &a2);
+		CHECK(!aprsDbIsDuplicate(&db, &a2, 1000 + 30003), "та сама info, інше джерело (SSID) -- не дублікат");
+		/* той самий пакет іншим шляхом (цифіпітер) -- дублікат */
+		n = buildFrame(b2, "APRS", "TEST", 1, 1, 1, (const uint8_t *)"!4903.50N/07201.75W-A", 21);
+		aprsAx25Parse(b2, (uint16_t)n, &a2);
+		CHECK(aprsDbIsDuplicate(&db, &a2, 1000 + 30002 + 100), "той самий пакет через цифіпітер -- дублікат (шлях у хеш не входить)");
+		/* переповнення лічильника мс (49 діб) */
+		aprsDbInit(&db);
+		CHECK(!aprsDbIsDuplicate(&db, &a1, 0xFFFFFF00UL), "перехід через 2^32 мс: перший");
+		CHECK(aprsDbIsDuplicate(&db, &a1, 0xFFFFFF00UL + 5000UL), "... дублікат через 5 с (після переходу)");
+
+		/* повтори повідомлень без ACK */
+		aprsDbInit(&db);
+		uint8_t mi[] = ":N0CALL-7 :hi{1";
+		n = buildFrame(b, "APRS", "TEST", 1, 0, 0, mi, (int)strlen((char *)mi));
+		aprsAx25Parse(b, (uint16_t)n, &a1);
+		aprsPacketParse(&a1, &pk);
+		CHECK(!aprsDbMsgSeen(&db, &a1, &pk, 5000), "повідомлення вперше");
+		CHECK(aprsDbMsgSeen(&db, &a1, &pk, 5000 + 120000), "повтор через 2 хв -- вже бачили");
+		CHECK(!aprsDbMsgSeen(&db, &a1, &pk, 5000 + 600001), "через 10 хв 0,001 с -- знову");
+	}
+
+	printf("== список станцій ==\n");
+	{
+		static aprsRxDb_t db;
+		aprsDbInit(&db);
+		aprsPacket_t p;
+		aprsAx25_t a;
+		uint8_t b[200];
+		char call[8];
+
+		memset(&p, 0, sizeof(p));
+		p.type = APRS_T_POSITION; p.hasPos = true; p.latU = 50000000; p.lonU = 30000000;
+		strcpy(p.text, "first");
+		for (int i = 0; i < APRS_STATIONS_MAX; i++)
+		{
+			snprintf(call, sizeof(call), "ST%d", i);
+			int n = buildFrame(b, "APRS", call, 1, 0, 0, (const uint8_t *)"!", 1);
+			aprsAx25Parse(b, (uint16_t)n, &a);
+			aprsDbUpdate(&db, &a, &p, 1000UL + (uint32_t)i * 100UL);
+		}
+		CHECK(aprsDbCount(&db) == APRS_STATIONS_MAX, "16 станцій записано (%d)", aprsDbCount(&db));
+		/* оновити ST0 (найстаріша) -- вона має стати найновішою і НЕ замінюватись */
+		int n = buildFrame(b, "APRS", "ST0", 1, 0, 0, (const uint8_t *)"!", 1);
+		aprsAx25Parse(b, (uint16_t)n, &a);
+		aprsStation_t *s0 = aprsDbUpdate(&db, &a, &p, 5000);
+		CHECK(!strcmp(s0->call, "ST0-1") && (s0->count == 2) && (aprsDbCount(&db) == APRS_STATIONS_MAX), "ST0-1 оновлено (лічильник %u), станцій %d", s0->count, aprsDbCount(&db));
+		/* 17-та станція замінює НАЙСТАРІШУ: тепер це ST1-1 (lastMs 1100) */
+		n = buildFrame(b, "APRS", "NEW", 0, 0, 0, (const uint8_t *)"!", 1);
+		aprsAx25Parse(b, (uint16_t)n, &a);
+		p.type = APRS_T_STATUS; p.hasPos = false; strcpy(p.text, "status");
+		aprsStation_t *sn = aprsDbUpdate(&db, &a, &p, 6000);
+		int has1 = 0, hasNew = 0;
+		for (int i = 0; i < APRS_STATIONS_MAX; i++)
+		{
+			if (!strcmp(db.st[i].call, "ST1-1")) { has1 = 1; }
+			if (!strcmp(db.st[i].call, "NEW")) { hasNew = 1; }
+		}
+		CHECK(!has1 && hasNew && (aprsDbCount(&db) == APRS_STATIONS_MAX) && (sn->count == 1) && !(sn->flags & APRS_ST_HASPOS),
+				"17-та замінила найстарішу (ST1-1), записів лишилось 16; нова без позиції");
+		/* порядок: найновіша -- NEW (6000), далі ST0-1 (5000), далі ST15-1 (2500) ... */
+		const aprsStation_t *x0 = aprsDbNth(&db, 0, 7000);
+		const aprsStation_t *x1 = aprsDbNth(&db, 1, 7000);
+		const aprsStation_t *x2 = aprsDbNth(&db, 2, 7000);
+		const aprsStation_t *x15 = aprsDbNth(&db, 15, 7000);
+		CHECK(x0 && x1 && x2 && x15 && !strcmp(x0->call, "NEW") && !strcmp(x1->call, "ST0-1") && !strcmp(x2->call, "ST15-1") && !strcmp(x15->call, "ST2-1"),
+				"порядок за новизною: %s, %s, %s, ..., %s", x0 ? x0->call : "?", x1 ? x1->call : "?", x2 ? x2->call : "?", x15 ? x15->call : "?");
+		CHECK(aprsDbNth(&db, 16, 7000) == NULL && aprsDbNth(&db, -1, 7000) == NULL, "поза межами -- NULL");
+		/* текст і позиція не затираються порожнім пакетом */
+		n = buildFrame(b, "APRS", "ST3", 1, 0, 0, (const uint8_t *)"!", 1);
+		aprsAx25Parse(b, (uint16_t)n, &a);
+		memset(&p, 0, sizeof(p)); p.type = APRS_T_OTHER;
+		aprsStation_t *s3 = aprsDbUpdate(&db, &a, &p, 7000);
+		CHECK((s3->flags & APRS_ST_HASPOS) && !strcmp(s3->text, "first") && (s3->type == APRS_T_OTHER), "порожній пакет не стирає позицію й коментар, тип -- останній");
+		/* довгий коментар обрізається до APRS_STATION_TEXT-1 */
+		memset(&p, 0, sizeof(p)); p.type = APRS_T_STATUS;
+		memset(p.text, 'x', 70);
+		aprsStation_t *s4 = aprsDbUpdate(&db, &a, &p, 7100);
+		CHECK(strlen(s4->text) == APRS_STATION_TEXT - 1U, "довгий текст обрізано до %u", (unsigned)strlen(s4->text));
+		/* перехід лічильника мс: вік рахується за модулем 2^32 */
+		aprsDbInit(&db);
+		memset(&p, 0, sizeof(p)); p.type = APRS_T_STATUS;
+		n = buildFrame(b, "APRS", "OLD", 1, 0, 0, (const uint8_t *)"!", 1); aprsAx25Parse(b, (uint16_t)n, &a);
+		aprsDbUpdate(&db, &a, &p, 0xFFFFFFF0UL);
+		n = buildFrame(b, "APRS", "NEWER", 1, 0, 0, (const uint8_t *)"!", 1); aprsAx25Parse(b, (uint16_t)n, &a);
+		aprsDbUpdate(&db, &a, &p, 20UL);
+		CHECK(!strcmp(aprsDbNth(&db, 0, 100)->call, "NEWER-1"), "порядок після переходу лічильника мс");
+	}
+
+	printf("== відстань і азимут ==\n");
+	{
+		uint32_t d;
+		uint16_t brg;
+		aprsGeo(0, 0, 0, 1000000, &d, &brg);
+		CHECK((labs((long)d - 111226) < 60) && (brg == 90), "1° по екватору на схід: %u м, азимут %u", d, brg);
+		aprsGeo(0, 0, 1000000, 0, &d, &brg);
+		CHECK((labs((long)d - 111226) < 60) && (brg == 0), "1° на північ: %u м, азимут %u", d, brg);
+		aprsGeo(0, 0, -1000000, 0, &d, &brg);
+		CHECK((brg == 180), "на південь: азимут %u", brg);
+		aprsGeo(0, 0, 0, -1000000, &d, &brg);
+		CHECK((brg == 270), "на захід: азимут %u", brg);
+		aprsGeo(50000000, 30000000, 50000000, 30000000, &d, &brg);
+		CHECK(d == 0, "та сама точка: %u м", d);
+		/* незалежна перевірка гаверсинусом на довільній парі */
+		int32_t la = 50450000, lo = 30523000, lb = 49839000, lob = 24029000;   /* ~ 470 км */
+		aprsGeo(la, lo, lb, lob, &d, &brg);
+		double r = 6372795.0, k = 3.14159265358979323846 / 180.0;
+		double p1 = la * 1e-6 * k, p2 = lb * 1e-6 * k, dl = (lob - lo) * 1e-6 * k;
+		double h = sin((p2 - p1) / 2) * sin((p2 - p1) / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2);
+		double ref = 2 * r * asin(sqrt(h));
+		CHECK(fabs((double)d - ref) < ref * 0.0005, "довільна пара: %u м (гаверсинус %.0f м)", d, ref);
+		CHECK((brg > 240) && (brg < 270), "... азимут на захід-південний захід: %u", brg);
+		/* через антимеридіан */
+		aprsGeo(0, 179500000, 0, -179500000, &d, &brg);
+		CHECK((labs((long)d - 111226) < 60) && (brg == 90), "через антимеридіан: %u м, азимут %u", d, brg);
+		CHECK(!strcmp(aprsBearingName(0), "N") && !strcmp(aprsBearingName(22), "N") && !strcmp(aprsBearingName(23), "NE") &&
+				!strcmp(aprsBearingName(45), "NE") && !strcmp(aprsBearingName(67), "NE") && !strcmp(aprsBearingName(68), "E") &&
+				!strcmp(aprsBearingName(90), "E") && !strcmp(aprsBearingName(135), "SE") && !strcmp(aprsBearingName(180), "S") &&
+				!strcmp(aprsBearingName(225), "SW") && !strcmp(aprsBearingName(270), "W") && !strcmp(aprsBearingName(315), "NW") &&
+				!strcmp(aprsBearingName(337), "NW") && !strcmp(aprsBearingName(338), "N") && !strcmp(aprsBearingName(359), "N"),
+				"сектори азимуту (8 по 45°)");
+	}
+
+	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
+	return fails ? 1 : 0;
+}

@@ -139,9 +139,10 @@ jobs:
           release: "14.2.Rel1"
       - name: Build
         working-directory: MDUV380_firmware
-        # ENABLE_APRS_RX_PROBE=1 -- ТИМЧАСОВО (R2/R3, 2026-10-09/10): екран «APRS проба» (прийом APRS
-        # з I2S, вимірювання на залізі). Прибрати після експериментів (STATUS.md).
-        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX_PROBE=1
+        # ENABLE_APRS_RX=1 -- R8 (2026-10-11): справжній фоновий приймач APRS (Опції рації -> «APRS станції»,
+        # банер, повідомлення нам). Діагностичний екран «APRS проба» (ENABLE_APRS_RX_PROBE) у користувацьку
+        # збірку НЕ входить -- він у окремій роботі build-ukrainian-diag нижче.
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
@@ -208,7 +209,7 @@ jobs:
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
               --title "CI ${SHORT} (${GITHUB_REF_NAME})" \
-              --notes "Автоматична CI-збірка коміту ${GITHUB_SHA}. Прошивка: українська, ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX_PROBE=1 (тимчасово). Windows-прошивальник (.exe) додається лише при ручному запуску workflow. НЕ перевірено на залізі."
+              --notes "Автоматична CI-збірка коміту ${GITHUB_SHA}. Прошивка: українська, ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 (фоновий приймач APRS). Діагностична збірка з екраном «APRS проба» -- окремий файл openuv380-10w-ukrainian-diag-${SHORT}.bin. Windows-прошивальник (.exe) додається лише при ручному запуску workflow. НЕ перевірено на залізі."
           fi
           gh release upload "$TAG" "$ASSET" --clobber
           echo "OK: $ASSET -> реліз $TAG"
@@ -230,6 +231,68 @@ jobs:
             echo "видалено реліз $T"
           done
           echo "OK: лишилось не більше 5 ci-* релізів"
+
+  # R8: ДІАГНОСТИЧНА збірка -- та сама користувацька, ПЛЮС екран «APRS проба» (R2-R7: сторінки пакетів,
+  # фону, потоку, фази, скан T_start, USB-запис). ENABLE_APRS_RX_PROBE включає приймач (на час проби він
+  # призупиняється). Окремий файл у тому самому релізі ci-<sha>; користувацька прошивка (build-ukrainian)
+  # проби не містить. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
+  build-ukrainian-diag:
+    needs: build-ukrainian
+    runs-on: ubuntu-latest
+    name: build (діагностична, APRS проба + приймач)
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM GNU toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "14.2.Rel1"
+      - name: Build
+        working-directory: MDUV380_firmware
+        # БЕЗ ENABLE_CALL_REPLAY: проба (s_probe) + приймач (s_rx) разом не вміщуються в CCM поруч із кільцем
+        # «Переслухати» (13,5 КБ) -- ld: CCMRAM overflowed by 1596 B (виміряно R8). Користувацька збірка
+        # (build-ukrainian) має і «Переслухати», і приймач, але без проби.
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_APRS_RX_PROBE=1
+      - name: Report size
+        working-directory: MDUV380_firmware
+        run: arm-none-eabi-size build/openuv380-10w.elf
+      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+        working-directory: MDUV380_firmware
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: openuv380-10w-ukrainian-diag
+          retention-days: 2
+          compression-level: 9
+          path: |
+            MDUV380_firmware/build/*.bin
+            MDUV380_firmware/build/*.hex
+      - name: Assert Ukrainian strings are actually linked in
+        working-directory: MDUV380_firmware
+        run: |
+          python3 - <<'PY'
+          data = open("build/openuv380-10w.bin","rb").read()
+          needle = "Мова".encode("cp1251")
+          assert needle in data, "українських рядків у .bin немає -- LANGUAGE_UKRAINIAN=1 не спрацював"
+          print("OK: українські рядки знайдено у прошивці")
+          PY
+      - name: Додати діагностичний .bin до релізу ci-<sha>
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        working-directory: MDUV380_firmware
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          TAG="ci-${SHORT}"
+          ASSET="openuv380-10w-ukrainian-diag-${SHORT}.bin"
+          cp build/openuv380-10w.bin "$ASSET"
+          gh release upload "$TAG" "$ASSET" --clobber
+          echo "OK: $ASSET -> реліз $TAG"
 
   # GUI-прошивальник для простих користувачів/тестерів: один .exe із двома кнопками
   # ("Обрати донор" і "ПРОШИТИ"), без ручного pip install/копіювання libusb dll.

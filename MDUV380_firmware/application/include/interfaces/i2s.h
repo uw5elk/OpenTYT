@@ -115,7 +115,8 @@ void I2SReset(void);
 void I2STerminateTransfers(void);
 void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen);
 
-#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "functions/aprs_rx_cfg.h"
+#if defined(APRS_RX)
 /* R2, «APRS проба» (functions/aprs_rx_probe.c): дуплексний DMA I2S у FM-прийомі без передачі.
  * Start -- з тайм-аутом на такт WS (стоковий I2SStartDMA чекав би вічно); false -- I2S зайнятий
  * або такту немає. Stop -- зупиняє лише передачу, запущену Start, і повертає прапорці в стан
@@ -134,6 +135,8 @@ void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen);
  * false -- I2S зайнятий, такту WS немає (> 2 періодів) або HAL не стартував. */
 bool I2SProbeStart(uint32_t tStartCycles, uint32_t periodCycles, uint32_t *halCycles, uint32_t *tActualCycles, uint32_t *startWs);
 void I2SProbeStop(void);
+/* R8: негайна зупинка без очікування переривання (задача; фоновий приймач APRS). */
+void I2SProbeAbort(void);
 /* R6: SPI3->SR (молодші 16 біт) і I2S3ext->SR (старші 16 біт). Читання скидає прапорець FRE
  * («WS змінився в неочікуваний момент» -- ознака розсинхронізації веденого). */
 uint32_t I2SProbeStatusRegs(void);

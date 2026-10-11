@@ -33,6 +33,7 @@
 #include "user_interface/menuSystem.h" /* uiNotificationShow/Hide/IsVisible/GetId + NOTIFICATION_*_CALL_REPLAY --
                                          * картка відтворення (задача 2026-09-20), той самий шлях, що вже
                                          * використовує functions/dmr_sms.c для банера SMS. */
+#include "functions/aprs_rx.h"          /* R8: aprsRxSuspendForAudio() (лише ENABLE_APRS_RX + українська) */
 #include <string.h>                   /* memcmp/memcpy/memset для callReplayOnFlashCfg_t нижче */
 
 /* Картка "Переслухати" під час відтворення (задача 2026-09-20, варіант A з макета) --
@@ -246,6 +247,9 @@ static bool callReplayStartAt(uint32_t startIndex, bool lastTransitionOnly)
 	// бути вимкнені саме в цю мить -- codecInit()/audioAmpEnable() нижче повинні
 	// піти з увімкненим трактом).
 	rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
+#if defined(APRS_RX)
+	aprsRxSuspendForAudio();   // R8: приймач APRS віддає I2S і буфер звуку відтворенню (негайно, до критичної секції)
+#endif
 
 	// Той самий порядок, що voicePromptsPlay(): скинути середнє АРУ ДО старту
 	// відтворення, а не після -- інакше перші кадри запису йдуть із застарілим

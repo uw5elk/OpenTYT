@@ -22,8 +22,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "functions/aprs_rx_cfg.h"
 
-#if defined(ENABLE_APRS_RX_PROBE)
+#if defined(ENABLE_APRS_RX)
 
 #define AFSK_FS             8000
 /* Вікно кореляції 8 відліків = 1 мс (1,2 біта): fs/8 = 1000 Гц -- рівно рознесення тонів, тож
@@ -98,5 +99,5 @@ bool ax25Summary(const uint8_t *f, int len, char *srcDst, int sdSize, char *info
  * «SRC-n>DST-n», непридатні до друку символи -> '.'. Щоб на око бачити, чи адреса читається. */
 void ax25LooseAddr(const uint8_t *f, int len, char *out, int size);
 
-#endif /* ENABLE_APRS_RX_PROBE */
+#endif /* ENABLE_APRS_RX */
 #endif /* _OPENGD77_APRS_AFSK_H_ */

@@ -27,6 +27,10 @@
  */
 #include "main.h"
 #include "interfaces/i2s.h"
+#include "functions/aprs_rx_cfg.h"
+#if defined(APRS_RX)
+#include "functions/aprs_rx.h"
+#endif
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "functions/aprs_rx_probe.h"
 #endif
@@ -53,6 +57,21 @@ static void clearI2SBuffersAndFlags(void)
 	soundInit();
 }
 
+#if defined(APRS_RX)
+/* R8: блок I2S RX -- пробі, якщо її екран відкрито, інакше фоновому приймачу APRS. */
+static inline void aprsI2SBlock(uint32_t bufNum)
+{
+#if defined(ENABLE_APRS_RX_PROBE)
+	if (aprsRxProbeIsOn())
+	{
+		aprsRxProbeI2SBlock(bufNum);
+		return;
+	}
+#endif
+	aprsRxI2SBlock(bufNum);
+}
+#endif
+
 void HAL_I2SEx_TxRxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 {
 	if (!stopOnNextI2SDMAInterrupt)
@@ -65,12 +84,12 @@ void HAL_I2SEx_TxRxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 		{
 			soundReceiveRefillData(0);
 		}
-#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#if defined(APRS_RX)
 		else
 		{
-			// R2: DMA без isSending/isReceiving запускає лише I2SProbeStart() («APRS проба»);
-			// звичайний код завжди ставить один із прапорців, тож сюди він не потрапляє.
-			aprsRxProbeI2SBlock(0);
+			// R2/R8: DMA без isSending/isReceiving запускає лише I2SProbeStart() (екран «APRS проба» і
+			// фоновий приймач APRS); звичайний код завжди ставить один із прапорців, тож сюди він не потрапляє.
+			aprsI2SBlock(0);
 		}
 #endif
 	}
@@ -92,12 +111,12 @@ void HAL_I2SEx_TxRxCpltCallback(I2S_HandleTypeDef *hi2s)
 		{
 			soundReceiveRefillData(1);
 		}
-#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#if defined(APRS_RX)
 		else
 		{
-			// R2: DMA без isSending/isReceiving запускає лише I2SProbeStart() («APRS проба»);
-			// звичайний код завжди ставить один із прапорців, тож сюди він не потрапляє.
-			aprsRxProbeI2SBlock(1);
+			// R2/R8: DMA без isSending/isReceiving запускає лише I2SProbeStart() (екран «APRS проба» і
+			// фоновий приймач APRS); звичайний код завжди ставить один із прапорців, тож сюди він не потрапляє.
+			aprsI2SBlock(1);
 		}
 #endif
 	}
@@ -117,7 +136,7 @@ void I2SStartDMA(uint16_t *txbuff, uint16_t *rxbuff, size_t bufferLen)
 	HAL_I2SEx_TransmitReceive_DMA(&hi2s3, txbuff, rxbuff, bufferLen);
 }
 
-#if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#if defined(APRS_RX)
 uint32_t I2SProbeStatusRegs(void)
 {
 	return (SPI3->SR & 0xFFFFU) | ((I2S3ext->SR & 0xFFFFU) << 16);
@@ -239,6 +258,19 @@ void I2SProbeStop(void)
 		// Переривань немає (такт WS зник посеред проби) -- зупиняємо самі.
 		clearI2SBuffersAndFlags();
 	}
+}
+
+/* R8: НЕГАЙНА зупинка передачі, запущеної I2SProbeStart(), без очікування переривання (на відміну від
+ * I2SProbeStop(), що чекає до 60 мс). Для фонового приймача APRS: його викликають із задачі перед
+ * голосовою підказкою / відтворенням «Переслухати» / зміною режиму, де 20 мс зупинки головного циклу
+ * були б помітні. Чужу (звичайну) передачу не чіпає. Безпечно, якщо нічого не запущено. */
+void I2SProbeAbort(void)
+{
+	if ((g_TX_SAI_in_use == false) || isSending || isReceiving)
+	{
+		return;
+	}
+	clearI2SBuffersAndFlags();
 }
 #endif
 

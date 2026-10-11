@@ -24,8 +24,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "functions/aprs_rx_cfg.h"
 
-#if defined(ENABLE_APRS_RX_PROBE)
+#if defined(ENABLE_APRS_RX)
 
 /* Підтримані частоти дискретизації: коефіцієнти Goertzel -- константи (без cosf). */
 #define AP_FS_I2S   8000U
@@ -262,5 +263,5 @@ uint32_t apIsqrt64(uint64_t v);
 int16_t  apRatioDb(uint32_t a, uint32_t b);
 uint8_t  apWinner(uint32_t a1200, uint32_t a2200);
 
-#endif /* ENABLE_APRS_RX_PROBE */
+#endif /* ENABLE_APRS_RX */
 #endif /* _OPENGD77_APRS_PROBE_DSP_H_ */

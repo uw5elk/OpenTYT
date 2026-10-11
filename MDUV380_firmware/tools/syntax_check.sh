@@ -104,7 +104,13 @@ DEFS_ENDATA=("${DEFS_COMMON[@]}" -DENABLE_AES -DENABLE_DMR_DATA -DENABLE_CALL_RE
 DEFS_APRSPROBE=("${DEFS_CALLREPLAY[@]}" -DENABLE_APRS_RX_PROBE)             # build-ukrainian, як у CI з R2 (тимчасово)
 DEFS_APRSPROBEEN=("${DEFS_ENDATA[@]}" -DENABLE_APRS_RX_PROBE)               # англійська + прапорець: екран має зникнути без помилок
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN)
+# R8: справжній приймач APRS -- користувацька українська збірка (БЕЗ проби) і її англійський двійник
+# (приймач має зникнути без помилок); окремо -- без AES/DMR_DATA (приймач без сховища «Повідомлення»).
+DEFS_APRSRX=("${DEFS_CALLREPLAY[@]}" -DENABLE_APRS_RX)                     # build-ukrainian + ENABLE_APRS_RX (CI, користувацька)
+DEFS_APRSRXEN=("${DEFS_ENDATA[@]}" -DENABLE_APRS_RX)                       # англійська + прапорець: приймач має зникнути
+DEFS_APRSRXLITE=("${DEFS_COMMON[@]}" -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX)   # українська БЕЗ AES/DMR_DATA + приймач
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

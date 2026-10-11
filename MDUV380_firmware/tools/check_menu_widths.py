@@ -310,5 +310,58 @@ for lang, lab, line, n in sms_over:
 print(f'  разом: {len(sms_over)}')
 fails += sms_over
 
+print('\n=== 6. Екран «APRS станції», банер і пункт меню (languages/aprsrx_ua.h, R8) ===')
+# Рядок екрана FONT_SIZE_1 -- 6 px на символ, екран 160 px => 26 символів; пункт меню -- 16
+# (SCREEN_LINE_BUFFER_SIZE); рядок банера -- 16. Для шаблонів з %s/%u/%lu підставляємо НАЙГІРШЕ значення.
+aprs_over = []
+aprs_path = os.path.join(LANG, 'aprsrx_ua.h')
+if os.path.exists(aprs_path):
+    aprs = {m.group(1): m.group(2) for m in re.finditer(
+        r'#define\s+(APRSRX_\w+)\s+"((?:[^"\\]|\\.)*)"', open(aprs_path, 'rb').read().decode('cp1251'))}
+    WORST_S = {   # що підставляється замість %s (найдовше можливе)
+        'APRSRX_STATUS_FMT': ['Слухаю'],
+        'APRSRX_CARD_POS': ['-179.1234 -179.1234'],
+        'APRSRX_CARD_DIST': ['20000' + aprs.get('APRSRX_KM', '') + ' NW'],
+        'APRSRX_CARD_LAST': ['59' + 'хв'],
+        'APRSRX_CARD_PATH': ['W' * 20],
+        'APRSRX_CARD_TYPE': [aprs.get('APRSRX_T_MSG', '')],
+        'APRSRX_BANNER_FMT': ['UW5ELK-15', '20000' + aprs.get('APRSRX_KM', '') + ' NW'],
+    }
+    SKIP = {'APRSRX_MSG_NOTE_FMT', 'APRSRX_M', 'APRSRX_KM'}   # нотатка йде на повнекранну картку (перенос по словах)
+    for name, val in aprs.items():
+        if name in SKIP:
+            continue
+        if name == 'APRSRX_BANNER_FMT':
+            # два рядки банера, роздільник \n
+            l1, l2 = val.split('\\n')
+            for call in ('UW5ELK-15',):
+                a = l1.replace('%s', call)
+                b = l2.replace('%s', '20000' + aprs.get('APRSRX_KM', '') + ' NW')
+                for t in (a, b):
+                    if len(t) > LINE_CHARS:
+                        aprs_over.append((name, t, len(t), LINE_CHARS))
+            continue
+        limit = LINE_CHARS if name in ('APRSRX_TITLE', 'APRSRX_DIAG_TITLE') else 26
+        t = val
+        subs = WORST_S.get(name)
+        for rx, rep in (('%lu', '99999'), ('%u', '65535')):
+            t = t.replace(rx, rep)
+        if '%s' in t:
+            t = t.replace('%s', subs[0] if subs else 'XXXXXXXXXXXXXXX')
+        if len(t) > limit:
+            aprs_over.append((name, t, len(t), limit))
+    # шапка списку у стані «Запуск...» з причиною: найдовша причина
+    why = [aprs[k] for k in aprs if k.startswith('APRSRX_OFF_')]
+    t = aprs.get('APRSRX_WAITING', '') + ' ' + max(why, key=len)
+    if len(t) > 26:
+        aprs_over.append(('APRSRX_WAITING+причина', t, len(t), 26))
+    # рядок списку: маркер(1) + позивний(9) + відстань(10) + вік(5)
+    if 1 + 9 + 10 + 5 > 26:
+        aprs_over.append(('рядок списку', '', 25, 26))
+for name, t, n, lim in aprs_over:
+    print(f'  {name}: "{t}" = {n} > {lim}')
+print(f'  разом: {len(aprs_over)}')
+fails += aprs_over
+
 print(f'\n{"Є ПЕРЕПОВНЕННЯ" if fails else "Переповнень не знайдено"} (всього: {len(fails)})')
 sys.exit(1 if fails else 0)

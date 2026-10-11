@@ -1611,6 +1611,54 @@ aprsBeaconingMode_t aprsBeaconingGetMode(void)
 	return aprsBcnData.settings.mode;
 }
 
+#if defined(ENABLE_APRS_RX)
+/* R8 (форк): що потрібно приймачеві APRS знати про конфіг. «Перемикач увімкнення» у налаштуваннях APRS --
+ * режим бікона (menuAPRSOptions): «Вимкнено» -- приймач не працює. Призупинений бікон (клавіша
+ * aprsBeaconingToggles(), APRS_BEACONING_STATE_ENABLED) приймач НЕ вимикає -- слухати можна й без передачі.
+ * Власна позиція -- та сама, з якої йде бікон: GPS (якщо є дійсна), інакше -- позиція конфігу каналу чи
+ * збережена в налаштуваннях (aprsGetFixedPosition*; NAN -- позиції нема). */
+bool aprsBeaconingGetRxInfo(aprsRxInfo_t *info, bool full)
+{
+	if ((aprsBcnData.settings.mode == APRS_BEACONING_MODE_OFF) ||
+			(aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG) == false))
+	{
+		return false;
+	}
+
+	char name[9];
+	double lat, lon;
+
+	/* Частота APRS: QSY з конфігу каналу; QSY = 0 -- бікон іде на самому каналі, тож «частота APRS» -- його власна. */
+	info->freq = (aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL].txFrequency != 0U) ?
+			aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL].txFrequency : currentChannelData->rxFreq;
+	if (full == false)
+	{
+		return true;
+	}
+	codeplugGetRadioName(name);
+	memcpy(info->call, name, 6);
+	info->call[6] = 0;
+	info->call[7] = 0;
+	info->call[8] = 0;
+	info->ssid = aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL].senderSSID;
+
+	if (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_LOCATION_FROM_GPS) && aprsBeaconingLocationIsValid(&aprsBcnData.currentLocation))
+	{
+		lat = aprsBcnData.currentLocation.coords.latitude;
+		lon = aprsBcnData.currentLocation.coords.longitude;
+	}
+	else
+	{
+		lat = aprsGetFixedPositionLatitude();
+		lon = aprsGetFixedPositionLongitude();
+	}
+	info->hasPos = ((isnan(lat) == 0) && (isnan(lon) == 0));
+	info->lat = info->hasPos ? lat : 0.0;
+	info->lon = info->hasPos ? lon : 0.0;
+	return true;
+}
+#endif
+
 // Returns true if the beacon has been sent.
 bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 {
