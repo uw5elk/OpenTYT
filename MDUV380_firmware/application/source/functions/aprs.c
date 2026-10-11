@@ -309,9 +309,11 @@ _Static_assert(((((30U + 27U + APRSM_COMMENT_AIR_MAX + 2U) * 8U) * 6U) / 5U) + (
 #if defined(APRS_MODE_TRACE)
 #define AX_TR(n)       do { if (s_modeCall != NULL) { AM_TRACE(n); } } while (0)
 #define AX_TRV(n, v)   do { if (s_modeCall != NULL) { AM_TRACE_V(n, v); } } while (0)
+#define AX_TRH(n, v)   do { if (s_modeCall != NULL) { AM_TRACE_H(n, v); } } while (0)
 #else
 #define AX_TR(n)       ((void)0)
 #define AX_TRV(n, v)   ((void)0)
+#define AX_TRH(n, v)   ((void)0)
 #endif
 #if !defined(ENABLE_APRS_RX)
 #define AX_STRLEN(s, n)      strlen(s)
@@ -647,6 +649,7 @@ static void aprsTxEnded(void)
 
 static void aprsConvertAndSplitCoord(double coord, bool isAmbiguous, uint32_t *degrees, uint32_t *minutesIntegral, uint32_t *minutesFractional)
 {
+	AX_TR(483);   /* split: перед (uint32_t)coord */
 	*degrees = (uint32_t)coord;
 
 	double minutes = ((coord - (double)*degrees) * 60.0);
@@ -657,8 +660,11 @@ static void aprsConvertAndSplitCoord(double coord, bool isAmbiguous, uint32_t *d
 		minutes += 0.000000001;
 	}
 
+	AX_TR(484);   /* split: перед modf() */
 	*minutesFractional = (uint32_t)abs((int)(modf(minutes, &minutesIntegralDouble) * 100));
+	AX_TR(485);   /* split: після modf(), перед (uint32_t)minutesIntegralDouble */
 	*minutesIntegral = (uint32_t)(minutesIntegralDouble);
+	AX_TR(486);   /* split: завершено */
 }
 
 static void aprsCompressLatitude(double lat, char *str)
@@ -733,7 +739,10 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 #if defined(APRS_RX)
 	if (s_modeCall != NULL) { AM_TRACE(240); }   /* aprsSendPacket: початок */
 #endif
+	AX_TRH(460, (uintptr_t)config);          /* R10-fix3: адреса конфігу, що передали (має бути у стеку/RAM, не 0) */
+	AX_TRH(461, (uintptr_t)aprsConfig);      /* адреса ПОПЕРЕДНЬОГО aprsConfig (до присвоєння) */
 	aprsConfig = config;
+	AX_TRH(462, (uintptr_t)s_modeCall);      /* адреса позивного режиму (CCM, 0x1000xxxx) */
 
 	encoderData.bitStuffingCounter = 0;
 	encoderData.currentBitNRZI = false; // clear
@@ -761,10 +770,13 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		uint32_t lat24bits, lon24bits;
 
 		lat24bits = ((aprsConfig->latitude[2] << 16) | ( aprsConfig->latitude[1] << 8) | aprsConfig->latitude[0]);
+		AX_TR(470);   /* позиція з конфігу: перед latLonFixed24ToDouble(lat) */
 		lat = latLonFixed24ToDouble(lat24bits);
+		AX_TR(471);   /* після latLonFixed24ToDouble(lat) */
 
 		lon24bits = ((aprsConfig->longitude[2] << 16) | (aprsConfig->longitude[1] << 8) | aprsConfig->longitude[0]);
 		lon = latLonFixed24ToDouble(lon24bits);
+		AX_TR(472);   /* після latLonFixed24ToDouble(lon) */
 	}
 	else
 	{
@@ -772,6 +784,16 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		lon = currentLocation->coords.longitude;
 	}
 	AX_TR(404);   /* широту/довготу отримано */
+#if defined(ENABLE_APRS_RX)
+	/* R10-fix3: перетворення NaN (позиції нема) або числа поза діапазоном у ціле -- невизначена поведінка (на Cortex-M4 може
+	 * дати що завгодно). Такий кадр НЕ складаємо: передавач уже ввімкнено викликачем, тож переводимо передачу в «завершено». */
+	if (isnan(lat) || isnan(lon) || (fabs(lat) > 90.0) || (fabs(lon) > 180.0))
+	{
+		AX_TR(427);   /* позиція недійсна (NaN або поза діапазоном): передачу скасовано */
+		aprsTxProgress = APRS_TX_FINISHED;
+		return false;
+	}
+#endif
 
 	uint8_t ambiguity = (aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_AMBIGUITY_MASK) >> 5;
 	if (ambiguity != 0U)
@@ -807,11 +829,14 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 				break;
 		}
 
+		AX_TR(480);   /* неточність: перед приведенням lat*коефіцієнт до int */
 		tmp = lat * ambCoeff;
 		lat = tmp / ambCoeff;
+		AX_TR(481);   /* після lat */
 
 		tmp = lon * ambCoeff;
 		lon = tmp / ambCoeff;
+		AX_TR(482);   /* після lon */
 	}
 	AX_TRV(405, ambiguity);   /* після неточності координат (v = неточність) */
 
@@ -2148,6 +2173,7 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	AM_TRACE(226);   /* перед HRC6000ClearIsWakingState */
 	HRC6000ClearIsWakingState();
 	AM_TRACE(227);   /* перед trxSetTX */
+	AM_TRACE_MARK();   /* R10-fix3: відлік t= на екрані трасування -- від увімкнення передавача */
 	trxSetTX();
 	AM_TRACE(228);   /* після trxSetTX */
 
@@ -2192,7 +2218,8 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	{
 		/* R10-fix2: кадр завеликий -- aprsSendPacket() поставив «завершено»; стани завершення вимикають TX */
 		aprsModeAbortTx();
-		return APRS_MODE_TX_TOOBIG;
+		/* відмова або через розмір кадру (позиція 0xFFFF), або через недійсну позицію (NaN/поза діапазоном) */
+		return (encoderData.packetBufferBitPosition == AX25_BITS_OVERFLOW) ? APRS_MODE_TX_TOOBIG : APRS_MODE_TX_NOPOS;
 	}
 
 	return APRS_MODE_TX_OK;

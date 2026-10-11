@@ -371,6 +371,33 @@ int main(void)
 		CHECK(e.packetBufferBitPosition == AX25_BITS_OVERFLOW, "біт за межею мав дати сигнальне значення");
 	}
 
+	/* 7а. Недійсна позиція (NaN, поза діапазоном) -- кадр НЕ складається (приведення NaN до цілого -- невизначена поведінка). */
+	{
+		static const double badLat[] = { 0.0 / 0.0, 95.0, -91.0, 50.5, 50.5 };
+		static const double badLon[] = { 30.25, 30.25, 30.25, 181.0, 1.0 / 0.0 };
+
+		for (unsigned k = 0; k < sizeof(badLat) / sizeof(badLat[0]); k++)
+		{
+			cfg_init(&cfg);
+			loc_init(&loc, badLat[k], badLon[k]);
+			aprsTxProgress = APRS_TX_IDLE;
+			s_timStart = 0;
+			bool ok = aprsSendPacket(&cfg, &loc, &loc, &s_chs, false);
+			CHECK(ok == false, "недійсна позиція #%u: aprsSendPacket мав відмовити", k);
+			CHECK(aprsTxProgress == APRS_TX_FINISHED, "недійсна позиція #%u: стан %d", k, (int)aprsTxProgress);
+			CHECK(s_timStart == 0, "недійсна позиція #%u: TIM6 не мав запускатися", k);
+			CHECK(encoderData.packetBufferBitPosition != AX25_BITS_OVERFLOW, "недійсна позиція #%u: це не переповнення буфера", k);
+		}
+		/* граничні дійсні значення проходять */
+		cfg_init(&cfg);
+		loc_init(&loc, 90.0, 180.0);
+		aprsTxProgress = APRS_TX_IDLE;
+		CHECK(aprsSendPacket(&cfg, &loc, &loc, &s_chs, false) == true, "позиція 90/180 має проходити");
+		loc_init(&loc, -90.0, -180.0);
+		aprsTxProgress = APRS_TX_IDLE;
+		CHECK(aprsSendPacket(&cfg, &loc, &loc, &s_chs, false) == true, "позиція -90/-180 має проходити");
+	}
+
 	/* 8. aprsModeTxBeacon(): aprsConfig після виклику -- НЕ на стеку; друга передача; стоковий маяк далі бачить свій конфіг. */
 	{
 		/* ця частина потребує заглушок TX-ланцюжка -- див. нижче tx_chain_test() */
@@ -415,6 +442,19 @@ int tx_chain_test(void)
 		CHECK(((uintptr_t)aprsConfig < (uintptr_t)&dummy - 65536U) || ((uintptr_t)aprsConfig > (uintptr_t)&dummy + 65536U),
 				"aprsConfig лежить поруч зі стеком");
 		CHECK(s_modeCall == NULL && s_modeComment == NULL, "s_modeCall/s_modeComment не обнулено");
+
+		/* недійсна позиція режиму (широта 95°): маяк не йде, передавач вимкнено, результат -- «нема позиції» */
+		{
+			aprsModeEff_t bad = e;
+
+			bad.latU = 95000000;
+			aprsTxProgress = APRS_TX_IDLE;
+			trxIsTransmitting = false;
+			r = aprsModeTxBeacon(&bad);
+			CHECK(r == APRS_MODE_TX_NOPOS, "широта 95°: очікували NOPOS, є %d", (int)r);
+			CHECK(aprsTxProgress == APRS_TX_IDLE && trxIsTransmitting == false, "широта 95°: передачу не завершено");
+			CHECK(aprsConfig == &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL], "широта 95°: aprsConfig висить");
+		}
 
 		/* друга передача поспіль */
 		aprsTxProgress = APRS_TX_IDLE;

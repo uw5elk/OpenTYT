@@ -32,12 +32,18 @@
 void aprsModeTrace(unsigned int n);
 void aprsModeTraceT(unsigned int n);
 void aprsModeTraceV(unsigned int n, unsigned int v);   /* номер + додаткове значення (R10-fix2) */
+void aprsModeTraceH(unsigned int n, unsigned long v);   /* номер + значення в hex, напр. адреса (R10-fix3) */
+void aprsModeTraceMark(void);                            /* мітка часу початку передачі для рядка t= (R10-fix3) */
 #define AM_TRACE(n)    aprsModeTrace(n)
 #define AM_TRACE_V(n, v)  aprsModeTraceV((n), (unsigned int)(v))
+#define AM_TRACE_H(n, v)  aprsModeTraceH((n), (unsigned long)(v))
+#define AM_TRACE_MARK()   aprsModeTraceMark()
 #define AM_TRACE_T(n)  aprsModeTraceT(n)
 #else
 #define AM_TRACE(n)    ((void)0)
 #define AM_TRACE_V(n, v)  ((void)0)
+#define AM_TRACE_H(n, v)  ((void)0)
+#define AM_TRACE_MARK()   ((void)0)
 #define AM_TRACE_T(n)  ((void)0)
 #endif
 
