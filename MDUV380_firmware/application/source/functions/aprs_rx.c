@@ -880,17 +880,23 @@ void aprsRxTick(void)
 	}
 
 	uint32_t now = ticksGetMillis();
-	aprsRxWhy_t why = hardBlock();
+	aprsRxWhy_t why;
+
+	AM_TRACE_T(64);   /* R10-fix: aprsRxTick у режимі, перший тік (перед hardBlock) */
+	why = hardBlock();
 
 	if (why != APRS_RX_WHY_NONE)
 	{
 		s_rx.holdUntilMs = now + APRS_RX_HOLD_MS;
+		AM_TRACE_T(65);   /* hardBlock != NONE: перед disengage */
 		disengage(why);
 		setWhy(why);
 		return;   /* відкладені дії чекають, поки умова зникне */
 	}
 
+	AM_TRACE_T(66);   /* перед flushPending */
 	flushPending();
+	AM_TRACE_T(67);   /* після flushPending */
 
 	if (s_rx.engaged == false)
 	{
@@ -906,7 +912,9 @@ void aprsRxTick(void)
 			setWhy(why);
 			return;
 		}
+		AM_TRACE_T(68);   /* перед engage (refreshCfg, ecoForce) */
 		engage(now, freq);
+		AM_TRACE_T(69);   /* після engage */
 	}
 	else
 	{
@@ -944,7 +952,11 @@ void aprsRxTick(void)
 
 	if ((s_rx.i2sRunning == false) && (now >= s_rx.holdUntilMs) && (now >= s_rx.tryAtMs))
 	{
-		aprsRxWhy_t r = i2sTryStart();
+		aprsRxWhy_t r;
+
+		AM_TRACE_T(70);   /* перед i2sTryStart (I2SProbeStart, PRIMASK) */
+		r = i2sTryStart();
+		AM_TRACE_T(71);   /* після i2sTryStart */
 		if (r == APRS_RX_WHY_NONE)
 		{
 			s_rx.st.state = 2;
@@ -966,7 +978,9 @@ void aprsRxTick(void)
 
 	if (s_rx.i2sRunning)
 	{
+		AM_TRACE_T(72);   /* перед processBlocks */
 		processBlocks(now);
+		AM_TRACE_T(73);   /* після processBlocks */
 		measureFs();
 	}
 }

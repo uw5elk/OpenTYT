@@ -47,6 +47,7 @@
 #include "hardware/HR-C6000.h"
 #include "functions/satellite.h"
 #include "functions/aprs_rx.h"   // R8-fix: aprsRxStopForTx() (лише ENABLE_APRS_RX + українська)
+#include "functions/aprs_mode.h" // R10-fix: aprsModeIsActive() для трасування (під APRS_RX)
 #if defined(HAS_GPS)
 #include "interfaces/gps.h"
 #endif
@@ -642,6 +643,9 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 	bool beaconingSilently = (aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_BEACONING_SILENTLY);
 #endif
 
+#if defined(APRS_RX)
+	if (s_modeCall != NULL) { AM_TRACE(240); }   /* aprsSendPacket: початок */
+#endif
 	aprsConfig = config;
 
 	encoderData.bitStuffingCounter = 0;
@@ -797,6 +801,9 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 	enqueuePayload(&encoderData, latStr, lonStr, (courseAndSpeed ? courseSpeedStr : NULL), channelSettings, fromSatScreen);
 	enqueueCRC(&encoderData);
 	enqueueFlagOfLength(&encoderData, 3U);
+#if defined(APRS_RX)
+	if (s_modeCall != NULL) { AM_TRACE(241); }   /* кадр AX.25 зібрано */
+#endif
 
 	lenBytes = encoderData.packetBufferBitPosition / 8;
 	bytePos = 0;
@@ -867,6 +874,9 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 #else // PLATFORM_MD9600
 	uint32_t lastTone = 0;
 	AT1846sWriteTone1Reg(lastTone);
+#if defined(APRS_RX)
+	if (s_modeCall != NULL) { AM_TRACE(242); }   /* перед AT1846sWriteTone1Reg/trxSelectVoiceChannel */
+#endif
 	trxSelectVoiceChannel(AT1846_VOICE_CHANNEL_TONE1);
 
 	int volume = getVolumeControl() + 30;
@@ -887,6 +897,9 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 	}
 #endif // PLATFORM_MD9600
 
+#if defined(APRS_RX)
+	if (s_modeCall != NULL) { AM_TRACE(243); }   /* перед HAL_TIM_Base_Start_IT(TIM6) */
+#endif
 	aprsTxProgress = APRS_TX_IN_PROGRESS;
 	HAL_TIM_Base_Start_IT(&htim6);
 #endif // CPU_MK22FN512VLL12
@@ -1240,6 +1253,13 @@ static void aprsBeaconingDecayTick(bool reset)
 	}
 }
 
+#if defined(APRS_RX)
+/* R10-fix: трасування завершення передачі -- лише поки активний «Режим APRS» (стоковий бікон не чіпаємо). */
+#define AM_TRACE_TX(n)  do { if (aprsModeIsActive()) { AM_TRACE(n); } } while (0)
+#else
+#define AM_TRACE_TX(n)  ((void)0)
+#endif
+
 static void aprsBeaconingTxStateTick(uiEvent_t *ev)
 {
 	switch(aprsTxProgress)
@@ -1249,9 +1269,11 @@ static void aprsBeaconingTxStateTick(uiEvent_t *ev)
 			break;
 
 		case APRS_TX_FINISHED:
+			AM_TRACE_TX(250);   /* кінець пакета: перед aprsTxEnded */
 			aprsTxEnded();// foreground parts of APRS send finished
 			// deliberate fall through
 		case APRS_TX_TERMINATE:
+			AM_TRACE_TX(251);   /* перед вимкненням передачі */
 			trxTransmissionEnabled = false;
 			// In analog mode. Stop transmitting immediately
 			LedWrite(LED_RED, 0);
@@ -1262,8 +1284,11 @@ static void aprsBeaconingTxStateTick(uiEvent_t *ev)
 			}
 #endif
 			// Need to wrap this in Task Critical to avoid bus contention on the I2C bus.
+			AM_TRACE_TX(252);   /* перед trxSetRxCSS */
 			trxSetRxCSS(RADIO_DEVICE_PRIMARY, currentChannelData->rxTone);
+			AM_TRACE_TX(253);   /* перед trxActivateRx */
 			trxActivateRx(true);
+			AM_TRACE_TX(254);   /* після trxActivateRx */
 			trxIsTransmitting = false;
 			PTTToggledDown = false;
 			aprsTxProgress = APRS_TX_WAIT_PTT_OFF;
@@ -1312,14 +1337,18 @@ static void aprsBeaconingTxStateTick(uiEvent_t *ev)
 			// (йшов прийом), переривання лишало DMR-машину застряглою в старому виклику ->
 			// прийом не відновлювався, поки канал не перемкнути туди-назад. Ці скиди -- саме
 			// те, що робить перемикання каналу.
+			AM_TRACE_TX(255);   /* FINAL_STAGE: перед trxSetModeAndBandwidth */
 			trxSetModeAndBandwidth(currentChannelData->chMode, (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_BW_25K) != 0));
 
 			if (currentChannelData->chMode == RADIO_MODE_ANALOG)
 			{
+				AM_TRACE_TX(256);   /* перед trxSetRxCSS */
 				trxSetRxCSS(RADIO_DEVICE_PRIMARY, currentChannelData->rxTone);
 			}
 
+			AM_TRACE_TX(257);   /* перед vTaskDelay(40 мс) */
 			vTaskDelay((40U / portTICK_PERIOD_MS));
+			AM_TRACE_TX(258);   /* після vTaskDelay */
 
 			if (currentChannelData->chMode == RADIO_MODE_DIGITAL)
 			{
@@ -1943,6 +1972,7 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	char comment[APRSM_COMMENT_AIR_MAX + 1U];
 	uint32_t txFrequency;
 
+	AM_TRACE(220);   /* aprsModeTxBeacon: вхід */
 	if ((aprsTxProgress != APRS_TX_IDLE) || trxTransmissionEnabled || trxIsTransmitting || uiDataGlobal.Scan.active)
 	{
 		return APRS_MODE_TX_BUSY;
@@ -1968,12 +1998,16 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	{
 		return APRS_MODE_TX_BAND;
 	}
+	AM_TRACE(221);   /* перевірки пройдено */
 
 #if defined(APRS_RX)
+	AM_TRACE(222);   /* перед aprsRxStopForTx */
 	aprsRxStopForTx();   // R8-fix2: приймач APRS -- СИНХРОННО, першим ділом (до еко-режиму і trxSetTX); маяк режиму R10 іде в обхід aprsBeaconingSendBeacon()
 #endif
 
+	AM_TRACE(223);   /* перед rxPowerSavingSetState */
 	rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
+	AM_TRACE(224);   /* після rxPowerSavingSetState */
 
 #if defined(HAS_GPS)
 	if (SETTINGS_GPS_MODE_GET(nonVolatileSettings) > GPS_MODE_OFF)
@@ -1985,11 +2019,15 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	// Анти-колізії тут немає: «частота вільна?» перевіряє сам режим (aprs_mode.c) НЕБЛОКУЮЧЕ, щоб на час очікування
 	// не глухнув приймач -- пакет, через який і зайнято частоту, якраз треба прийняти.
 
+	AM_TRACE(225);   /* перед LedWrite */
 	LedWrite(LED_GREEN, 0);
 	LedWrite(LED_RED, 1);
 
+	AM_TRACE(226);   /* перед HRC6000ClearIsWakingState */
 	HRC6000ClearIsWakingState();
+	AM_TRACE(227);   /* перед trxSetTX */
 	trxSetTX();
+	AM_TRACE(228);   /* після trxSetTX */
 
 	// TX Delay;
 	uint32_t m = ticksGetMillis();
@@ -1997,9 +2035,12 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	{
 		vTaskDelay((1U / portTICK_PERIOD_MS));
 	}
+	AM_TRACE(229);   /* після затримки TX Delay */
 
 	aprsModeToBeaconCfg(e, &cfg);
+	AM_TRACE(230);   /* перед aprsModeCommentToUtf8 */
 	(void)aprsModeCommentToUtf8(e->comment, comment, sizeof(comment));
+	AM_TRACE(231);   /* після aprsModeCommentToUtf8 */
 
 	memset(&loc, 0, sizeof(loc));
 	loc.time = ticksGetMillis();
@@ -2020,7 +2061,9 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	/* aprsSendPacket() на самому початку читає flags ЩЕ ПОПЕРЕДНЬОГО aprsConfig (стокова особливість: присвоєння
 	 * нижче в тілі) -- підставляємо наш конфіг заздалегідь, щоб «безшумний» біт не залежав від сміття на стеку. */
 	aprsConfig = (CodeplugAPRSConfig_t *)(void *)&cfg;
+	AM_TRACE(232);   /* перед aprsSendPacket (далі 240..) */
 	(void)aprsSendPacket((CodeplugAPRSConfig_t *)(void *)&cfg, &loc, &loc, &channelSettings, false);
+	AM_TRACE(233);   /* aprsSendPacket повернув керування; TX у фоні (TIM6) */
 	s_modeCall = NULL;       // aprsSendPacket() збирає кадр синхронно; далі їх не читають
 	s_modeComment = NULL;
 

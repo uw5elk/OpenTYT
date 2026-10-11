@@ -22,4 +22,20 @@
 #define APRS_RX 1
 #endif
 
+/* R10-fix: ТИМЧАСОВЕ трасування «Режиму APRS» на екран (великий номер кроку + негайний рендер): після зависання на
+ * екрані лишається номер останнього кроку, який почався (таблиця номерів -- TESTING.md, блок AO). Вимикається
+ * прапорцем APRS_MODE_NO_TRACE (хост-тести) або видаленням цього блоку; без APRS_RX -- порожні макроси (нуль коду).
+ *   AM_TRACE(n)   -- безумовно (вхід, вихід, маяк: рідкісні події);
+ *   AM_TRACE_T(n) -- лише коли режим активний і лише ПЕРШИЙ раз після входу/маяка (тіки: інакше затопило б екран). */
+#if defined(APRS_RX) && !defined(APRS_MODE_NO_TRACE)
+#define APRS_MODE_TRACE 1
+void aprsModeTrace(unsigned int n);
+void aprsModeTraceT(unsigned int n);
+#define AM_TRACE(n)    aprsModeTrace(n)
+#define AM_TRACE_T(n)  aprsModeTraceT(n)
+#else
+#define AM_TRACE(n)    ((void)0)
+#define AM_TRACE_T(n)  ((void)0)
+#endif
+
 #endif /* _OPENGD77_APRS_RX_CFG_H_ */

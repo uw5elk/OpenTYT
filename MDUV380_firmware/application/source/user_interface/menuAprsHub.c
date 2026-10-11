@@ -95,6 +95,7 @@ static void openItem(int n)
 	switch (n)
 	{
 		case APRS_HUB_MODE:
+			AM_TRACE(50);   /* R10-fix: хаб, GREEN на «Режим APRS»: перед menuAprsModeEnter() (далі 51, 1..19, 30..37, 52, 84..86) */
 			(void)menuAprsModeEnter();   /* R10: дія, а не налаштування. Не вдалося -- сповіщення, список лишається */
 			break;
 		case APRS_HUB_STATIONS:
