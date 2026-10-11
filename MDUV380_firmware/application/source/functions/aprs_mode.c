@@ -65,6 +65,7 @@ typedef struct
 	aprsModeUi_t           ui;
 #if defined(APRS_MODE_TRACE)
 	uint32_t               trSeen;         /* R10-fix: які номери тік-трасування (60..91) уже показано після входу/маяка */
+	uint32_t               trT0;           /* R10-fix3: мітка часу (мс) початку передачі -- trxSetTX(); рядок t= на екрані трасування */
 #endif
 } aprsModeMem_t;
 
@@ -91,33 +92,87 @@ static inline aprsModeMem_t *mem(void)
  * поточного завдання в БАЙТАХ (uxTaskGetStackHighWaterMark): якщо він близький до 0, зависання -- переповнення стека. */
 #define TRACE_NO_V  0xFFFFFFFFUL
 
-static void traceDraw(unsigned int n, unsigned long v)
+/* R10-fix3: ГАРАНТІЯ, що кадр на склі відповідає останньому виконаному кроку.
+ * Рендер (displayRenderRows) синхронний: HAL_DMA_PollForTransfer(HAL_MAX_DELAY) чекає кінця пересилки в FSMC. Але якщо
+ * DMA2/Stream0 застряг у стані «зайнято», HAL_DMA_Start() мовчки повертає HAL_BUSY і екран НЕ оновлюється -- тоді номер
+ * на склі відстає від коду. Тому перед малюванням: стан не READY -> примусовий HAL_DMA_Abort() і позначка «DMA!» на екрані;
+ * після малювання: чекаємо READY (до 50 мс) і ще 30 мс, поки кадр дійде до скла. Маяк у трасуванні повільніший -- це нормально. */
+static void traceDraw(unsigned int n, unsigned long v, bool hex)
 {
 	char b[12];
 	char c[24];
+	bool dmaFixed = false;
 
+	if (HAL_DMA_GetState(&hdma_memtomem_dma2_stream0) != HAL_DMA_STATE_READY)
+	{
+		(void)HAL_DMA_Abort(&hdma_memtomem_dma2_stream0);
+		dmaFixed = true;
+	}
 	snprintf(b, sizeof(b), "%u", n);
 	displayClearBuf();
-	displayPrintCentered(8, "APRS TRACE", FONT_SIZE_2);
+	displayPrintCentered(2, "APRS TRACE", FONT_SIZE_2);
+	if (aprsModeIsActive() && (mem()->trT0 != 0U))
+	{
+		snprintf(c, sizeof(c), "t=%lu ms", (unsigned long)(ticksGetMillis() - mem()->trT0));   /* від trxSetTX() */
+		displayPrintCentered(20, c, FONT_SIZE_2);
+	}
 	displayPrintCentered(48, b, FONT_SIZE_4);
 	if (v != TRACE_NO_V)
 	{
-		snprintf(c, sizeof(c), "v=%lu", v);
+		if (hex)
+		{
+			snprintf(c, sizeof(c), "0x%08lX", v);
+		}
+		else
+		{
+			snprintf(c, sizeof(c), "v=%lu", v);
+		}
 		displayPrintCentered(86, c, FONT_SIZE_2);
 	}
-	snprintf(c, sizeof(c), "stk %lu B", (unsigned long)uxTaskGetStackHighWaterMark(NULL) * (unsigned long)sizeof(StackType_t));
+	if (dmaFixed)
+	{
+		snprintf(c, sizeof(c), "stk %lu B DMA!", (unsigned long)uxTaskGetStackHighWaterMark(NULL) * (unsigned long)sizeof(StackType_t));
+	}
+	else
+	{
+		snprintf(c, sizeof(c), "stk %lu B", (unsigned long)uxTaskGetStackHighWaterMark(NULL) * (unsigned long)sizeof(StackType_t));
+	}
 	displayPrintCentered(106, c, FONT_SIZE_2);
 	displayRenderWithoutNotification();
+
+	{
+		uint32_t t0 = ticksGetMillis();
+
+		while ((HAL_DMA_GetState(&hdma_memtomem_dma2_stream0) != HAL_DMA_STATE_READY) && ((ticksGetMillis() - t0) < 50U))
+		{
+			vTaskDelay(1U);
+		}
+	}
+	vTaskDelay((30U / portTICK_PERIOD_MS));
 }
 
 void aprsModeTrace(unsigned int n)
 {
-	traceDraw(n, TRACE_NO_V);
+	traceDraw(n, TRACE_NO_V, false);
 }
 
 void aprsModeTraceV(unsigned int n, unsigned int v)
 {
-	traceDraw(n, (unsigned long)v);
+	traceDraw(n, (unsigned long)v, false);
+}
+
+void aprsModeTraceH(unsigned int n, unsigned long v)
+{
+	traceDraw(n, v, true);
+}
+
+/* Мітка «передача почалась» (перед trxSetTX): далі кожен кадр трасування показує t= від неї. */
+void aprsModeTraceMark(void)
+{
+	if (aprsModeIsActive())
+	{
+		mem()->trT0 = (ticksGetMillis() != 0U) ? ticksGetMillis() : 1U;
+	}
 }
 
 void aprsModeTraceT(unsigned int n)
