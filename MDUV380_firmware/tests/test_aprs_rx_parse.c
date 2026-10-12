@@ -109,6 +109,24 @@ static void b91(uint8_t *o, int64_t v)
 	for (int i = 3; i >= 0; i--) { o[i] = (uint8_t)(33 + (v % 91)); v /= 91; }
 }
 
+/* R11-fix: кадр шлюзу (SP5WWP-10 > APRS) з заданим info (байти), розбір AX.25, РОЗГОРТАННЯ third-party, розбір пакета.
+ * Повертає результат aprsAx25Unwrap() (1/0) або -1, якщо кадр шлюзу не розібрано. */
+static int tpParseBytes(const uint8_t *info, int infoLen, aprsAx25_t *ax, aprsPacket_t *pk, uint8_t *buf)
+{
+	int n = buildFrame(buf, "APRS", "SP5WWP", 10, 0, 0, info, infoLen);
+	int u;
+
+	if (!aprsAx25Parse(buf, (uint16_t)n, ax)) { memset(pk, 0, sizeof(*pk)); return -1; }
+	u = aprsAx25Unwrap(ax) ? 1 : 0;
+	aprsPacketParse(ax, pk);
+	return u;
+}
+
+static int tpParse(const char *info, aprsAx25_t *ax, aprsPacket_t *pk, uint8_t *buf)
+{
+	return tpParseBytes((const uint8_t *)info, (int)strlen(info), ax, pk, buf);
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -436,6 +454,232 @@ int main(void)
 		n = buildFrame(b, "APRS", "NEWER", 1, 0, 0, (const uint8_t *)"!", 1); aprsAx25Parse(b, (uint16_t)n, &a);
 		aprsDbUpdate(&db, &a, &p, 20UL);
 		CHECK(!strcmp(aprsDbNth(&db, 0, 100)->call, "NEWER-1"), "порядок після переходу лічильника мс");
+	}
+
+	printf("== R11-fix: third-party (i-gate, префікс '}') ==\n");
+	{
+		uint8_t b[400];
+		const char *m = "}UW5ELK-5>APDR16,TCPIP,SP5WWP-10*::US5EX-7  :test{5";
+		const uint8_t *infoBefore;
+		int u;
+
+		/* БАЗОВА лінія -- те, що було до виправлення: без розгортання пакет «інше», а джерело -- шлюз */
+		{
+			int n = buildFrame(b, "APRS", "SP5WWP", 10, 0, 0, (const uint8_t *)m, (int)strlen(m));
+			CHECK(aprsAx25Parse(b, (uint16_t)n, &ax), "кадр шлюзу розібрано як AX.25");
+			aprsPacketParse(&ax, &pk);
+			CHECK((pk.type == APRS_T_OTHER) && !strcmp(ax.src, "SP5WWP-10") && !ax.tp,
+					"без розгортання: «інше», джерело -- шлюз «%s» (це й був баг: банер «пакет від gateway»)", ax.src);
+		}
+
+		/* повідомлення нам, латиниця (пакет Богдана: UW5ELK-5 -> US5EX-7 через APRS-IS) */
+		u = tpParse(m, &ax, &pk, b);
+		CHECK(u == 1 && ax.tp, "розгорнуто");
+		CHECK(!strcmp(ax.src, "UW5ELK-5") && !strcmp(ax.dst, "APDR16") && !strcmp(ax.path, "TCPIP,SP5WWP-10*") && !strcmp(ax.gate, "SP5WWP-10"),
+				"справжній відправник «%s», призначення «%s», шлях «%s», шлюз «%s»", ax.src, ax.dst, ax.path, ax.gate);
+		CHECK((pk.type == APRS_T_MESSAGE) && !pk.msgAck && !strcmp(pk.msgTo, "US5EX-7") && !strcmp(pk.msgId, "5") && !strcmp(pk.text, "test"),
+				"повідомлення: адресат «%s», номер «%s», текст «%s»", pk.msgTo, pk.msgId, pk.text);
+		CHECK(aprsMsgIsForUs(pk.msgTo, "US5EX", 7), "... і воно НАМ (US5EX-7)");
+		CHECK(!aprsMsgIsForUs(pk.msgTo, "US5EX", 0) && !aprsMsgIsForUs(pk.msgTo, "US5EX", 1), "... а US5EX і US5EX-1 -- ні");
+
+		/* ack від справжнього відправника через шлюз */
+		u = tpParse("}UW5ELK-5>APDR16,TCPIP,SP5WWP-10*::US5EX-7  :ack12", &ax, &pk, b);
+		CHECK(u == 1 && !strcmp(ax.src, "UW5ELK-5") && (pk.type == APRS_T_MESSAGE) && pk.msgAck, "ack через шлюз: msgAck, джерело -- справжнє");
+
+		/* кирилиця UTF-8 («Привіт ґ Ґ є ї») через шлюз */
+		{
+			static const uint8_t head[] = "}UW5ELK-5>APDR16,TCPIP,SP5WWP-10*::US5EX-7  :";
+			static const uint8_t body[] = { 0xD0, 0x9F, 0xD1, 0x80, 0xD0, 0xB8, 0xD0, 0xB2, 0xD1, 0x96, 0xD1, 0x82, ' ',
+					0xD2, 0x91, 0xD2, 0x90, 0xD1, 0x94, 0xD1, 0x97, '{', '7' };
+			static const uint8_t want[] = { 0xCF, 0xF0, 0xE8, 0xE2, 0xB3, 0xF2, ' ', 0xB4, 0xA5, 0xBA, 0xBF, 0 };
+			uint8_t inf[120];
+			int hl = (int)sizeof(head) - 1;
+
+			memcpy(inf, head, (size_t)hl);
+			memcpy(inf + hl, body, sizeof(body));
+			u = tpParseBytes(inf, hl + (int)sizeof(body), &ax, &pk, b);
+			CHECK(u == 1 && (pk.type == APRS_T_MESSAGE) && !strcmp(pk.msgId, "7") && !strcmp(pk.text, (const char *)want),
+					"кирилиця UTF-8 -> cp1251 (Привіт ґ Ґ є ї), номер «%s»", pk.msgId);
+		}
+
+		/* позиція через шлюз */
+		u = tpParse("}N0CALL-9>APRS,TCPIP,SP5WWP-10*:!4903.50N/07201.75W-Test", &ax, &pk, b);
+		CHECK(u == 1 && !strcmp(ax.src, "N0CALL-9") && (pk.type == APRS_T_POSITION) && pk.hasPos && (pk.latU == dm(49, 3, 50)) &&
+				(pk.lonU == -dm(72, 1, 75)) && !strcmp(pk.text, "Test"), "позиція через шлюз: %d %d, «%s»", pk.latU, pk.lonU, pk.text);
+		u = tpParse("}N0CALL-9>APRS,TCPIP*:>On the air", &ax, &pk, b);
+		CHECK(u == 1 && (pk.type == APRS_T_STATUS) && !strcmp(pk.text, "On the air"), "статус через шлюз");
+
+		/* Mic-E через шлюз: призначення ВКЛАДЕНОГО кадру (а не шлюзу) несе широту */
+		{
+			uint8_t info[32], inf[120];
+			char dst[8];
+			int hl;
+
+			encodeMicE(dst, info, 49, 3, 50, 1, 72, 1, 75, 1);
+			strcpy((char *)&info[9], "Mic-E test");
+			hl = snprintf((char *)inf, sizeof(inf), "}N0CALL-9>%s,TCPIP,SP5WWP-10*:", dst);
+			memcpy(inf + hl, info, 9 + 10);
+			u = tpParseBytes(inf, hl + 9 + 10, &ax, &pk, b);
+			CHECK(u == 1 && !strcmp(ax.dst, dst) && (pk.type == APRS_T_POSITION) && pk.micE && (pk.latU == dm(49, 3, 50)) && (pk.lonU == -dm(72, 1, 75)) &&
+					!strcmp(pk.text, "Mic-E test"), "Mic-E через шлюз: %d %d, «%s»", pk.latU, pk.lonU, pk.text);
+		}
+
+		/* рівно ОДИН рівень: подвійне '}' не розгортається вдруге -- «інше» */
+		u = tpParse("}A1B>APRS,TCPIP*:}C2D>APRS,TCPIP*:!4903.50N/07201.75W-x", &ax, &pk, b);
+		CHECK(u == 1 && (pk.type == APRS_T_OTHER) && !strcmp(ax.src, "A1B") && ax.tp, "подвійне '}': розгорнуто один раз, пакет -- «інше», джерело «%s»", ax.src);
+		infoBefore = ax.info;
+		CHECK(!aprsAx25Unwrap(&ax) && (ax.info == infoBefore) && !strcmp(ax.src, "A1B"), "повторний Unwrap -- відмова, кадр не змінився");
+
+		/* порожнє вкладене info: розгортається, пакет «інше» */
+		u = tpParse("}UW5ELK-5>APRS,TCPIP*:", &ax, &pk, b);
+		CHECK(u == 1 && (ax.infoLen == 0) && (pk.type == APRS_T_OTHER) && !strcmp(ax.src, "UW5ELK-5"), "порожнє вкладене info");
+
+		/* SSID вкладеного позивного: -0 знімається, -1/-7/-15 лишаються, -07/-16/-00 -- відмова */
+		u = tpParse("}UW5ELK-0>APRS:>x", &ax, &pk, b);
+		CHECK(u == 1 && !strcmp(ax.src, "UW5ELK"), "«-0» -> без суфікса («%s»)", ax.src);
+		u = tpParse("}uw5elk-1>aprs:>x", &ax, &pk, b);
+		CHECK(u == 1 && !strcmp(ax.src, "UW5ELK-1") && !strcmp(ax.dst, "APRS"), "нижній регістр -> ВЕРХНІЙ, «-1»");
+		u = tpParse("}UW5ELK-7>APRS:>x", &ax, &pk, b);
+		CHECK(u == 1 && !strcmp(ax.src, "UW5ELK-7"), "«-7»");
+		u = tpParse("}UW5ELK-15>APRS:>x", &ax, &pk, b);
+		CHECK(u == 1 && !strcmp(ax.src, "UW5ELK-15"), "«-15»");
+		CHECK(tpParse("}UW5ELK-07>APRS:>x", &ax, &pk, b) == 0, "«-07» -- відмова");
+		CHECK(tpParse("}UW5ELK-16>APRS:>x", &ax, &pk, b) == 0, "«-16» -- відмова");
+		CHECK(tpParse("}UW5ELK-00>APRS:>x", &ax, &pk, b) == 0, "«-00» -- відмова");
+		CHECK(tpParse("}UW5ELK->APRS:>x", &ax, &pk, b) == 0, "«-» без цифри -- відмова");
+		CHECK(tpParse("}UW5ELKX>APRS:>x", &ax, &pk, b) == 0, "позивний довший за 6 -- відмова");
+
+		/* обрізані й побиті заголовки: false, кадр шлюзу НЕ змінений, пакет -- «інше», жодного виходу за межі */
+		{
+			static const char *const bad[] = {
+				"}", "}U", "}UW5ELK-5", "}UW5ELK-5>", "}UW5ELK-5>APDR16", "}UW5ELK-5>APDR16,TCPIP,SP5WWP-10*",
+				"}>APRS:x", "}UW5ELK-5>:x", "}UW5ELK 5>APRS:x", "}UW5#LK>APRS:x", "}UW5ELK-5>AP RS:x",
+				"}UW5ELK-5>APRS,TC PIP:x", "}UW5ELK-5>APRS,TCP\x01IP:x", "}UW5ELK-5>APRS,TCPIP",
+				"}UW5ELK-5,APRS:x", "}:x", "}>:"
+			};
+			int allBad = 1, allSame = 1, allOther = 1;
+
+			for (size_t k = 0; k < sizeof(bad) / sizeof(bad[0]); k++)
+			{
+				u = tpParse(bad[k], &ax, &pk, b);
+				if (u != 0) { allBad = 0; printf("   [не відмовило: %s]\n", bad[k]); }
+				if (strcmp(ax.src, "SP5WWP-10") || ax.tp) { allSame = 0; }
+				if (pk.type != APRS_T_OTHER) { allOther = 0; }
+			}
+			CHECK(allBad, "обрізані/побиті заголовки -- Unwrap відмовляє");
+			CHECK(allSame, "... кадр шлюзу не змінено (джерело лишається шлюзом, tp = false)");
+			CHECK(allOther, "... пакет -- «інше»");
+		}
+		{
+			/* заголовок без ':' довший за ліміт (120 Б) -- відмова, а не читання за межами; довгий, але в межах ліміту шлях -- обрізається */
+			uint8_t inf[300];
+			memset(inf, 'A', sizeof(inf));
+			inf[0] = '}'; inf[1] = 'A'; inf[2] = '>'; inf[3] = 'B'; inf[4] = ',';
+			CHECK(tpParseBytes(inf, 250, &ax, &pk, b) == 0, "шлях без ':' на 250 Б -- відмова");
+			inf[200] = ':';
+			CHECK(tpParseBytes(inf, 250, &ax, &pk, b) == 0, "':' за межею 120 Б заголовка -- відмова");
+			memset(inf, 'A', sizeof(inf));
+			inf[0] = '}'; inf[1] = 'A'; inf[2] = '>'; inf[3] = 'B'; inf[4] = ',';
+			inf[100] = ':';
+			u = tpParseBytes(inf, 120, &ax, &pk, b);
+			CHECK(u == 1 && (strlen(ax.path) < sizeof(ax.path)) && (ax.infoLen == 19), "довгий шлях: обрізається до %u, info %u Б", (unsigned)strlen(ax.path), (unsigned)ax.infoLen);
+		}
+		{
+			/* псевдовипадковий фарш після '}' (фіксоване зерно): не падати; якщо розгорнуто -- info усередині кадру */
+			uint32_t seed = 12345U;
+			int outside = 0, unwrapped = 0;
+
+			for (int it = 0; it < 20000; it++)
+			{
+				uint8_t inf[96];
+				int len = 1 + (int)(seed % 90U);
+
+				for (int i = 0; i < len; i++) { seed = seed * 1664525U + 1013904223U; inf[i] = (uint8_t)(seed >> 24); }
+				inf[0] = '}';
+				if ((it & 1) && (len > 12)) { memcpy(inf + 1, "AB1CD>APRS,X", 12); inf[7 + (it % 5)] = ':'; }
+				u = tpParseBytes(inf, len, &ax, &pk, b);
+				if (u == 1)
+				{
+					unwrapped++;
+					if ((ax.info < b) || ((ax.info + ax.infoLen) > (b + sizeof(b))) || (ax.infoLen > len)) { outside++; }
+				}
+			}
+			CHECK(outside == 0, "20000 випадкових кадрів з '}' -- без виходу за межі (розгорнуто %d)", unwrapped);
+		}
+
+		/* дедуплікація: той самий пакет напряму і через шлюз -- ОДИН пакет і ОДНА станція */
+		{
+			static aprsRxDb_t db;
+			aprsAx25_t direct, gated;
+			aprsPacket_t pd, pg;
+			uint8_t b1[200], b2[200];
+			const char *inner = ":US5EX-7  :test{5";
+			char viaGate[120];
+			int n1, n2;
+
+			aprsDbInit(&db);
+			n1 = buildFrame(b1, "APDR16", "UW5ELK", 5, 0, 0, (const uint8_t *)inner, (int)strlen(inner));
+			snprintf(viaGate, sizeof(viaGate), "}UW5ELK-5>APDR16,TCPIP,SP5WWP-10*:%s", inner);
+			n2 = buildFrame(b2, "APRS", "SP5WWP", 10, 0, 0, (const uint8_t *)viaGate, (int)strlen(viaGate));
+			CHECK(aprsAx25Parse(b1, (uint16_t)n1, &direct) && aprsAx25Parse(b2, (uint16_t)n2, &gated) && aprsAx25Unwrap(&gated), "прямий і через шлюз розібрано");
+			aprsPacketParse(&direct, &pd);
+			aprsPacketParse(&gated, &pg);
+			CHECK(!strcmp(direct.src, gated.src) && (direct.infoLen == gated.infoLen) && !memcmp(direct.info, gated.info, direct.infoLen),
+					"джерело й info однакові після розгортання");
+			CHECK(!aprsDbIsDuplicate(&db, &direct, 1000) && aprsDbIsDuplicate(&db, &gated, 4000), "прямий, потім через шлюз (+3 с) -- дублікат");
+			CHECK(!aprsDbMsgSeen(&db, &direct, &pd, 1000) && aprsDbMsgSeen(&db, &gated, &pg, 4000), "... і для «повідомлення вже віддавали»");
+			aprsDbUpdate(&db, &direct, &pd, 1000);
+			aprsDbUpdate(&db, &gated, &pg, 4000);
+			CHECK((aprsDbCount(&db) == 1) && !strcmp(aprsDbNth(&db, 0, 5000)->call, "UW5ELK-5") && (aprsDbNth(&db, 0, 5000)->count == 2),
+					"у списку один рядок UW5ELK-5 (шлюзу там нема)");
+			aprsDbInit(&db);
+			CHECK(!aprsDbIsDuplicate(&db, &gated, 1000) && aprsDbIsDuplicate(&db, &direct, 2000), "спершу через шлюз, потім напряму -- дублікат");
+		}
+	}
+
+	printf("== R11-fix: адресат повідомлення («нам / не нам») ==\n");
+	{
+		uint8_t b[300];
+		struct { const char *info; const char *call; unsigned ssid; int want; const char *what; } t[] = {
+			{ ":US5EX-7  :x{1", "US5EX", 7, 1, "точний збіг US5EX-7" },
+			{ ":US5EX-7  :x{1", "us5ex", 7, 1, "власний позивний у нижньому регістрі" },
+			{ ":us5ex-7  :x{1", "US5EX", 7, 1, "адресат у нижньому регістрі" },
+			{ ":US5EX-7:x{1", "US5EX", 7, 0, "адресат коротший за 9 без пробілів -- формат зіпсований, не вважаємо своїм" },
+			{ ":US5EX-7   :x{1", "US5EX", 7, 0, "10-й символ не ':' -- формат зіпсований" },
+			{ ":US5EX -7 :x{1", "US5EX", 7, 0, "пробіл усередині («US5EX -7») -- не наш" },
+			{ ": US5EX-7 :x{1", "US5EX", 7, 0, "пробіл попереду -- не наш" },
+			{ ":US5EX-70 :x{1", "US5EX", 7, 0, "US5EX-70 -- не US5EX-7" },
+			{ ":US5EX-07 :x{1", "US5EX", 7, 0, "«-07» -- не наш (SSID без нулів)" },
+			{ ":US5EX-7  :x{1", "US5EX", 8, 0, "інший SSID" },
+			{ ":US5EX    :x{1", "US5EX", 0, 1, "SSID 0: голий позивний" },
+			{ ":US5EX-0  :x{1", "US5EX", 0, 1, "SSID 0: «-0» теж" },
+			{ ":US5EX    :x{1", "US5EX", 7, 0, "адресат без SSID -- не для US5EX-7" },
+			{ ":US5EX-1  :x{1", "US5EX", 1, 1, "SSID 1" },
+			{ ":US5EX-15 :x{1", "US5EX", 15, 1, "SSID 15" },
+			{ ":US5EX-15 :x{1", "US5EX", 5, 0, "15 не 5" },
+			{ ":US5EX-1  :x{1", "US5EX", 11, 0, "1 не 11" },
+			{ ":US5EX-7  :x{1", "US5EX", 16, 0, "власний SSID 16 (сміття) -- ніколи" },
+			{ ":US5EX-7  :x{1", "", 7, 0, "власного позивного нема -- ніколи" },
+		};
+
+		for (size_t k = 0; k < sizeof(t) / sizeof(t[0]); k++)
+		{
+			parseInfo("APRS", t[k].info, &ax, &pk, b);
+			CHECK((pk.type == APRS_T_MESSAGE) ? (aprsMsgIsForUs(pk.msgTo, t[k].call, (uint8_t)t[k].ssid) == (t[k].want != 0)) : (t[k].want == 0),
+					"%s", t[k].what);
+		}
+	}
+
+	printf("== R11-fix: SSID у розборі адреси (0, 1, 7, 10, 15) ==\n");
+	{
+		static const struct { int ssid; const char *want; } t[] = { { 0, "TEST" }, { 1, "TEST-1" }, { 7, "TEST-7" }, { 10, "TEST-10" }, { 15, "TEST-15" } };
+		uint8_t b[100];
+
+		for (size_t k = 0; k < sizeof(t) / sizeof(t[0]); k++)
+		{
+			int n = buildFrame(b, "APRS", "TEST", t[k].ssid, 0, 0, (const uint8_t *)">x", 2);
+			CHECK(aprsAx25Parse(b, (uint16_t)n, &ax) && !strcmp(ax.src, t[k].want), "SSID %d -> «%s»", t[k].ssid, t[k].want);
+		}
 	}
 
 	printf("== відстань і азимут ==\n");

@@ -79,7 +79,14 @@ static void pathStr(char *b, size_t n, const char *name, uint8_t ssid)
 	}
 	else
 	{
-		snprintf(b, n, APRSM_V_PATH_FMT, name, (unsigned)ssid);
+		if (ssid == 0U)
+		{
+			snprintf(b, n, "%s", name);   /* SSID 0 -- без «-0» (R11-fix) */
+		}
+		else
+		{
+			snprintf(b, n, APRSM_V_PATH_FMT, name, (unsigned)ssid);
+		}
 	}
 }
 
@@ -270,7 +277,16 @@ static void drawMonitor(void)
 		printRow(8, APRSM_M_MANUAL);
 	}
 
-	printRow(9, APRSM_M_NORX);
+	if (last->valid && last->tp)
+	{
+		/* R11-fix: останній пакет прийшов через i-gate (third-party): рядок 5 -- справжній відправник, тут -- шлюз */
+		snprintf(buf, sizeof(buf), APRSM_M_3P, last->gate);
+		printRow(9, buf);
+	}
+	else
+	{
+		printRow(9, APRSM_M_NORX);
+	}
 	printRow(10, APRSM_M_HINT);
 }
 
@@ -339,7 +355,14 @@ static void editOpen(int field)
 			ed->mtMode = SMS_MT_LAT_UP;
 			if (e->path[p][0] != 0)
 			{
-				snprintf(ed->buf, sizeof(ed->buf), "%s-%u", e->path[p], (unsigned)e->pathSsid[p]);
+				if (e->pathSsid[p] == 0U)
+				{
+					snprintf(ed->buf, sizeof(ed->buf), "%s", e->path[p]);   /* SSID 0 -- без «-0» (R11-fix) */
+				}
+				else
+				{
+					snprintf(ed->buf, sizeof(ed->buf), "%s-%u", e->path[p], (unsigned)e->pathSsid[p]);
+				}
 			}
 			break;
 		}

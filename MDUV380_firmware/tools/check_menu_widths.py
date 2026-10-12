@@ -385,8 +385,7 @@ if os.path.exists(mode_path):
     }
     def worst(name, val):
         t = val.replace('%%', '\x01')
-        if name == 'APRSM_M_LAST':
-            t = t.replace('%.9s', 'X' * 9).replace('%.7s', 'X' * 7)
+        t = re.sub(r'%\.(\d+)s', lambda m_: 'X' * int(m_.group(1)), t)   # «%.9s» -- рівно стільки символів (R11-fix: і для APRSM_M_3P)
         t = t.replace('%02u', '59').replace('%lu', '99999').replace('%d', '-120').replace('%c', '*').replace('%u', '65535')
         if name == 'APRSM_TITLE_FMT':
             t = val.replace('%u', '3')

@@ -124,6 +124,140 @@ bool aprsAx25Parse(const uint8_t *f, uint16_t len, aprsAx25_t *out)
 	return true;
 }
 
+/* ---- third-party ("}") -- R11-fix ------------------------------------------------------------------------- */
+/* Формат (APRS-IS, «IGate Details», aprs-is.net/IGateDetails.aspx -- звірено дослівно): i-gate шле в ефір
+ *     IGATECALL>APRS,GATEPATH:}FROMCALL>TOCALL,TCPIP,IGATECALL*:оригінальне info
+ * тобто info кадру шлюзу = '}' + повний вкладений кадр у текстовому вигляді; шлях вкладеного кадру завжди містить «TCPIP,IGATECALL*»
+ * (це захист від повернення в APRS-IS). Таблицю DTI з APRS101 ('}' = «Third-party traffic») бачили, а тіло розділу 17 PDF автоматично
+ * не читається (витяг обривається раніше) -- тому правила нижче (один рівень, ліміт заголовка 120 Б) -- наші, обережні. */
+
+static bool isDig(uint8_t c);
+
+#define APRS_TP_HEAD_MAX   120U     /* заголовок "SRC>DST,path:" довший за це -- не наш формат (8 цифіпітерів по 9 + позивні ~ 100) */
+
+/* Позивний вкладеного заголовка: 1..6 символів A-Z/0-9 (регістр не важливий), далі необов'язково «-SSID» (1..15 без нулів попереду;
+ * «-0» -- те саме, що без SSID). Результат (ВЕРХНІЙ регістр, SSID 0 без суфікса) -- у out. */
+static bool tpCall(const uint8_t *p, size_t n, char out[APRS_CALL_LEN])
+{
+	size_t k = 0, i = 0;
+
+	while ((i < n) && (p[i] != '-'))
+	{
+		uint8_t c = p[i];
+
+		if ((c >= 'a') && (c <= 'z'))
+		{
+			c = (uint8_t)(c - 'a' + 'A');
+		}
+		if ((k >= 6U) || (!(((c >= 'A') && (c <= 'Z')) || isDig(c))))
+		{
+			return false;
+		}
+		out[k++] = (char)c;
+		i++;
+	}
+	if (k == 0U)
+	{
+		return false;
+	}
+	if (i < n)   /* p[i] == '-' */
+	{
+		size_t sl = n - i - 1U;
+		unsigned v;
+
+		if ((sl < 1U) || (sl > 2U) || (!isDig(p[i + 1U])) || ((sl == 2U) && ((!isDig(p[i + 2U])) || (p[i + 1U] == '0'))))
+		{
+			return false;
+		}
+		v = (unsigned)(p[i + 1U] - '0');
+		if (sl == 2U)
+		{
+			v = (v * 10U) + (unsigned)(p[i + 2U] - '0');
+		}
+		if (v > 15U)
+		{
+			return false;
+		}
+		if (v != 0U)
+		{
+			out[k++] = '-';
+			if (v >= 10U)
+			{
+				out[k++] = '1';
+				v -= 10U;
+			}
+			out[k++] = (char)('0' + v);
+		}
+	}
+	out[k] = 0;
+	return true;
+}
+
+bool aprsAx25Unwrap(aprsAx25_t *ax)
+{
+	const uint8_t *in = ax->info;
+	size_t n = ax->infoLen;
+	size_t lim, s, i, pl = 0;
+	char src[APRS_CALL_LEN] = { 0 }, dst[APRS_CALL_LEN] = { 0 }, path[APRS_PATH_LEN] = { 0 };
+
+	/* не '}' або вже розгорнуто (один рівень: подвійне '}' далі стане «інше») */
+	if (ax->tp || (in == NULL) || (n < 5U) || (in[0] != '}'))
+	{
+		return false;
+	}
+	lim = (n < APRS_TP_HEAD_MAX) ? n : APRS_TP_HEAD_MAX;
+
+	for (i = 1U; (i < lim) && (in[i] != '>'); i++)
+	{
+	}
+	if ((i >= lim) || (tpCall(in + 1, i - 1U, src) == false))
+	{
+		return false;   /* нема '>' або джерело не схоже на позивний */
+	}
+	s = i + 1U;
+	for (i = s; (i < lim) && (in[i] != ',') && (in[i] != ':'); i++)
+	{
+	}
+	if ((i >= lim) || (tpCall(in + s, i - s, dst) == false))
+	{
+		return false;
+	}
+	if (in[i] == ',')
+	{
+		for (i++; (i < lim) && (in[i] != ':'); i++)
+		{
+			uint8_t c = in[i];
+
+			if ((c >= 'a') && (c <= 'z'))
+			{
+				c = (uint8_t)(c - 'a' + 'A');
+			}
+			if (!(((c >= 'A') && (c <= 'Z')) || isDig(c) || (c == ',') || (c == '*') || (c == '-')))
+			{
+				return false;   /* побитий байт у шляху */
+			}
+			if ((pl + 1U) < sizeof(path))
+			{
+				path[pl++] = (char)c;   /* зайве просто відсікається: шлях лише для показу */
+			}
+		}
+		if (i >= lim)
+		{
+			return false;   /* нема ':' -- заголовок обрізано */
+		}
+	}
+	path[pl] = 0;
+	/* in[i] == ':' -- далі справжнє info (може бути порожнім: тоді «інше») */
+	memcpy(ax->gate, ax->src, sizeof(ax->gate));
+	memcpy(ax->src, src, sizeof(ax->src));
+	memcpy(ax->dst, dst, sizeof(ax->dst));
+	memcpy(ax->path, path, sizeof(ax->path));
+	ax->info = in + i + 1U;
+	ax->infoLen = (uint16_t)(n - (i + 1U));
+	ax->tp = true;
+	return true;
+}
+
 /* ===================================================================================== */
 /* Текст                                                                                  */
 /* ===================================================================================== */
@@ -639,7 +773,7 @@ bool aprsMsgIsForUs(const char *msgTo, const char *ownCall, uint8_t ownSsid)
 		}
 		want[k++] = c;
 	}
-	if (k == 0U)
+	if ((k == 0U) || (ownSsid > 15U))
 	{
 		return false;
 	}

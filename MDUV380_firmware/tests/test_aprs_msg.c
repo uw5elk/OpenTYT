@@ -606,6 +606,48 @@ static void testWrapAndInbox(void)
 	}
 }
 
+/* R11-fix: позивний-SSID в адресаті повідомлення й ACK -- байт-у-байт проти еталонів, виписаних вручну.
+ * Поле адресата рівно 9 символів, пробіли ТІЛЬКИ праворуч; SSID 0 -- без «-0»; 1..15 -- «-1»…«-15» без нулів і пробілів. */
+static void testSsidForms(void)
+{
+	static const struct { const char *typed; const char *msg; const char *ack; unsigned ssid; } t[] = {
+		{ "UW5ELK",    ":UW5ELK   :Hi{01", ":UW5ELK   :ack01", 0U },
+		{ "UW5ELK-0",  ":UW5ELK   :Hi{01", ":UW5ELK   :ack01", 0U },
+		{ "uw5elk-1",  ":UW5ELK-1 :Hi{01", ":UW5ELK-1 :ack01", 1U },
+		{ "UW5ELK-7",  ":UW5ELK-7 :Hi{01", ":UW5ELK-7 :ack01", 7U },
+		{ "UW5ELK-10", ":UW5ELK-10:Hi{01", ":UW5ELK-10:ack01", 10U },
+		{ "UW5ELK-15", ":UW5ELK-15:Hi{01", ":UW5ELK-15:ack01", 15U },
+	};
+	char out[96];
+
+	for (unsigned k = 0; k < sizeof(t) / sizeof(t[0]); k++)
+	{
+		aprsAx25_t ax;
+		aprsPacket_t pk;
+		size_t n = aprsMsgBuildMessage(out, sizeof(out), t[k].typed, "Hi", "01");
+
+		CHECK(n == 16U && strcmp(out, t[k].msg) == 0, "повідомлення «%s» -> \"%s\" (еталон \"%s\")", t[k].typed, out, t[k].msg);
+		CHECK(out[10] == ':' && strchr(out + 1, '\t') == NULL, "поле адресата рівно 9 символів, 10-й -- ':'");
+		/* пробіли лише праворуч: між першим пробілом і ':' нема нічого, крім пробілів */
+		{
+			const char *sp = strchr(out + 1, ' ');
+			int onlySpaces = 1;
+
+			for (const char *c = sp; (sp != NULL) && (c < out + 10); c++) { if (*c != ' ') { onlySpaces = 0; } }
+			CHECK(onlySpaces, "пробіли в адресаті лише праворуч");
+		}
+		/* наш же приймач: адресат ПІСЛЯ розбору збігається з нашим позивним-SSID, а з іншим SSID -- ні */
+		memset(&ax, 0, sizeof(ax));
+		ax.info = (const uint8_t *)out;
+		ax.infoLen = (uint16_t)n;
+		aprsPacketParse(&ax, &pk);
+		CHECK((pk.type == APRS_T_MESSAGE) && aprsMsgIsForUs(pk.msgTo, "UW5ELK", (uint8_t)t[k].ssid) && !aprsMsgIsForUs(pk.msgTo, "UW5ELK", (uint8_t)((t[k].ssid + 1U) & 15U)),
+				"приймач: «%s» -- це UW5ELK з SSID %u і лише він", pk.msgTo, t[k].ssid);
+		n = aprsMsgBuildAck(out, sizeof(out), t[k].typed, "01");
+		CHECK(strcmp(out, t[k].ack) == 0 && (n == strlen(t[k].ack)), "ACK «%s» -> \"%s\" (еталон \"%s\")", t[k].typed, out, t[k].ack);
+	}
+}
+
 int main(void)
 {
 	testCharBytes();
@@ -620,6 +662,7 @@ int main(void)
 	testScheduling();
 	testNumbersAndOverflow();
 	testWrapAndInbox();
+	testSsidForms();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_msg: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);
