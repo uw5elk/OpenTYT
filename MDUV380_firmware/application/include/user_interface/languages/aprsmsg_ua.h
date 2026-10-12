@@ -16,6 +16,7 @@
 
 /* ---- пункт меню «APRS» і заголовки ---- */
 #define APRSMSG_MENU          "Повідом. APRS"
+#define APRSMSG_MENU_NEW      "Повід. APRS: %u"   /* пункт хабу, коли є непрочитані (16 симв. -- буфер рядка меню) */
 #define APRSMSG_TITLE         "Повідом. APRS"
 #define APRSMSG_TITLE_NEW     "Нове повідом."
 #define APRSMSG_TITLE_REPLY   "Відповідь"
@@ -40,19 +41,21 @@
 
 /* ---- набір ---- */
 #define APRSMSG_C_CALL        "Кому (позивний):"
-#define APRSMSG_C_CALL_HINT   "A-Z, 0-9, -SSID"
+#define APRSMSG_C_CALL_HINT   "A-Z,0-9,-SSID D:літери"
 #define APRSMSG_C_CALL_KEYS   "GREEN:далі RED:скасув."
 #define APRSMSG_C_TO          "Кому: %s"
 #define APRSMSG_C_LEFT        "Лишилось: %u Б"
 #define APRSMSG_C_MODE_HINT   "#:режим"
-#define APRSMSG_C_HINT1       "<:стерти"
+#define APRSMSG_C_HINT1       "D:літери  L:стерти"
 #define APRSMSG_C_HINT2       "GREEN:надіслати RED:назад"
+/* шпаргалка розкладки (D на екрані набору) -- та сама, що в «Повідомленнях» DMR (uiSmsKeys.c) */
+#define APRSMSG_K_TITLE       "Розкладка: %s"
+#define APRSMSG_K_BACK        "будь-яка клавіша: назад"
 
 /* ---- сповіщення (до 16 символів) ---- */
 #define APRSMSG_E_CALL        "Невірн.позивний"
 #define APRSMSG_E_TEXT        "Порожній текст"
 #define APRSMSG_E_FULL        "Черга повна"
-#define APRSMSG_E_EXIT        "RED ще раз:вихід"
 #define APRSMSG_E_NOTX        "Не передано"
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSMSG_UA_H_ */

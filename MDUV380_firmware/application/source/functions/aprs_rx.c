@@ -33,9 +33,6 @@
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h"
 #endif
-#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
-#include "functions/dmr_sms.h"
-#endif
 #if defined(APRS_RX_PROBE)
 #include "functions/aprs_rx_probe.h"
 #endif
@@ -722,15 +719,12 @@ static void flushPending(void)
 		int n = (int)strlen(s_rx.pend.note);
 		s_rx.pend.msg = false;
 		s_rx.pend.banner = false;
-#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
-		dmrSmsAddAprsInbox(s_rx.pend.note, n);   /* блокуючий запис у флеш, як для SMS */
-		s_rx.st.msgStored++;
-#endif
+		s_rx.st.msgStored++;   /* R11-fix2: сховище SMS НЕ чіпаємо -- повідомлення вже у списку «Повідом. APRS» (aprsMsgBgNewMessage()) */
 		char note[APRS_RX_NOTE_TEXT + 8];
 		snprintf(note, sizeof(note), "APRS %s", s_rx.pend.note);
 		/* Так само, як вхідне SMS: будимо підсвітку, картка на весь екран до RED і сигнал. */
 		displayLightTrigger(false);
-		uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_SMS, 60000, note, true);
+		uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_MSG, 60000, note, true);   /* R11-fix2: власний id -- картка малює ЦЕЙ текст, а не останнє SMS зі сховища */
 		soundSetMelody(MELODY_SMS_RECEIVED_BEEP);
 		(void)n;
 		return;
@@ -776,7 +770,9 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 	aprsPacketParse(&ax, &pkt);   /* R11: розбір ДО відсіву дублікатів -- ACK на повторене відправником повідомлення потрібен і для дубліката */
 	if ((pkt.type == APRS_T_MESSAGE) && s_rx.ownCall[0] && aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid))
 	{
-		aprsModeMsgPre(&ax, &pkt);   /* R11: лише в «Режимі APRS»: ACK на наше -- скасувати повтори; повідомлення з номером -- ACK негайно */
+		/* R11-fix2: незалежно від «Режиму APRS»: ACK на наше -- скасувати повтори; повідомлення з номером -- ACK у фонову чергу
+		 * НЕГАЙНО і на КОЖНУ копію (і на дублікат нижче: відправник повторює, доки не почує ACK). Рішення «показувати чи ні» -- пізніше. */
+		aprsMsgBgOnMessage(&ax, &pkt);
 	}
 	if (aprsDbIsDuplicate(&s_rx.db, &ax, now))
 	{
@@ -798,21 +794,31 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		aprsModeOnFrame(&ax, &pkt, mg, md, mb);   /* R10: «останній пакет» на «Моніторі» */
 	}
 
-	/* Повідомлення нам: тільки справжнє (не ack/rej), раніше не віддане. ACK шле «Режим APRS» (R11, aprsModeMsgPre()); поза режимом -- ні. */
+	/* Повідомлення нам: тільки справжнє (не ack/rej), раніше не віддане. ACK уже поставлено вище (aprsMsgBgOnMessage(), на кожну копію);
+	 * тут лише рішення «показувати чи ні». Повторна копія (відправник чекає ACK) користувачу вдруге не показується і банера станції
+	 * не дає. Сховище SMS не чіпаємо. */
+	bool msgCopy = false;
+
 	if ((pkt.type == APRS_T_MESSAGE) && (pkt.msgAck == false) && (s_rx.ownCall[0] != 0) &&
-			aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid) && (aprsDbMsgSeen(&s_rx.db, &ax, &pkt, now) == false))
+			aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid))
 	{
-		aprsModeMsgIncoming(&ax, &pkt);   /* R11: у «Режимі APRS» -- ще й у список екрана «Повідомлення» */
-		if (s_rx.pend.msg)
+		if (aprsDbMsgSeen(&s_rx.db, &ax, &pkt, now))
 		{
-			flushPending();   /* два повідомлення за один блок -- перше віддаємо зараз */
+			msgCopy = true;
 		}
-		snprintf(s_rx.pend.note, sizeof(s_rx.pend.note), "%s: %s", ax.src, pkt.text);
-		s_rx.pend.msg = true;
+		else if (aprsMsgBgNewMessage(&ax, &pkt))   /* у список «Повідом. APRS» (постійний блок) -- і в режимі, і поза ним */
+		{
+			if (s_rx.pend.msg)
+			{
+				flushPending();   /* два повідомлення за один блок -- перше віддаємо зараз */
+			}
+			snprintf(s_rx.pend.note, sizeof(s_rx.pend.note), "%s: %s", ax.src, pkt.text);
+			s_rx.pend.msg = true;
+		}
 	}
 
 	/* Банер: кожен новий недублікат. */
-	if (s_rx.pend.msg == false)
+	if ((s_rx.pend.msg == false) && (msgCopy == false))
 	{
 		s_rx.pend.banner = true;
 		s_rx.pend.type = pkt.type;

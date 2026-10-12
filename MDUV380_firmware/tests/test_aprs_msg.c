@@ -498,15 +498,17 @@ static void testNumbersAndOverflow(void)
 	(void)aprsMsgSend(b, "AAA", "x", t);
 	CHECK(strlen(b->list[0].id) == 2U && b->list[0].id[0] >= '0' && b->list[0].id[0] <= '9' && strcmp(b->list[0].id, "00") != 0, "seed великий -- номер 01..99: %s", b->list[0].id);
 
-	/* переповнення черги: 4 повідомлення, 5-те -- відмова; ACK при повній черзі -- false */
+	/* переповнення черги: 4 повідомлення, 5-те -- відмова; R11-fix2: ACK при повній черзі ВИТІСНЯЄ найстаріше наше повідомлення */
 	aprsMsgInit(b, 0U);
 	for (int i = 0; i < 4; i++)
 	{
-		CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_OK, "повідомлення %d у чергу", i);
+		CHECK(aprsMsgSend(b, "AAA", "x", t + (uint32_t)i) == AMSG_OK, "повідомлення %d у чергу", i);
 	}
 	CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_E_FULL, "5-те -- черга повна");
-	CHECK(aprsMsgQueueAck(b, "BBB", "1", t) == false, "ACK при повній черзі не вміщається");
-	CHECK(aprsMsgPendingCount(b) == 4U && aprsMsgListCount(b) == 4U, "у черзі 4, у списку 4");
+	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U) == true, "ACK при повній черзі витісняє наше повідомлення");
+	CHECK(aprsMsgPendingCount(b) == 3U && aprsMsgAckPending(b) == 1U && aprsMsgQueueLen(b) == 4U && aprsMsgListCount(b) == 4U, "у черзі 3 повідомлення + ACK, у списку 4");
+	CHECK(b->list[3].status == AMSG_ST_NOACK && strcmp(b->list[3].id, "01") == 0, "витіснене -- найстаріше (номер 01) -- стало «без ACK»");
+	CHECK(b->list[0].status == AMSG_ST_WAIT && b->list[1].status == AMSG_ST_WAIT && b->list[2].status == AMSG_ST_WAIT, "решта чекають");
 	/* відмови не псують стан: помилковий адресат/текст */
 	aprsMsgInit(b, 0U);
 	CHECK(aprsMsgSend(b, "A B", "x", t) == AMSG_E_CALL && aprsMsgSend(b, "AAA", "a:b", t) == AMSG_E_TEXT && aprsMsgSend(b, "AAA", "", t) == AMSG_E_TEXT, "помилки адресата й тексту");
@@ -583,18 +585,6 @@ static void testWrapAndInbox(void)
 	n = aprsMsgWrapLine("0123456789 ab", 13, 0, 10, &ls, &nx);
 	CHECK(n == 10 && nx == 11, "рівно по ширині + пробіл: n=%d nx=%d", n, nx);
 
-	/* запис зі сховища SMS «ВІДПРАВНИК: текст» */
-	{
-		char call[10];
-		const char *tx;
-
-		CHECK(aprsMsgSplitInbox("UW5ELK-7: Hello", call, &tx) && strcmp(call, "UW5ELK-7") == 0 && strcmp(tx, "Hello") == 0, "розбір запису сховища");
-		CHECK(aprsMsgSplitInbox("UW5ELK:x", call, &tx) && strcmp(tx, "x") == 0, "без пробілу після двокрапки");
-		CHECK(aprsMsgSplitInbox("UW5ELK-7: a: b", call, &tx) && strcmp(tx, "a: b") == 0, "двокрапка в тексті лишається");
-		CHECK(aprsMsgSplitInbox("no colon here", call, &tx) == false && aprsMsgSplitInbox(": x", call, &tx) == false && aprsMsgSplitInbox("TOOLONGCALLSIGN: x", call, &tx) == false,
-				"не схоже на запис -- відмова");
-		CHECK(aprsMsgSplitInbox(NULL, call, &tx) == false, "NULL");
-	}
 	/* пауза між передачами */
 	{
 		aprsMsgBox_t *b = &g_box;
@@ -604,6 +594,189 @@ static void testWrapAndInbox(void)
 		aprsMsgTxEnded(b, 10000U);
 		CHECK(aprsMsgGapOk(b, 11999U) == false && aprsMsgGapOk(b, 12000U) == true, "рівно 2 с після кінця");
 	}
+}
+
+
+/* ---- R11-fix2: ACK на КОЖНУ копію, довгі повідомлення, пріоритет і витіснення, лічильники ---------------------------- */
+
+/* cp1251 -> UTF-8 БЕЗ ліміту 67 байт (як це робить APRSdroid): так довге повідомлення надходить з ефіру. */
+static size_t cpToUtf8Full(const char *cp, char *out, size_t cap)
+{
+	size_t n = 0;
+
+	for (; *cp != 0; cp++)
+	{
+		uint8_t c = (uint8_t)*cp;
+
+		if (c < 0x80U)
+		{
+			out[n++] = (char)c;
+		}
+		else
+		{
+			uint16_t u = aprsModeCp1251ToUcs2(c);
+
+			out[n++] = (char)(0xC0U | (u >> 6));
+			out[n++] = (char)(0x80U | (u & 0x3FU));
+		}
+		if (n + 3U >= cap)
+		{
+			break;
+		}
+	}
+	out[n] = 0;
+	return n;
+}
+
+/* Прогнати інфо-поле через ТОЙ САМИЙ розбір, що в приймачі (aprsPacketParse), і віддати поля як їх бачить aprs_rx.c. */
+static void rxInfo(const char *utf8Info, aprsPacket_t *pkt)
+{
+	aprsAx25_t ax;
+
+	memset(&ax, 0, sizeof(ax));
+	ax.info = (const uint8_t *)utf8Info;
+	ax.infoLen = (uint16_t)strlen(utf8Info);
+	aprsPacketParse(&ax, pkt);
+}
+
+static void testFix2(void)
+{
+	aprsMsgBox_t *b = &g_box;
+	char info[160];
+	uint32_t t = 100000U;
+
+	/* --- ACK на КОЖНУ копію: три копії того самого повідомлення -> три ACK, один рядок у списку ---------------------------- */
+	aprsMsgInit(b, 0U);
+	for (int i = 0; i < 3; i++)
+	{
+		uint32_t ti = t + (uint32_t)i * 31000U;   /* APRSdroid повторює з інтервалом у десятки секунд */
+
+		aprsMsgCountRx(b);
+		CHECK(aprsMsgQueueAck(b, "UW5ELK-5", "5", ti) == true, "копія %d: ACK поставлено ДО рішення про дублікат", i);
+		CHECK(aprsMsgOnIncoming(b, "UW5ELK-5", "hello", "5", ti) == (i == 0), "копія %d: у списку лише перша", i);
+		CHECK(aprsMsgPoll(b, ti, false, true, info, sizeof(info)) != 0U && strcmp(info, ":UW5ELK-5 :ack5") == 0, "копія %d: ACK у ефір: \"%s\"", i, info);
+		aprsMsgTxDone(b, ti, true, false);
+		aprsMsgTxEnded(b, ti + 700U);
+	}
+	CHECK(aprsMsgListCount(b) == 1U, "один рядок у списку");
+	CHECK(b->stats.rx == 3U && b->stats.rxNew == 1U && b->stats.ackFormed == 3U && b->stats.ackSent == 3U && b->stats.ackLost == 0U, "лічильники: rx=%u new=%u formed=%u sent=%u",
+			(unsigned)b->stats.rx, (unsigned)b->stats.rxNew, (unsigned)b->stats.ackFormed, (unsigned)b->stats.ackSent);
+	CHECK(strcmp(b->lastAckText, ":UW5ELK-5 :ack5") == 0, "текст останнього ACK: \"%s\"", b->lastAckText);
+
+	/* той самий номер, ІНШИЙ текст (відправник почав нумерацію спочатку) -- нове повідомлення, а не повтор */
+	CHECK(aprsMsgOnIncoming(b, "UW5ELK-5", "other text", "5", t + 100000U) == true && aprsMsgListCount(b) == 2U, "той самий номер з іншим текстом -- нове");
+
+	/* --- номери "5", "10", "11", "aB1": кадр ACK побайтово --------------------------------------------------------------- */
+	{
+		static const char *ids[] = { "5", "10", "11", "aB1" };
+		static const char *want[] = { ":UW5ELK-5 :ack5", ":UW5ELK-5 :ack10", ":UW5ELK-5 :ack11", ":UW5ELK-5 :ackaB1" };
+
+		aprsMsgInit(b, 0U);
+		for (int i = 0; i < 4; i++)
+		{
+			uint32_t ti = t + (uint32_t)i * 3000U;
+
+			CHECK(aprsMsgQueueAck(b, "UW5ELK-5", ids[i], ti) == true, "id %s: у чергу", ids[i]);
+			CHECK(aprsMsgPoll(b, ti, false, true, info, sizeof(info)) != 0U && strcmp(info, want[i]) == 0, "id %s: \"%s\"", ids[i], info);
+			aprsMsgTxDone(b, ti, true, false);
+			aprsMsgTxEnded(b, ti + 700U);
+		}
+	}
+
+	/* --- довге повідомлення (~90 байт UTF-8): приймається, показується обрізаним, ACK іде --------------------------------- */
+	{
+		char wire[300], utf[200], pk0[2];
+		aprsPacket_t pkt;
+		/* «привіт усім, перевірка українського шрифта, ще трохи довшого тексту» -- байтами cp1251 */
+		static const char longCp[] =
+				"\xEF\xF0\xE8\xE2\xB3\xF2 \xF3\xF1\xB3\xEC, \xEF\xE5\xF0\xE5\xE2\xB3\xF0\xEA\xE0 \xF3\xEA\xF0\xE0\xBF\xED\xF1\xFC\xEA\xEE\xE3\xEE "
+				"\xF8\xF0\xE8\xF4\xF2\xE0, \xBF\xF9\xE5 \xF2\xF0\xEE\xF5\xE8 \xE4\xEE\xE2\xF8\xEE\xE3\xEE";
+		size_t ub = cpToUtf8Full(longCp, utf, sizeof(utf));
+
+		(void)pk0;
+		CHECK(ub >= 90U, "тестове повідомлення справді довге: %u байт UTF-8", (unsigned)ub);
+		snprintf(wire, sizeof(wire), ":UW5ELK-7 :%s{12", utf);
+		aprsMsgInit(b, 0U);
+		rxInfo(wire, &pkt);
+		CHECK(pkt.type == APRS_T_MESSAGE && strcmp(pkt.msgId, "12") == 0 && pkt.msgAck == false, "розібрано як повідомлення з номером 12");
+		CHECK(strlen(pkt.text) > 40U, "текст розкодовано (cp1251, %u символів)", (unsigned)strlen(pkt.text));
+		aprsMsgCountRx(b);
+		CHECK(aprsMsgQueueAck(b, "UW5ELK-5", pkt.msgId, t) == true, "ACK на довге поставлено (довжина не відсікає)");
+		CHECK(aprsMsgOnIncoming(b, "UW5ELK-5", pkt.text, pkt.msgId, t) == true && aprsMsgListCount(b) == 1U, "довге -- у списку");
+		CHECK(strcmp(b->list[0].text, pkt.text) == 0 || strlen(b->list[0].text) < strlen(pkt.text), "у списку повний або обрізаний текст");
+		CHECK(aprsMsgOnIncoming(b, "UW5ELK-5", pkt.text, pkt.msgId, t + 31000U) == false, "копія довгого -- не дублюється (порівняння з обрізаним)");
+		CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) != 0U && strcmp(info, ":UW5ELK-5 :ack12") == 0, "ACK на довге пішов: \"%s\"", info);
+
+		/* найдовше, що влізає в кадр AX.25 (до ~250 байт info): усе одно приймається, ACK є */
+		{
+			char big[300];
+			size_t bn = 0;
+
+			wire[0] = 0;
+			while ((bn + 2U) < 200U)
+			{
+				bn += 2U;
+				big[bn - 2U] = (char)0xD0; big[bn - 1U] = (char)0xB0;   /* «а» */
+			}
+			big[bn] = 0;
+			snprintf(wire, sizeof(wire), ":UW5ELK-7 :%s{7", big);
+			rxInfo(wire, &pkt);
+			CHECK(pkt.type == APRS_T_MESSAGE && strcmp(pkt.msgId, "7") == 0, "200-байтовий текст: повідомлення з номером 7");
+			aprsMsgInit(b, 0U);
+			CHECK(aprsMsgQueueAck(b, "UW5ELK-5", pkt.msgId, t) == true && aprsMsgOnIncoming(b, "UW5ELK-5", pkt.text, pkt.msgId, t) == true, "ACK і запис для 200-байтового тексту");
+			CHECK(strlen(b->list[0].text) < APRS_MSG_TEXT_LEN, "текст у списку обрізаний до %u символів", (unsigned)(APRS_MSG_TEXT_LEN - 1U));
+		}
+	}
+
+	/* --- ACK першим у черзі: ACK, поставлений ПІСЛЯ нашого повідомлення, іде раніше ------------------------------------------ */
+	aprsMsgInit(b, 0U);
+	(void)aprsMsgSend(b, "AAA", "msg1", t);
+	(void)aprsMsgSend(b, "BBB", "msg2", t);
+	CHECK(aprsMsgQueueAck(b, "CCC", "9", t + 5U) == true, "ACK поставлено після двох повідомлень");
+	CHECK(aprsMsgPoll(b, t + 10U, false, true, info, sizeof(info)) != 0U && strcmp(info, ":CCC      :ack9") == 0, "перший у ефірі -- ACK: \"%s\"", info);
+
+	/* --- черга повна, ACK витісняє СТАРІШЕ наше повідомлення, а не навпаки ---------------------------------------------------- */
+	aprsMsgInit(b, 0U);
+	for (int i = 0; i < 4; i++)
+	{
+		CHECK(aprsMsgSend(b, "AAA", "x", t + (uint32_t)i) == AMSG_OK, "повідомлення %d", i);
+	}
+	CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_E_FULL, "повідомлення при повній черзі -- відмова, ACK не витісняє нічого");
+	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U) == true && aprsMsgAckPending(b) == 1U && aprsMsgPendingCount(b) == 3U, "ACK витіснив одне повідомлення");
+	CHECK(aprsMsgQueueAck(b, "BBB", "2", t + 11U) == true && aprsMsgQueueAck(b, "BBB", "3", t + 12U) == true && aprsMsgQueueAck(b, "BBB", "4", t + 13U) == true,
+			"ще три ACK витіснили решту повідомлень");
+	CHECK(aprsMsgAckPending(b) == 4U && aprsMsgPendingCount(b) == 0U, "тепер у черзі лише ACK");
+	CHECK(aprsMsgQueueAck(b, "BBB", "5", t + 14U) == false && b->stats.ackLost == 1U, "п'ятий ACK не вміщається (усі слоти ACK) -- лічиться як втрачений");
+	CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_E_FULL, "наше повідомлення не витісняє ACK");
+	/* повідомлення, що вже в ефірі, не витісняється */
+	aprsMsgInit(b, 0U);
+	(void)aprsMsgSend(b, "AAA", "m1", t);
+	CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) != 0U, "повідомлення m1 видано (inflight)");
+	for (int i = 0; i < 3; i++)
+	{
+		(void)aprsMsgSend(b, "AAA", "m", t + (uint32_t)i + 1U);
+	}
+	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U) == true && b->inflight >= 0 && b->q[b->inflight].type == AMSG_JOB_MSG, "ACK витіснив інше повідомлення, а не те, що в ефірі");
+
+	/* --- ACK, який не вдалось почати: до 3 спроб через 1,5 с, далі знято; передані не повторюються ------------------------- */
+	aprsMsgInit(b, 0U);
+	(void)aprsMsgQueueAck(b, "BBB", "1", t);
+	for (int k = 0; k < 3; k++)
+	{
+		uint32_t tk = t + (uint32_t)k * 1500U;
+
+		CHECK(aprsMsgPoll(b, tk, false, true, info, sizeof(info)) != 0U, "спроба %d видана", k);
+		aprsMsgTxDone(b, tk, false, false);
+		CHECK(aprsMsgPoll(b, tk + 1499U, false, true, info, sizeof(info)) == 0U || k == 2, "до 1,5 с нової спроби нема");
+	}
+	CHECK(aprsMsgQueueLen(b) == 0U && b->stats.ackLost == 1U && b->stats.ackSent == 0U, "після 3 невдач ACK знято і пораховано як втрачений");
+	/* а вже ПЕРЕДАНИЙ ACK не повторюється */
+	aprsMsgInit(b, 0U);
+	(void)aprsMsgQueueAck(b, "BBB", "1", t);
+	(void)aprsMsgPoll(b, t, false, true, info, sizeof(info));
+	aprsMsgTxDone(b, t, true, false);
+	aprsMsgTxEnded(b, t + 700U);
+	CHECK(aprsMsgQueueLen(b) == 0U && aprsMsgPoll(b, t + 60000U, false, true, info, sizeof(info)) == 0U, "переданий ACK не повторюється");
 }
 
 /* R11-fix: позивний-SSID в адресаті повідомлення й ACK -- байт-у-байт проти еталонів, виписаних вручну.
@@ -663,6 +836,7 @@ int main(void)
 	testNumbersAndOverflow();
 	testWrapAndInbox();
 	testSsidForms();
+	testFix2();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_msg: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

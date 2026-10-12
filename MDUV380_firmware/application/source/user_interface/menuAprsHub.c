@@ -42,13 +42,25 @@ enum
 
 static menuStatus_t hubExitCode = MENU_STATUS_SUCCESS;
 
-static const char *itemName(int n)
+static const char *itemName(int n, char *buf, size_t cap)
 {
 	switch (n)
 	{
 		case APRS_HUB_MODE:     return APRSM_MENU;
 		case APRS_HUB_STATIONS: return APRSRX_TITLE;
-		case APRS_HUB_MESSAGES: return APRSMSG_MENU;
+		case APRS_HUB_MESSAGES:
+		{
+			/* R11-fix2: непрочитані повідомлення APRS -- у назві пункту (вхідні більше не потрапляють у «Повідомлення» DMR).
+			 * Буфер -- на стеку викликача (updateScreen()): статичний масив коштував би main RAM. */
+			unsigned unread = aprsMsgUnreadCount(aprsModeMsgBox());
+
+			if ((unread == 0U) || (buf == NULL))
+			{
+				return APRSMSG_MENU;
+			}
+			snprintf(buf, cap, APRSMSG_MENU_NEW, (unread > 99U) ? 99U : unread);
+			return buf;
+		}
 		case APRS_HUB_SETTINGS: return APRSRX_HUB_SETTINGS;
 #if defined(APRS_RX_PROBE)
 		case APRS_HUB_PROBE:    return APRSRX_HUB_PROBE;
@@ -59,6 +71,8 @@ static const char *itemName(int n)
 
 static void updateScreen(bool isFirstRun)
 {
+	char nameBuf[24];
+
 	displayClearBuf();
 	menuDisplayTitle(currentLanguage->APRS);
 
@@ -75,7 +89,7 @@ static void updateScreen(bool isFirstRun)
 			break;
 		}
 
-		menuDisplayEntry(i, mNum, itemName(mNum), 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
+		menuDisplayEntry(i, mNum, itemName(mNum, nameBuf, sizeof(nameBuf)), 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
 
 		if (i == 0)
 		{

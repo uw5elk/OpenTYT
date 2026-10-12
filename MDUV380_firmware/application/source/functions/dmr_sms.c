@@ -293,6 +293,11 @@ int dmrSmsUnreadCount(void)
 	int n = 0;
 	for (int o = 0; o + SMS_ENTRY_HDR <= (int)s_store.used; o += entry_size(o))
 	{
+#if defined(ENABLE_APRS_RX)
+		/* R11-fix2: повідомлення APRS у сховищі SMS більше не з'являються (список «Повідом. APRS»); старі записи R8..R11 з прапорцем APRS
+		 * не рахуємо в «непрочитаних SMS» -- лічильник і значок на головному екрані тільки для DMR */
+		if (s_store.data[o] & DMR_SMS_FLAG_APRS) { continue; }
+#endif
 		if (((s_store.data[o] & DMR_SMS_FLAG_OUTGOING) == 0) && (s_store.data[o] & DMR_SMS_FLAG_UNREAD)) { n++; }
 	}
 	return n + pendInboxUnread();
@@ -434,13 +439,6 @@ static void store_add(uint8_t flags, uint32_t peerId, const char *text, int text
 	s_store.used = (uint16_t)(o + need);
 	store_save();
 }
-
-#if defined(ENABLE_APRS_RX)
-void dmrSmsAddAprsInbox(const char *text, int len)
-{
-	store_add((uint8_t)(DMR_SMS_FLAG_UNREAD | DMR_SMS_FLAG_APRS), 0U, text, len);
-}
-#endif
 
 /* ============================ config (MSGC block) ======================= */
 /* Read-only from the firmware's side; written by the CHIRP module. Layout is

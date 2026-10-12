@@ -45,6 +45,11 @@ static __attribute__((section(".ccmram"), aligned(8))) uint8_t callReplayRing[CA
 #else
 static __attribute__((section(".ccmram"))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];   /* CCM-OK(вміст дійсний лише в межах callReplayCap.count, який скидає callReplayInit()) */
 #endif
+#if defined(ENABLE_APRS_RX)
+/* R11-fix2: постійний блок повідомлень APRS (aprsMsgBox_t) -- частина колишнього буфера, яку «Режим APRS» не позичає. */
+static __attribute__((section(".ccmram"), aligned(8))) uint8_t callReplayAprsReserve[CALL_REPLAY_APRS_RESERVE_BYTES];   /* CCM-INIT(callReplayBorrowReset) */
+_Static_assert(((CALL_REPLAY_GROUPS * CALL_REPLAY_GROUP_BYTES) + CALL_REPLAY_APRS_RESERVE_BYTES) <= 13500U, "call replay ring + APRS reserve exceed the old 13500 B CCM budget");
+#endif
 /* Один біт на групу: чи ця група -- перша в новому "заході". (CALL_REPLAY_GROUPS+7)/8 = 63 Б. */
 /* CCM-INIT-FILE(callReplayInit, callReplayBorrowReset) -- applicationMain.c викликає їх на старті */
 static __attribute__((section(".ccmram"))) uint8_t callReplayOverBit[(CALL_REPLAY_GROUPS + 7U) / 8U];
@@ -100,6 +105,16 @@ void callReplayBorrowReset(void)
 {
 	callReplayBorrowed = false;
 	callReplayBorrowSavedRec = true;
+	memset(callReplayAprsReserve, 0, sizeof(callReplayAprsReserve));   // R11-fix2: далі aprsMsgBgInit() наповнює його
+}
+
+void *callReplayReserved(size_t *size)
+{
+	if (size != NULL)
+	{
+		*size = sizeof(callReplayAprsReserve);
+	}
+	return (void *)callReplayAprsReserve;
 }
 #endif
 

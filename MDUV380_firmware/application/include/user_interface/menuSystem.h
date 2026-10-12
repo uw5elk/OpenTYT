@@ -142,6 +142,9 @@ typedef enum
 	NOTIFICATION_ID_CALL_ALERT, /* форк (2026-09-26) -- дивись NOTIFICATION_TYPE_CALL_ALERT вище */
 	NOTIFICATION_ID_SMS_ACKED,  /* форк (ui1) -- дивись NOTIFICATION_TYPE_SMS_ACKED вище */
 #endif
+#if defined(ENABLE_APRS_RX)
+	NOTIFICATION_ID_APRS_MSG,   /* форк (R11-fix2): вхідне повідомлення APRS -- картка SMS-типу з ВЛАСНИМ текстом (сховище SMS не чіпаємо) */
+#endif
 	NOTIFICATION_ID_BEARING,
 	NOTIFICATION_ID_TX_INHIBIT,
 	NOTIFICATION_ID_USER /* Could use _USER, _USER + 1, + 2, etc... */

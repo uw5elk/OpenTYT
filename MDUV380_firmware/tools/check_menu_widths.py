@@ -433,7 +433,9 @@ if os.path.exists(msg_path):
         r'#define\s+(APRSMSG_\w+)\s+"((?:[^"\\]|\\.)*)"', open(msg_path, 'rb').read().decode('cp1251'))}
     for name, val in mm.items():
         t = val.replace('%u', '99').replace('%s', 'UW5ELK-15')   # лічильники: список ≤ 8, черга ≤ 4, байтів ≤ 67
-        if name in ('APRSMSG_MENU',) or name.startswith('APRSMSG_TITLE') or name.startswith('APRSMSG_E_'):
+        if name == 'APRSMSG_K_TITLE':
+            t = val.replace('%s', 'ABC')   # R11-fix2: заголовок шпаргалки -- мітка режиму multitap (smsMtModeLabel(), до 3 символів)
+        if name.startswith('APRSMSG_MENU') or name.startswith('APRSMSG_TITLE') or name.startswith('APRSMSG_E_') or name == 'APRSMSG_K_TITLE':
             lim = LINE_CHARS
         elif name.startswith('APRSMSG_ST_'):
             lim = 9

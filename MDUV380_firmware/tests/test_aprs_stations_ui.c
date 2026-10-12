@@ -43,6 +43,10 @@ uint32_t aprsRxAgeSec(const aprsStation_t *st) { return (s_now - st->lastMs) / 1
 /* R11: «Відповісти» з картки станції -- відкриває набір повідомлення; тут лише фіксуємо виклик */
 static int s_replyCalls = 0;
 static char s_replyCall[16];
+/* R11-fix2: екран DIAG2 показує лічильники фонової черги повідомлень/ACK (постійний блок aprsModeMsgBox()) */
+static aprsMsgBox_t s_box;
+aprsMsgBox_t *aprsModeMsgBox(void) { return &s_box; }
+unsigned aprsMsgQueueLen(const aprsMsgBox_t *b) { (void)b; return 4U; }
 bool menuAprsModeReplyTo(const char *call) { s_replyCalls++; snprintf(s_replyCall, sizeof(s_replyCall), "%s", call); return true; }
 void aprsRxClear(void) { memset(&s_st, 0, sizeof(s_st)); aprsDbInit(&s_db); }
 
@@ -103,6 +107,7 @@ static void walkAll(const char *tag)
 	{ uint8_t keepState = s_st.state, keepWhy = s_st.why; memset(&s_st, 0, sizeof(s_st)); s_st.state = keepState; s_st.why = keepWhy;
 	  s_st.starts = s_st.startFails = 999; s_st.blocks = 99999; s_st.overflows = s_st.gateDrops = 999; }   /* реалістичні межі сторінки R8 */
 	click(KEY_HASH); CHECK(s_ui.view == APRS_RX_VIEW_DIAG, "# -> DIAG"); snprintf(w, sizeof(w), "%s: діагностика", tag); checkScreen(w);
+	s_box.stats.rx = s_box.stats.ackFormed = s_box.stats.ackSent = s_box.stats.ackLost = 0xFFFF; snprintf(s_box.lastAckText, sizeof(s_box.lastAckText), ":WWWWWWWWW :ackWWWWW");   /* крайні значення лічильників ACK */
 	memset(&s_st.stops, 0xFF, sizeof(s_st.stops)); s_st.wsTimeouts = s_st.syncStops = s_st.abortTimeouts = 0xFFFF; s_st.starts = s_st.startFails = 0xFFFFFFFFU;   /* крайні значення DIAG2 */
 	click(KEY_HASH); CHECK(s_ui.view == APRS_RX_VIEW_DIAG2, "# -> DIAG2"); snprintf(w, sizeof(w), "%s: діагностика 2", tag); checkScreen(w);
 	click(KEY_HASH); CHECK(s_ui.view == APRS_RX_VIEW_DIAG, "# -> назад у DIAG");

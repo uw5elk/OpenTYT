@@ -37,7 +37,15 @@
 #define CALL_REPLAY_GROUP_BYTES   27U
 /* 500 груп x 27 Б = 13500 Б -- 30 с при 450 Б/с (60 мс/група), увесь буфер у
  * .ccmram (docs/notification-buffer.md звільнив під це місце). */
+#if defined(ENABLE_APRS_RX)
+/* R11-fix2 (форк): з 13500 Б CCM-буфера 1312 Б відведено під ПОСТІЙНИЙ блок повідомлень APRS (черга ACK/повідомлень + список,
+ * aprs_msg.h): він мусить жити й поза «Режимом APRS», а вільного CCM у збірці лише ~324 Б. Кільце від цього коротшає з 500 до
+ * 451 групи (~27,1 с замість 30 с); сумарно CCM-буфер не росте. Без ENABLE_APRS_RX -- рівно стокові 500. */
+#define CALL_REPLAY_APRS_RESERVE_BYTES  1312U
+#define CALL_REPLAY_GROUPS        ((13500U - CALL_REPLAY_APRS_RESERVE_BYTES) / CALL_REPLAY_GROUP_BYTES)
+#else
 #define CALL_REPLAY_GROUPS        500U
+#endif
 
 /* Обнулити стан у CCM -- .ccmram НЕ ініціалізується стартапом (той самий
  * застережний коментар, що й біля dmrAesInit()), тож без явного виклику тут
@@ -135,6 +143,9 @@ uint32_t callReplayFindLastOverStart(void);
  * відтворення (callReplayStop()). Старий запис ВТРАЧАЄТЬСЯ -- це свідомо (TESTING.md, AM8). */
 /* Лише на старті (applicationMain.c, після callReplayInit()): CCM там сміття, а позика живе в CCM. */
 void  callReplayBorrowReset(void);
+/* R11-fix2: зарезервована частина буфера (CALL_REPLAY_APRS_RESERVE_BYTES, вирівняна на 8), яку «Режим APRS» НЕ позичає -- там
+ * живе постійний блок повідомлень APRS (aprs_mode.c). Обнуляється в callReplayBorrowReset() на старті. */
+void *callReplayReserved(size_t *size);
 void *callReplayBorrow(size_t *size);
 void  callReplayRelease(void);
 bool  callReplayIsBorrowed(void);

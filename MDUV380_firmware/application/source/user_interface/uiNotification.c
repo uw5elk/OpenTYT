@@ -688,6 +688,15 @@ static void displaySmsFullScreen(void)
 	const dmrSmsMessage_t *m = dmrSmsNewestInbox(&t);
 	int unread = dmrSmsUnreadCount();
 
+#if defined(ENABLE_APRS_RX)
+	if (notificationData.id == NOTIFICATION_ID_APRS_MSG)
+	{
+		/* R11-fix2: повідомлення APRS не лежить у сховищі SMS -- малюємо його власний текст, а не останнє SMS DMR, і лічильник DMR не чіпаємо */
+		m = NULL;
+		unread = 0;
+	}
+#endif
+
 	int16_t reserved = (int16_t)((unread > 1) ? (cntH + 2) : 0);
 	int16_t maxLines = (int16_t)((DISPLAY_SIZE_Y - textY - 2 - reserved) / lineH);
 	if (maxLines < 1) { maxLines = 1; }

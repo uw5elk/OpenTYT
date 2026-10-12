@@ -2283,6 +2283,162 @@ aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info)
 	}
 	return modeTxCommon(e, info);
 }
+
+bool aprsBeaconingMessagesAllowed(void)
+{
+	return ((aprsBcnData.settings.mode != APRS_BEACONING_MODE_OFF) && aprsBeaconingStateEnabled(APRS_BEACONING_STATE_ENABLED) &&
+			aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG));
+}
+
+/* R11-fix2: повідомлення/ACK APRS поза «Режимом APRS». Це гілка «Вручну» aprsBeaconingSendBeacon() без вимоги позиції й без
+ * екрана «APRS Tx»: ті самі QSY, анти-колізія, затримка TX і aprsSendPacket(); різниця -- інфо-поле (s_modeInfo, як в
+ * aprsModeTxMessage()). Повернення каналу після передачі -- стокове: aprsBeaconingTick() -> APRS_TX_FINAL_STAGE за
+ * aprsBcnData.hasDoneQSY. Блокує, як стоковий бікон: до 2 с анти-колізії (APRS_ANTI_COLLISION_MS_MAX) + 40 мс після QSY +
+ * затримка TX. Вільну частоту (до 10 с) викликач чекає ДО цього виклику неблокуюче (aprs_mode.c, aprsMsgBgTick()). */
+aprsModeTxResult_t aprsBeaconingSendMessage(const char *info)
+{
+	aprsChannelSettingsInUse_t channelSettings;
+	aprsBeaconingLocation_t loc;
+	const CodeplugAPRSConfig_t *cfg = &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL];
+	bool hasQsy;
+	uint32_t txFrequency;
+
+	if ((info == NULL) || (info[0] != ':'))
+	{
+		return APRS_MODE_TX_TOOBIG;   // не повідомлення -- не передаємо
+	}
+	if (uiDataGlobal.Scan.active || (aprsTxProgress != APRS_TX_IDLE) || trxTransmissionEnabled || trxIsTransmitting)
+	{
+		return APRS_MODE_TX_BUSY;
+	}
+	if (settingsIsOptionBitSet(BIT_TX_INHIBIT))
+	{
+		return APRS_MODE_TX_INHIBIT;
+	}
+	if ((aprsBcnData.settings.mode == APRS_BEACONING_MODE_OFF) || (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG) == false))
+	{
+		return APRS_MODE_TX_NOCALL;   // APRS не налаштовано/вимкнено
+	}
+	if (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_ENABLED) == false)
+	{
+		return APRS_MODE_TX_INHIBIT;  // бікон призупинено клавішею -- мовчимо й для відповідей
+	}
+	hasQsy = (cfg->txFrequency != 0U);
+	if ((trxGetMode() == RADIO_MODE_NONE) || ((trxGetMode() == RADIO_MODE_DIGITAL) && (hasQsy == false)))
+	{
+		return APRS_MODE_TX_NOT_FM;
+	}
+	txFrequency = hasQsy ? cfg->txFrequency : currentChannelData->txFreq;
+	if (txFrequency == 0U)
+	{
+		return APRS_MODE_TX_NOT_FM;
+	}
+	if ((hasQsy == false) && (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_RX_ONLY) != 0))
+	{
+		return APRS_MODE_TX_INHIBIT;
+	}
+	if ((nonVolatileSettings.txFreqLimited != BAND_LIMITS_NONE) && (trxCheckFrequencyInAmateurBand(txFrequency) == false)
+#if defined(PLATFORM_MD9600)
+			&& ((hasQsy == false) && (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OUT_OF_BAND) == 0))
+#endif
+	)
+	{
+		return APRS_MODE_TX_BAND;
+	}
+
+	// Параметри поточного каналу -- до QSY (як у aprsBeaconingSendBeacon())
+	channelSettings.chMode = currentChannelData->chMode;
+	channelSettings.rxFreq = currentChannelData->rxFreq;
+	channelSettings.txFreq = currentChannelData->txFreq;
+	channelSettings.rxTone = currentChannelData->rxTone;
+	channelSettings.wideBW = trxGetBandwidthIs25kHz();
+
+#if defined(APRS_RX)
+	aprsRxStopForTx();   // приймач APRS -- СИНХРОННО, першим ділом (до QSY, анти-колізії і trxSetTX)
+#endif
+	rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
+#if defined(HAS_GPS)
+	if (SETTINGS_GPS_MODE_GET(nonVolatileSettings) > GPS_MODE_OFF)
+	{
+		gpsDataInputStartStop(false);
+	}
+#endif
+	watchdogRun(false);
+
+	if (hasQsy)
+	{
+		// Канал повернеться після передачі (aprsBeaconingTick() -> APRS_TX_FINAL_STAGE)
+		radioSetTRxDevice(RADIO_DEVICE_PRIMARY);
+
+		trxSetFrequency(txFrequency, txFrequency, DMR_MODE_AUTO);
+		trxSetModeAndBandwidth(RADIO_MODE_ANALOG, false);
+		trxSetRxCSS(RADIO_DEVICE_PRIMARY, CODEPLUG_CSS_TONE_NONE);
+		trxSetTxCSS(CODEPLUG_CSS_TONE_NONE);
+
+		aprsBcnData.hasDoneQSY = true;
+
+		vTaskDelay((40U / portTICK_PERIOD_MS));
+	}
+
+	// Avoid collision.
+	uint32_t waitingForXmit = (APRS_ANTI_COLLISION_MS_MAX / RSSI_NOISE_SAMPLE_PERIOD_PIT);
+	while ((waitingForXmit > 0) && (LedRead(LED_GREEN) || ((audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) != 0)))
+	{
+		vTaskDelay((RSSI_NOISE_SAMPLE_PERIOD_PIT / portTICK_PERIOD_MS));
+		waitingForXmit--;
+		trxCheckAnalogSquelch();
+	}
+
+	watchdogRun(true);
+
+	if (waitingForXmit == 0U)
+	{
+#if defined(HAS_GPS)
+		if (SETTINGS_GPS_MODE_GET(nonVolatileSettings) > GPS_MODE_OFF)
+		{
+			gpsDataInputStartStop(true);
+		}
+#endif
+		aprsTxProgress = APRS_TX_FAILED_WAITING_TO_BEACON;   // машина повернеться до каналу (hasDoneQSY) без передачі
+		return APRS_MODE_TX_BUSY;
+	}
+
+	if (aprsBcnData.hasDoneQSY && (aprsBcnData.settings.power != 0U))
+	{
+		trxSetPowerFromLevel((aprsBcnData.settings.power - 1U));
+	}
+
+	LedWrite(LED_GREEN, 0);
+	LedWrite(LED_RED, 1);
+
+	HRC6000ClearIsWakingState();
+	trxSetTX();
+
+	// TX Delay;
+	uint32_t m = ticksGetMillis();
+	while ((ticksGetMillis() - m) < APRS_XMIT_TX_DELAY)
+	{
+		vTaskDelay((1U / portTICK_PERIOD_MS));
+	}
+
+	// Позиції в повідомленні нема, але aprsSendPacket() рахує координати: даємо йому дійсні 0,0 (як aprsModeTxMessage())
+	memset(&loc, 0, sizeof(loc));
+	loc.time = ticksGetMillis();
+	loc.bearing = UINT16_MAX;
+	loc.speed = 0U;
+	loc.coords.latitude = 0.0;
+	loc.coords.longitude = 0.0;
+
+	s_modeInfo = info;
+	bool frameOk = aprsSendPacket(&aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL], &loc, &loc, &channelSettings, false);
+	s_modeInfo = NULL;
+	if (frameOk == false)
+	{
+		aprsModeAbortTx();   // кадр не влазить: aprsSendPacket() уже поставив «завершено» -- прогнати стани, TX вимкнеться
+		return APRS_MODE_TX_TOOBIG;
+	}
+	return APRS_MODE_TX_OK;
+}
 #endif
 
 #if defined(ENABLE_APRS_RX)
