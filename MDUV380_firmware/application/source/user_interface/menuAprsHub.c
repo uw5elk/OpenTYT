@@ -24,14 +24,15 @@
 #include "functions/aprs_mode.h"
 #include "user_interface/languages/aprsmode_ua.h"
 #include "user_interface/languages/aprsrx_ua.h"
+#include "user_interface/languages/aprsmsg_ua.h"
 
-/* Порядок пунктів = порядок на екрані. Нові пункти додавати СЮДИ, у відповідному місці; не реалізовано:
- * APRS_HUB_MESSAGES (R11, «Повідомлення APRS» -- стане після «APRS станції»).
- *   APRS_HUB_MODE, APRS_HUB_STATIONS, [APRS_HUB_MESSAGES], APRS_HUB_SETTINGS, [APRS_HUB_PROBE] */
+/* Порядок пунктів = порядок на екрані. Нові пункти додавати СЮДИ, у відповідному місці:
+ *   APRS_HUB_MODE, APRS_HUB_STATIONS, APRS_HUB_MESSAGES (R11), APRS_HUB_SETTINGS, [APRS_HUB_PROBE] */
 enum
 {
 	APRS_HUB_MODE = 0,
 	APRS_HUB_STATIONS,
+	APRS_HUB_MESSAGES,
 	APRS_HUB_SETTINGS,
 #if defined(APRS_RX_PROBE)
 	APRS_HUB_PROBE,
@@ -47,6 +48,7 @@ static const char *itemName(int n)
 	{
 		case APRS_HUB_MODE:     return APRSM_MENU;
 		case APRS_HUB_STATIONS: return APRSRX_TITLE;
+		case APRS_HUB_MESSAGES: return APRSMSG_MENU;
 		case APRS_HUB_SETTINGS: return APRSRX_HUB_SETTINGS;
 #if defined(APRS_RX_PROBE)
 		case APRS_HUB_PROBE:    return APRSRX_HUB_PROBE;
@@ -100,6 +102,9 @@ static void openItem(int n)
 			break;
 		case APRS_HUB_STATIONS:
 			menuAprsStationsEnter();
+			break;
+		case APRS_HUB_MESSAGES:
+			(void)menuAprsModeEnterMessages();   /* R11: режим відкривається одразу на сторінці «Повідомлення» (черга й ACK живуть у режимі) */
 			break;
 		case APRS_HUB_SETTINGS:
 			menuSystemPushNewMenu(MENU_APRS);   /* стокове меню налаштувань APRS: посилання, QuickKey на нього не змінилися */

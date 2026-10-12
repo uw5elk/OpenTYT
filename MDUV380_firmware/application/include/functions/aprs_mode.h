@@ -31,9 +31,31 @@
 #include "functions/aprs_mode_cfg.h"
 #include "functions/aprs_rx_parse.h"
 #include "functions/sms_multitap.h"
+#include "functions/aprs_msg.h"
 
-/* Сторінки режиму. PAGE_MESSAGES -- місце для R11 (не реалізовано): порядок сторінок поки без нього. */
-enum { APRS_MODE_PAGE_MONITOR = 0, APRS_MODE_PAGE_STATIONS, APRS_MODE_PAGE_SETTINGS, APRS_MODE_PAGES };
+/* Сторінки режиму. R11: «Повідомлення» -- між «Станціями» і «Налаштуваннями». */
+enum { APRS_MODE_PAGE_MONITOR = 0, APRS_MODE_PAGE_STATIONS, APRS_MODE_PAGE_MESSAGES, APRS_MODE_PAGE_SETTINGS, APRS_MODE_PAGES };
+
+/* R11: вигляди сторінки «Повідомлення». */
+enum { APRS_MSG_VIEW_LIST = 0, APRS_MSG_VIEW_READ, APRS_MSG_VIEW_CALL, APRS_MSG_VIEW_TEXT };
+
+/* R11: стан екрана «Повідомлення» (лежить у aprsModeUi_t, тобто в позиченому буфері режиму). */
+typedef struct
+{
+	uint8_t  view;                            /* APRS_MSG_VIEW_* */
+	uint8_t  sel;                             /* вибраний запис списку */
+	uint8_t  scroll;                          /* перший видимий запис списку */
+	uint8_t  readTop;                         /* перший видимий рядок тексту в читанні */
+	uint8_t  mtMode;                          /* режим набору (sms_multitap) */
+	uint8_t  err;                             /* набір: останнє GREEN не прийняло значення */
+	uint8_t  exitArmed;                       /* на «Моніторі» RED вже натиснуто при непереданих повідомленнях */
+	uint8_t  reply;                           /* набір: відповідь (адресат заданий, одразу текст) */
+	int16_t  pos;                             /* довжина підтвердженого тексту в набраному рядку */
+	smsMt_t  mt;                              /* символ, що гортається */
+	uint32_t keyMs;                           /* ticksGetMillis() останнього натискання тексту */
+	char     call[APRS_MSG_CALL_LEN + 2];     /* адресат (набір) */
+	char     text[APRS_MSG_JOB_TEXT_LEN + 2]; /* текст (набір), cp1251 */
+} aprsMsgUi_t;
 
 /* Поля сторінки «Налаштування» (порядок рядків). */
 enum
@@ -91,6 +113,7 @@ typedef struct
 	uint8_t  resetArmed;      /* «Скинути»: перше GREEN натиснуто, чекаємо друге */
 	uint32_t lastDrawMs;
 	aprsModeEdit_t edit;
+	aprsMsgUi_t    msg;               /* R11 */
 } aprsModeUi_t;
 
 /* ---- життєвий цикл --------------------------------------------------------------------------------- */
@@ -115,7 +138,19 @@ uint32_t aprsModeNextBeaconSec(void);            /* 0xFFFFFFFF -- періоди
 aprsModeBcnState_t aprsModeBeaconState(void);
 bool aprsModeIsTransmitting(void);
 
+/* ---- R11: повідомлення APRS ------------------------------------------------------------------------------- */
+aprsMsgBox_t *aprsModeMsgBox(void);              /* список і черга (лише поки режим активний) */
+/* Поставити наше повідомлення в чергу. Повертає AMSG_OK, AMSG_E_CALL / AMSG_E_TEXT / AMSG_E_FULL або -1, якщо режим не активний
+ * чи нема власного позивного. Саму передачу робить aprsModeTick() (пауза, вільна частота, повтори). */
+int aprsModeMsgSend(const char *to, const char *cp1251Text);
+bool aprsModeHasCall(void);                      /* власний позивний режиму дійсний (без нього передавати нічого) */
+
 /* ---- для приймача (aprs_rx.c) ---------------------------------------------------------------------------- */
+/* Повідомлення/ACK, адресовані нам, ДО відсіву дублікатів: ACK на наше повідомлення -- скасувати повтори; повідомлення з номером --
+ * поставити ACK негайно (і для повторів, якщо відправник не почув ACK). Викликати лише для pkt->type == APRS_T_MESSAGE нам. */
+void aprsModeMsgPre(const aprsAx25_t *ax, const aprsPacket_t *pkt);
+/* Нове (недублікат) повідомлення нам -- у список екрана «Повідомлення». */
+void aprsModeMsgIncoming(const aprsAx25_t *ax, const aprsPacket_t *pkt);
 /* Власний позивний/SSID/позиція режиму (замість конфігу каналу). false -- режим не активний. */
 bool aprsModeOwnInfo(char call[8], uint8_t *ssid, bool *hasPos, int32_t *latU, int32_t *lonU);
 /* Кожен розібраний недублікат (CRC ок) -- для «останнього пакета» на «Моніторі». */

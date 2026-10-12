@@ -4,7 +4,9 @@
  *   2 «Станції»      -- список R8 (16 станцій) і картка станції (спільний код з menuAprsStations.c);
  *   3 «Налаштування» -- частота, позивний, SSID, шлях 1/2, символ, коментар, позиція, неточність, інтервал
  *                       маяка, шумодав, «Скинути»; значення міняються ←→ (перелічувані) або в редакторі (GREEN).
- * Місце під «Повідомлення» (R11) зарезервовано в нумерації сторінок (aprs_mode.h), у R10 його нема.
+ *   3 «Повідомлення» (R11) -- список (8: вхідні + наші зі станом), читання з перенесенням за словами великим шрифтом, «Нове»
+ *                       (адресат Latin + текст кирилицею, multitap), «Відповісти»; логіка й черга -- aprs_msg.c / aprs_mode.c;
+ *   4 «Налаштування» -- (було 3-ю до R11).
  * Стан екрана -- у aprsModeUi() (позичений буфер режиму): окремі змінні коштували б main RAM.
  */
 #include "user_interface/menuAprsMode.h"
@@ -19,6 +21,7 @@
 #include "functions/ticks.h"
 #include "functions/sound.h"
 #include "user_interface/languages/aprsmode_ua.h"
+#include "user_interface/languages/aprsmsg_ua.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -651,6 +654,598 @@ static bool editEvent(uiEvent_t *ev)
 	return false;
 }
 
+
+/* ---- R11: сторінка «Повідомлення» ---------------------------------------------------------------------------- */
+
+#define AM_MSG_REDRAW_MS    500U
+#define AM_MSG_COLS         20           /* великий шрифт 8x16 на екрані 160 px */
+#define AM_MSG_FONT         FONT_SIZE_3
+#define AM_MSG_LINE_H       FONT_SIZE_3_HEIGHT
+
+static void gotoPage(int dir);
+
+static const char *msgStatusWord(uint8_t st)
+{
+	switch (st)
+	{
+		case AMSG_ST_WAIT:  return APRSMSG_ST_WAIT;
+		case AMSG_ST_SENT:  return APRSMSG_ST_SENT;
+		case AMSG_ST_ACK:   return APRSMSG_ST_ACK;
+		case AMSG_ST_NOACK: return APRSMSG_ST_NOACK;
+		default:            return "";
+	}
+}
+
+static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
+{
+	if (e->noTime)
+	{
+		snprintf(b, n, "%s", APRSMSG_L_NOTIME);
+	}
+	else
+	{
+		menuAprsStationsAgeStr(b, n, (uint32_t)(now - e->ms) / 1000U);
+	}
+}
+
+static void drawMsgList(void)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	unsigned count = aprsMsgListCount(b);
+	uint32_t now = ticksGetMillis();
+	char buf[40], age[8];
+
+	snprintf(buf, sizeof(buf), APRSMSG_L_HDR, aprsMsgUnreadCount(b), aprsMsgPendingCount(b));
+	printRow(0, buf);
+	if (count == 0U)
+	{
+		displayPrintCentered(AM_ROW(4), APRSMSG_L_EMPTY, FONT_SIZE_1);
+		printRow(10, APRSMSG_L_HINT);
+		return;
+	}
+	if (mu->sel >= count)
+	{
+		mu->sel = (uint8_t)(count - 1U);
+	}
+	for (unsigned i = 0; i < count; i++)
+	{
+		const aprsMsgEntry_t *e = &b->list[i];
+		char mark = (e->dir == AMSG_DIR_OUT) ? '<' : (e->unread ? '*' : ' ');
+
+		msgAgeStr(age, sizeof(age), e, now);
+		/* маркер(1) + ознака(1) + позивний(9) + пробіл(1) + текст або стан(9) + вік(5) = 26 символів */
+		snprintf(buf, sizeof(buf), "%c%c%-9.9s %-9.9s%5.5s", (i == mu->sel) ? '>' : ' ', mark, e->call,
+				(e->dir == AMSG_DIR_OUT) ? msgStatusWord(e->status) : e->text, age);
+		printRow(1 + (int)i, buf);
+	}
+	printRow(10, APRSMSG_L_HINT);
+}
+
+/* Малює рядки [first, first + rows) тексту, розбитого aprsMsgWrapLine() з шириною cols. Повертає загальну кількість рядків. */
+static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0)
+{
+	int pos = 0, line = 0;
+
+	while (pos < len)
+	{
+		int ls, nx;
+		int n = aprsMsgWrapLine(t, len, pos, AM_MSG_COLS, &ls, &nx);
+
+		if (ls >= len)
+		{
+			break;
+		}
+		if ((line >= first) && (line < (first + rows)) && (n > 0))
+		{
+			char one[AM_MSG_COLS + 2];
+
+			memcpy(one, t + ls, (size_t)n);
+			one[n] = 0;
+			displayPrintCore(0, (int16_t)(y0 + ((line - first) * AM_MSG_LINE_H)), one, AM_MSG_FONT, TEXT_ALIGN_LEFT, false);
+		}
+		line++;
+		pos = nx;
+	}
+	return line;
+}
+
+static void drawMsgRead(void)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	const aprsMsgEntry_t *e = &b->list[(mu->sel < APRS_MSG_LIST_MAX) ? mu->sel : 0U];
+	char buf[48], age[8];
+	const int16_t y0 = 38;
+	const int rows = ((111 - y0 - AM_MSG_LINE_H) / AM_MSG_LINE_H) + 1;
+	int total, maxTop;
+
+	snprintf(buf, sizeof(buf), (e->dir == AMSG_DIR_OUT) ? APRSMSG_R_TO : APRSMSG_R_FROM, e->call);
+	printRow(0, buf);
+	msgAgeStr(age, sizeof(age), e, ticksGetMillis());
+	if (e->dir == AMSG_DIR_OUT)
+	{
+		snprintf(buf, sizeof(buf), "%s %s", msgStatusWord(e->status), age);
+		if ((e->id[0] != 0) && (strlen(buf) <= 19U))
+		{
+			snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " {%s", e->id);
+		}
+	}
+	else
+	{
+		snprintf(buf, sizeof(buf), "%s", age);
+	}
+	printRow(1, buf);
+
+	total = drawWrapped(e->text, (int)strlen(e->text), 0, 0, y0);   /* лише порахувати */
+	maxTop = (total > rows) ? (total - rows) : 0;
+	if (mu->readTop > maxTop)
+	{
+		mu->readTop = (uint8_t)maxTop;
+	}
+	(void)drawWrapped(e->text, (int)strlen(e->text), mu->readTop, rows, y0);
+	displayPrintCentered(112, APRSMSG_R_HINT, FONT_SIZE_1);
+	if (mu->readTop > 0U)
+	{
+		displayFillTriangle(4, 112, 0, 119, 8, 119, true);                                   /* є вище */
+	}
+	if (mu->readTop < maxTop)
+	{
+		displayFillTriangle(DISPLAY_SIZE_X - 9, 112, DISPLAY_SIZE_X - 1, 112, DISPLAY_SIZE_X - 5, 119, true);   /* є нижче */
+	}
+}
+
+static void drawMsgPage(void)
+{
+	if (aprsModeUi()->msg.view == APRS_MSG_VIEW_READ)
+	{
+		drawMsgRead();
+	}
+	else
+	{
+		drawMsgList();
+	}
+}
+
+/* Підказка літер клавіші, що гортається (як composeKeyHint() у menuMessages.c): поточна літера інверсно. */
+static void msgKeyHint(int16_t x, int16_t y)
+{
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	const char *map = smsMtKeyMap(mu->mtMode, mu->mt.key);
+	int n, cells, step, start = 0;
+
+	if (map == NULL)
+	{
+		return;
+	}
+	n = (int)strlen(map);
+	cells = (DISPLAY_SIZE_X - x) / 8;
+	step = (((2 * n) - 1) <= cells) ? 2 : 1;
+	if ((step == 1) && (n > cells))
+	{
+		start = (int)mu->mt.idx - (cells / 2);
+		if (start > (n - cells))
+		{
+			start = n - cells;
+		}
+		if (start < 0)
+		{
+			start = 0;
+		}
+	}
+	for (int k = start; (k < n) && (((k - start) * step) < cells); k++)
+	{
+		char one[2] = { (map[k] == ' ') ? '_' : map[k], 0 };
+		int16_t cx = (int16_t)(x + ((k - start) * step * 8));
+
+		if (k == (int)mu->mt.idx)
+		{
+			displayFillRect(cx, y, 8, 8, false);
+			displayPrintCore(cx, y, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, true);
+		}
+		else
+		{
+			displayPrintCore(cx, y, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, false);
+		}
+	}
+}
+
+/* Екран набору (адресат або текст) -- на весь екран, великий шрифт. */
+static void drawMsgCompose(void)
+{
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	bool isCall = (mu->view == APRS_MSG_VIEW_CALL);
+	const char *src = isCall ? mu->call : mu->text;
+	char cur[APRS_MSG_JOB_TEXT_LEN + 4];
+	char buf[40];
+	const char *lbl = smsMtModeLabel(mu->mtMode);
+	int16_t chipW = (int16_t)((strlen(lbl) * 6U) + 4U);
+	int16_t y0 = isCall ? 30 : 26;
+	int rows = isCall ? 2 : 4;
+	int len, total, first;
+
+	displayClearBuf();
+	menuDisplayTitle((isCall || (mu->reply == 0U)) ? APRSMSG_TITLE_NEW : APRSMSG_TITLE_REPLY);
+	if (isCall)
+	{
+		printRow(0, APRSMSG_C_CALL);
+	}
+	else
+	{
+		snprintf(buf, sizeof(buf), APRSMSG_C_TO, mu->call);
+		printRow(0, buf);
+	}
+	/* текст із курсором: символ, що гортається, вже в буфері; без нього -- підкреслення */
+	snprintf(cur, sizeof(cur), "%s%s", src, (mu->mt.key == 0) ? "_" : "");
+	len = (int)strlen(cur);
+	total = drawWrapped(cur, len, 0, 0, y0);
+	first = (total > rows) ? (total - rows) : 0;   /* вікно іде за курсором: показуємо останні рядки */
+	(void)drawWrapped(cur, len, first, rows, y0);
+	if (mu->err)
+	{
+		printRow(isCall ? 6 : 7, isCall ? APRSMSG_E_CALL : APRSMSG_E_TEXT);
+	}
+
+	displayFillRect(0, 95, chipW, 10, false);
+	displayPrintCore(2, 96, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+	if (mu->mt.key != 0)
+	{
+		msgKeyHint((int16_t)(chipW + 4), 96);
+	}
+	else if (isCall == false)
+	{
+		snprintf(buf, sizeof(buf), APRSMSG_C_LEFT, (unsigned)(APRS_MSG_UTF8_MAX - aprsMsgUtf8Len(mu->text)));
+		displayPrintCore(0, 96, buf, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
+		displayPrintAt((uint16_t)(chipW + 4), 96, APRSMSG_C_MODE_HINT, FONT_SIZE_1);
+	}
+	else
+	{
+		displayPrintAt((uint16_t)(chipW + 4), 96, APRSMSG_C_MODE_HINT, FONT_SIZE_1);
+	}
+	displayPrintCentered(106, isCall ? APRSMSG_C_CALL_HINT : APRSMSG_C_HINT1, FONT_SIZE_1);
+	displayPrintCentered(116, isCall ? APRSMSG_C_CALL_KEYS : APRSMSG_C_HINT2, FONT_SIZE_1);
+}
+
+static void msgNotify(const char *txt)
+{
+	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, txt, true);
+	soundSetMelody(MELODY_ERROR_BEEP);
+}
+
+/* Почати набір. call == NULL -- «Нове» (спершу адресат); інакше «Відповісти» (адресат заданий, одразу текст). */
+static void msgComposeStart(const char *call)
+{
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+
+	mu->mt.key = 0;
+	mu->mt.idx = 0;
+	mu->err = 0U;
+	mu->pos = 0;
+	mu->text[0] = 0;
+	mu->call[0] = 0;
+	mu->mtMode = SMS_MT_DEFAULT;
+	if (call != NULL)
+	{
+		snprintf(mu->call, sizeof(mu->call), "%s", call);
+		mu->reply = 1U;
+		mu->view = APRS_MSG_VIEW_TEXT;
+	}
+	else
+	{
+		mu->reply = 0U;
+		mu->mtMode = SMS_MT_LAT_UP;
+		mu->view = APRS_MSG_VIEW_CALL;
+	}
+}
+
+/* Допустимість символу c при наборі: адресат -- A-Z, 0-9, '-'; текст -- дозволений символ, що влазить цілим у 67 байт.
+ * buf[pos] (символ, що гортається) у розрахунок не входить. */
+static bool msgCharOk(bool isCall, char *buf, int16_t pos, uint8_t c)
+{
+	char keep = buf[pos];
+	bool ok;
+
+	if (isCall)
+	{
+		return ((c >= 'A') && (c <= 'Z')) || ((c >= 'a') && (c <= 'z')) || ((c >= '0') && (c <= '9')) || (c == '-');
+	}
+	buf[pos] = 0;
+	ok = aprsMsgCanAppend(buf, c);
+	buf[pos] = keep;
+	return ok;
+}
+
+/* smsMtKey() з відсівом: символи, яких не можна в повідомленні (':' '|' '~' '{', керівні), і ті, що не влазять у 67 байт, при
+ * гортанні пропускаються. Повертає як smsMtKey(): 0 -- нічого, 1 -- у перегляді, 2 -- підтверджено. */
+static int msgMtKey(aprsMsgUi_t *mu, bool isCall, char key, bool same, char *buf, int cap)
+{
+	int r = smsMtKey(&mu->mt, mu->mtMode, key, same, buf, &mu->pos, cap);
+	const char *map = smsMtKeyMap(mu->mtMode, key);
+
+	if ((r == 0) || (map == NULL))
+	{
+		return 0;
+	}
+	if (r == 2)
+	{
+		/* єдиний варіант (цифра в «123»), уже підтверджений: pos вже зсунувся */
+		uint8_t c = (uint8_t)buf[mu->pos - 1];
+
+		mu->pos--;
+		buf[mu->pos] = 0;
+		if (msgCharOk(isCall, buf, mu->pos, c) == false)
+		{
+			return 0;
+		}
+		buf[mu->pos] = (char)c;
+		mu->pos++;
+		buf[mu->pos] = 0;
+		return 2;
+	}
+	for (size_t tries = 0; tries <= strlen(map); tries++)
+	{
+		if (msgCharOk(isCall, buf, mu->pos, (uint8_t)buf[mu->pos]))
+		{
+			return 1;
+		}
+		mu->mt.idx++;
+		if (map[mu->mt.idx] == 0)
+		{
+			mu->mt.idx = 0;
+		}
+		buf[mu->pos] = map[mu->mt.idx];
+	}
+	buf[mu->pos] = 0;   /* жоден символ клавіші тут не дозволений */
+	mu->mt.key = 0;
+	mu->mt.idx = 0;
+	return 0;
+}
+
+/* Подія набору. Повертає true, якщо екран треба перемалювати. */
+static bool msgComposeEvent(uiEvent_t *ev)
+{
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	bool isCall = (mu->view == APRS_MSG_VIEW_CALL);
+	char *buf = isCall ? mu->call : mu->text;
+	int cap = isCall ? (int)APRS_MSG_ADDR_LEN : (int)APRS_MSG_UTF8_MAX;
+	uint32_t now = ticksGetMillis();
+
+	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
+	{
+		return false;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		smsMtCommit(&mu->mt, &mu->pos);
+		if ((isCall == false) && (mu->reply == 0U))
+		{
+			mu->view = APRS_MSG_VIEW_CALL;   /* із тексту -- назад до адресата */
+			mu->pos = (int16_t)strlen(mu->call);
+			mu->mtMode = SMS_MT_LAT_UP;
+		}
+		else
+		{
+			mu->view = APRS_MSG_VIEW_LIST;
+		}
+		mu->err = 0U;
+		return true;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		smsMtCommit(&mu->mt, &mu->pos);
+		buf[mu->pos] = 0;
+		if (isCall)
+		{
+			char norm[APRS_MSG_CALL_LEN];
+
+			if (aprsMsgNormCall(norm, mu->call) == false)
+			{
+				mu->err = 1U;
+				soundSetMelody(MELODY_ERROR_BEEP);
+				return true;
+			}
+			snprintf(mu->call, sizeof(mu->call), "%s", norm);
+			mu->view = APRS_MSG_VIEW_TEXT;
+			mu->mtMode = SMS_MT_DEFAULT;
+			mu->pos = (int16_t)strlen(mu->text);
+			mu->err = 0U;
+			return true;
+		}
+		{
+			int r = aprsModeMsgSend(mu->call, mu->text);
+
+			if (r == AMSG_OK)
+			{
+				mu->view = APRS_MSG_VIEW_LIST;
+				mu->sel = 0U;
+				mu->err = 0U;
+			}
+			else if (r < 0)
+			{
+				msgNotify(APRSM_ERR_NOCALL);
+			}
+			else if (r == AMSG_E_FULL)
+			{
+				msgNotify(APRSMSG_E_FULL);
+			}
+			else if (r == AMSG_E_CALL)
+			{
+				msgNotify(APRSMSG_E_CALL);
+			}
+			else
+			{
+				mu->err = 1U;   /* порожній текст */
+				soundSetMelody(MELODY_ERROR_BEEP);
+			}
+		}
+		return true;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_LEFT))
+	{
+		mu->err = 0U;
+		smsMtBackspace(&mu->mt, buf, &mu->pos);
+		return true;
+	}
+	if ((ev->keys.event & KEY_MOD_LONG) || ((ev->keys.event & KEY_MOD_PRESS) == 0))
+	{
+		return false;
+	}
+	if (ev->keys.key == KEY_HASH)
+	{
+		smsMtCommit(&mu->mt, &mu->pos);
+		mu->mtMode = smsMtModeNext(mu->mtMode);
+		return true;
+	}
+	{
+		char k = (char)ev->keys.key;
+
+		if (smsMtKeyMap(mu->mtMode, k) != NULL)
+		{
+			bool same = (mu->mt.key == k) && ((now - mu->keyMs) < SMS_MT_TIMEOUT_MS);
+
+			mu->err = 0U;
+			if (msgMtKey(mu, isCall, k, same, buf, cap) == 1)
+			{
+				mu->keyMs = now;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Читання: сусіднє повідомлення (dir +1 -- старіше). На краях нічого. */
+static void msgReadGo(int dir)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	int n = (int)mu->sel + dir;
+
+	if ((n < 0) || (n >= (int)aprsMsgListCount(b)))
+	{
+		return;
+	}
+	mu->sel = (uint8_t)n;
+	mu->readTop = 0U;
+	aprsMsgMarkRead(b, (unsigned)n);
+}
+
+/* Подія списку/читання. Повертає: 0 -- нічого, 1 -- перемалювати. */
+static int msgPageEvent(uiEvent_t *ev)
+{
+	aprsModeUi_t *u = aprsModeUi();
+	aprsMsgUi_t *mu = &u->msg;
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	unsigned count = aprsMsgListCount(b);
+
+	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
+	{
+		return 0;
+	}
+	if (mu->view == APRS_MSG_VIEW_READ)
+	{
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+		{
+			mu->view = APRS_MSG_VIEW_LIST;
+			return 1;
+		}
+		if (KEYCHECK_PRESS(ev->keys, KEY_UP) && (mu->readTop > 0U))
+		{
+			mu->readTop--;
+			return 1;
+		}
+		if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+		{
+			mu->readTop++;   /* верхню межу виправить drawMsgRead() */
+			return 1;
+		}
+		if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+		{
+			msgReadGo(+1);
+			return 1;
+		}
+		if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+		{
+			msgReadGo(-1);
+			return 1;
+		}
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (mu->sel < count))
+		{
+			char norm[APRS_MSG_CALL_LEN];
+
+			if (aprsMsgNormCall(norm, b->list[mu->sel].call))
+			{
+				msgComposeStart(norm);
+			}
+			else
+			{
+				msgNotify(APRSMSG_E_CALL);
+			}
+			return 1;
+		}
+		return 0;
+	}
+
+	/* список */
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		u->page = APRS_MODE_PAGE_MONITOR;
+		return 1;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	{
+		gotoPage(+1);
+		return 1;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	{
+		gotoPage(-1);
+		return 1;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		int n = (int)mu->sel + (KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1);
+
+		if (count > 0U)
+		{
+			mu->sel = (uint8_t)((n < 0) ? (int)(count - 1U) : ((n >= (int)count) ? 0 : n));   // по колу
+		}
+		return 1;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (count > 0U))
+	{
+		if (mu->sel >= count)
+		{
+			mu->sel = (uint8_t)(count - 1U);
+		}
+		mu->view = APRS_MSG_VIEW_READ;
+		mu->readTop = 0U;
+		aprsMsgMarkRead(b, mu->sel);
+		return 1;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR))
+	{
+		msgComposeStart(NULL);
+		return 1;
+	}
+	return 0;
+}
+
+/* Режим відкрито на сторінці «Повідомлення»: список зверху. */
+static void msgOpenPage(void)
+{
+	aprsModeUi_t *u = aprsModeUi();
+
+	u->page = APRS_MODE_PAGE_MESSAGES;
+	u->resetArmed = 0U;
+	u->msg.view = APRS_MSG_VIEW_LIST;
+	u->msg.sel = 0U;
+	u->msg.readTop = 0U;
+	u->msg.err = 0U;
+	u->msg.mt.key = 0;
+	u->msg.mt.idx = 0;
+}
+
 /* ---- сторінки: події ---------------------------------------------------------------------------------------- */
 
 static void gotoPage(int dir)
@@ -672,6 +1267,11 @@ static void gotoPage(int dir)
 	{
 		aprsRxUi()->view = APRS_RX_VIEW_LIST;
 	}
+	else if (u->page == APRS_MODE_PAGE_MESSAGES)
+	{
+		msgOpenPage();
+	}
+	u->msg.exitArmed = 0U;
 }
 
 static int wrapStep(int v, int dir, int max)   /* 0..max, по колу */
@@ -804,14 +1404,28 @@ static int pageEvent(uiEvent_t *ev)
 		return 0;
 	}
 
+	if ((u->page == APRS_MODE_PAGE_MONITOR) && (KEYCHECK_SHORTUP(ev->keys, KEY_RED) == false))
+	{
+		u->msg.exitArmed = 0U;
+	}
 	switch (u->page)
 	{
+		case APRS_MODE_PAGE_MESSAGES:
+			return msgPageEvent(ev);
+
 		case APRS_MODE_PAGE_MONITOR:
 			if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 			{
 				if (aprsModeIsTransmitting())
 				{
 					return 0;   /* посеред маяка не виходимо */
+				}
+				if ((aprsMsgPendingCount(aprsModeMsgBox()) > 0U) && (u->msg.exitArmed == 0U))
+				{
+					/* R11: вихід з режиму скасує непередані/непідтверджені повідомлення -- просимо підтвердити другим RED */
+					u->msg.exitArmed = 1U;
+					msgNotify(APRSMSG_E_EXIT);
+					return 1;
 				}
 				return -1;
 			}
@@ -905,9 +1519,15 @@ static void draw(void)
 		editDraw();
 		return;
 	}
+	if ((u->page == APRS_MODE_PAGE_MESSAGES) && ((u->msg.view == APRS_MSG_VIEW_CALL) || (u->msg.view == APRS_MSG_VIEW_TEXT)))
+	{
+		drawMsgCompose();   /* R11: набір -- на весь екран, з власним заголовком */
+		displayRender();
+		return;
+	}
 	displayClearBuf();
 	snprintf(title, sizeof(title), APRSM_TITLE_FMT, (unsigned)(u->page + 1U), (unsigned)APRS_MODE_PAGES);
-	menuDisplayTitle(title);
+	menuDisplayTitle((u->page == APRS_MODE_PAGE_MESSAGES) ? ((u->msg.view == APRS_MSG_VIEW_READ) ? APRSMSG_TITLE_READ : APRSMSG_TITLE) : title);
 	AM_TRACE_T(85);   /* draw(): перед малюванням сторінки */
 	switch (u->page)
 	{
@@ -916,6 +1536,9 @@ static void draw(void)
 			break;
 		case APRS_MODE_PAGE_STATIONS:
 			menuAprsStationsDrawEmbedded();
+			break;
+		case APRS_MODE_PAGE_MESSAGES:
+			drawMsgPage();
 			break;
 		default:
 			drawSettings();
@@ -939,6 +1562,47 @@ bool menuAprsModeEnter(void)
 	return true;
 }
 
+bool menuAprsModeEnterMessages(void)
+{
+	if (aprsModeEnter() == false)
+	{
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_NOT_NOW, true);
+		soundSetMelody(MELODY_ERROR_BEEP);
+		return false;
+	}
+	msgOpenPage();
+	draw();
+	return true;
+}
+
+bool menuAprsModeReplyTo(const char *call)
+{
+	char norm[APRS_MSG_CALL_LEN];
+
+	if ((call == NULL) || (aprsMsgNormCall(norm, call) == false))
+	{
+		msgNotify(APRSMSG_E_CALL);   /* об'єкти, станції з нестандартним позначенням -- адресатом бути не можуть */
+		return false;
+	}
+	if (aprsModeIsActive() == false)
+	{
+		bool wasOn = (aprsRxUi()->on != 0U);
+
+		aprsRxUi()->on = 0;   /* «APRS станції» (R8) закриваємо: далі всі тіки меню належать режиму */
+		if (aprsModeEnter() == false)
+		{
+			aprsRxUi()->on = wasOn ? 1U : 0U;   /* не вийшло -- лишаємось на картці станції */
+			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_NOT_NOW, true);
+			soundSetMelody(MELODY_ERROR_BEEP);
+			return false;
+		}
+	}
+	msgOpenPage();
+	msgComposeStart(norm);
+	draw();
+	return true;
+}
+
 bool menuAprsModeTick(uiEvent_t *ev)
 {
 	aprsModeUi_t *u = aprsModeUi();
@@ -953,6 +1617,16 @@ bool menuAprsModeTick(uiEvent_t *ev)
 		if (u->edit.active && (u->edit.mt.key != 0) && ((now - u->edit.keyMs) >= SMS_MT_TIMEOUT_MS))
 		{
 			smsMtCommit(&u->edit.mt, &u->edit.pos);
+			redraw = true;
+		}
+	}
+	else if ((u->page == APRS_MODE_PAGE_MESSAGES) && ((u->msg.view == APRS_MSG_VIEW_CALL) || (u->msg.view == APRS_MSG_VIEW_TEXT)))
+	{
+		/* R11: набір повідомлення (адресат/текст) -- свій обробник; символ, що гортається, підтверджується сам через ~1 с */
+		redraw = msgComposeEvent(ev);
+		if ((u->msg.mt.key != 0) && ((now - u->msg.keyMs) >= SMS_MT_TIMEOUT_MS))
+		{
+			smsMtCommit(&u->msg.mt, &u->msg.pos);
 			redraw = true;
 		}
 	}
@@ -978,8 +1652,10 @@ bool menuAprsModeTick(uiEvent_t *ev)
 	}
 	if ((u->edit.active == 0U) && (redraw == false))
 	{
+		bool composing = (u->page == APRS_MODE_PAGE_MESSAGES) && ((u->msg.view == APRS_MSG_VIEW_CALL) || (u->msg.view == APRS_MSG_VIEW_TEXT));
 		uint32_t period = (u->page == APRS_MODE_PAGE_MONITOR) ? AM_MON_REDRAW_MS :
-				((u->page == APRS_MODE_PAGE_STATIONS) ? AM_ST_REDRAW_MS : 0xFFFFFFFFUL);
+				((u->page == APRS_MODE_PAGE_STATIONS) ? AM_ST_REDRAW_MS :
+				((u->page == APRS_MODE_PAGE_MESSAGES) ? (composing ? 0xFFFFFFFFUL : AM_MSG_REDRAW_MS) : 0xFFFFFFFFUL));
 
 		if ((period != 0xFFFFFFFFUL) && ((now - u->lastDrawMs) >= period))
 		{

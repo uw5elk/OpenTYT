@@ -156,6 +156,33 @@ static void ref_frame(ref_t *r, const char *call, int ssid, const char (*pname)[
 	for (int i = 0; i < 3; i++) { ref_char(r, 0x7E, 0); }
 }
 
+/* R11: еталон кадру ПОВІДОМЛЕННЯ/ACK -- те саме, але замість позиції й коментаря -- готове інфо-поле. */
+static void ref_frame_info(ref_t *r, const char *call, int ssid, const char (*pname)[6], const int *pssid, int npaths, const char *info)
+{
+	memset(r, 0, sizeof(*r));
+	for (int i = 0; i < 16; i++) { ref_char(r, 0x7E, 0); }
+	r->crc = 0xFFFF;
+	for (const char *d = "APOG77"; *d; d++) { ref_char(r, (uint8_t)(*d << 1), 1); }
+	ref_char(r, (uint8_t)('0' << 1), 1);
+	ref_pad6(r, call, 6U);
+	ref_char(r, (uint8_t)((ssid + '0') << 1), 1);
+	for (int p = 0; p < npaths; p++)
+	{
+		ref_pad6(r, pname[p], 6U);
+		ref_char(r, (uint8_t)(((pssid[p] + '0') << 1) + ((p == (npaths - 1)) ? 1 : 0)), 1);
+	}
+	ref_char(r, 0x03, 1);
+	ref_char(r, 0xF0, 1);
+	ref_str(r, info, 100U);
+	{
+		uint8_t lo = (uint8_t)(r->crc ^ 0xFF), hi = (uint8_t)((r->crc >> 8) ^ 0xFF);
+
+		ref_char(r, lo, 1);
+		ref_char(r, hi, 1);
+	}
+	for (int i = 0; i < 3; i++) { ref_char(r, 0x7E, 0); }
+}
+
 /* ---- допоміжне ----------------------------------------------------------------------------------------- */
 static void cfg_init(CodeplugAPRSConfig_t *c)
 {
@@ -481,6 +508,94 @@ int tx_chain_test(void)
 		(void)aprsSendPacket(&sc, &sl, &sl, &s_chs, false);
 		CHECK(s_ampEnable > 0 && s_ampDisable == 0, "стоковий маяк без прапора: amp не вмикався (%d/%d)", s_ampEnable, s_ampDisable);
 		(void)s_cfgFlagsSeen;
+	}
+
+	/* 8в. R11: повідомлення і ACK APRS через aprsModeTxMessage() -- кадр ТОЙ САМИЙ, що й у маяка, лише інфо-поле інше.
+	 * Еталон, порахований вручну (Python, незалежно від C): логічні байти після 16 прапорів (7E) для
+	 * call=UW5ELK, SSID 7, шлях WIDE1-1, інфо ":UW5ELK-9 :Hi{01" -- у hex:
+	 *   82 a0 9e 8e 6e 6e 60            APOG77 + '0', кожен байт <<1
+	 *   aa ae 6a 8a 98 96 6e            UW5ELK + SSID '7' (<<1)
+	 *   ae 92 88 8a 62 40 63            WIDE1<пробіл> + SSID '1' з бітом кінця адрес (0x62|1)
+	 *   03 f0                           control UI, PID без 3 рівня
+	 *   3a 55 57 35 45 4c 4b 2d 39 20 3a 48 69 7b 30 31     ":UW5ELK-9 :Hi{01"
+	 *   d9 fa                           FCS (CRC-16/X.25, молодший байт перший)
+	 * потім NRZI + бітстаффінг + три прапори -- це робить ref_* вище, окремо від прошивки. */
+	{
+		aprsModeEff_t e;
+		CodeplugChannel_t ch;
+		ref_t ref2;
+		char p6[2][6];
+		int ps[2];
+		aprsModeTxResult_t r;
+		const char *infoMsg = ":UW5ELK-9 :Hi{01";
+
+		memset(&e, 0, sizeof(e));
+		strcpy(e.call, "UW5ELK"); e.ssid = 7;
+		strcpy(e.path[0], "WIDE1"); e.pathSsid[0] = 1;
+		e.hasPos = false;                           /* повідомленню позиція не потрібна */
+		e.latU = 123456789; e.lonU = -987654321;    /* сміття: не має потрапити в кадр і не має зіпсувати передачу */
+		memset(&ch, 0, sizeof(ch));
+		ch.chMode = RADIO_MODE_ANALOG; ch.rxFreq = 14480000U; ch.txFreq = 14480000U;
+		currentChannelData = &ch;
+		nonVolatileSettings.txFreqLimited = BAND_LIMITS_NONE;
+		memcpy(p6[0], "WIDE1\0", 6); ps[0] = 1;
+
+		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false; s_timStart = 0; s_rxStop = 0;
+		r = aprsModeTxMessage(&e, infoMsg);
+		CHECK(r == APRS_MODE_TX_OK, "повідомлення: aprsModeTxMessage повернув %d", (int)r);
+		ref_frame_info(&ref2, "UW5ELK", 7, (const char (*)[6])p6, ps, 1, infoMsg);
+		CHECK(encoderData.packetBufferBitPosition == ref2.bits, "повідомлення: %u біт, еталон %u", (unsigned)encoderData.packetBufferBitPosition, ref2.bits);
+		CHECK(memcmp(encoderData.packetBuffer, ref2.buf, (ref2.bits + 7U) / 8U) == 0, "повідомлення: вміст кадру відрізняється від еталона");
+		CHECK(s_timStart == 1 && s_rxStop == 1, "повідомлення: TIM6 %d раз, приймач зупинено %d раз", s_timStart, s_rxStop);
+		CHECK(s_modeCall == NULL && s_modeComment == NULL && s_modeInfo == NULL, "повідомлення: s_mode* не обнулено");
+		CHECK(aprsConfig == &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL], "повідомлення: aprsConfig висить");
+
+		/* ACK: ":UW5ELK-9 :ack01" */
+		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
+		r = aprsModeTxMessage(&e, ":UW5ELK-9 :ack01");
+		CHECK(r == APRS_MODE_TX_OK, "ACK: %d", (int)r);
+		ref_frame_info(&ref2, "UW5ELK", 7, (const char (*)[6])p6, ps, 1, ":UW5ELK-9 :ack01");
+		CHECK(encoderData.packetBufferBitPosition == ref2.bits && memcmp(encoderData.packetBuffer, ref2.buf, (ref2.bits + 7U) / 8U) == 0, "ACK: кадр відрізняється від еталона");
+
+		/* найдовше повідомлення: 67 байт UTF-8 + номер з 5 символів = 84 байти інфо-поля -- влазить у буфер */
+		{
+			char longInfo[100];
+			size_t n = 0;
+
+			memcpy(longInfo, ":UW5ELK-15:", 11); n = 11;
+			memset(longInfo + n, '\xD0', 0);
+			for (int i = 0; i < 33; i++) { longInfo[n++] = (char)0xD0; longInfo[n++] = (char)0xB0; }   /* 33 x «а» = 66 байт */
+			longInfo[n++] = 'x';                                                                    /* = 67 */
+			memcpy(longInfo + n, "{12345", 6); n += 6;
+			longInfo[n] = 0;
+			CHECK(n == 84U, "довжина найдовшого інфо-поля %u, очікували 84", (unsigned)n);
+			aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
+			r = aprsModeTxMessage(&e, longInfo);
+			CHECK(r == APRS_MODE_TX_OK, "найдовше повідомлення: %d", (int)r);
+			CHECK(encoderData.packetBufferBitPosition != AX25_BITS_OVERFLOW, "найдовше повідомлення: переповнення буфера");
+			ref_frame_info(&ref2, "UW5ELK", 7, (const char (*)[6])p6, ps, 1, longInfo);
+			CHECK(encoderData.packetBufferBitPosition == ref2.bits && memcmp(encoderData.packetBuffer, ref2.buf, (ref2.bits + 7U) / 8U) == 0, "найдовше повідомлення: кадр відрізняється від еталона");
+		}
+
+		/* не повідомлення (інфо не з ':') і NULL -- відмова, передавач не вмикається */
+		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false; s_timStart = 0;
+		CHECK(aprsModeTxMessage(&e, "!4930.00N/03015.00E>") != APRS_MODE_TX_OK && aprsModeTxMessage(&e, NULL) != APRS_MODE_TX_OK, "не повідомлення мало бути відхилено");
+		CHECK(s_timStart == 0 && trxIsTransmitting == false, "відхилене інфо увімкнуло передавач");
+
+		/* ПЕРЕД маяком після повідомлення -- звичайний маяк із позицією не зачеплений: s_modeInfo знову NULL */
+		e.hasPos = true; e.latU = 50500000; e.lonU = 30250000;
+		strcpy(e.comment, "TYT");
+		e.iconTable = 0; e.iconIndex = ('>' - '!');
+		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
+		r = aprsModeTxBeacon(&e);
+		CHECK(r == APRS_MODE_TX_OK, "маяк після повідомлення: %d", (int)r);
+		CHECK(s_modeInfo == NULL, "маяк після повідомлення: s_modeInfo лишився");
+		{
+			ref_t refB;
+
+			ref_frame(&refB, "UW5ELK", 7, (const char (*)[6])p6, ps, 1, '/', '>', "5030.00N", "03015.00E", "TYT", 43U);
+			CHECK(encoderData.packetBufferBitPosition == refB.bits && memcmp(encoderData.packetBuffer, refB.buf, (refB.bits + 7U) / 8U) == 0, "маяк після повідомлення: кадр відрізняється від еталона (позиція втрачена?)");
+		}
 	}
 	return s_fail - fail0;
 }

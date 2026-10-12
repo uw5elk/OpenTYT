@@ -295,6 +295,9 @@ static CodeplugAPRSConfig_t *aprsConfig;
 #define APRS_MODE_CCM  __attribute__((section(".aes_ccmram")))
 static const char *s_modeCall APRS_MODE_CCM;      /* CCM-INIT(aprsBeaconingInit) */
 static const char *s_modeComment APRS_MODE_CCM;   /* CCM-INIT(aprsBeaconingInit) */
+/* R11: готове інфо-поле кадру (повідомлення/ACK APRS) замість позиції+коментаря. NULL -- звичайний маяк. Діє лише на час
+ * aprsSendPacket() з aprsModeTxMessage(); рядок -- локальний буфер викликача, з нулем у кінці (байти UTF-8, без NUL усередині). */
+static const char *s_modeInfo APRS_MODE_CCM;      /* CCM-INIT(aprsBeaconingInit) */
 
 /* R10-fix2: жорсткі межі кадру AX.25. Біт, що не влазить у packetBuffer, НЕ пишеться, а позиція стає сигнальним
  * значенням AX25_BITS_OVERFLOW (окремого прапорця нема -- main RAM +0). aprsSendPacket() після складання перевіряє
@@ -308,6 +311,9 @@ static const char *s_modeComment APRS_MODE_CCM;   /* CCM-INIT(aprsBeaconingInit)
 #if !defined(APRS_FRAME_TEST_SMALL_BUFFER)
 _Static_assert(((((30U + 27U + APRSM_COMMENT_AIR_MAX + 2U) * 8U) * 6U) / 5U) + ((16U + 3U) * 8U) + 8U <= (AX25_PACKET_BUFFER_SIZE * 8U),
 		"APRS mode frame with the longest comment does not fit packetBuffer");
+/* R11: найдовше повідомлення: ':' + адресат 9 + ':' + текст 67 байт + '{' + id 5 = 84 байти інфо-поля */
+_Static_assert(((((30U + 84U + 2U) * 8U) * 6U) / 5U) + ((16U + 3U) * 8U) + 8U <= (AX25_PACKET_BUFFER_SIZE * 8U),
+		"APRS message frame (84-byte info) does not fit packetBuffer");
 #endif
 #endif
 
@@ -936,6 +942,14 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 	enqueueHeader(&encoderData);
 	AX_TR(419);   /* після enqueueHeader */
 	AX_TR(420);   /* перед enqueuePayload */
+#if defined(ENABLE_APRS_RX)
+	if (s_modeInfo != NULL)
+	{
+		/* R11: повідомлення/ACK APRS -- інфо-поле вже готове (aprs_msg.c); межа 100 байт з запасом над 84 */
+		enqueueStringN(&encoderData, s_modeInfo, 100U);
+	}
+	else
+#endif
 	enqueuePayload(&encoderData, latStr, lonStr, (courseAndSpeed ? courseSpeedStr : NULL), channelSettings, fromSatScreen);
 	AX_TR(421);   /* після enqueuePayload */
 	AX_TR(422);   /* перед enqueueCRC */
@@ -1649,6 +1663,7 @@ void aprsBeaconingInit(void)
 #if defined(ENABLE_APRS_RX)
 	s_modeCall = NULL;       // R10-fix5: CCM при старті -- сміття; без цього стоковий маяк читав позивний зі сміттєвої адреси
 	s_modeComment = NULL;
+	s_modeInfo = NULL;       // R11: те саме -- CCM при старті сміття
 #endif
 	aprsBcnData.decayMult = APRS_BEACON_DECAY_MULT_MIN;
 	aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_ENABLED, false);
@@ -2121,7 +2136,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
  * AFSK-модулятор у перериванні TIM6), а завершення -- aprsBeaconingTick() -> APRS_TX_FINISHED ... FINAL_STAGE,
  * який повертає режим/смугу з currentChannelData (тобто з «каналу» режиму -- ті самі FM 12,5 кГц).
  * Блокує лише на затримку TX (APRS_XMIT_TX_DELAY, 50 мс), як стоковий. */
-aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
+static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info)
 {
 	aprsModeRawCfg_t cfg;
 	aprsChannelSettingsInUse_t channelSettings;
@@ -2146,9 +2161,9 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	{
 		return APRS_MODE_TX_NOCALL;
 	}
-	if (e->hasPos == false)
+	if ((info == NULL) && (e->hasPos == false))
 	{
-		return APRS_MODE_TX_NOPOS;
+		return APRS_MODE_TX_NOPOS;   // R11: повідомленню позиція не потрібна
 	}
 	txFrequency = currentChannelData->txFreq;
 	if ((nonVolatileSettings.txFreqLimited != BAND_LIMITS_NONE) && (trxCheckFrequencyInAmateurBand(txFrequency) == false))
@@ -2195,7 +2210,20 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	}
 	AM_TRACE(229);   /* після затримки TX Delay */
 
-	aprsModeToBeaconCfg(e, &cfg);
+	if (info != NULL)
+	{
+		/* R11: у повідомленні позиції нема, але aprsSendPacket() усе одно рахує координати з конфігу -- даємо йому дійсні 0,0 */
+		aprsModeEff_t msgEff = *e;
+
+		msgEff.latU = 0;
+		msgEff.lonU = 0;
+		msgEff.hasPos = true;
+		aprsModeToBeaconCfg(&msgEff, &cfg);
+	}
+	else
+	{
+		aprsModeToBeaconCfg(e, &cfg);
+	}
 	AM_TRACE(230);   /* перед aprsModeCommentToUtf8 */
 	(void)aprsModeCommentToUtf8(e->comment, comment, sizeof(comment));
 	AM_TRACE(231);   /* після aprsModeCommentToUtf8 */
@@ -2204,8 +2232,8 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	loc.time = ticksGetMillis();
 	loc.bearing = UINT16_MAX;   // «позиція без курсу» -- aprsBeaconingLocationIsValid() == false
 	loc.speed = 0U;
-	loc.coords.latitude = (double)e->latU / 1000000.0;
-	loc.coords.longitude = (double)e->lonU / 1000000.0;
+	loc.coords.latitude = (info == NULL) ? ((double)e->latU / 1000000.0) : 0.0;   // R11: у повідомленні позиції нема -- дійсна 0,0 лише для перевірок
+	loc.coords.longitude = (info == NULL) ? ((double)e->lonU / 1000000.0) : 0.0;
 
 	channelSettings.chMode = RADIO_MODE_ANALOG;
 	channelSettings.rxFreq = currentChannelData->rxFreq;
@@ -2215,6 +2243,7 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 
 	s_modeCall = e->call;
 	s_modeComment = comment;
+	s_modeInfo = info;   // R11: NULL для маяка
 	_Static_assert(sizeof(aprsModeRawCfg_t) == sizeof(CodeplugAPRSConfig_t), "aprsModeRawCfg_t != CodeplugAPRSConfig_t");
 	/* R10-fix2: cfg -- ЛОКАЛЬНА змінна, а aprsSendPacket() кладе вказівник на неї в глобальний aprsConfig. Після виходу з
 	 * цієї функції він був би висячим (мертвий стек) -- нижче, одразу після виклику, його повертаємо на конфіг кодплуга. */
@@ -2224,6 +2253,7 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	AM_TRACE(233);   /* aprsSendPacket повернув керування; TX у фоні (TIM6) */
 	s_modeCall = NULL;       // aprsSendPacket() збирає кадр синхронно; далі їх не читають
 	s_modeComment = NULL;
+	s_modeInfo = NULL;
 	if (frameOk == false)
 	{
 		/* R10-fix2: кадр завеликий -- aprsSendPacket() поставив «завершено»; стани завершення вимикають TX */
@@ -2233,6 +2263,25 @@ aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 	}
 
 	return APRS_MODE_TX_OK;
+}
+#endif
+
+#if defined(ENABLE_APRS_RX)
+aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
+{
+	return modeTxCommon(e, NULL);
+}
+
+/* R11: повідомлення/ACK APRS у ефір. Той самий шлях, що й маяк (modeTxCommon()): рація вже стоїть на частоті APRS у «Режимі APRS»
+ * (тому QSY і повернення каналу, про які йдеться в брифі, тут не потрібні -- як і для маяка R10), aprsRxStopForTx(), TX delay,
+ * той самий модулятор AFSK. Відрізняється лише інфо-поле: готовий рядок із aprs_msg.c замість позиції. info -- з нулем. */
+aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info)
+{
+	if ((info == NULL) || (info[0] != ':'))
+	{
+		return APRS_MODE_TX_TOOBIG;   // не повідомлення -- не передаємо
+	}
+	return modeTxCommon(e, info);
 }
 #endif
 

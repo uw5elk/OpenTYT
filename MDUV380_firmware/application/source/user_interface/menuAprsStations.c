@@ -18,6 +18,7 @@
 #include "functions/ticks.h"
 #include "user_interface/languages/aprsrx_ua.h"
 #include "user_interface/languages/aprsmode_ua.h"   /* R10: підказка вбудованої сторінки */
+#include "user_interface/menuAprsMode.h"              /* R11: «Відповісти» з картки */
 #include <stdio.h>
 #include <string.h>
 
@@ -410,6 +411,15 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 				}
 				redraw = true;
 			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view == APRS_RX_VIEW_CARD))
+			{
+				/* R11: «Відповісти» -- набір повідомлення цій станції; екран «APRS станції» закриється, відкриється «Режим APRS» */
+				if (menuAprsModeReplyTo(ui->cardCall))
+				{
+					return true;
+				}
+				redraw = true;
+			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_LIST))
 			{
 				ui->view = APRS_RX_VIEW_DIAG;
@@ -503,6 +513,11 @@ int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
 				ui->sel = (uint8_t)((n < 0) ? (count - 1) : ((n >= count) ? 0 : n));   // по колу
 			}
 		}
+		return 1;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view == APRS_RX_VIEW_CARD))
+	{
+		(void)menuAprsModeReplyTo(ui->cardCall);   /* R11: «Відповісти» -- режим уже активний: відкриває сторінку «Повідомлення» з набором */
 		return 1;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view != APRS_RX_VIEW_CARD))

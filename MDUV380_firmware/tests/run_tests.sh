@@ -55,7 +55,8 @@ declare -A SRCS=(
 	[test_aprs_afsk]="$APP/source/functions/aprs_afsk.c $APP/source/functions/aprs_probe_dsp.c -lm"   # R3: демодулятор Bell 202 + AX.25, поріг SNR, завади
 	[test_aprs_rx_parse]="$APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R8: розбір кадрів APRS, Mic-E, дедуплікація, список станцій, відстань
 	[test_aprs_mode]="$APP/source/functions/aprs_mode_cfg.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R10: налаштування «Режиму APRS» -- блок, типові значення, ефективні, збирання бікона, UTF-8 коментар
-	[test_aprs_mode_state]="$APP/source/functions/aprs_mode.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/callReplay.c"   # R10: вхід/вихід «Режиму APRS», налаштування, маяк -- РЕАЛЬНИЙ aprs_mode.c, залізо -- заглушки в тесті
+	[test_aprs_mode_state]="$APP/source/functions/aprs_mode.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/aprs_msg.c $APP/source/functions/callReplay.c"   # R10: вхід/вихід «Режиму APRS», налаштування, маяк -- РЕАЛЬНИЙ aprs_mode.c, залізо -- заглушки в тесті
+	[test_aprs_msg]="$APP/source/functions/aprs_msg.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R11: повідомлення APRS -- UTF-8/cp1251, кадр повідомлення й ACK, черга/повтори/ACK/пауза
 	[test_aprs_frame]="$APP/source/functions/aprs_mode_cfg.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R10-fix2: складання кадру AX.25 -- РЕАЛЬНИЙ aprs.c (#include), еталонний кодувальник у тесті, ASan/UBSan
 	[test_aprs_frame_ovf]="$APP/source/functions/aprs_mode_cfg.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R10-fix2: гілка «кадр завеликий» -- aprs.c з МАЛИМ буфером
 	[test_aprs_fault]="$APP/source/functions/aprs_fault_fmt.c"   # R10-fix4: ЧИСТА частина обробника збою -- hex/dec, CFSR, пошук адрес у стеку, магія запису
@@ -80,6 +81,7 @@ declare -A XFLAGS=(
 	[test_aprs_rx_parse]="-DENABLE_APRS_RX"
 	[test_aprs_fault]="-DENABLE_APRS_RX"
 	[test_aprs_mode]="-DENABLE_APRS_RX"
+	[test_aprs_msg]="-DENABLE_APRS_RX"
 	[test_aprs_mode_state]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX -DAPRS_MODE_NO_TRACE -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 	[test_aprs_frame]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX -DAPRS_MODE_NO_TRACE -Wl,--unresolved-symbols=ignore-all -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 	[test_aprs_frame_ovf]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX -DAPRS_MODE_NO_TRACE -Wl,--unresolved-symbols=ignore-all -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"

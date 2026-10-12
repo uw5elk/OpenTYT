@@ -47,7 +47,7 @@
 #define APRSRX_AGE_H          "%luг"
 #define APRSRX_AGE_D          "%luд"
 #define APRSRX_HINT_LIST      "GREEN:картка #:діагн."
-#define APRSRX_HINT_CARD      "UP/DN:станція RED:назад"
+#define APRSRX_HINT_CARD      "GREEN:відповісти RED:назад"
 #define APRSRX_HINT_DIAG      "0:скинути #:ще RED:назад"
 #define APRSRX_CARD_POS       "Поз: %s"
 #define APRSRX_CARD_NOPOS     "Позиції нема"

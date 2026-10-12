@@ -199,6 +199,7 @@ typedef enum
 	APRS_MODE_TX_TOOBIG       /* R10-fix2: кадр AX.25 не влазить у буфер -- передачу скасовано */
 } aprsModeTxResult_t;
 aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e);
+aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info);   /* R11: повідомлення/ACK APRS (info -- з aprs_msg.c) */
 void aprsModeAbortTx(void);   /* примусово обірвати маяк режиму (вихід посеред передачі) */
 #endif
 bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing);
