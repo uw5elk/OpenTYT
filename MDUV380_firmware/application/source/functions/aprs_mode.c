@@ -78,7 +78,7 @@ static inline aprsModeMem_t *mem(void)
 }
 _Static_assert(sizeof(aprsModeMem_t) <= (500U * 27U), "aprsModeMem_t does not fit the call replay ring");
 #else
-static aprsModeMem_t s_modeMem __attribute__((section(".aes_ccmram"), aligned(8)));
+static aprsModeMem_t s_modeMem __attribute__((section(".aes_ccmram"), aligned(8)));   /* CCM-INIT(aprsModeEnter): memset перед першим використанням; усі читачі діють лише при aprsModeIsActive() */
 static inline aprsModeMem_t *mem(void)
 {
 	return &s_modeMem;
@@ -86,7 +86,7 @@ static inline aprsModeMem_t *mem(void)
 #endif
 
 #if defined(APRS_MODE_TRACE)
-/* R10-fix: ТИМЧАСОВЕ трасування на екран. Не залежить від сповіщень (displayRenderWithoutNotification) і не чіпає стан
+/* R10-fix (R10-fix5: ПОСТІЙНЕ під APRS_RX): трасування на екран. Не залежить від сповіщень (displayRenderWithoutNotification) і не чіпає стан
  * режиму; номер видно, поки екран не перемалюють. Якщо зависає САМ displayRender() -- на склі лишиться ПОПЕРЕДНІЙ номер. */
 /* v != TRACE_NO_V: під номером ще й додаткове значення (лічильник/довжина). Нижче -- мінімальний залишок стека
  * поточного завдання в БАЙТАХ (uxTaskGetStackHighWaterMark): якщо він близький до 0, зависання -- переповнення стека. */

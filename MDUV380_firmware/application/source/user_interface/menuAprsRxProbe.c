@@ -33,8 +33,8 @@
 #define PROBE_NO_DATA_MS     1000U
 
 /* Стан екрана -- у CCM; ініціалізується в menuAprsRxProbeEnter() (до того не читається). */
-static uint32_t s_lastDrawMs PROBE_CCM;
-static uint8_t  s_page       PROBE_CCM;   /* 0 -- пакети, 1 -- фон, 2 -- потік, 3 -- кадр, 4 -- регістри, 5 -- фаза, 6 -- скан */
+static uint32_t s_lastDrawMs PROBE_CCM;   /* CCM-INIT(menuAprsRxProbeEnter) */
+static uint8_t  s_page       PROBE_CCM;   /* CCM-INIT(menuAprsRxProbeEnter) */   /* 0 -- пакети, 1 -- фон, 2 -- потік, 3 -- кадр, 4 -- регістри, 5 -- фаза, 6 -- скан */
 #define PROBE_PAGES          7U
 #define PROBE_PAGE_REGS      4U
 #define PROBE_PAGE_PHASE     5U
@@ -571,6 +571,7 @@ static void draw(void)
 void menuAprsRxProbeEnter(void)
 {
 	s_page = 0;
+	s_lastDrawMs = 0U;   // R10-fix5: CCM -- сміття; draw() нижче все одно ставить поточний час
 	aprsRxProbeOpen();
 	draw();
 }

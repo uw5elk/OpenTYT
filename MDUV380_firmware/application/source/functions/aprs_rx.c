@@ -111,7 +111,7 @@ typedef struct
 	aprsRxDb_t        db;
 } aprsRxState_t;
 
-static aprsRxState_t s_rx APRS_RX_CCM;
+static aprsRxState_t s_rx APRS_RX_CCM;   /* CCM-INIT(aprsRxInit) */
 
 /* ============================================================================================== */
 /* Допоміжне                                                                                       */

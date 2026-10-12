@@ -181,7 +181,7 @@ typedef struct
 	aprsProbeVar_t    var[APRS_PROBE_NUM_VARIANTS];
 } aprsProbeState_t;
 
-static aprsProbeState_t s_probe APRS_PROBE_CCM;
+static aprsProbeState_t s_probe APRS_PROBE_CCM;   /* CCM-INIT(aprsRxProbeInit) */
 
 static inline bool stateValid(void)
 {
