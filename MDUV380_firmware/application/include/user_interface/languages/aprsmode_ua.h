@@ -46,7 +46,7 @@
 #define APRSM_M_STATE         "Стан: %s"
 #define APRSM_M_ST_LISTEN     "Слухаю"
 #define APRSM_M_ST_START      "Запуск..."
-#define APRSM_M_ST_TX         "ПЕРЕДАЧА МАЯКА"
+#define APRSM_M_ST_TX         "ПЕРЕДАЧА"
 #define APRSM_M_ST_WAIT       "Чекаю вільну частоту"
 #define APRSM_M_ST_SENT       "Маяк передано"
 #define APRSM_M_RSSI          "Сигнал: %d дБм %c"

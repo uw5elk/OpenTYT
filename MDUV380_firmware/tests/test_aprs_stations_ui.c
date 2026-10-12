@@ -40,6 +40,10 @@ const aprsRxStats_t *aprsRxStats(void) { return &s_st; }
 bool aprsRxStationGeo(const aprsStation_t *st, uint32_t *d, uint16_t *b) { if (!(st->flags & APRS_ST_HASPOS)) return false; *d = 3200; *b = 45; return true; }
 void aprsRxFormatGeo(char *buf, size_t n, uint32_t d, uint16_t b) { snprintf(buf, n, "%lu.%luкм %s", (unsigned long)(d / 1000), (unsigned long)((d % 1000) / 100), aprsBearingName(b)); }
 uint32_t aprsRxAgeSec(const aprsStation_t *st) { return (s_now - st->lastMs) / 1000U; }
+/* R11: «Відповісти» з картки станції -- відкриває набір повідомлення; тут лише фіксуємо виклик */
+static int s_replyCalls = 0;
+static char s_replyCall[16];
+bool menuAprsModeReplyTo(const char *call) { s_replyCalls++; snprintf(s_replyCall, sizeof(s_replyCall), "%s", call); return true; }
 void aprsRxClear(void) { memset(&s_st, 0, sizeof(s_st)); aprsDbInit(&s_db); }
 
 static void key(char k, uint8_t ev)
@@ -87,6 +91,12 @@ static void walkAll(const char *tag)
 	for (int i = 0; i < 20; i++) { click(KEY_DOWN); }
 	for (int i = 0; i < 20; i++) { click(KEY_UP); }
 	snprintf(w, sizeof(w), "%s: картка", tag); checkScreen(w);
+	if (s_ui.view == APRS_RX_VIEW_CARD)
+	{
+		int before = s_replyCalls;
+		click(KEY_GREEN);
+		CHECK(s_replyCalls == before + 1 && s_replyCall[0] != 0, "GREEN на картці -- «Відповісти» зі станцією");
+	}
 	click(KEY_RED);                                              /* картка -> список */
 	if (s_ui.on == 0) { menuAprsStationsEnter(); }                /* порожня база: картки нема, RED зі списку закрив екран -- це правильно */
 	CHECK(s_ui.on == 1 && s_ui.view == APRS_RX_VIEW_LIST, "після RED з картки -- список");

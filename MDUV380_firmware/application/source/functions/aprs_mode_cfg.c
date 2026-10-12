@@ -260,7 +260,7 @@ int32_t aprsModeFixed24ToMicro(const uint8_t b[3])
 
 /* cp1251 -> Unicode для коментаря. Власна компактна таблиця (кирилиця й українські літери), а не dmrSmsCp1251ToUcs2():
  * та існує лише в збірці з AES + DMR_DATA, а «Режим APRS» збирається і без них. Усе, чого шрифт рації й так не має, -- '?'. */
-static uint16_t cp1251ToUcs2(uint8_t c)
+uint16_t aprsModeCp1251ToUcs2(uint8_t c)   /* R11: не static -- нею користується aprs_msg.c (повідомлення) */
 {
 	if (c >= 0xC0U)
 	{
@@ -302,7 +302,7 @@ size_t aprsModeCommentToUtf8(const char *cp1251, char *out, size_t cap)
 		{
 			c = ' ';   /* керівні в ефір не пускаємо */
 		}
-		u = (c < 0x80U) ? (uint16_t)c : cp1251ToUcs2(c);
+		u = (c < 0x80U) ? (uint16_t)c : aprsModeCp1251ToUcs2(c);
 		if (u < 0x80U)
 		{
 			enc[0] = (uint8_t)u;

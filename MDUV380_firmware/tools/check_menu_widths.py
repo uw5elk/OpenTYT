@@ -424,5 +424,31 @@ for name, t, n, lim in mode_over:
 print(f'  разом: {len(mode_over)}')
 fails += mode_over
 
+print('\n=== 8. «Повідомлення APRS»: список, читання, набір, сповіщення (languages/aprsmsg_ua.h, R11) ===')
+# Рядок екрана FONT_SIZE_1 -- 26 символів; заголовок і пункт меню -- 16; рядок сповіщення -- 16;
+# слово стану в рядку списку -- 9. Для шаблонів підставляємо НАЙГІРШЕ значення.
+msg_over = []
+msg_path = os.path.join(LANG, 'aprsmsg_ua.h')
+if os.path.exists(msg_path):
+    mm = {m.group(1): m.group(2) for m in re.finditer(
+        r'#define\s+(APRSMSG_\w+)\s+"((?:[^"\\]|\\.)*)"', open(msg_path, 'rb').read().decode('cp1251'))}
+    for name, val in mm.items():
+        t = val.replace('%u', '99').replace('%s', 'UW5ELK-15')   # лічильники: список ≤ 8, черга ≤ 4, байтів ≤ 67
+        if name in ('APRSMSG_MENU',) or name.startswith('APRSMSG_TITLE') or name.startswith('APRSMSG_E_'):
+            lim = LINE_CHARS
+        elif name.startswith('APRSMSG_ST_'):
+            lim = 9
+        else:
+            lim = 26
+        if len(t) > lim:
+            msg_over.append((name, t, len(t), lim))
+    # рядок списку: маркер(1) + мітка(1) + позивний(9) + пробіл(1) + текст/статус(9) + вік(5) = 26
+    if 1 + 1 + 9 + 1 + 9 + 5 > 26:
+        msg_over.append(('рядок списку', '', 26, 26))
+for name, t, n, lim in msg_over:
+    print(f'  {name}: "{t}" = {n} > {lim}')
+print(f'  разом: {len(msg_over)}')
+fails += msg_over
+
 print(f'\n{"Є ПЕРЕПОВНЕННЯ" if fails else "Переповнень не знайдено"} (всього: {len(fails)})')
 sys.exit(1 if fails else 0)

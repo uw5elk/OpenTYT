@@ -767,12 +767,16 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		return;   /* не AX.25 UI (або адреси не схожі) */
 	}
 	s_rx.db.total++;
+	aprsPacketParse(&ax, &pkt);   /* R11: розбір ДО відсіву дублікатів -- ACK на повторене відправником повідомлення потрібен і для дубліката */
+	if ((pkt.type == APRS_T_MESSAGE) && s_rx.ownCall[0] && aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid))
+	{
+		aprsModeMsgPre(&ax, &pkt);   /* R11: лише в «Режимі APRS»: ACK на наше -- скасувати повтори; повідомлення з номером -- ACK негайно */
+	}
 	if (aprsDbIsDuplicate(&s_rx.db, &ax, now))
 	{
 		return;   /* той самий (джерело, info) у межах 30 с -- один пакет */
 	}
 
-	aprsPacketParse(&ax, &pkt);
 	if (pkt.type == APRS_T_OTHER)
 	{
 		s_rx.db.other++;
@@ -788,10 +792,11 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		aprsModeOnFrame(&ax, &pkt, mg, md, mb);   /* R10: «останній пакет» на «Моніторі» */
 	}
 
-	/* Повідомлення нам: тільки справжнє (не ack/rej), раніше не віддане. ACK НЕ шлемо (R9). */
+	/* Повідомлення нам: тільки справжнє (не ack/rej), раніше не віддане. ACK шле «Режим APRS» (R11, aprsModeMsgPre()); поза режимом -- ні. */
 	if ((pkt.type == APRS_T_MESSAGE) && (pkt.msgAck == false) && (s_rx.ownCall[0] != 0) &&
 			aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid) && (aprsDbMsgSeen(&s_rx.db, &ax, &pkt, now) == false))
 	{
+		aprsModeMsgIncoming(&ax, &pkt);   /* R11: у «Режимі APRS» -- ще й у список екрана «Повідомлення» */
 		if (s_rx.pend.msg)
 		{
 			flushPending();   /* два повідомлення за один блок -- перше віддаємо зараз */

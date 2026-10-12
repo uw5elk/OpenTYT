@@ -153,6 +153,8 @@ void aprsModeFormatCoord(char *b, size_t n, int32_t u);     /* «50.450100» -> 
 /* Коментар cp1251 -> UTF-8 для ефіру; результат не довший за cap-1 байт і не більше
  * APRSM_COMMENT_AIR_MAX, не рветься посеред символу. Повертає довжину. */
 size_t aprsModeCommentToUtf8(const char *cp1251, char *out, size_t cap);
+/* R11: cp1251 -> Unicode (кирилиця, Є/І/Ї/Ґ, №; усе інше з байтів >= 0x80 -- '?'). Лише для c >= 0x80: ASCII викликач обробляє сам. */
+uint16_t aprsModeCp1251ToUcs2(uint8_t c);
 /* Коротка назва найуживаніших символів первинної таблиці (cp1251); NULL -- назви нема. */
 const char *aprsModeSymbolName(uint8_t table, uint8_t index);
 /* Наступний символ із названих (для швидкого перебору); починає з наступного після (table,index). */
