@@ -214,11 +214,26 @@ jobs:
               --notes "Автоматична CI-збірка коміту ${GITHUB_SHA}. Прошивка: українська, ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 (фоновий приймач APRS). Діагностична збірка з екраном «APRS проба» -- окремий файл openuv380-10w-ukrainian-diag-${SHORT}.bin. Windows-прошивальник (.exe) додається лише при ручному запуску workflow. НЕ перевірено на залізі."
           fi
           gh release upload "$TAG" "$ASSET" --clobber
-          # R10-fix4: .map (невеликий) і .elf (для addr2line) -- поруч із .bin того самого коміту
+          echo "OK: $ASSET -> реліз $TAG"
+      # R10-fix6: .map і .elf ТІЄЇ САМОЇ збірки, що й .bin вище, -- окремим кроком (щоб його було видно в логах), імена за тим самим
+      # шаблоном: openuv380-10w-ukrainian-<sha>.map / .elf. Без них адреси зі звіту про збій (HardFault PC/LR) розшифрувати нічим:
+      # tools/fault_lookup.py читає .map, arm-none-eabi-addr2line -- .elf, а обидва мають бути від ТОГО САМОГО коміту й тулчейну.
+      - name: Додати .map і .elf до релізу ci-<sha>
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        working-directory: MDUV380_firmware
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          TAG="ci-${SHORT}"
           cp build/openuv380-10w.map "openuv380-10w-ukrainian-${SHORT}.map"
           cp build/openuv380-10w.elf "openuv380-10w-ukrainian-${SHORT}.elf"
           gh release upload "$TAG" "openuv380-10w-ukrainian-${SHORT}.map" "openuv380-10w-ukrainian-${SHORT}.elf" --clobber
-          echo "OK: $ASSET -> реліз $TAG"
+          echo "OK: .map і .elf -> реліз $TAG; активи релізу зараз:"
+          gh release view "$TAG" --json assets -q '.assets[].name'
       # Автоочистка: лишаємо 5 найновіших ci-* релізів, старіші видаляємо разом із тегом.
       # continue-on-error: невдале прибирання не повинно червонити збірку.
       - name: Прибрати старі ci-* релізи (лишити 5)
@@ -299,6 +314,23 @@ jobs:
           cp build/openuv380-10w.bin "$ASSET"
           gh release upload "$TAG" "$ASSET" --clobber
           echo "OK: $ASSET -> реліз $TAG"
+      # R10-fix6: .map і .elf діагностичної збірки (інша прошивка -> інший .map, тож імена з "diag", як і в .bin).
+      - name: Додати .map і .elf діагностичної збірки до релізу ci-<sha>
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        working-directory: MDUV380_firmware
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          TAG="ci-${SHORT}"
+          cp build/openuv380-10w.map "openuv380-10w-ukrainian-diag-${SHORT}.map"
+          cp build/openuv380-10w.elf "openuv380-10w-ukrainian-diag-${SHORT}.elf"
+          gh release upload "$TAG" "openuv380-10w-ukrainian-diag-${SHORT}.map" "openuv380-10w-ukrainian-diag-${SHORT}.elf" --clobber
+          echo "OK: .map і .elf (diag) -> реліз $TAG; активи релізу зараз:"
+          gh release view "$TAG" --json assets -q '.assets[].name'
 
   # GUI-прошивальник для простих користувачів/тестерів: один .exe із двома кнопками
   # ("Обрати донор" і "ПРОШИТИ"), без ручного pip install/копіювання libusb dll.

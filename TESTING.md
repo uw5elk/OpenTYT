@@ -1239,6 +1239,48 @@ cd ~/OpenGD77-AES256 && gh release download ci-d64a852 --pattern "*.elf" --dir /
 Автоперевірка на майбутнє: `python3 MDUV380_firmware/tools/check_ccm_init.py` (входить у `tests/run_tests.sh`) -- кожна APRS-змінна в CCM мусить мати позначку
 `CCM-INIT(функція)`, і ця функція мусить згадувати змінну. Нова змінна в CCM без ініціалізації -- провал тестів.
 
+## 13zd. Блок AT — R10-fix6: .map і .elf у релізі ci-<sha> (НЕ ПЕРЕВІРЕНО: CI з цією зміною ще не запускався)
+
+Кожен реліз `ci-<7 символів sha>` тепер містить `.map` і `.elf` тієї самої збірки, що й `.bin` (імена за тим самим шаблоном):
+
+| Збірка | Активи релізу |
+|---|---|
+| користувацька (українська, ENABLE_AES + ENABLE_DMR_DATA + ENABLE_CALL_REPLAY + ENABLE_APRS_RX) | `openuv380-10w-ukrainian-<sha>.bin`, `.map`, `.elf` |
+| діагностична (APRS проба + приймач) | `openuv380-10w-ukrainian-diag-<sha>.bin`, `.map`, `.elf` |
+| Windows-прошивальник (лише ручний запуск) | `TYT.MD-UV390UKR.exe` |
+
+`<sha>` — перші 7 символів коміту (саме вони в назві прошитого `.bin`). `.map`/`.elf` ДІАГНОСТИЧНОЇ збірки не підходять до користувацької і навпаки.
+Старі релізи (зокрема `ci-d64a852`) без `.map` розшифрувати вже не можна — потрібна нова прошивка з релізу, що має ці активи.
+
+| № | Дія | Що записати |
+|---|---|---|
+| AT1 | Після CI нового коміту: перелік активів останнього релізу (команда нижче) | Є 3 файли користувацької і 3 діагностичної збірки? |
+| AT2 | Розшифрувати адреси зі звіту збою (команда нижче; запитає hex з екрана) | Функція+зсув для PC і LR |
+
+Перелік активів останнього релізу:
+
+```
+cd ~/OpenGD77-AES256 && T=$(gh release list --limit 1 --json tagName -q '.[0].tagName') && echo "$T" && gh release view "$T" --json assets -q '.assets[].name'
+```
+
+Розшифрувати адреси користувацької збірки (команда спитає адреси — PC, LR та адреси стека з екрана збою, hex через пробіл; `.map` береться з останнього релізу, тож прошивай саме його `.bin`):
+
+```
+cd ~/OpenGD77-AES256 && T=$(gh release list --limit 1 --json tagName -q '.[0].tagName') && S=${T#ci-} && gh release download "$T" --pattern "openuv380-10w-ukrainian-$S.map" --dir ~ --clobber && read -r -p "Адреси hex через пробіл: " A && python3 MDUV380_firmware/tools/fault_lookup.py ~/openuv380-10w-ukrainian-$S.map $A
+```
+
+Те саме для діагностичної збірки:
+
+```
+cd ~/OpenGD77-AES256 && T=$(gh release list --limit 1 --json tagName -q '.[0].tagName') && S=${T#ci-} && gh release download "$T" --pattern "openuv380-10w-ukrainian-diag-$S.map" --dir ~ --clobber && read -r -p "Адреси hex через пробіл: " A && python3 MDUV380_firmware/tools/fault_lookup.py ~/openuv380-10w-ukrainian-diag-$S.map $A
+```
+
+`.elf` (для номерів рядків; в Termux addr2line нема — поклади в Download і надішли мені):
+
+```
+cd ~/OpenGD77-AES256 && T=$(gh release list --limit 1 --json tagName -q '.[0].tagName') && S=${T#ci-} && gh release download "$T" --pattern "openuv380-10w-ukrainian-$S.elf" --dir /sdcard/Download --clobber && ls -l /sdcard/Download/openuv380-10w-ukrainian-$S.elf
+```
+
 ## 14. Таблиця результатів
 
 Заповни й пришли — далі я працюю вже за нею.
