@@ -504,6 +504,7 @@ void applicationMainTask(void)
 #endif
 #if defined(APRS_RX)
 	aprsRxInit();             // R8: стан приймача APRS у CCM (.aes_ccmram) -- стартап його не обнуляє
+	aprsMsgBgInit();          // R11-fix2: постійний блок повідомлень/ACK APRS (CCM) -- теж сміття після старту
 #endif
 
 	radioPostinit();
@@ -1663,6 +1664,9 @@ void applicationMainTask(void)
 		soundTickMelody();
 		voxTick();
 		gpsTick();
+#if defined(APRS_RX)
+		aprsMsgBgTick();  // R11-fix2: фонова черга повідомлень/ACK APRS -- ПЕРЕД біконом: ACK іде першим, на будь-якому екрані
+#endif
 		aprsBeaconingTick(&ev);
 #if defined(APRS_RX)
 		aprsRxTick();     // R8: фоновий приймач APRS -- працює незалежно від відкритого екрана

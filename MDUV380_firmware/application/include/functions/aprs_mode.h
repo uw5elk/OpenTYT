@@ -48,8 +48,9 @@ typedef struct
 	uint8_t  readTop;                         /* перший видимий рядок тексту в читанні */
 	uint8_t  mtMode;                          /* режим набору (sms_multitap) */
 	uint8_t  err;                             /* набір: останнє GREEN не прийняло значення */
-	uint8_t  exitArmed;                       /* на «Моніторі» RED вже натиснуто при непереданих повідомленнях */
 	uint8_t  reply;                           /* набір: відповідь (адресат заданий, одразу текст) */
+	uint8_t  layout;                          /* набір: показано шпаргалку розкладки (D) */
+	uint8_t  swallowUp;                       /* клавіша, що закрила шпаргалку: її відпускання набір не обробляє */
 	int16_t  pos;                             /* довжина підтвердженого тексту в набраному рядку */
 	smsMt_t  mt;                              /* символ, що гортається */
 	uint32_t keyMs;                           /* ticksGetMillis() останнього натискання тексту */
@@ -140,19 +141,26 @@ uint32_t aprsModeNextBeaconSec(void);            /* 0xFFFFFFFF -- періоди
 aprsModeBcnState_t aprsModeBeaconState(void);
 bool aprsModeIsTransmitting(void);
 
-/* ---- R11: повідомлення APRS ------------------------------------------------------------------------------- */
-aprsMsgBox_t *aprsModeMsgBox(void);              /* список і черга (лише поки режим активний) */
+/* ---- R11 / R11-fix2: повідомлення APRS ------------------------------------------------------------------- */
+/* ПОСТІЙНИЙ блок: список і фонова черга передачі (повідомлення + ACK). Живе й поза «Режимом APRS» (див. aprs_msg.h). */
+aprsMsgBox_t *aprsModeMsgBox(void);
+/* Старт прошивки (applicationMain.c), після callReplayBorrowReset(): CCM там сміття. */
+void aprsMsgBgInit(void);
+/* Фонова черга передачі: з головного циклу (applicationMain.c) ПЕРЕД aprsBeaconingTick(). Працює на будь-якому екрані. */
+void aprsMsgBgTick(void);
 /* Поставити наше повідомлення в чергу. Повертає AMSG_OK, AMSG_E_CALL / AMSG_E_TEXT / AMSG_E_FULL або -1, якщо режим не активний
- * чи нема власного позивного. Саму передачу робить aprsModeTick() (пауза, вільна частота, повтори). */
+ * чи нема власного позивного (складати повідомлення можна лише з «Режиму APRS»). Саму передачу робить aprsMsgBgTick() -- навіть
+ * після виходу з режиму. */
 int aprsModeMsgSend(const char *to, const char *cp1251Text);
 bool aprsModeHasCall(void);                      /* власний позивний режиму дійсний (без нього передавати нічого) */
 
 /* ---- для приймача (aprs_rx.c) ---------------------------------------------------------------------------- */
-/* Повідомлення/ACK, адресовані нам, ДО відсіву дублікатів: ACK на наше повідомлення -- скасувати повтори; повідомлення з номером --
- * поставити ACK негайно (і для повторів, якщо відправник не почув ACK). Викликати лише для pkt->type == APRS_T_MESSAGE нам. */
-void aprsModeMsgPre(const aprsAx25_t *ax, const aprsPacket_t *pkt);
-/* Нове (недублікат) повідомлення нам -- у список екрана «Повідомлення». */
-void aprsModeMsgIncoming(const aprsAx25_t *ax, const aprsPacket_t *pkt);
+/* Повідомлення/ACK, адресовані нам, ДО відсіву дублікатів (незалежно від того, відкрито «Режим APRS»): ACK на наше -- скасувати
+ * повтори; повідомлення з номером -- поставити ACK негайно (на КОЖНУ копію, бо відправник повторює, доки не почує ACK).
+ * Викликати лише для pkt->type == APRS_T_MESSAGE нам. */
+void aprsMsgBgOnMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt);
+/* Нове (недублікат) повідомлення нам -- у список «Повідом. APRS». true -- додано (нове, не повтор). Сховище SMS НЕ чіпає. */
+bool aprsMsgBgNewMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt);
 /* Власний позивний/SSID/позиція режиму (замість конфігу каналу). false -- режим не активний. */
 bool aprsModeOwnInfo(char call[8], uint8_t *ssid, bool *hasPos, int32_t *latU, int32_t *lonU);
 /* Кожен розібраний недублікат (CRC ок) -- для «останнього пакета» на «Моніторі». */

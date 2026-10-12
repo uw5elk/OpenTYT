@@ -479,9 +479,13 @@ bool aprsMsgOnIncoming(aprsMsgBox_t *b, const char *from, const char *cp, const 
 	}
 	if ((id != NULL) && (id[0] != 0))
 	{
+		char cut[APRS_MSG_TEXT_LEN];
+
+		setStr(cut, sizeof(cut), cp);   /* порівнюємо з тим, що ЗБЕРЕЖЕНО (обрізаним), інакше довге повідомлення було б «новим» щоразу */
 		for (unsigned i = 0; i < APRS_MSG_LIST_MAX; i++)
 		{
-			if (b->list[i].used && (b->list[i].dir == AMSG_DIR_IN) && eqCI(b->list[i].call, from) && (strcmp(b->list[i].id, id) == 0))
+			if (b->list[i].used && (b->list[i].dir == AMSG_DIR_IN) && eqCI(b->list[i].call, from) && (strcmp(b->list[i].id, id) == 0) &&
+					(strcmp(b->list[i].text, cut) == 0))
 			{
 				return false;   /* повтор: показуємо один раз */
 			}
@@ -499,7 +503,27 @@ bool aprsMsgOnIncoming(aprsMsgBox_t *b, const char *from, const char *cp, const 
 	setStr(e->call, sizeof(e->call), from);
 	setStr(e->id, sizeof(e->id), id);
 	setStr(e->text, sizeof(e->text), cp);
+	if (b->stats.rxNew < 0xFFFFU)
+	{
+		b->stats.rxNew++;
+	}
 	return true;
+}
+
+void aprsMsgCountRx(aprsMsgBox_t *b)
+{
+	if (b->stats.rx < 0xFFFFU)
+	{
+		b->stats.rx++;
+	}
+}
+
+static void statInc(uint16_t *v)
+{
+	if (*v < 0xFFFFU)
+	{
+		(*v)++;
+	}
 }
 
 bool aprsMsgQueueAck(aprsMsgBox_t *b, const char *to, const char *id, uint32_t now)
@@ -527,9 +551,36 @@ bool aprsMsgQueueAck(aprsMsgBox_t *b, const char *to, const char *id, uint32_t n
 	}
 	if (slot < 0)
 	{
-		return false;   /* черга повна: відправник повторить, і ми підтвердимо тоді */
+		/* Черга без місця: ACK важливіший за наше повідомлення, що ще не в ефірі (без ACK відправник повторюватиме до безкінечності).
+		 * Витісняємо НАЙСТАРІШЕ таке повідомлення -- воно стає «без ACK»; те, що вже в ефірі (inflight), не чіпаємо. */
+		int victim = -1;
+
+		for (unsigned i = 0; i < APRS_MSG_QUEUE_MAX; i++)
+		{
+			if ((b->q[i].type == AMSG_JOB_MSG) && (b->inflight != (int8_t)i) &&
+					((victim < 0) || ((int32_t)(b->q[victim].nextMs - b->q[i].nextMs) > 0)))
+			{
+				victim = (int)i;
+			}
+		}
+		if (victim < 0)
+		{
+			statInc(&b->stats.ackLost);
+			return false;   /* усі слоти -- ACK або передача в ефірі: відправник повторить, і ми підтвердимо тоді */
+		}
+		{
+			aprsMsgEntry_t *e = findOut(b, b->q[victim].to, b->q[victim].id);
+
+			if (e != NULL)
+			{
+				e->status = AMSG_ST_NOACK;
+			}
+		}
+		jobFree(b, (unsigned)victim);
+		slot = victim;
 	}
 	memset(&b->q[slot], 0, sizeof(b->q[slot]));
+	statInc(&b->stats.ackFormed);
 	b->q[slot].type = AMSG_JOB_ACK;
 	b->q[slot].nextMs = now;   /* негайно, без повторів */
 	setStr(b->q[slot].to, sizeof(b->q[slot].to), to);
@@ -652,6 +703,10 @@ size_t aprsMsgPoll(aprsMsgBox_t *b, uint32_t now, bool busy, bool txOk, char *in
 				e->status = AMSG_ST_NOACK;
 			}
 		}
+		else
+		{
+			statInc(&b->stats.ackLost);
+		}
 		jobFree(b, (unsigned)pick);
 		return 0U;
 	}
@@ -679,8 +734,18 @@ void aprsMsgTxDone(aprsMsgBox_t *b, uint32_t now, bool ok, bool fatal)
 			b->lastAckMs = (now != 0U) ? now : 1U;
 			setStr(b->lastAckTo, sizeof(b->lastAckTo), b->q[i].to);
 			setStr(b->lastAckId, sizeof(b->lastAckId), b->q[i].id);
+			(void)aprsMsgBuildAck(b->lastAckText, sizeof(b->lastAckText), b->q[i].to, b->q[i].id);
+			statInc(&b->stats.ackSent);
+			jobFree(b, (unsigned)i);   /* ПЕРЕДАНИЙ ACK не повторюється: відправник, що не почув, повторить повідомлення -- і дістане новий */
+			return;
 		}
-		jobFree(b, (unsigned)i);   /* ACK не повторюється ні за яких умов */
+		if (fatal || (++b->q[i].attempts >= APRS_MSG_ACK_TRIES))
+		{
+			statInc(&b->stats.ackLost);
+			jobFree(b, (unsigned)i);
+			return;
+		}
+		b->q[i].nextMs = now + APRS_MSG_ACK_RETRY_MS;   /* передачу не вдалось почати (зайнято чимось іншим) -- ще раз за мить */
 		return;
 	}
 	if (b->q[i].type != AMSG_JOB_MSG)
@@ -701,6 +766,10 @@ void aprsMsgTxDone(aprsMsgBox_t *b, uint32_t now, bool ok, bool fatal)
 			return;
 		}
 		j->attempts++;
+		if (ok)
+		{
+			statInc(&b->stats.msgSent);
+		}
 		j->nextMs = now + APRS_MSG_RETRY_MS;
 		if (e != NULL)
 		{
@@ -722,32 +791,6 @@ void aprsMsgTxEnded(aprsMsgBox_t *b, uint32_t now)
 bool aprsMsgGapOk(const aprsMsgBox_t *b, uint32_t now)
 {
 	return (b->lastTxMs == 0U) || ((now - b->lastTxMs) >= APRS_MSG_GAP_MS);
-}
-
-bool aprsMsgSplitInbox(const char *note, char call[APRS_MSG_CALL_LEN], const char **text)
-{
-	size_t n = 0;
-
-	if ((note == NULL) || (call == NULL) || (text == NULL))
-	{
-		return false;
-	}
-	while ((note[n] != 0) && (note[n] != ':') && (n < (APRS_MSG_CALL_LEN - 1U)))
-	{
-		n++;
-	}
-	if ((n == 0U) || (note[n] != ':'))
-	{
-		return false;
-	}
-	memcpy(call, note, n);
-	call[n] = 0;
-	*text = note + n + 1U;
-	if (**text == ' ')
-	{
-		(*text)++;
-	}
-	return true;
 }
 
 int aprsMsgWrapLine(const char *s, int len, int start, int w, int *lineStart, int *next)
@@ -815,6 +858,28 @@ void aprsMsgCancelAll(aprsMsgBox_t *b)
 		jobFree(b, i);
 	}
 	b->inflight = -1;
+}
+
+unsigned aprsMsgAckPending(const aprsMsgBox_t *b)
+{
+	unsigned n = 0;
+
+	for (unsigned i = 0; i < APRS_MSG_QUEUE_MAX; i++)
+	{
+		n += (b->q[i].type == AMSG_JOB_ACK) ? 1U : 0U;
+	}
+	return n;
+}
+
+unsigned aprsMsgQueueLen(const aprsMsgBox_t *b)
+{
+	unsigned n = 0;
+
+	for (unsigned i = 0; i < APRS_MSG_QUEUE_MAX; i++)
+	{
+		n += (b->q[i].type != AMSG_JOB_FREE) ? 1U : 0U;
+	}
+	return n;
 }
 
 unsigned aprsMsgPendingCount(const aprsMsgBox_t *b)

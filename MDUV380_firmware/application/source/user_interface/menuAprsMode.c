@@ -22,6 +22,7 @@
 #include "functions/sound.h"
 #include "user_interface/languages/aprsmode_ua.h"
 #include "user_interface/languages/aprsmsg_ua.h"
+#include "user_interface/uiSmsKeys.h"   /* R11-fix2: підказка літер і шпаргалка розкладки -- спільні з SMS */
 #include <stdio.h>
 #include <string.h>
 
@@ -830,47 +831,12 @@ static void drawMsgPage(void)
 	}
 }
 
-/* Підказка літер клавіші, що гортається (як composeKeyHint() у menuMessages.c): поточна літера інверсно. */
+/* Підказка літер клавіші, що гортається, і шпаргалка розкладки (D) -- ТА САМА реалізація, що в «Повідомленнях» DMR (uiSmsKeys.c, ui7). */
 static void msgKeyHint(int16_t x, int16_t y)
 {
 	aprsMsgUi_t *mu = &aprsModeUi()->msg;
-	const char *map = smsMtKeyMap(mu->mtMode, mu->mt.key);
-	int n, cells, step, start = 0;
 
-	if (map == NULL)
-	{
-		return;
-	}
-	n = (int)strlen(map);
-	cells = (DISPLAY_SIZE_X - x) / 8;
-	step = (((2 * n) - 1) <= cells) ? 2 : 1;
-	if ((step == 1) && (n > cells))
-	{
-		start = (int)mu->mt.idx - (cells / 2);
-		if (start > (n - cells))
-		{
-			start = n - cells;
-		}
-		if (start < 0)
-		{
-			start = 0;
-		}
-	}
-	for (int k = start; (k < n) && (((k - start) * step) < cells); k++)
-	{
-		char one[2] = { (map[k] == ' ') ? '_' : map[k], 0 };
-		int16_t cx = (int16_t)(x + ((k - start) * step * 8));
-
-		if (k == (int)mu->mt.idx)
-		{
-			displayFillRect(cx, y, 8, 8, false);
-			displayPrintCore(cx, y, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, true);
-		}
-		else
-		{
-			displayPrintCore(cx, y, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, false);
-		}
-	}
+	uiSmsKeyHint(mu->mtMode, mu->mt.key, mu->mt.idx, x, y);
 }
 
 /* Екран набору (адресат або текст) -- на весь екран, великий шрифт. */
@@ -887,6 +853,13 @@ static void drawMsgCompose(void)
 	int rows = isCall ? 2 : 4;
 	int len, total, first;
 
+	if (mu->layout)
+	{
+		/* D: шпаргалка розкладки поточного режиму (Cyrillic/Latin/цифри) -- як у SMS; будь-яка клавіша -- назад до набору */
+		snprintf(buf, sizeof(buf), APRSMSG_K_TITLE, lbl);
+		uiSmsKeyLayoutDraw(mu->mtMode, buf, APRSMSG_K_BACK);
+		return;
+	}
 	displayClearBuf();
 	menuDisplayTitle((isCall || (mu->reply == 0U)) ? APRSMSG_TITLE_NEW : APRSMSG_TITLE_REPLY);
 	if (isCall)
@@ -943,6 +916,8 @@ static void msgComposeStart(const char *call)
 	mu->mt.key = 0;
 	mu->mt.idx = 0;
 	mu->err = 0U;
+	mu->layout = 0U;
+	mu->swallowUp = 0U;
 	mu->pos = 0;
 	mu->text[0] = 0;
 	mu->call[0] = 0;
@@ -1036,6 +1011,36 @@ static bool msgComposeEvent(uiEvent_t *ev)
 	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
 	{
 		return false;
+	}
+	if (mu->layout)
+	{
+		/* шпаргалка відкрита: лише нове НАТИСКАННЯ закриває її (як layoutEvent() у menuMessages.c); текст не чіпається */
+		if ((ev->keys.event & KEY_MOD_PRESS) && ((ev->keys.event & KEY_MOD_LONG) == 0))
+		{
+			mu->swallowUp = (ev->keys.event & KEY_MOD_UP) ? 0U : (uint8_t)ev->keys.key;   /* валкодер шле натискання й відпускання разом */
+			mu->layout = 0U;
+			return true;
+		}
+		return false;
+	}
+	if (mu->swallowUp != 0U)
+	{
+		/* відпускання клавіші, що закрила шпаргалку, -- RED/GREEN діють на відпусканні й інакше вийшли б із набору */
+		if ((ev->keys.key == mu->swallowUp) && (ev->keys.event & KEY_MOD_UP))
+		{
+			mu->swallowUp = 0U;
+			return false;
+		}
+		if (ev->keys.event & KEY_MOD_PRESS)
+		{
+			mu->swallowUp = 0U;
+		}
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		smsMtCommit(&mu->mt, &mu->pos);   /* символ, що гортається, -- у текст */
+		mu->layout = 1U;
+		return true;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
@@ -1294,7 +1299,6 @@ static void gotoPage(int dir)
 	{
 		msgOpenPage();
 	}
-	u->msg.exitArmed = 0U;
 }
 
 static int wrapStep(int v, int dir, int max)   /* 0..max, по колу */
@@ -1427,10 +1431,6 @@ static int pageEvent(uiEvent_t *ev)
 		return 0;
 	}
 
-	if ((u->page == APRS_MODE_PAGE_MONITOR) && (KEYCHECK_SHORTUP(ev->keys, KEY_RED) == false))
-	{
-		u->msg.exitArmed = 0U;
-	}
 	switch (u->page)
 	{
 		case APRS_MODE_PAGE_MESSAGES:
@@ -1443,13 +1443,7 @@ static int pageEvent(uiEvent_t *ev)
 				{
 					return 0;   /* посеред маяка не виходимо */
 				}
-				if ((aprsMsgPendingCount(aprsModeMsgBox()) > 0U) && (u->msg.exitArmed == 0U))
-				{
-					/* R11: вихід з режиму скасує непередані/непідтверджені повідомлення -- просимо підтвердити другим RED */
-					u->msg.exitArmed = 1U;
-					msgNotify(APRSMSG_E_EXIT);
-					return 1;
-				}
+				/* R11-fix2: черга повідомлень/ACK фонова -- вихід з режиму її НЕ скасовує (підтвердження «RED ще раз» прибрано) */
 				return -1;
 			}
 			if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))

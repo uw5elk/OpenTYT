@@ -29,10 +29,6 @@
 #include "user_interface/uiUtilities.h"
 #include "usb/usb_com.h"
 #include "io/buttons.h"
-#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
-#include "functions/dmr_sms.h"      /* R11: повідомлення APRS зі сховища SMS -- у список екрана */
-#include "functions/sms_format.h"   /* SMS_TIME_VALID_MIN: годинник рації виставлено */
-#endif
 #include "user_interface/languages/aprsmode_ua.h"
 #include <string.h>
 #include <stdio.h>
@@ -69,18 +65,11 @@ typedef struct
 	/* монітор */
 	aprsModeLast_t         last;
 	aprsModeUi_t           ui;
-	/* R11: повідомлення APRS -- список (8) і черга (4). Живе в цьому ж позиченому буфері, тому в CCM користувацької збірки не
-	 * займає нічого: з виходом із режиму усе зникає (непередане скасовується, прочитане лишається у «Вхідних» сховища SMS). */
-	aprsMsgBox_t           msg;
-	bool                   txSeen;         /* R11: бачили передачу (aprsTxProgress != IDLE) -- відмітити її кінець для паузи 2 с */
+	/* R11-fix2: список і черга повідомлень APRS більше НЕ тут -- це ПОСТІЙНИЙ блок (bgBox()), що живе й поза режимом. */
 #if defined(APRS_MODE_TRACE)
 	uint32_t               trSeen;         /* R10-fix: які номери тік-трасування (60..91) уже показано після входу/маяка */
 #endif
 } aprsModeMem_t;
-
-#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
-static void preloadInbox(aprsModeMem_t *m);
-#endif
 
 #if defined(ENABLE_CALL_REPLAY)
 static inline aprsModeMem_t *mem(void)
@@ -89,12 +78,25 @@ static inline aprsModeMem_t *mem(void)
 
 	return (aprsModeMem_t *)callReplayBorrow(&n);
 }
-_Static_assert(sizeof(aprsModeMem_t) <= (500U * 27U), "aprsModeMem_t does not fit the call replay ring");
+_Static_assert(sizeof(aprsModeMem_t) <= (CALL_REPLAY_GROUPS * CALL_REPLAY_GROUP_BYTES), "aprsModeMem_t does not fit the call replay ring");
+/* R11-fix2: ПОСТІЙНИЙ блок повідомлень -- у зарезервованій частині буфера «Переслухати», яку режим не позичає (callReplay.c). */
+_Static_assert(sizeof(aprsMsgBox_t) <= CALL_REPLAY_APRS_RESERVE_BYTES, "aprsMsgBox_t does not fit the call replay APRS reserve");
+static inline aprsMsgBox_t *bgBox(void)
+{
+	size_t n = 0;
+
+	return (aprsMsgBox_t *)callReplayReserved(&n);
+}
 #else
 static aprsModeMem_t s_modeMem __attribute__((section(".aes_ccmram"), aligned(8)));   /* CCM-INIT(aprsModeEnter): memset перед першим використанням; усі читачі діють лише при aprsModeIsActive() */
 static inline aprsModeMem_t *mem(void)
 {
 	return &s_modeMem;
+}
+static aprsMsgBox_t s_msgBox __attribute__((section(".aes_ccmram"), aligned(8)));   /* CCM-INIT(aprsMsgBgInit) */
+static inline aprsMsgBox_t *bgBox(void)
+{
+	return &s_msgBox;
 }
 #endif
 
@@ -514,10 +516,6 @@ bool aprsModeEnter(void)
 	AM_TRACE(17);  /* перед scheduleBeacons */
 	scheduleBeacons(m, ticksGetMillis());
 	m->bcnState = APRS_MODE_BCN_NONE;
-	aprsMsgInit(&m->msg, ticksGetMillis() / 997U);   /* перший номер -- «випадковий», щоб новий сеанс не повторював номери попереднього */
-#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
-	preloadInbox(m);
-#endif
 	m->ui.page = APRS_MODE_PAGE_MONITOR;
 	aprsRxUi()->view = APRS_RX_VIEW_LIST;
 	aprsRxUi()->sel = 0;
@@ -550,6 +548,7 @@ void aprsModeExit(void)
 	{
 		AM_TRACE(302);  /* перед aprsModeAbortTx */
 		aprsModeAbortTx();   /* примусовий вихід посеред маяка (вимкнення, push меню) */
+		bgBox()->txSeen = 1U;   /* R11-fix2: передачу обірвано синхронно -- фоновий тік мусить відмітити її кінець (пауза 2 с, txActive) */
 	}
 	AM_TRACE(303);  /* перед aprsRxSuspendForAudio */
 	aprsRxSuspendForAudio();   /* приймач -- негайно; далі радіо перебудовується */
@@ -658,7 +657,14 @@ static void beaconFeedback(aprsModeBcnState_t st)
 
 aprsMsgBox_t *aprsModeMsgBox(void)
 {
-	return &mem()->msg;
+	return bgBox();
+}
+
+/* Старт прошивки (applicationMain.c, ПІСЛЯ callReplayBorrowReset()): CCM там сміття, блок постійний. Годинник рації тут ще не читаємо
+ * (ранній старт) -- лічильник номерів «розсіюється» ним при першому нашому повідомленні (aprsModeMsgSend()). */
+void aprsMsgBgInit(void)
+{
+	aprsMsgInit(bgBox(), ticksGetMillis() / 997U);
 }
 
 bool aprsModeHasCall(void)
@@ -668,149 +674,151 @@ bool aprsModeHasCall(void)
 
 int aprsModeMsgSend(const char *to, const char *cp1251Text)
 {
-	aprsModeMem_t *m;
-
 	if (aprsModeHasCall() == false)
 	{
 		return -1;
 	}
-	m = mem();
-	return aprsMsgSend(&m->msg, to, cp1251Text, ticksGetMillis());
+	{
+		aprsMsgBox_t *b = bgBox();
+
+		if (b->numSeeded == 0U)
+		{
+			/* перший номер -- «випадковий», щоб новий сеанс (перезапуск рації) не повторював номери попереднього */
+			b->numSeeded = 1U;
+			b->lastNum = (uint8_t)(((uint32_t)getRtcTime_custom() + (ticksGetMillis() / 997U)) % 99U);
+		}
+		return aprsMsgSend(b, to, cp1251Text, ticksGetMillis());
+	}
 }
 
-/* Одна спроба передати те, що в черзі. true -- кадр пішов у ефір (або спроба зроблена): інших передач цього тіку не робимо. */
-static bool msgTick(aprsModeMem_t *m, uint32_t now)
+/* Вільна частота? У режимі -- за шумодавом «каналу» режиму; поза ним -- за активністю AFSK і несучою поточного каналу. */
+static bool bgChannelBusy(void)
 {
+	if (aprsModeIsActive())
+	{
+		return channelBusy(mem());
+	}
+	return aprsRxBusy(APRS_MODE_RX_BUSY_MS) || (LedRead(LED_GREEN) != 0);
+}
+
+/* R11-fix2: ФОНОВА черга передачі повідомлень і ACK -- з головного циклу (applicationMain.c), ПЕРЕД aprsBeaconingTick(), тож ACK іде
+ * раніше за періодичний бікон. Працює однаково в «Режимі APRS», на головному екрані, в меню, у списку станцій.
+ * Умови передачі: APRS увімкнено, жодна інша передача/сканування, PTT не натиснуто, хотспот не вхопив рацію; зайнята частота --
+ * чекаємо до 10 с, далі передаємо; між двома передачами пауза >= 2 с (все це в aprsMsgPoll()).
+ * Шлях в ефір: у режимі -- aprsModeTxMessage() (рація вже на частоті APRS); поза режимом -- aprsBeaconingSendMessage() (QSY на
+ * частоту APRS і назад, як у бікона). Перед передачею синхронно зупиняється приймач (aprsRxStopForTx() усередині обох), після --
+ * його вмикає aprsRxTick(). */
+void aprsMsgBgTick(void)
+{
+	aprsMsgBox_t *b = bgBox();
+	uint32_t now = ticksGetMillis();
 	char info[APRS_MSG_ADDR_LEN + 3U + APRS_MSG_UTF8_MAX + 8U + 8U];
 	size_t n;
-	bool txOk;
+	bool txOk, modeOn;
 	aprsModeTxResult_t r;
 
-	/* Умови передачі: режим активний (ми тут), приймач не в процесі кадру (враховано в channelBusy -> очікування до 10 с), PTT не
-	 * натиснуто, не йде жодна інша передача (голос/DMR/стоковий бікон), не сканування. */
-	txOk = (trxTransmissionEnabled == false) && (trxIsTransmitting == false) && (uiDataGlobal.Scan.active == false) &&
-			((buttonsRead() & BUTTON_PTT) == 0U);
-	n = aprsMsgPoll(&m->msg, now, channelBusy(m), txOk, info, sizeof(info));
-	if (n == 0U)
+	if (aprsTxProgress != APRS_TX_IDLE)
 	{
-		return false;
+		b->txSeen = 1U;
+		return;   /* передача йде (або стокова машина завершує її) */
 	}
-	r = aprsModeTxMessage(&m->eff, info);
-	switch (r)
+	if (b->txSeen)
 	{
-		case APRS_MODE_TX_OK:
-			aprsMsgTxDone(&m->msg, now, true, false);
-			break;
-		case APRS_MODE_TX_BUSY:
-			aprsMsgTxDone(&m->msg, now, false, false);   /* зайнято чимось іншим -- спробуємо ще, спроба рахується */
-			break;
-		default:
-			aprsMsgTxDone(&m->msg, now, false, true);    /* заборона TX, не FM, поза діапазоном, нема позивного -- марно повторювати */
-			beaconFeedback((r == APRS_MODE_TX_INHIBIT) ? APRS_MODE_BCN_INHIBIT : ((r == APRS_MODE_TX_BAND) ? APRS_MODE_BCN_BAND :
-					((r == APRS_MODE_TX_NOCALL) ? APRS_MODE_BCN_NOCALL : APRS_MODE_BCN_FAILED)));
-			break;
+		b->txSeen = 0U;
+		aprsMsgTxEnded(b, now);   /* кінець будь-якої передачі (маяк теж) -- від нього пауза 2 с */
 	}
-	return true;
-}
-
-void aprsModeMsgPre(const aprsAx25_t *ax, const aprsPacket_t *pkt)
-{
-	aprsModeMem_t *m;
-
-	if ((aprsModeIsActive() == false) || (pkt->type != APRS_T_MESSAGE))
+	if (aprsMsgQueueLen(b) == 0U)
 	{
 		return;
 	}
-	m = mem();
+
+	modeOn = aprsModeIsActive();
+	if ((modeOn == false) && (aprsBeaconingMessagesAllowed() == false))
+	{
+		/* APRS вимкнено/бікон призупинено, режим закрито: ні ACK, ні повтори не підуть. Кому ACK уже не потрібен -- знімаємо, щоб
+		 * вони не спрацювали пізніше, коли APRS знову ввімкнуть. Стан «чекає» наших повідомлень -> «без ACK». */
+		aprsMsgCancelAll(b);
+		return;
+	}
+
+	txOk = (trxTransmissionEnabled == false) && (trxIsTransmitting == false) && (uiDataGlobal.Scan.active == false) &&
+			(settingsUsbMode != USB_MODE_HOTSPOT) && ((buttonsRead() & BUTTON_PTT) == 0U);
+	n = aprsMsgPoll(b, now, bgChannelBusy(), txOk, info, sizeof(info));
+	if (n == 0U)
+	{
+		return;
+	}
+	r = modeOn ? aprsModeTxMessage(&mem()->eff, info) : aprsBeaconingSendMessage(info);
+	switch (r)
+	{
+		case APRS_MODE_TX_OK:
+			aprsMsgTxDone(b, now, true, false);
+			b->txSeen = 1U;   /* кінець відмітимо, щойно aprsTxProgress знову стане IDLE */
+			break;
+		case APRS_MODE_TX_BUSY:
+			aprsMsgTxDone(b, now, false, false);   /* зайнято чимось іншим -- спробуємо ще, спроба рахується */
+			break;
+		default:
+			aprsMsgTxDone(b, now, false, true);    /* заборона TX, не FM, поза діапазоном, нема позивного -- марно повторювати */
+			if (modeOn)
+			{
+				beaconFeedback((r == APRS_MODE_TX_INHIBIT) ? APRS_MODE_BCN_INHIBIT : ((r == APRS_MODE_TX_BAND) ? APRS_MODE_BCN_BAND :
+						((r == APRS_MODE_TX_NOCALL) ? APRS_MODE_BCN_NOCALL : APRS_MODE_BCN_FAILED)));
+			}
+			break;
+	}
+}
+
+/* Повідомлення/ACK, адресовані нам, ДО відсіву дублікатів (aprs_rx.c, frameDispatch()): ПОЗА залежністю від того, чи відкрито режим.
+ * ACK на наше -- скасувати повтори; повідомлення з номером -- ACK негайно, на КОЖНУ копію (відправник повторює, доки не почує). */
+void aprsMsgBgOnMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt)
+{
+	aprsMsgBox_t *b = bgBox();
+
+	if (pkt->type != APRS_T_MESSAGE)
+	{
+		return;
+	}
 	if (pkt->msgAck)
 	{
 		/* текст «ack12» / «rej12» (parseMessage гарантує довжину 4..8) */
 		if (strlen(pkt->text) >= 4U)
 		{
-			(void)aprsMsgOnAckRx(&m->msg, ax->src, pkt->text + 3, pkt->text[0] == 'r');
+			(void)aprsMsgOnAckRx(b, ax->src, pkt->text + 3, pkt->text[0] == 'r');
 		}
-	}
-	else if (pkt->msgId[0] != 0)
-	{
-		(void)aprsMsgQueueAck(&m->msg, ax->src, pkt->msgId, ticksGetMillis());
-	}
-}
-
-void aprsModeMsgIncoming(const aprsAx25_t *ax, const aprsPacket_t *pkt)
-{
-	aprsModeMem_t *m;
-
-	if (aprsModeIsActive() == false)
-	{
 		return;
 	}
-	m = mem();
-	if (aprsMsgOnIncoming(&m->msg, ax->src, pkt->text, pkt->msgId, ticksGetMillis()) && (m->ui.msg.sel > 0U))
+	aprsMsgCountRx(b);
+	if (pkt->msgId[0] != 0)
 	{
-		m->ui.msg.sel++;   /* нове зверху: вибраний запис зсунувся на один вниз */
-		if (m->ui.msg.sel >= APRS_MSG_LIST_MAX)
-		{
-			m->ui.msg.sel = (uint8_t)(APRS_MSG_LIST_MAX - 1U);
-		}
+		(void)aprsMsgQueueAck(b, ax->src, pkt->msgId, ticksGetMillis());
 	}
 }
 
-#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
-/* Повідомлення APRS, що прийшли ПОЗА режимом (їх покладено у «Вхідні» сховища SMS з прапорцем APRS), -- у список екрана:
- * до 8 найновіших. Вік береться з часу запису (годинник рації); нема годинника -- «--». */
-static void preloadInbox(aprsModeMem_t *m)
+/* Нове (недублікат) повідомлення нам -- у список; у режимі ще й зсув вибраного рядка. true -- додано (нове). */
+bool aprsMsgBgNewMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt)
 {
-	int idx[APRS_MSG_LIST_MAX];
-	int found = 0;
-	int count = dmrSmsCount(0);
-	uint32_t nowMs = ticksGetMillis();
-	uint32_t rtc = (uint32_t)getRtcTime_custom();
+	aprsMsgBox_t *b = bgBox();
 
-	for (int i = 0; (i < count) && (found < (int)APRS_MSG_LIST_MAX); i++)
+	if (aprsMsgOnIncoming(b, ax->src, pkt->text, pkt->msgId, ticksGetMillis()) == false)
 	{
-		const dmrSmsMessage_t *e = dmrSmsGet(0, i);
+		return false;
+	}
+	if (aprsModeIsActive())
+	{
+		aprsModeMem_t *m = mem();
 
-		if ((e != NULL) && (e->flags & DMR_SMS_FLAG_APRS))
+		if (m->ui.msg.sel > 0U)
 		{
-			idx[found++] = i;
+			m->ui.msg.sel++;   /* нове зверху: вибраний запис зсунувся на один вниз */
+			if (m->ui.msg.sel >= APRS_MSG_LIST_MAX)
+			{
+				m->ui.msg.sel = (uint8_t)(APRS_MSG_LIST_MAX - 1U);
+			}
 		}
 	}
-	for (int k = found - 1; k >= 0; k--)   /* від найстаршого до найновішого: найновіше опиниться зверху */
-	{
-		const dmrSmsMessage_t *e = dmrSmsGet(0, idx[k]);
-		uint32_t t = dmrSmsGetTime(0, idx[k]);
-		char call[APRS_MSG_CALL_LEN];
-		const char *text;
-		char buf[DMR_SMS_TEXT_MAX + 1];
-		aprsMsgEntry_t *ent;
-
-		if (e == NULL)
-		{
-			continue;
-		}
-		memcpy(buf, e->text, e->textLen);
-		buf[e->textLen] = 0;
-		if (aprsMsgSplitInbox(buf, call, &text) == false)
-		{
-			continue;
-		}
-		if (aprsMsgOnIncoming(&m->msg, call, text, "", nowMs) == false)
-		{
-			continue;
-		}
-		ent = &m->msg.list[0];
-		ent->unread = (e->flags & DMR_SMS_FLAG_UNREAD) ? 1U : 0U;
-		if ((t != 0U) && (rtc >= SMS_TIME_VALID_MIN) && (rtc >= t) && ((rtc - t) < (30UL * 86400UL)))
-		{
-			ent->ms = nowMs - ((rtc - t) * 1000U);
-		}
-		else
-		{
-			ent->noTime = 1U;
-		}
-	}
+	return true;
 }
-#endif
 
 void aprsModeTick(void)
 {
@@ -842,17 +850,11 @@ void aprsModeTick(void)
 
 	if (aprsTxProgress != APRS_TX_IDLE)
 	{
-		m->txSeen = true;
-		return;   /* передача йде (або стокова машина завершує її) */
+		return;   /* передача йде (або стокова машина завершує її); її кінець відмічає aprsMsgBgTick() */
 	}
-	if (m->txSeen)
+	if (aprsMsgAckPending(bgBox()) != 0U)
 	{
-		m->txSeen = false;
-		aprsMsgTxEnded(&m->msg, now);   /* R11: кінець будь-якої передачі (маяк теж) -- від нього пауза 2 с */
-	}
-	if (msgTick(m, now))
-	{
-		return;   /* пішло повідомлення або ACK; маяк, якщо замовлений, чекає своєї черги */
+		return;   /* R11-fix2: ACK чекає передачі -- він ПЕРШИЙ, маяк (запит лишається) іде після нього */
 	}
 	if ((m->bcnState == APRS_MODE_BCN_SENT) && (m->lastBeaconMs != 0U) && ((now - m->lastBeaconMs) > 3000U))
 	{
@@ -894,7 +896,7 @@ void aprsModeTick(void)
 		return;
 	}
 	m->busySinceMs = 0U;
-	if (aprsMsgGapOk(&m->msg, now) == false)
+	if (aprsMsgGapOk(bgBox(), now) == false)
 	{
 		return;   /* R11: від кінця попередньої передачі (повідомлення чи маяка) не минуло 2 с -- запит лишається */
 	}

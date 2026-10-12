@@ -19,6 +19,7 @@
 #include "user_interface/languages/aprsrx_ua.h"
 #include "user_interface/languages/aprsmode_ua.h"   /* R10: підказка вбудованої сторінки */
 #include "user_interface/menuAprsMode.h"              /* R11: «Відповісти» з картки */
+#include "functions/aprs_mode.h"                     /* R11-fix2: лічильники черги повідомлень/ACK (aprsModeMsgBox()) */
 #include <stdio.h>
 #include <string.h>
 
@@ -301,6 +302,17 @@ static void drawDiag2(void)
 	/* R11-fix: скільки кадрів прийшло через i-gate (third-party "}") і було розгорнуто до справжнього відправника */
 	snprintf(buf, sizeof(buf), "3P unwrapped %u", (unsigned)aprsRxDb()->tpUnwrapped);
 	printRow(7, buf);
+	/* R11-fix2: повідомлення/ACK. rx -- до нас (УСІ копії), ak a>b -- ACK сформовано>передано, L -- ACK не пішов (lost),
+	 * q -- довжина черги. Нижче -- останній ПЕРЕДАНИЙ ACK як інфо-поле: порівняти з "raw packets" на aprs.fi. */
+	{
+		const aprsMsgBox_t *mb = aprsModeMsgBox();
+
+		snprintf(buf, sizeof(buf), "rx%lu ak%lu>%lu L%lu q%u", ST_CAP(mb->stats.rx, 999), ST_CAP(mb->stats.ackFormed, 999),
+				ST_CAP(mb->stats.ackSent, 999), ST_CAP(mb->stats.ackLost, 99), aprsMsgQueueLen(mb));
+		printRow(8, buf);
+		snprintf(buf, sizeof(buf), ">%s", (mb->lastAckText[0] != 0) ? mb->lastAckText : "-");
+		printRow(9, buf);
+	}
 	printRow(10, APRSRX_HINT_DIAG);
 }
 

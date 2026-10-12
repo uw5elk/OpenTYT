@@ -122,7 +122,25 @@ aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info)
 	}
 	return s_msgTxResult;
 }
-uint32_t buttonsRead(void) { return 0U; }
+/* R11-fix2: передача повідомлень/ACK ПОЗА режимом (стокова гілка з QSY) -- справжня в aprs.c, тут заглушка */
+static int s_bgTxCalls = 0;
+static char s_bgTxInfo[100];
+static bool s_bgAllowed = true;
+static aprsModeTxResult_t s_bgTxResult = APRS_MODE_TX_OK;
+aprsModeTxResult_t aprsBeaconingSendMessage(const char *info)
+{
+	s_bgTxCalls++;
+	snprintf(s_bgTxInfo, sizeof(s_bgTxInfo), "%s", info);
+	if (s_bgTxResult == APRS_MODE_TX_OK)
+	{
+		s_autoEnd = true;
+		aprsTxProgress = APRS_TX_IN_PROGRESS;
+	}
+	return s_bgTxResult;
+}
+bool aprsBeaconingMessagesAllowed(void) { return s_bgAllowed; }
+static bool s_pttHeld = false;
+uint32_t buttonsRead(void) { return s_pttHeld ? BUTTON_PTT : 0U; }
 time_t_custom getRtcTime_custom(void) { time_t_custom t; memset(&t, 0, sizeof(t)); return t; }
 int dmrSmsCount(int outgoing) { (void)outgoing; return 0; }
 const dmrSmsMessage_t *dmrSmsGet(int outgoing, int idx) { (void)outgoing; (void)idx; return NULL; }
@@ -174,6 +192,9 @@ static void resetWorld(void)
 	s_rxBusy = false; s_led = false; s_txResult = APRS_MODE_TX_OK;
 	s_flashValid = false;
 	memset(s_flash, 0, sizeof(s_flash));
+	callReplayBorrowReset();   /* як на старті: обнуляє зарезервовану частину буфера з постійним блоком повідомлень */
+	aprsMsgBgInit();
+	s_bgTxCalls = 0; s_bgTxInfo[0] = 0; s_bgAllowed = true; s_bgTxResult = APRS_MODE_TX_OK; s_pttHeld = false;
 	settingsUsbMode = 0; trxTransmissionEnabled = false; trxIsTransmitting = false; aprsTxProgress = APRS_TX_IDLE; s_msgTxCalls = 0; s_autoEnd = false; s_msgTxResult = APRS_MODE_TX_OK; s_msgTxInfo[0] = 0;
 	memset(&uiDataGlobal, 0, sizeof(uiDataGlobal));
 	memset(&s_userChan, 0, sizeof(s_userChan));
@@ -212,13 +233,14 @@ static void fillRing(int groups)
 static void tickMs(uint32_t ms)
 {
 	s_now += ms;
+	aprsMsgBgTick();   /* як у головному циклі applicationMain.c: фонова черга -- ПЕРЕД aprsModeTick() і біконом */
 	aprsModeTick();
 	if (s_autoEnd && (aprsTxProgress == APRS_TX_IN_PROGRESS))
 	{
 		/* передачу повідомлення/ACK імітуємо до кінця: 100 мс «в ефірі», далі кінець (від нього пауза 2 с) */
-		s_now += 100U; aprsModeTick();
+		s_now += 100U; aprsMsgBgTick(); aprsModeTick();
 		aprsTxProgress = APRS_TX_IDLE;
-		s_now += 100U; aprsModeTick();
+		s_now += 100U; aprsMsgBgTick(); aprsModeTick();
 	}
 }
 
@@ -696,7 +718,7 @@ static void testMessages(void)
 		pk.type = APRS_T_MESSAGE; pk.msgAck = true;
 		snprintf(pk.text, sizeof(pk.text), "ack%s", id ? id + 1 : "");
 	}
-	aprsModeMsgPre(&ax, &pk);
+	aprsMsgBgOnMessage(&ax, &pk);
 	CHECK(b->list[0].status == AMSG_ST_ACK, "статус ACK");
 	tickMs(35000);
 	CHECK(s_msgTxCalls == 1, "після ACK повторів нема");
@@ -708,15 +730,15 @@ static void testMessages(void)
 	pk.type = APRS_T_MESSAGE; pk.msgAck = false;
 	snprintf(pk.msgId, sizeof(pk.msgId), "42");
 	snprintf(pk.text, sizeof(pk.text), "ping");
-	aprsModeMsgPre(&ax, &pk);
+	aprsMsgBgOnMessage(&ax, &pk);
 	tickMs(10);
 	CHECK(s_msgTxCalls == base + 1, "ACK пішов одразу");
 	CHECK(strcmp(s_msgTxInfo, ":N0CALL-9 :ack42") == 0, "кадр ACK");
-	aprsModeMsgPre(&ax, &pk);   /* повтор від відправника */
+	aprsMsgBgOnMessage(&ax, &pk);   /* повтор від відправника */
 	tickMs(10);
 	CHECK(s_msgTxCalls == base + 1, "ACK не частіше ніж раз на 5 с");
 	tickMs(5100);
-	aprsModeMsgPre(&ax, &pk);
+	aprsMsgBgOnMessage(&ax, &pk);
 	tickMs(10);
 	CHECK(s_msgTxCalls == base + 2, "дубль -- ACK знову");
 	aprsModeExit();
@@ -747,6 +769,179 @@ static void testMessages(void)
 	s_msgTxResult = APRS_MODE_TX_OK;
 }
 
+
+/* ---- R11-fix2: ФОНОВА черга -- ACK і повідомлення йдуть і поза «Режимом APRS» --------------------------------------- */
+
+static void mkMsg(aprsAx25_t *ax, aprsPacket_t *pk, const char *from, const char *id, const char *text)
+{
+	memset(ax, 0, sizeof(*ax)); memset(pk, 0, sizeof(*pk));
+	snprintf(ax->src, sizeof(ax->src), "%s", from);
+	pk->type = APRS_T_MESSAGE; pk->msgAck = false;
+	snprintf(pk->msgId, sizeof(pk->msgId), "%s", id);
+	snprintf(pk->text, sizeof(pk->text), "%s", text);
+}
+
+static void testBackground(void)
+{
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	aprsMsgBox_t *b;
+	int i;
+
+	/* 1. Режим закрито: вхідне повідомлення з номером -> ACK іде через стокову гілку (QSY), а не через режим */
+	resetWorld();
+	b = aprsModeMsgBox();
+	CHECK(aprsModeIsActive() == false, "режим закрито");
+	mkMsg(&ax, &pk, "UW5ELK-5", "10", "hi");
+	aprsMsgBgOnMessage(&ax, &pk);
+	CHECK(aprsMsgAckPending(b) == 1U && b->stats.rx == 1U && b->stats.ackFormed == 1U, "ACK поставлено в чергу поза режимом, лічильники");
+	tickMs(10);
+	CHECK(s_bgTxCalls == 1 && s_msgTxCalls == 0, "ACK пішов стоковою гілкою, не режимом");
+	CHECK(strcmp(s_bgTxInfo, ":UW5ELK-5 :ack10") == 0, "кадр ACK: \"%s\"", s_bgTxInfo);
+	CHECK(b->stats.ackSent == 1U && strcmp(b->lastAckText, ":UW5ELK-5 :ack10") == 0 && aprsMsgQueueLen(b) == 0U, "ACK передано, текст останнього ACK, черга порожня");
+
+	/* 2. Три копії одного повідомлення (відправник повторює): три ACK, один рядок у списку */
+	resetWorld();
+	b = aprsModeMsgBox();
+	for (i = 0; i < 3; i++)
+	{
+		mkMsg(&ax, &pk, "UW5ELK-5", "5", "hello");
+		aprsMsgBgOnMessage(&ax, &pk);   /* ACK -- ДО рішення про дублікат */
+		CHECK(aprsMsgBgNewMessage(&ax, &pk) == (i == 0), "копія %d: у список лише перша", i);
+		tickMs(100);
+		tickMs(30000);   /* APRSdroid повторює через десятки секунд */
+	}
+	CHECK(s_bgTxCalls == 3 && b->stats.ackSent == 3U && b->stats.ackFormed == 3U && b->stats.rx == 3U, "три копії -- три ACK: tx=%d", s_bgTxCalls);
+	CHECK(aprsMsgListCount(b) == 1U, "у списку один рядок");
+
+	/* 3. Номери: "5", "10", "11", "aB1" -- кожен ACK побайтово */
+	{
+		static const char *ids[] = { "5", "10", "11", "aB1" };
+		static const char *want[] = { ":UW5ELK-5 :ack5", ":UW5ELK-5 :ack10", ":UW5ELK-5 :ack11", ":UW5ELK-5 :ackaB1" };
+
+		resetWorld();
+		for (i = 0; i < 4; i++)
+		{
+			mkMsg(&ax, &pk, "UW5ELK-5", ids[i], "t");
+			aprsMsgBgOnMessage(&ax, &pk);
+			tickMs(100);
+			tickMs(2500);
+			CHECK(strcmp(s_bgTxInfo, want[i]) == 0, "id %s: \"%s\"", ids[i], s_bgTxInfo);
+		}
+		CHECK(s_bgTxCalls == 4, "п'ять-шість різних повідомлень поспіль -- жодне не пропущене");
+	}
+
+	/* 4. П'ять різних повідомлень підряд, без пауз між кадрами: усі ACK, у порядку надходження (черга 4 + ефір) */
+	resetWorld();
+	b = aprsModeMsgBox();
+	for (i = 0; i < 5; i++)
+	{
+		char id[8];
+
+		snprintf(id, sizeof(id), "%d", 5 + i);
+		mkMsg(&ax, &pk, "UW5ELK-5", id, "x");
+		aprsMsgBgOnMessage(&ax, &pk);
+		tickMs(50);
+		tickMs(2200);
+	}
+	CHECK(s_bgTxCalls == 5 && b->stats.ackSent == 5U && b->stats.ackLost == 0U, "п'ять різних -- п'ять ACK: %d", s_bgTxCalls);
+
+	/* 5. Режим відкритий, повідомлення нашої черги ще не пішло -- вихід з режиму НЕ скасовує: воно піде поза режимом */
+	resetWorld();
+	b = aprsModeMsgBox();
+	CHECK(aprsModeEnter(), "вхід");
+	CHECK(aprsModeMsgSend("UW5ELK-1", "Hi") == AMSG_OK, "у чергу");
+	aprsModeExit();
+	CHECK(aprsModeIsActive() == false && aprsMsgPendingCount(b) == 1U && b->list[0].status == AMSG_ST_WAIT, "після виходу з режиму черга ціла, статус «чекає»");
+	tickMs(10);
+	CHECK(s_bgTxCalls == 1 && strncmp(s_bgTxInfo, ":UW5ELK-1 :Hi{", 14) == 0, "повідомлення пішло ПОЗА режимом: \"%s\"", s_bgTxInfo);
+	CHECK(b->list[0].status == AMSG_ST_SENT, "статус «надіслано»");
+	/* ACK приходить, коли режим уже закрито */
+	{
+		const char *id = strrchr(s_bgTxInfo, '{');
+
+		memset(&ax, 0, sizeof(ax)); memset(&pk, 0, sizeof(pk));
+		snprintf(ax.src, sizeof(ax.src), "UW5ELK-1");
+		pk.type = APRS_T_MESSAGE; pk.msgAck = true;
+		snprintf(pk.text, sizeof(pk.text), "ack%s", id ? id + 1 : "");
+		aprsMsgBgOnMessage(&ax, &pk);
+		CHECK(b->list[0].status == AMSG_ST_ACK, "ACK прийнято поза режимом: статус «ACK»");
+	}
+
+	/* 6. Вихід посеред передачі (обрив): наступна передача не застрягає */
+	resetWorld();
+	b = aprsModeMsgBox();
+	CHECK(aprsModeEnter(), "вхід");
+	CHECK(aprsModeMsgSend("UW5ELK-1", "Hi") == AMSG_OK, "у чергу");
+	s_now += 10; aprsMsgBgTick();   /* кадр пішов, aprsTxProgress == IN_PROGRESS, кінець не відмічено */
+	CHECK(s_msgTxCalls == 1 && aprsTxProgress == APRS_TX_IN_PROGRESS, "кадр у ефірі");
+	s_autoEnd = false;
+	aprsModeExit();   /* заглушка aprsModeAbortTx() ставить IDLE */
+	s_now += 5000; aprsMsgBgTick();
+	mkMsg(&ax, &pk, "N0CALL-9", "7", "x");
+	aprsMsgBgOnMessage(&ax, &pk);
+	tickMs(10);
+	CHECK(s_bgTxCalls == 0, "пауза 2 с від кінця обірваної передачі ще не минула");
+	tickMs(2100);
+	CHECK(s_bgTxCalls == 1 && strcmp(s_bgTxInfo, ":N0CALL-9 :ack7") == 0, "після обриву черга не заблокована: ACK пішов");
+
+	/* 7. Пріоритет ACK: в режимі замовлено бікон, а в черзі наше повідомлення й ACK -- ACK першим, потім повідомлення, потім бікон */
+	resetWorld();
+	s_bcnMode = APRS_BEACONING_MODE_AUTO;
+	b = aprsModeMsgBox();
+	CHECK(aprsModeEnter(), "вхід");
+	aprsModeRequestBeacon();
+	CHECK(aprsModeMsgSend("UW5ELK-1", "Hi") == AMSG_OK, "повідомлення у чергу");
+	mkMsg(&ax, &pk, "N0CALL-9", "42", "ping");
+	aprsMsgBgOnMessage(&ax, &pk);
+	tickMs(10);
+	CHECK(s_msgTxCalls == 1 && strcmp(s_msgTxInfo, ":N0CALL-9 :ack42") == 0 && s_txCalls == 0, "перший у ефірі -- ACK, бікон ще чекає");
+	tickMs(2100);
+	CHECK(s_msgTxCalls == 2 && strncmp(s_msgTxInfo, ":UW5ELK-1 :Hi{", 14) == 0 && s_txCalls == 0, "другим -- наше повідомлення, бікон і далі чекає");
+	tickMs(2100);
+	CHECK(s_txCalls == 1, "бікон -- останнім");
+	aprsModeExit();
+
+	/* 8. Умови передачі поза режимом: PTT -- чекаємо; APRS вимкнено -- черга знімається, нічого не йде */
+	resetWorld();
+	b = aprsModeMsgBox();
+	mkMsg(&ax, &pk, "UW5ELK-5", "1", "x");
+	aprsMsgBgOnMessage(&ax, &pk);
+	s_pttHeld = true;
+	for (i = 0; i < 5; i++) { tickMs(1000); }
+	CHECK(s_bgTxCalls == 0 && aprsMsgAckPending(b) == 1U, "PTT натиснуто -- ACK чекає");
+	s_pttHeld = false;
+	s_bgAllowed = false;
+	tickMs(1000);
+	CHECK(s_bgTxCalls == 0 && aprsMsgQueueLen(b) == 0U, "APRS вимкнено й режим закрито -- черга знята, нічого не передано");
+	s_bgAllowed = true;
+	mkMsg(&ax, &pk, "UW5ELK-5", "2", "x");
+	aprsMsgBgOnMessage(&ax, &pk);
+	trxIsTransmitting = true;
+	for (i = 0; i < 3; i++) { tickMs(1000); }
+	CHECK(s_bgTxCalls == 0, "під час чужої передачі (DMR-TX) ACK чекає");
+	trxIsTransmitting = false;
+	s_rxBusy = true;
+	tickMs(3000);
+	CHECK(s_bgTxCalls == 0, "частота зайнята -- чекаємо");
+	tickMs(10100);
+	CHECK(s_bgTxCalls == 1, "після 10 с очікування -- передаємо");
+
+	/* 9. ACK не вдалось почати (BUSY): 3 спроби, далі знімається й лічиться як втрачений */
+	resetWorld();
+	b = aprsModeMsgBox();
+	s_bgTxResult = APRS_MODE_TX_BUSY;
+	mkMsg(&ax, &pk, "UW5ELK-5", "3", "x");
+	aprsMsgBgOnMessage(&ax, &pk);
+	for (i = 0; i < 6; i++) { tickMs(2000); }
+	CHECK(s_bgTxCalls == 3 && aprsMsgQueueLen(b) == 0U && b->stats.ackLost == 1U && b->stats.ackSent == 0U, "3 спроби, далі знято: tx=%d lost=%u", s_bgTxCalls, (unsigned)b->stats.ackLost);
+	s_bgTxResult = APRS_MODE_TX_OK;
+	mkMsg(&ax, &pk, "UW5ELK-5", "3", "x");
+	aprsMsgBgOnMessage(&ax, &pk);   /* ще раз ту саму копію (відправник повторив) -- ACK знову, бо попередній не пішов */
+	tickMs(2000);
+	CHECK(s_bgTxCalls == 4 && b->stats.ackSent == 1U, "наступна копія -- ACK пішов");
+}
+
 int main(void)
 {
 	testBootInit();
@@ -761,6 +956,7 @@ int main(void)
 	testBeacons();
 	testLastFrame();
 	testMessages();
+	testBackground();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_mode_state: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);
