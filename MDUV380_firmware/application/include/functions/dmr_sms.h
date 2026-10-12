@@ -58,6 +58,9 @@ typedef struct
 /* ---- lifecycle --------------------------------------------------------- */
 /* Load the message store from flash into the CCM working copy. Call once at boot. */
 void dmrSmsInit(void);
+/* R12: лише скинути RAM-стан (без читання флеша) -- викликається з applicationMain.c одразу після HRC6000Init(), ДО
+ * dmrSmsInit(): CCM при старті сміття, а HR-C6000 ISR уже може віддати data-burst у dmrSmsRxBurst(). */
+void dmrSmsRuntimeInit(void);
 /* Лише перечитати сховище й MSGC-конфіг (вхід у меню «Повідомлення»). НЕ скидає стан
  * прийому, відкладену квитанцію, N(S) і лічильники -- на відміну від dmrSmsInit(). */
 void dmrSmsReloadStore(void);

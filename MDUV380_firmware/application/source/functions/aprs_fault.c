@@ -140,9 +140,17 @@ static void load(aprsFaultRec_t *r)
 	{
 		r->stk[i] = BKP(S_STK0 + i);
 	}
+#if defined(APRS_MODE_TRACE)
 	r->trace = trn & 0xFFFFU;
 	r->traceMs = trn >> 16;
 	r->traceV = BKP(S_TRV);
+#else
+	/* R12: у користувацькій збірці трасування немає; регістри 16-17 можуть лишитись від діагностичної прошивки -- не показуємо */
+	(void)trn;
+	r->trace = 0U;
+	r->traceMs = 0U;
+	r->traceV = 0U;
+#endif
 }
 
 /* Підготувати дисплей: підсвітка, DMA-пересилка в стані READY (HAL_DMA_Start мовчки повертає HAL_BUSY, якщо ні). */
@@ -367,7 +375,8 @@ __attribute__((naked)) void MemManage_Handler(void)   { AF_TRAMPOLINE_BODY; }
 __attribute__((naked)) void BusFault_Handler(void)    { AF_TRAMPOLINE_BODY; }
 __attribute__((naked)) void UsageFault_Handler(void)  { AF_TRAMPOLINE_BODY; }
 
-/* ---- трасування -------------------------------------------------------------------------------------------- */
+/* ---- трасування (R12: лише в діагностичній збірці, див. aprs_rx_cfg.h) ------------------------------------- */
+#if defined(APRS_MODE_TRACE)
 void aprsFaultTraceMark(void)
 {
 	BKP(S_T0) = ticksGetMillis();
@@ -395,6 +404,7 @@ uint32_t aprsFaultTraceNote(uint32_t n, uint32_t v)
 	aprsFaultKick();
 	return dt;
 }
+#endif /* APRS_MODE_TRACE */
 
 /* ---- kick / арм ------------------------------------------------------------------------------------------- */
 void aprsFaultKick(void)

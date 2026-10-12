@@ -69,6 +69,9 @@ typedef struct
 	uint8_t  data[DMR_SMS_STORE_DATA];
 } dmrSmsStore_t;
 
+/* R12: CCM при старті -- сміття. Стан нижче скидає dmrSmsInit() -> runtimeReset() (+ dmrSmsRuntimeInit() раніше, одразу після
+ * HRC6000Init(), щоб ISR не побачив сміття до dmrSmsInit()). Що не покрито -- помічено CCM-OK(причина). */
+/* CCM-INIT-FILE(dmrSmsInit, dmrSmsRuntimeInit) */
 static dmrSmsStore_t   s_store   DMR_AES_CCM;
 static uint8_t         s_loaded  DMR_AES_CCM;  /* CCM is not zeroed at boot -> guard init */
 static dmrSmsMessage_t s_scratch;                /* copy-out buffer for dmrSmsGet (main RAM, not CCM) */
@@ -153,6 +156,12 @@ static void store_upgrade_v2(void)
 	s_store.version = SMS_STORE_VERSION;
 	/* У флеш не пишемо: v3 збережеться з першою зміною (нове SMS, видалення, «прочитано»).
 	 * До того на флеші лишається v2 -- і стара прошивка, якщо до неї повернутись, його прочитає. */
+}
+
+void dmrSmsRuntimeInit(void)
+{
+	s_loaded = 0;       /* сховище ще не завантажене: store_ensure() прочитає його сама, якщо хтось звернеться раніше за dmrSmsInit() */
+	runtimeReset();
 }
 
 void dmrSmsInit(void)
@@ -450,7 +459,7 @@ typedef struct
 	                                  * Appended last so an old (shorter) MSGC block reads as 0 = default. */
 } dmrSmsCfg_t;
 
-static dmrSmsCfg_t s_cfg DMR_AES_CCM;
+static dmrSmsCfg_t s_cfg DMR_AES_CCM;   /* CCM-INIT(cfg_load) */
 static uint8_t     s_cfgLoaded DMR_AES_CCM;
 
 static void cfg_load(void)
@@ -881,7 +890,7 @@ static volatile uint16_t s_dgBlkExtra  DMR_AES_CCM;  /* блоків уже бі
 static volatile uint16_t s_dgTickNotUs DMR_AES_CCM;  /* головний цикл: PDU не нам (і монітор вимк) */
 static volatile uint16_t s_dgTickBad   DMR_AES_CCM;  /* головний цикл: закороткий PDU або CRC32 знімка не зійшовся */
 static volatile uint16_t s_dgPickMaxMs DMR_AES_CCM;  /* найбільша затримка «PDU готовий -> забрав головний цикл», мс */
-static volatile uint32_t s_rxReadyMs   DMR_AES_CCM;  /* коли ISR виставив s_rxReady */
+static volatile uint32_t s_rxReadyMs   DMR_AES_CCM;  /* коли ISR виставив s_rxReady */   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1; читається лише коли s_rxReady=1) */
 /* diag6 (2026-10-04): ЯКІ байти псуються. На залізі (diag5, 5 SMS) 3 з 8 повністю зібраних PDU
  * (рівно стільки блоків, скільки в заголовку) мали невалідний CRC32, а HackRF ті самі спроби
  * прийняв чисто. Тут -- знімок ОСТАННЬОГО такого PDU: сирі блоки (зі службовими DBSN+CRC9),
@@ -889,20 +898,20 @@ static volatile uint32_t s_rxReadyMs   DMR_AES_CCM;  /* коли ISR виста�
  * Лише діагностика: прийом не змінено. ISR пише, екран «Діагностика 4» читає. */
 #define SMS_SNAP_MAX 8
 /* поточний PDU: навантаження вже лежить у s_rxPdu, тож тримаємо лише службові байти й час */
-static uint8_t           s_curSvc[SMS_SNAP_MAX][2] DMR_AES_CCM;
-static uint16_t          s_curMs[SMS_SNAP_MAX]     DMR_AES_CCM;
-static uint8_t           s_curHwOk                 DMR_AES_CCM;  /* біт i = HW CRC блока i валідний */
-static uint8_t           s_curHdr[12]              DMR_AES_CCM;
-static uint32_t          s_curHdrMs                DMR_AES_CCM;
-static volatile uint8_t  s_lastHwOk                DMR_AES_CCM;  /* HW CRC burst-а, що зараз у хуку */
+static uint8_t           s_curSvc[SMS_SNAP_MAX][2] DMR_AES_CCM;   /* CCM-OK(знімок поточного PDU: заповнюється при кожному блоці після заголовка s_rxHaveHeader=1, читається лише після нього) */
+static uint16_t          s_curMs[SMS_SNAP_MAX]     DMR_AES_CCM;   /* CCM-OK(пишеться при прийомі кожного блока (s_curMs[s_rxCount]) раніше, ніж читається знімком) */
+static uint8_t           s_curHwOk                 DMR_AES_CCM;  /* біт i = HW CRC блока i валідний */   /* CCM-OK(скидається в 0 при прийомі кожного заголовка, до читання) */
+static uint8_t           s_curHdr[12]              DMR_AES_CCM;   /* CCM-OK(копіюється з заголовка при його прийомі, раніше за знімок) */
+static uint32_t          s_curHdrMs                DMR_AES_CCM;   /* CCM-OK(виставляється при прийомі заголовка, раніше за знімок) */
+static volatile uint8_t  s_lastHwOk                DMR_AES_CCM;  /* HW CRC burst-а, що зараз у хуку */   /* CCM-OK(хук HR-C6000 пише його прямо перед КОЖНИМ dmrSmsRxBurst()) */
 /* знімок останнього PDU з «CRC пог» */
-static uint8_t           s_badBlk[SMS_SNAP_MAX][18] DMR_AES_CCM;
-static uint16_t          s_badMs[SMS_SNAP_MAX]      DMR_AES_CCM;
-static uint8_t           s_badHdr[12]               DMR_AES_CCM;
+static uint8_t           s_badBlk[SMS_SNAP_MAX][18] DMR_AES_CCM;   /* CCM-OK(знімок CRC-помилки: smsSnapStore() заповнює його раніше, ніж s_badN=n; s_badN скидає dmrSmsDiagScreenReset) */
+static uint16_t          s_badMs[SMS_SNAP_MAX]      DMR_AES_CCM;   /* CCM-OK(частина знімка s_badBlk: пишеться в smsSnapStore() до s_badN=n) */
+static uint8_t           s_badHdr[12]               DMR_AES_CCM;   /* CCM-OK(частина знімка: пишеться в smsSnapStore() до s_badN=n) */
 static volatile uint8_t  s_badN                     DMR_AES_CCM;  /* блоків у знімку; 0 = знімка нема */
-static uint8_t           s_badLen                   DMR_AES_CCM;  /* 18 (rate-3/4) або 12 (rate-1/2) */
-static uint8_t           s_badHwOk                  DMR_AES_CCM;
-static uint32_t          s_badWant, s_badGot        DMR_AES_CCM;
+static uint8_t           s_badLen                   DMR_AES_CCM;  /* 18 (rate-3/4) або 12 (rate-1/2) */   /* CCM-OK(частина знімка: пишеться в smsSnapStore() до s_badN=n; поза знімком -- лише відображення) */
+static uint8_t           s_badHwOk                  DMR_AES_CCM;   /* CCM-OK(частина знімка: пишеться в smsSnapStore() до s_badN=n; поза знімком -- лише відображення) */
+static uint32_t          s_badWant, s_badGot        DMR_AES_CCM;   /* CCM-OK(частина знімка: пишеться в smsSnapStore() до s_badN=n; поза знімком -- лише відображення) */
 static uint16_t          s_badSeq                   DMR_AES_CCM;  /* яке це «CRC пог» від скидання */
 static volatile uint16_t s_dgDbsnBad                DMR_AES_CCM;  /* rate-3/4 CONFIRMED: DBSN != порядковий номер */
 static volatile uint16_t s_dg8HwOk                  DMR_AES_CCM;  /* блоків т8, які HW позначив CRC-валідними */
@@ -1221,7 +1230,7 @@ static void buildAndLoadSmsAck(uint32_t dst)
 	/* [CSBK-преамбули x s_ackPreambles] + Response header x s_ackRepeats. Заголовок: BF=0,
 	 * o9 = Class 00 | Type 001 (ACK) | Status = N(S) відправника (dmrSmsPduAckHeader).
 	 * fix3: типово 0 преамбул (як у стокової) -- див. коментар біля s_ackPreambles. */
-	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * BURST_STRIDE] DMR_AES_CCM;
+	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * BURST_STRIDE] DMR_AES_CCM;   /* CCM-OK(черга burst-ів: dmrSmsPduBuildAckQueue() заповнює n burst-ів, віддається в dmr_data рівно n) */
 	int n = dmrSmsPduBuildAckQueue(q, SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS, dst, src, s_rxLastNS,
 	                               SMS_ACK_PREAMBLES(), SMS_ACK_REPEATS());
 	if (n <= 0) { s_ackPending = 0; return; }
@@ -1409,7 +1418,7 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	 * (ми самі групові не квитуємо, smsIsForUs/ackReq), тож A-біт там лише змушував би чекати.
 	 * Раніше в режимі «Підтв.» групові йшли CONFIRMED; тепер «З підтв.» типовий -- тому явно. */
 	if (group) { txMode = 0; }
-	static uint8_t q[DMR_DATA_MAX_BURSTS * BURST_STRIDE] DMR_AES_CCM;
+	static uint8_t q[DMR_DATA_MAX_BURSTS * BURST_STRIDE] DMR_AES_CCM;   /* CCM-OK(черга burst-ів: Build*() заповнює n burst-ів, віддається в dmr_data рівно n) */
 	int n;
 	if (txMode == 0)
 	{
@@ -1460,25 +1469,25 @@ static volatile uint8_t  s_rxHaveEnc DMR_AES_CCM;
 static volatile uint8_t  s_rxExpBlocks DMR_AES_CCM;   /* rate-1/2 blocks expected (nblocks-1) */
 static volatile uint8_t  s_rxHdrBlocks DMR_AES_CCM;   /* diag5: nblocks із заголовка як є */
 static volatile uint8_t  s_rxCount DMR_AES_CCM;
-static volatile uint8_t  s_rxGroup DMR_AES_CCM;
-static volatile uint8_t  s_rxKeyId DMR_AES_CCM;
-static volatile uint32_t s_rxSrc DMR_AES_CCM;
-static volatile uint32_t s_rxDst DMR_AES_CCM;
+static volatile uint8_t  s_rxGroup DMR_AES_CCM;   /* CCM-OK(виставляється з data-заголовка, s_rxHaveHeader=1; до цього блоки відкидаються) */
+static volatile uint8_t  s_rxKeyId DMR_AES_CCM;   /* CCM-OK(виставляється з ENC-заголовка, s_rxHaveEnc=1; читається лише після нього) */
+static volatile uint32_t s_rxSrc DMR_AES_CCM;   /* CCM-OK(виставляється з data-заголовка, s_rxHaveHeader=1; до цього блоки відкидаються) */
+static volatile uint32_t s_rxDst DMR_AES_CCM;   /* CCM-OK(виставляється з data-заголовка, s_rxHaveHeader=1; до цього блоки відкидаються) */
 /* Блоки навантаження пишемо ПРЯМО в s_rxPdu у міру надходження (замість окремого масиву
  * блоків -- економить CCM і природно підтримує і 12-байтні rate-1/2, і 18-байтні rate-3/4).
  * s_rxLen -- скільки байтів уже накопичено. */
 static volatile uint16_t s_rxLen DMR_AES_CCM;
 /* hand-off to main loop */
 static volatile uint8_t  s_rxReady DMR_AES_CCM;       /* a complete PDU is waiting */
-static uint8_t  s_rxPdu[384] DMR_AES_CCM;
-static volatile uint16_t s_rxPduLen DMR_AES_CCM;
-static volatile uint32_t s_rxPeer DMR_AES_CCM;
-static volatile uint32_t s_rxPeerDst DMR_AES_CCM;   /* адресат із ВІДКРИТОГО заголовка -- для фільтра */
-static volatile uint8_t  s_rxPeerGroup DMR_AES_CCM;
-static volatile uint8_t  s_rxPeerKeyId DMR_AES_CCM;
-static volatile uint8_t  s_rxPeerEnc DMR_AES_CCM;   /* 1 = PDU carried the ENC header (decrypt); 0 = cleartext */
+static uint8_t  s_rxPdu[384] DMR_AES_CCM;   /* CCM-OK(накопичувач: пишеться блок за блоком, читається лише до s_rxLen/s_rxPduLen, які скидає dmrSmsRxReset) */
+static volatile uint16_t s_rxPduLen DMR_AES_CCM;   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1; читається лише коли s_rxReady=1) */
+static volatile uint32_t s_rxPeer DMR_AES_CCM;   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1; читається лише коли s_rxReady=1) */
+static volatile uint32_t s_rxPeerDst DMR_AES_CCM;   /* адресат із ВІДКРИТОГО заголовка -- для фільтра */   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1) */
+static volatile uint8_t  s_rxPeerGroup DMR_AES_CCM;   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1) */
+static volatile uint8_t  s_rxPeerKeyId DMR_AES_CCM;   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1) */
+static volatile uint8_t  s_rxPeerEnc DMR_AES_CCM;   /* 1 = PDU carried the ENC header (decrypt); 0 = cleartext */   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1) */
 static volatile uint8_t  s_rxAckReq DMR_AES_CCM;    /* вхідний data-заголовок = CONFIRMED + прохання квитанції */
-static volatile uint8_t  s_rxPeerAckReq DMR_AES_CCM;/* знімок s_rxAckReq на момент готового PDU */
+static volatile uint8_t  s_rxPeerAckReq DMR_AES_CCM;/* знімок s_rxAckReq на момент готового PDU */   /* CCM-OK(пишеться в smsRxPublish() разом з s_rxReady=1) */
 /* Дедуплікація вхідних SMS (Task #34).
  * Те ж саме повідомлення (той самий відправник + IP-ID + TMS-seq) в межах ~30 с відкидається:
  * не зберігається і не показується (але квитанцію відправляємо завжди). */
@@ -1497,19 +1506,19 @@ static volatile uint32_t s_diagPdu    DMR_AES_CCM; /* completed PDUs handed to m
 static volatile uint32_t s_diagMsg    DMR_AES_CCM; /* successfully decrypted + stored    */
 static volatile uint32_t s_diagType[16] DMR_AES_CCM; /* гістограма rxDataType (0..15) усіх data-sync бурстів -- щоб бачити, яким типом стокова шле навантаження */
 /* snapshot of the last reassembled (encrypted) PDU, for offline inspection over USB */
-static uint8_t  s_diagLastPdu[120] DMR_AES_CCM;
+static uint8_t  s_diagLastPdu[120] DMR_AES_CCM;   /* CCM-OK(дамп останнього PDU для USB: s_diagLastPduLen скидається на старті, тож читається лише записане) */
 static volatile uint16_t s_diagLastPduLen DMR_AES_CCM;
-static volatile uint8_t  s_diagLastKeyId DMR_AES_CCM;
-static volatile uint8_t  s_diagLastExp DMR_AES_CCM;
-static volatile uint32_t s_diagLastPeer DMR_AES_CCM;
+static volatile uint8_t  s_diagLastKeyId DMR_AES_CCM;   /* CCM-OK(дамп останнього PDU для USB: пишеться разом з s_diagLastPduLen; до першого PDU -- лише діагностичний вивід) */
+static volatile uint8_t  s_diagLastExp DMR_AES_CCM;   /* CCM-OK(дамп останнього PDU для USB: пишеться разом з s_diagLastPduLen; до першого PDU -- лише діагностичний вивід) */
+static volatile uint32_t s_diagLastPeer DMR_AES_CCM;   /* CCM-OK(дамп останнього PDU для USB: пишеться разом з s_diagLastPduLen; до першого PDU -- лише діагностичний вивід) */
 /* СИРІ блоки навантаження, як їх віддає чип -- РАЗОМ зі службовими байтами (DBSN+CRC9).
  * Потрібні, щоб реверснути CRC9 по реальному еталону, а не вигадувати його: без валідного
  * CRC9 наші власні CONFIRMED-блоки приймач відкине. Штатний шлях ці 2 байти відкидає, тож
  * тут зберігаємо блок цілим. */
 #define SMS_RAWBLK_MAX   8
 #define SMS_RAWBLK_SIZE  18
-static uint8_t  s_rawBlk[SMS_RAWBLK_MAX][SMS_RAWBLK_SIZE] DMR_AES_CCM;
-static volatile uint8_t s_rawBlkLen[SMS_RAWBLK_MAX] DMR_AES_CCM;
+static uint8_t  s_rawBlk[SMS_RAWBLK_MAX][SMS_RAWBLK_SIZE] DMR_AES_CCM;   /* CCM-OK(читається лише до s_rawBlkCount, яке тепер скидає runtimeReset()) */
+static volatile uint8_t s_rawBlkLen[SMS_RAWBLK_MAX] DMR_AES_CCM;   /* CCM-OK(читається лише до s_rawBlkCount, яке тепер скидає runtimeReset()) */
 static volatile uint8_t s_rawBlkCount DMR_AES_CCM;
 
 /* Fill out with [pduLen_hi,pduLen_lo, keyId, expBlocks, peer(4 LE), rawPdu...]. Returns bytes.
@@ -2151,6 +2160,9 @@ static void runtimeReset(void)
 	s_diagData = s_diagHdrOk = s_diagHdrBad = s_diagBlkOk = s_diagBlkBad = 0;
 	s_diagPdu = s_diagMsg = 0;
 	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
+	/* R12: без цього сміттєвий лічильник у CCM давав dmrSmsRxRawBlocks() цикл по сміттєвому числу блоків -- читання за межі масиву */
+	s_diagLastPduLen = 0;
+	s_rawBlkCount = 0;
 #endif
 	s_rxReady = 0;                   /* don't process stray garbage as a PDU */
 	s_ackPending = 0;                /* не тягнути квитанцію через зміну каналу */

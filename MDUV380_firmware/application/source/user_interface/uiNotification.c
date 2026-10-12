@@ -104,7 +104,7 @@ static __attribute__((section(".data.$RAM2"))) uint8_t screenNotificationBufData
  * випадку -- косметичний артефакт на краю картки APO, не крах. */
 #define NOTIFICATION_APO_BUF_Y0   26
 #define NOTIFICATION_APO_BUF_H    72
-static  __attribute__((section(".ccmram"))) uint16_t screenNotificationBufData[DISPLAY_SIZE_X * NOTIFICATION_APO_BUF_H];
+static  __attribute__((section(".ccmram"))) uint16_t screenNotificationBufData[DISPLAY_SIZE_X * NOTIFICATION_APO_BUF_H];   /* CCM-OK(перед використанням завжди memcpy() повного розміру з основного екранного буфера) */
 #endif
 
 typedef struct

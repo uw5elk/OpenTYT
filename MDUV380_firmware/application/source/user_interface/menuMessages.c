@@ -216,12 +216,12 @@ static struct
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
 	uint8_t  diagScroll;    // diag6: перший видимий рядок сторінки 4 (знімок «CRC пог»)
 #endif
-} s_msg DMR_AES_CCM;
+} s_msg DMR_AES_CCM;   /* CCM-INIT(menuMessages) -- memset(&s_msg) на isFirstRun, до будь-якого читання */
 
 /* ui4: останній режим набору -- до перезавантаження, без custom-data. s_msg на кожному вході в
  * меню обнуляється, тож режим живе окремо. CCM стартовий код не обнуляє: після ввімкнення там
  * сміття, тому поруч контрольний байт (режим ^ 0xA5) -- без збігу беремо типовий режим. */
-static uint8_t s_mtModeKeep[2] DMR_AES_CCM;
+static uint8_t s_mtModeKeep[2] DMR_AES_CCM;   /* CCM-OK(читається лише через mtModeLoad(): значення з контрольним байтом, сміття дає типовий режим; випадковий збіг дає все одно коректний режим) */
 
 static uint8_t mtModeLoad(void)
 {

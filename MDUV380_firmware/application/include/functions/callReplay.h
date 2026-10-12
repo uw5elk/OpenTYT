@@ -133,6 +133,8 @@ uint32_t callReplayFindLastOverStart(void);
  * захоплення й повертає базу кільця та розмір; callReplayRelease() знову інвалідує (у кільці сміття режиму),
  * повертає справжній перемикач "Запис RX" і відновлює захоплення. Викликач ПЕРЕД позичанням сам зупиняє
  * відтворення (callReplayStop()). Старий запис ВТРАЧАЄТЬСЯ -- це свідомо (TESTING.md, AM8). */
+/* Лише на старті (applicationMain.c, після callReplayInit()): CCM там сміття, а позика живе в CCM. */
+void  callReplayBorrowReset(void);
 void *callReplayBorrow(size_t *size);
 void  callReplayRelease(void);
 bool  callReplayIsBorrowed(void);

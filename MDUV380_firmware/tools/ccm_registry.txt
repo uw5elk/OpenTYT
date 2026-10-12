@@ -1,0 +1,16 @@
+# Реєстр CCM-змінних СТОКОВОГО OpenGD77, у чиїх файлах ми не додаємо коментарів CCM-OK (щоб не множити конфлікти з upstream).
+# Формат:  шлях/відносно/application/source.c:ім'я | чому змінна завжди ПИШЕТЬСЯ раніше, ніж ЧИТАЄТЬСЯ
+# (upstream теж не ініціалізує CCM -- стартап його не копіює й не обнуляє, тому ці змінні й мусять бути write-before-read).
+# Перевіряє tools/check_ccm_init.py; запис без відповідного оголошення -- помилка.
+hardware/SPI_Flash.c:SPI_Flash_sectorbuffer | чернетка сектора: перед кожним використанням заповнюється SPI_Flash_read()/memcpy (SPI_Flash_write, codeplug.c, usb_com.c)
+user_interface/uiGlobals.c:currentRxGroupData | lastLoadedRxGroup = -1 при старті; список приймальних груп завантажується з флеша перед першим читанням
+user_interface/uiUtilities.c:callsList | lastHeardInitList() (applicationMain.c, до UI) заповнює всі елементи й ланцюжок prev/next
+user_interface/menuRadioInfos.c:batteryVoltageHistory | circularBufferInit() при вході в меню, до push/get
+functions/hotspot.c:BPTCRaw | memset на початку кожного декодування BPTC (hotspot.c, декодер), далі заповнюється з inputData
+functions/hotspot.c:BPTCDeInterleaved | memset на початку кожного декодування BPTC, далі заповнюється з BPTCRaw
+functions/sound.c:audioAndHotspotDataBuffer | буфер-об'єднання: кожен споживач (звук, hotspot, APRS-кільце aprsRxInit) заповнює його сам перед читанням
+functions/sound.c:melody_generic | soundCreateSong() заповнює масив до маркера -1, -1 перед відтворенням
+functions/voicePrompts.c:ambeData | getAmbeData() читає дані промпта з флеша перед кожним декодуванням
+functions/voicePrompts.c:tableOfContents | заповнюється SPI_Flash_read у voicePromptsCacheInit() (applicationMain.c) до першого читання; без даних voicePromptDataIsLoaded=false і промпти не граються
+functions/voicePrompts.c:voicePromptsCurrentSequence | ЛАТЕНТНО (стокове): ініціалізатор "= {0,0}" у .ccmram НЕ копіюється стартом. Length/Pos скидає voicePromptsInit(), а всі читання Length охороняє audioPromptMode >= VOICE_THRESHOLD (voicePromptsPlay/Append/uiUtilities.c:3772). Не змінюємо -- збірка за замовчуванням має лишитись байт-у-байт стоковою
+functions/calibration.c:calibrationData | calibrationInit() (applicationMain.c) читає локальну копію з флеша, а за її відсутності -- заводську, до будь-якого читання
