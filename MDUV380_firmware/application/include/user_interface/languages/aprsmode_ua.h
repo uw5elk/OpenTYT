@@ -108,4 +108,7 @@
 #define APRSM_E_FMT_PATH      "Порожньо = без шляху"
 #define APRSM_E_FMT_COMMENT   "До 24 символів"
 
+/* R11-fix: останній кадр розгорнуто з third-party (i-gate): шлюз, що ретранслював. 26 символів: 6 + 9 + 10 = 25. */
+#define APRSM_M_3P            "Шлюз: %.9s (розгорн)"
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

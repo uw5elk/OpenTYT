@@ -597,5 +597,42 @@ int tx_chain_test(void)
 			CHECK(encoderData.packetBufferBitPosition == refB.bits && memcmp(encoderData.packetBuffer, refB.buf, (refB.bits + 7U) / 8U) == 0, "маяк після повідомлення: кадр відрізняється від еталона (позиція втрачена?)");
 		}
 	}
+
+	/* 8г. R11-fix: SSID у заголовку AX.25 -- байт-у-байт проти ЗАЗДАЛЕГІДЬ порахованих значень (а не проти тієї ж формули):
+	 * байт SSID = 0x60 (зарезервовані біти 11) | SSID << 1 | біт «кінець адрес» (лише останній).
+	 *   SSID  0 -> 0x60 (останній 0x61)      SSID  1 -> 0x62 (0x63)
+	 *   SSID  7 -> 0x6e (0x6f)               SSID 15 -> 0x7e (0x7f)
+	 * Позивний «дорівнює» 6 символам, доповненим пробілами (0x40 = ' ' << 1) ПРАВОРУЧ. Кадр кодує aprsModeTxMessage()
+	 * (той самий enqueueHeader(), що й у маяка); еталон кадру -- незалежний ref_frame_info(). */
+	{
+		static const struct { int ssid; uint8_t byte; uint8_t last; } want[] = { { 0, 0x60, 0x61 }, { 1, 0x62, 0x63 }, { 7, 0x6e, 0x6f }, { 15, 0x7e, 0x7f } };
+		aprsModeEff_t e;
+		CodeplugChannel_t ch;
+		ref_t refS;
+		char p6[2][6];
+		int ps[2];
+
+		memset(&ch, 0, sizeof(ch));
+		ch.chMode = RADIO_MODE_ANALOG; ch.rxFreq = 14480000U; ch.txFreq = 14480000U;
+		currentChannelData = &ch;
+		nonVolatileSettings.txFreqLimited = BAND_LIMITS_NONE;
+		for (unsigned k = 0; k < sizeof(want) / sizeof(want[0]); k++)
+		{
+			aprsModeTxResult_t r;
+
+			CHECK((uint8_t)((want[k].ssid + '0') << 1) == want[k].byte && (uint8_t)(((want[k].ssid + '0') << 1) + 1) == want[k].last,
+					"SSID %d: байт заголовка 0x%02x, з кінцем адрес 0x%02x (як порахували вручну)", want[k].ssid, want[k].byte, want[k].last);
+			memset(&e, 0, sizeof(e));
+			strcpy(e.call, "UW5E"); e.ssid = (uint8_t)want[k].ssid;       /* 4 символи: два пробіли праворуч (0x40 0x40) */
+			strcpy(e.path[0], "WIDE1"); e.pathSsid[0] = (uint8_t)want[k].ssid;
+			memset(p6, 0, sizeof(p6));
+			memcpy(p6[0], "WIDE1\0", 6); ps[0] = want[k].ssid;
+			aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
+			CHECK(aprsModeTxMessage(&e, ":US5EX-7  :x{1") == APRS_MODE_TX_OK, "SSID %d: передано", want[k].ssid);
+			ref_frame_info(&refS, "UW5E", want[k].ssid, (const char (*)[6])p6, ps, 1, ":US5EX-7  :x{1");
+			CHECK(encoderData.packetBufferBitPosition == refS.bits && memcmp(encoderData.packetBuffer, refS.buf, (refS.bits + 7U) / 8U) == 0,
+					"SSID %d: кадр збігається з еталоном (джерело й шлях)", want[k].ssid);
+		}
+	}
 	return s_fail - fail0;
 }

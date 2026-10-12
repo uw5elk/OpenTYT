@@ -298,6 +298,9 @@ static void drawDiag2(void)
 	printRow(5, buf);
 	snprintf(buf, sizeof(buf), APRSRX_D2_TICKTX, ST_CAP(st->stops[APRS_RX_WHY_TX], 99999));
 	printRow(6, buf);
+	/* R11-fix: скільки кадрів прийшло через i-gate (third-party "}") і було розгорнуто до справжнього відправника */
+	snprintf(buf, sizeof(buf), "3P unwrapped %u", (unsigned)aprsRxDb()->tpUnwrapped);
+	printRow(7, buf);
 	printRow(10, APRSRX_HINT_DIAG);
 }
 

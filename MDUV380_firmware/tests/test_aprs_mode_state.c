@@ -610,6 +610,15 @@ static void testLastFrame(void)
 	aprsModeOnFrame(&ax, &pkt, true, 3200, 45);
 	CHECK(aprsModeLast()->valid && strcmp(aprsModeLast()->src, "UW5ELK-7") == 0 && strcmp(aprsModeLast()->dst, "APDR16") == 0, "останній пакет записано");
 	CHECK(aprsModeLast()->hasGeo && aprsModeLast()->distM == 3200 && aprsModeLast()->bearing == 45 && aprsModeLast()->type == APRS_T_POSITION, "відстань і азимут");
+	CHECK(aprsModeLast()->tp == false && aprsModeLast()->gate[0] == 0, "прямий кадр: не third-party, шлюзу нема");
+	/* R11-fix: кадр, розгорнутий з third-party: справжній відправник у src, шлюз -- окремо (рядок «Шлюз: ...» на Моніторі) */
+	ax.tp = true;
+	snprintf(ax.gate, sizeof(ax.gate), "SP5WWP-10");
+	aprsModeOnFrame(&ax, &pkt, false, 0, 0);
+	CHECK(aprsModeLast()->tp && strcmp(aprsModeLast()->gate, "SP5WWP-10") == 0 && strcmp(aprsModeLast()->src, "UW5ELK-7") == 0, "third-party: шлюз записано, src -- справжній відправник");
+	ax.tp = false; ax.gate[0] = 0;
+	aprsModeOnFrame(&ax, &pkt, false, 0, 0);
+	CHECK(aprsModeLast()->tp == false && aprsModeLast()->gate[0] == 0, "наступний прямий кадр стирає позначку third-party");
 	aprsModeExit();
 	/* поза режимом виклик нічого не робить і не чіпає позичений буфер */
 	aprsModeOnFrame(&ax, &pkt, true, 1, 1);

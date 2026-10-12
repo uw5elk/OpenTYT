@@ -54,11 +54,21 @@ typedef struct
 	char           path[APRS_PATH_LEN];     /* цифіпітери через кому, «*» -- вже ретрансльовано */
 	const uint8_t *info;                    /* поле info (вказує всередину кадру) */
 	uint16_t       infoLen;
+	bool           tp;                      /* R11-fix: кадр розгорнуто з third-party ("}"): src/dst/path/info -- ВКЛАДЕНОГО кадру */
+	char           gate[APRS_CALL_LEN];     /* ... а це -- шлюз (i-gate), що ретранслював (справжнє джерело AX.25-кадру); лише при tp */
 } aprsAx25_t;
 
 /* Кадр без FCS (FCS перевірив демодулятор). true -- AX.25 UI (контроль 0x03, PID 0xF0) з коректними
  * позивними джерела й призначення. */
 bool aprsAx25Parse(const uint8_t *f, uint16_t len, aprsAx25_t *out);
+
+/* R11-fix: third-party traffic (APRS101, розділ «Third-Party Traffic»). i-gate, ретранслюючи пакет з APRS-IS в ефір, загортає його:
+ * info = "}" + "SRC>DST[,path]:" + оригінальне info. Якщо ax->info починається з '}' і вкладений заголовок коректний, РОЗГОРТАЄ
+ * кадр на місці: src/dst/path/info/infoLen -- вкладеного кадру (тобто СПРАВЖНІЙ відправник), gate -- колишнє src, tp = true.
+ * Рівно один рівень: уже розгорнутий кадр (tp) удруге не розгортається; якщо після розгортання info знову починається з '}',
+ * aprsPacketParse() віднесе його до APRS_T_OTHER. Обрізаний/побитий заголовок -- false, ax не змінюється (лишається кадр шлюзу, «інше»).
+ * Нічого не копіює з info: вказівник лише зсувається всередині того самого кадру. */
+bool aprsAx25Unwrap(aprsAx25_t *ax);
 
 /* ---- пакет APRS ------------------------------------------------------------------------ */
 typedef struct
@@ -84,7 +94,9 @@ size_t aprsDecodeText(const uint8_t *in, size_t n, char *out, size_t outSize);
 bool aprsIsUtf8(const uint8_t *p, size_t n);
 
 /* Повідомлення адресоване нам: ownCall (до 6 симв., будь-який регістр, хвостові пробіли ігноруються),
- * ownSsid 0..15. Збіг: «CALL-SSID»; для SSID 0 -- «CALL» або «CALL-0». */
+ * ownSsid 0..15 (більше -- завжди false). msgTo -- вже без хвостових пробілів, ВЕРХНІЙ регістр (aprsPacketParse()).
+ * Збіг точний: «CALL-SSID» (SSID 1..15 без нулів попереду); для SSID 0 -- «CALL» або «CALL-0». Пробіл усередині адресата
+ * («US5EX -7»), чужий префікс/суфікс («US5EX-70») -- НЕ збіг. */
 bool aprsMsgIsForUs(const char *msgTo, const char *ownCall, uint8_t ownSsid);
 
 /* ---- географія ------------------------------------------------------------------------- */
@@ -115,6 +127,7 @@ typedef struct
 	struct { uint32_t hash; uint32_t ms; } dedup[APRS_DEDUP_SLOTS];
 	struct { uint32_t hash; uint32_t ms; } seen[APRS_MSG_SEEN_SLOTS];
 	uint8_t dedupNext, seenNext;
+	uint16_t tpUnwrapped;                   /* R11-fix: скільки кадрів розгорнуто з third-party (у байтах вирівнювання -- розмір структури не росте) */
 	uint32_t total;                         /* пакетів з коректним FCS, розібраних як AX.25 UI */
 	uint32_t dups;                          /* ... з них дублікатів */
 	uint32_t other;                         /* ... з них APRS_T_OTHER */

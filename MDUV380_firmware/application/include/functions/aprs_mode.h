@@ -87,8 +87,10 @@ typedef struct
 	uint32_t distM;
 	uint16_t bearing;
 	uint32_t ms;              /* ticksGetMillis() прийому */
-	char     src[APRS_CALL_LEN];
+	char     src[APRS_CALL_LEN];      /* справжній відправник (для third-party -- з вкладеного кадру) */
 	char     dst[APRS_CALL_LEN];
+	bool     tp;                      /* R11-fix: кадр розгорнуто з third-party */
+	char     gate[APRS_CALL_LEN];     /* ... і шлюз, що його ретранслював */
 } aprsModeLast_t;
 
 /* Чому маяк не пішов / результат останньої спроби (для екрана). */

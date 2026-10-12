@@ -767,6 +767,12 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		return;   /* не AX.25 UI (або адреси не схожі) */
 	}
 	s_rx.db.total++;
+	/* R11-fix: i-gate загортає пакет з APRS-IS у third-party ("}SRC>DST,path:info"). Розгортаємо ДО розбору: далі (банер, список станцій,
+	 * дедуплікація, ACK відправнику) скрізь ax.src -- СПРАВЖНІЙ відправник, а не шлюз. Один рівень (див. aprsAx25Unwrap()). */
+	if (aprsAx25Unwrap(&ax) && (s_rx.db.tpUnwrapped < 0xFFFFU))
+	{
+		s_rx.db.tpUnwrapped++;
+	}
 	aprsPacketParse(&ax, &pkt);   /* R11: розбір ДО відсіву дублікатів -- ACK на повторене відправником повідомлення потрібен і для дубліката */
 	if ((pkt.type == APRS_T_MESSAGE) && s_rx.ownCall[0] && aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid))
 	{

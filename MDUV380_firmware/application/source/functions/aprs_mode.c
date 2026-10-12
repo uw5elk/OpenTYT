@@ -973,6 +973,8 @@ void aprsModeOnFrame(const aprsAx25_t *ax, const aprsPacket_t *pkt, bool hasGeo,
 	m->last.ms = ticksGetMillis();
 	snprintf(m->last.src, sizeof(m->last.src), "%s", ax->src);
 	snprintf(m->last.dst, sizeof(m->last.dst), "%s", ax->dst);
+	m->last.tp = ax->tp;
+	snprintf(m->last.gate, sizeof(m->last.gate), "%s", ax->tp ? ax->gate : "");
 }
 
 #endif /* APRS_RX */
