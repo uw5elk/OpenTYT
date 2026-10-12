@@ -285,10 +285,16 @@ static AX25Encoder_t encoderData;
 static CodeplugAPRSConfig_t *aprsConfig;
 #if defined(ENABLE_APRS_RX)
 /* R10 (форк): «Режим APRS» передає маяк зі СВОЇМ позивним і коментарем (UTF-8), а не з імені рації/конфігу кодплуга.
- * Вказівники діють лише на час aprsSendPacket() з aprsModeTxBeacon(); поза ним NULL. Стан -- у CCM, main RAM +0. */
+ * Вказівники діють лише на час aprsSendPacket() з aprsModeTxBeacon(); поза ним NULL. Стан -- у CCM, main RAM +0.
+ *
+ * R10-fix5: CCM при старті -- СМІТТЯ (лінкер кладе .ccmram AT> FLASH, але стартап її не копіює й не обнуляє; див. також
+ * dmrAesInit()/aprsRxInit()). Цих двох вказівників ніхто не обнуляв, тож стоковий маяк (aprsBeaconingSendBeacon() ->
+ * aprsSendPacket()) бачив `s_modeCall != NULL`, малював трасування і робив strncpy() зі сміттєвої адреси: на залізі
+ * Precise Bus Fault, BFAR = 0x9931AB9B. Тепер вони обнуляються в aprsBeaconingInit() (позначки CCM-INIT нижче перевіряє
+ * tools/check_ccm_init.py). */
 #define APRS_MODE_CCM  __attribute__((section(".aes_ccmram")))
-static const char *s_modeCall APRS_MODE_CCM;
-static const char *s_modeComment APRS_MODE_CCM;
+static const char *s_modeCall APRS_MODE_CCM;      /* CCM-INIT(aprsBeaconingInit) */
+static const char *s_modeComment APRS_MODE_CCM;   /* CCM-INIT(aprsBeaconingInit) */
 
 /* R10-fix2: жорсткі межі кадру AX.25. Біт, що не влазить у packetBuffer, НЕ пишеться, а позиція стає сигнальним
  * значенням AX25_BITS_OVERFLOW (окремого прапорця нема -- main RAM +0). aprsSendPacket() після складання перевіряє
@@ -305,7 +311,7 @@ _Static_assert(((((30U + 27U + APRSM_COMMENT_AIR_MAX + 2U) * 8U) * 6U) / 5U) + (
 #endif
 #endif
 
-/* R10-fix2: ТИМЧАСОВЕ трасування складання кадру (лише в «Режимі APRS»: s_modeCall != NULL). Номери -- TESTING.md, блок AP. */
+/* R10-fix2 (R10-fix5: постійне): трасування складання кадру (лише в «Режимі APRS»: s_modeCall != NULL). Номери -- TESTING.md, блок AP. */
 #if defined(APRS_MODE_TRACE)
 #define AX_TR(n)       do { if (s_modeCall != NULL) { AM_TRACE(n); } } while (0)
 #define AX_TRV(n, v)   do { if (s_modeCall != NULL) { AM_TRACE_V(n, v); } } while (0)
@@ -329,7 +335,7 @@ static struct
 	uint8_t      active;    /* відкладений бікон зараз передається (від QSY до FINAL_STAGE) */
 	uint8_t      qsyNow;    /* aprsBeaconingSendBeacon(): у режимі PTT іти гілкою «Вручну» (QSY + TX) */
 	ticksTimer_t settle;    /* пауза після повернення в RX */
-} s_aprsPtt DMR_AES_CCM;
+} s_aprsPtt DMR_AES_CCM;   /* CCM-INIT(aprsBeaconingInit) */
 #endif
 
 
@@ -1639,6 +1645,10 @@ void aprsBeaconingInit(void)
 {
 #if defined(ENABLE_AES)
 	memset(&s_aprsPtt, 0, sizeof(s_aprsPtt));
+#endif
+#if defined(ENABLE_APRS_RX)
+	s_modeCall = NULL;       // R10-fix5: CCM при старті -- сміття; без цього стоковий маяк читав позивний зі сміттєвої адреси
+	s_modeComment = NULL;
 #endif
 	aprsBcnData.decayMult = APRS_BEACON_DECAY_MULT_MIN;
 	aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_ENABLED, false);

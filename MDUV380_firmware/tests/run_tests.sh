@@ -135,6 +135,15 @@ for src in "$TESTS_DIR"/test_*.c; do
 	done
 done
 
+if [ -z "$FILTER" ] || [[ "check_ccm_init" == *"$FILTER"* ]]; then
+	# R10-fix5: кожна APRS-змінна в CCM має явну ініціалізацію (CCM при старті -- сміття): самоперевірка + перевірка коду прошивки
+	if out="$(python3 "$TESTS_DIR/../tools/check_ccm_init.py" --selftest 2>&1 && python3 "$TESTS_DIR/../tools/check_ccm_init.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            check_ccm_init (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        check_ccm_init (python)"; printf '%s\n' "$out" | tail -20
+	fi
+fi
+
 if [ -z "$FILTER" ] || [[ "test_aprs_capture aprs_offline" == *"$FILTER"* ]]; then
 	# R4: самоперевірки інструментів запису «APRS проби» (без рації): розбір відповідей 0xB5 і
 	# склеювання за номерами блоків; офлайн-аналіз еталонного WAV тим самим C-демодулятором.
