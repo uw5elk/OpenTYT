@@ -54,6 +54,7 @@
 #include "functions/rxPowerSaving.h"
 #include "functions/dmr_sms.h"
 #include "functions/dmr_rctl_tx.h"
+#include "functions/dmr_rctl_cap.h"   // dmrRctlCapReset (R12: старт CCM)
 #include "functions/dmr_rctl_cfg.h"   // dmrRctlIsInhibited (повний stun: сон рації)
 #include "functions/callReplay.h"     // "Переслухати" -- кільцевий буфер RX-голосу (ENABLE_CALL_REPLAY)
 #include "functions/aprs_rx_probe.h"  // R2: «APRS проба» (лише ENABLE_APRS_RX_PROBE + українська)
@@ -478,9 +479,18 @@ void applicationMainTask(void)
 	HRC6000Init();
 
 	dmrAesInit(); // AES state lives in .ccmram which the startup does not init; zero it (no-op unless ENABLE_AES)
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+	// R12: стан SMS і захоплення RCTL теж у CCM (сміття при старті), а HR-C6000 ISR уже може віддати data-burst:
+	// скидаємо RAM-стан зараз, не чекаючи dmrSmsInit() (він читає флеш і стоїть значно пізніше).
+	dmrSmsRuntimeInit();
+	dmrRctlCapReset();
+#endif
 
 #if defined(ENABLE_CALL_REPLAY)
 	callReplayInit();         // те саме застереження -- кільце "Переслухати" теж у .ccmram
+#if defined(ENABLE_APRS_RX)
+	callReplayBorrowReset();  // R12: прапорець позики кільця (для «Режиму APRS») -- теж у CCM, там сміття
+#endif
 	callReplayPlaybackInit(); // стан відтворення -- окремий .c (callReplayPlayback.c), окреме обнулення
 	// Перемикач "Запис RX" (2026-09-19) -- callReplayInit() вище щойно поставив
 	// його в true (типове значення модуля); тут підвантажуємо РЕАЛЬНИЙ стан із

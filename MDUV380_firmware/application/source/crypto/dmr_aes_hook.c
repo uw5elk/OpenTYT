@@ -62,6 +62,9 @@ static const uint8_t s_stockKeyB[32] = {
 static const uint8_t s_stockBlankKey[32] = {
     0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0x01 };
 
+/* R12: CCM при старті -- сміття; ВЕСЬ стан нижче скидає dmrAesInit() (applicationMain.c, одразу після HRC6000Init()).
+ * check_ccm_init.py перевіряє це за директивою: */
+/* CCM-INIT-FILE(dmrAesInit) */
 static dmr_aes_ctx_t s_rx DMR_AES_CCM, s_tx DMR_AES_CCM;
 static size_t        s_rxOff DMR_AES_CCM, s_txOff DMR_AES_CCM;
 static int           s_rxActive DMR_AES_CCM, s_txActive DMR_AES_CCM, s_keysLoaded DMR_AES_CCM;
@@ -87,7 +90,7 @@ static uint8_t       s_rxPendValid DMR_AES_CCM;  /* 1 = s_rxPendMi/s_rxPendKeyId
 
 /* Shared scratch for the (non-reentrant, foreground-only) key-store helpers. One
  * buffer instead of three per-function statics keeps CCM usage down. */
-static uint8_t       s_aesBlk[AESK_BLOCK_LEN] DMR_AES_CCM;
+static uint8_t       s_aesBlk[AESK_BLOCK_LEN] DMR_AES_CCM;   /* CCM-OK(чернетка: кожен шлях спершу заповнює її з флеша/з ключа, лише потім читає) */
 static uint32_t      s_txPiMi DMR_AES_CCM;   /* MI to advertise in the PI header (the call's initial MI) */
 static uint8_t       s_txKeyId DMR_AES_CCM;  /* selected TX key (AESK header byte 5); 0 = enc TX off */
 static uint32_t      s_txFrameCnt DMR_AES_CCM; /* free-running encoded voice frame index (encode==transmit order) */
@@ -197,6 +200,10 @@ void dmrAesResetRxDiag(void)
     memset(s_rxdLe, 0, sizeof s_rxdLe);
     memset(s_rxdMisc, 0, sizeof s_rxdMisc);
     s_capState = 0; s_capN = 0;
+    memset(s_capBuf, 0, sizeof s_capBuf);   /* R12: CCM при старті сміття -- знімок читає dmrAesGetCapData() */
+    memset(s_capSeq, 0, sizeof s_capSeq);
+    memset(s_capExp, 0, sizeof s_capExp);
+    s_capMi = 0;
 }
 /* Copy a self-describing snapshot into out (<= max). Header (32 bytes, LE):
  *  [0]=0xA5 magic, [1]=ring size, [2]=record size, [3]=0, [4..5]=write index,

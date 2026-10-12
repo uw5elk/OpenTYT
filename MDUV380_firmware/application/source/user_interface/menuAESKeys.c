@@ -51,7 +51,7 @@ static struct
 	uint8_t  editKeyId;   // key id being edited (1..15)
 	int16_t  editPos;     // cursor nibble 0..63
 	uint8_t  nib[64];     // editor nibble buffer (cleared after save/cancel)
-} s_aes DMR_AES_CCM;
+} s_aes DMR_AES_CCM;   /* CCM-INIT(menuAESKeys) -- усі поля виставляються на isFirstRun */
 // NB: keep ALL persistent menu state in CCM (above). Any net-new main-RAM .bss
 // shifts the AMBE codec's hardcoded ambebuffer_* addresses and breaks DMR voice,
 // so the per-tick exit code is a LOCAL threaded through handleEvent, not a static.

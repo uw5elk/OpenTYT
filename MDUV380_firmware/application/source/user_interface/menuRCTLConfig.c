@@ -65,7 +65,7 @@ static struct
 	uint8_t allow;      // робоча копія маски дозволів
 	uint8_t monSecs;    // робоча копія тривалості моніторингу (сек)
 	bool    dirty;      // відрізняється від того, що зараз на флеші
-} s_rcfg DMR_AES_CCM;
+} s_rcfg DMR_AES_CCM;   /* CCM-INIT(menuRCTLConfig) -- усі поля виставляються на isFirstRun */
 
 /* Кроки тривалості моніторингу (сек): L/R циклічно перемикає. */
 static const uint8_t MONSECS_STEPS[] = { 10, 20, 30, 60, 120 };

@@ -88,7 +88,7 @@ typedef struct
 	bool     boundaryHandled;   // пауза для поточної межі "over" вже вставлена
 } callReplayPlayState_t;
 
-static __attribute__((section(".ccmram"))) callReplayPlayState_t callReplayPlay;
+static __attribute__((section(".ccmram"))) callReplayPlayState_t callReplayPlay;   /* CCM-INIT(callReplayPlaybackInit) */
 
 /* AMBE "тиша" -- та сама, що SILENCE_AUDIO в HR-C6000.c (той масив static, тому
  * копія тут; той самий 27-байтний "comfort noise" кадр, яким прошивка й так

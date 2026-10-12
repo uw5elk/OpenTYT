@@ -41,11 +41,12 @@ typedef struct
 /* R10-fix: кільце позичає «Режим APRS» під aprsModeMem_t (u32/double/структурні копії -> LDM/STM/LDRD, які на
  * НЕвирівняній адресі дають UsageFault, а обробник -- while(1)). Без вирівнювання лінкер ставив кільце на 0x1000ab5f
  * (виміряно nm у збірці R10). Без ENABLE_APRS_RX атрибута нема -- збірка байт-у-байт стокова. */
-static __attribute__((section(".ccmram"), aligned(8))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];
+static __attribute__((section(".ccmram"), aligned(8))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];   /* CCM-OK(вміст дійсний лише в межах callReplayCap.count, який скидає callReplayInit()) */
 #else
-static __attribute__((section(".ccmram"))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];
+static __attribute__((section(".ccmram"))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];   /* CCM-OK(вміст дійсний лише в межах callReplayCap.count, який скидає callReplayInit()) */
 #endif
 /* Один біт на групу: чи ця група -- перша в новому "заході". (CALL_REPLAY_GROUPS+7)/8 = 63 Б. */
+/* CCM-INIT-FILE(callReplayInit, callReplayBorrowReset) -- applicationMain.c викликає їх на старті */
 static __attribute__((section(".ccmram"))) uint8_t callReplayOverBit[(CALL_REPLAY_GROUPS + 7U) / 8U];
 static __attribute__((section(".ccmram"))) callReplayCaptureState_t callReplayCap;
 /* Перемикач "Запис RX" -- окремо від callReplayCap вище: callReplayInit() обнуляє
@@ -89,6 +90,18 @@ void callReplayInit(void)
 	callReplayRecordingEnabled = true; // типове значення; applicationMain.c одразу
 	                                    // після цього синхронізує реальне (флеш)
 }
+
+#if defined(ENABLE_APRS_RX)
+/* R12: стан позики теж у CCM, тож на старті там сміття. Раніше callReplayBorrowed ніхто не обнуляв: випадкове "true"
+ * мовчки глушило запис «Переслухати» (callReplayCaptureTick() виходив одразу), а callReplayBorrowSavedRec ставав
+ * "справжнім" перемикачем після першого виходу з «Режиму APRS». НЕ частина callReplayInit(): ту кличуть і самі
+ * callReplayBorrow()/Release(), і callReplaySetRecordingEnabled(false) -- вони не мають скидати позику. */
+void callReplayBorrowReset(void)
+{
+	callReplayBorrowed = false;
+	callReplayBorrowSavedRec = true;
+}
+#endif
 
 bool callReplayIsRecordingEnabled(void)
 {

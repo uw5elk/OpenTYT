@@ -105,7 +105,7 @@ static struct
 	uint32_t ackFrom;       // хто відповів
 	uint32_t ackAgeSecs;    // скільки секунд тому
 	ticksTimer_t holdTimer; // показ результату / очікування -- реальний час, не тіки
-} s_rc DMR_AES_CCM;
+} s_rc DMR_AES_CCM;   /* CCM-INIT(menuRCTLRemote) -- memset(&s_rc) на isFirstRun */
 
 // Пункти екрана вибору команди -- у ПОРЯДКУ dmr_rctl_stock_cmd_t (Check,Monitor,Enable,Disable,
 // Call Alert), щоб індекс пункту == коду команди. Мітки спільні з екраном дозволів (rctl_ua.h).

@@ -580,8 +580,34 @@ static void testLastFrame(void)
 	CHECK(callReplayIsBorrowed() == false, "поза режимом aprsModeOnFrame не позичає кільце");
 }
 
+/* R12: прапорець позиченого кільця живе в CCM (на залізі при старті сміття). applicationMain.c на старті кличе callReplayInit() і
+ * callReplayBorrowReset(): після них кільце НЕ позичене, запис працює; позика й повернення зберігають справжній перемикач. */
+static void testBootInit(void)
+{
+	uint8_t g[CALL_REPLAY_GROUP_BYTES];
+
+	callReplayInit();
+	callReplayBorrowReset();
+	CHECK(callReplayIsBorrowed() == false, "після старту кільце не позичене");
+	CHECK(callReplayIsRecordingEnabled(), "після старту «Запис RX» увімкнено");
+	memset(g, 7, sizeof(g));
+	callReplayCaptureTick(g, false, 100);
+	CHECK(callReplayGroupCount() == 1, "після старту «Переслухати» пише");
+	callReplaySetRecordingEnabled(false);
+	{
+		size_t n = 0;
+
+		(void)callReplayBorrow(&n);
+		CHECK(callReplayIsBorrowed(), "кільце позичене");
+		callReplayRelease();
+	}
+	CHECK(callReplayIsBorrowed() == false && callReplayIsRecordingEnabled() == false, "справжній перемикач (вимкнено) повернуто після позики");
+	callReplaySetRecordingEnabled(true);
+}
+
 int main(void)
 {
+	testBootInit();
 	testEnterExit();
 	testRecordingOff();
 	testVfo();

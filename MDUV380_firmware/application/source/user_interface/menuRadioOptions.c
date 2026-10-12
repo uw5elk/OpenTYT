@@ -47,7 +47,7 @@
 /* Режим TX SMS живе в окремому custom-data блоці (пишеться у флеш одразу), а не в
  * nonVolatileSettings, тож «RED -- скасувати» його б не відкотив. Тому тут -- лише чернетка,
  * у флеш вона йде в applySettings() (GREEN / тайм-аут QuickKey). CCM: main RAM не чіпаємо. */
-static uint8_t s_smsTxModePending DMR_AES_CCM;
+static uint8_t s_smsTxModePending DMR_AES_CCM;   /* CCM-INIT(menuRadioOptions) -- = dmrSmsTxMode() на isFirstRun */
 #endif
 
 static void updateScreen(bool isFirstRun);

@@ -56,7 +56,7 @@ void dmrDataTriggerReboot(void)
  * отже надійно нульовий) не дає ISR прочитати масив раніше.
  * Стан-машина (s_dataTxActive, s_burstCount, s_burstIndex) -- у .bss як і раніше. */
 static uint8_t          s_bursts[DMR_DATA_MAX_BURSTS][1 + DMR_DATA_BURST_LEN]
-                                 __attribute__((section(".ccmram")));
+                                 __attribute__((section(".ccmram")));   /* CCM-OK(заповнюється dmrDataTxLoad*() раніше, ніж s_dataTxActive=1 пускає ISR читати) */
 static volatile uint8_t s_burstCount;   /* read in the HR-C6000 ISR (dmrDataTxNextBurst), so */
 static volatile uint8_t s_burstIndex;   /* volatile: dmrDataTxEnd's resets must not reorder  */
 static volatile uint8_t s_dataTxActive; /* past the active=0 store the ISR gates on           */
@@ -72,6 +72,7 @@ static volatile uint8_t s_fastEnd;      /* 1 = обірвати передачу
  * нічого з наявного в CCM не зсуває. Скидає dmrDataTxDiagReset(), її кличе dmrSmsInit()
  * (через runtimeReset) при старті. */
 #define DMR_DATA_DIAG_CCM __attribute__((section(".aes_ccmram")))
+/* CCM-INIT-FILE(dmrDataTxDiagReset) */
 static volatile uint16_t s_dgRejected   DMR_DATA_DIAG_CCM;  /* чергу відкинуто: передача вже активна */
 static volatile uint16_t s_dgStarted    DMR_DATA_DIAG_CCM;  /* перший burst реально пішов у чип */
 static volatile uint16_t s_dgTimeout    DMR_DATA_DIAG_CCM;  /* dmrDataTxFinishPoll вийшов по таймауту */

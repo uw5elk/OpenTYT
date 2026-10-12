@@ -117,8 +117,8 @@ void dmr_lfsr128d(uint32_t mi, uint8_t iv_out[16], uint32_t *next_mi_out) {
 }
 
 /* ===== key store ======================================================== */
-static uint8_t  s_keys[DMR_AES_MAX_KEYS][DMR_AES_KEY_BYTES] DMR_AES_CCM;
-static uint8_t  s_have[DMR_AES_MAX_KEYS] DMR_AES_CCM;
+static uint8_t  s_keys[DMR_AES_MAX_KEYS][DMR_AES_KEY_BYTES] DMR_AES_CCM;   /* CCM-INIT(dmrAesInit) -- dmr_aes_clear_keys() */
+static uint8_t  s_have[DMR_AES_MAX_KEYS] DMR_AES_CCM;   /* CCM-INIT(dmrAesInit) */
 
 int dmr_aes_set_key(uint8_t slot, const uint8_t key[DMR_AES_KEY_BYTES]) {
     if (slot >= DMR_AES_MAX_KEYS) return -1;

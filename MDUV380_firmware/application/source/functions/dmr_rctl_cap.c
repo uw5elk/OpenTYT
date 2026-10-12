@@ -11,6 +11,9 @@
 /* CCM НЕ обнуляється при старті, тож усе явно ініціалізується в dmrRctlCapReset(), а сам
  * armed за замовчуванням 0 (захоплення вимкнене, доки ПК його не ввімкне). Щоб гарантувати
  * нульовий старт без виклику reset, ці статики лежать разом і скидаються на першому arm. */
+/* R12: захист `s_inited` від сміття ненадійний (випадкове 1 на холодному старті -> стан НЕ скидається, s_armed лишається
+ * сміттям, а HR-C6000 ISR читає його на кожному data-burst) -- тому явний dmrRctlCapReset() викликає applicationMain.c на старті. */
+/* CCM-INIT-FILE(dmrRctlCapReset) */
 static dmr_rctl_cap_entry_t s_ring[DMR_RCTL_CAP_SLOTS] DMR_AES_CCM;
 static uint8_t  s_count   DMR_AES_CCM;   /* заповнено слотів (0..DMR_RCTL_CAP_SLOTS) */
 static uint8_t  s_armed   DMR_AES_CCM;

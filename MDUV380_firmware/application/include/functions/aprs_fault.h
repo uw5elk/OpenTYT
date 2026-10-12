@@ -31,8 +31,10 @@ void aprsFaultKick(void);                    /* «головний цикл жи
 void aprsFaultArm(bool on);                  /* увімкнути/вимкнути сторож (вимикати перед вимкненням/сном рації!) */
 void aprsFaultLoopTick(bool modeActive);     /* викликається щоітерації головного циклу: kick + арм/дизарм за станом режиму */
 /* Запам'ятати крок трасування (backup-регістри); повертає мс від початку серії (для рядка t=). */
+#if defined(APRS_MODE_TRACE)                 /* R12: лише діагностична збірка (ENABLE_APRS_RX_PROBE) */
 uint32_t aprsFaultTraceNote(uint32_t n, uint32_t v);
 void aprsFaultTraceMark(void);               /* початок серії: t=0 (перед trxSetTX) */
+#endif
 
 #define APRS_FAULT_KICK()          aprsFaultKick()
 #define APRS_FAULT_DISARM()        aprsFaultArm(false)
