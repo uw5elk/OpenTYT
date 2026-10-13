@@ -76,6 +76,7 @@ typedef struct
 	uint8_t  attempts;
 	char     to[APRS_MSG_CALL_LEN];
 	char     id[APRS_MSG_ID_LEN];
+	char     from[APRS_MSG_CALL_LEN];     /* R13 (П.6): позивний-SSID відправника, ЗАФІКСОВАНИЙ при постановці в чергу («US5EX-7»); порожній -- поточний за замовчуванням */
 	char     text[APRS_MSG_JOB_TEXT_LEN]; /* cp1251; для ACK порожній */
 } aprsMsgJob_t;
 
@@ -139,8 +140,10 @@ size_t aprsMsgBuildAck(char *out, size_t cap, const char *to, const char *id);
 /* seed -- початок лічильника номерів (перший номер буде (seed % 99) + 1): щоб новий сеанс не повторював номери
  * попереднього, які одержувач ще пам'ятає. Тест викликає з 0. */
 void aprsMsgInit(aprsMsgBox_t *b, uint32_t seed);
-/* Поставити наше повідомлення в чергу (і запис «чекає» у список). Адресат -- довільний (нормалізується тут). */
-int aprsMsgSend(aprsMsgBox_t *b, const char *to, const char *cp1251Text, uint32_t now);
+/* Поставити наше повідомлення в чергу (і запис «чекає» у список). Адресат -- довільний (нормалізується тут).
+ * R13 (П.6): from -- позивний-SSID відправника («CALL» або «CALL-SSID»), який діятиме для ВСІХ спроб цього повідомлення,
+ * де б не був користувач (у режимі чи ні). NULL/порожній/недійсний -- «позивний за замовчуванням» (як було до R13). */
+int aprsMsgSend(aprsMsgBox_t *b, const char *to, const char *cp1251Text, uint32_t now, const char *from);
 /* Вхідне повідомлення нам (текст cp1251, id -- номер або порожній). true -- нове (додано у список, непрочитане); false --
  * повтор (той самий відправник, номер І текст) або нема місця. Той самий номер з ІНШИМ текстом -- нове повідомлення (відправник
  * почав нову нумерацію). Довший за 79 символів cp1251 текст обрізається -- ACK від цього не залежить. */
@@ -150,7 +153,7 @@ void aprsMsgCountRx(aprsMsgBox_t *b);
 /* Вхідне повідомлення з номером => відповісти ACK негайно. true -- ACK поставлено в чергу; false -- вже є/щойно був/черга
  * без місця/номера нема. Викликати і для ПОВТОРІВ (відправник не почув наш ACK). ACK стоїть першим у черзі; якщо вільного слота
  * нема -- ВИТІСНЯЄ старіше НАШЕ повідомлення, що ще не в ефірі (воно стає «без ACK»), а не навпаки. */
-bool aprsMsgQueueAck(aprsMsgBox_t *b, const char *to, const char *id, uint32_t now);
+bool aprsMsgQueueAck(aprsMsgBox_t *b, const char *to, const char *id, uint32_t now, const char *from);
 /* Прийшов ":МИ:ackNN" (або "rejNN" -- isRej). Скасовує повтори відповідного нашого повідомлення. true -- знайдено. */
 bool aprsMsgOnAckRx(aprsMsgBox_t *b, const char *from, const char *id, bool isRej);
 
@@ -158,6 +161,8 @@ bool aprsMsgOnAckRx(aprsMsgBox_t *b, const char *from, const char *id, bool isRe
  * приймається пакет, PTT не натиснуто, не DMR-TX) -- їх рахує викликач. busy -- частота зайнята. Усередині: завершення
  * очікування ACK («без ACK»), пауза 2 с між передачами, пріоритет ACK, очікування вільної частоти до 10 с. */
 size_t aprsMsgPoll(aprsMsgBox_t *b, uint32_t now, bool busy, bool txOk, char *info, size_t cap);
+/* R13 (П.6): позивник відправника для кадру, щойно виданого aprsMsgPoll() (завдання в ефірі). "" -- без фіксації (стандартний). */
+const char *aprsMsgInflightFrom(const aprsMsgBox_t *b);
 /* Результат спроби передачі кадру, виданого aprsMsgPoll(). ok -- передачу почато. fatal -- марно повторювати (TX заборонено...):
  * повідомлення одразу «без ACK». */
 void aprsMsgTxDone(aprsMsgBox_t *b, uint32_t now, bool ok, bool fatal);

@@ -298,6 +298,26 @@ static const char *s_modeComment APRS_MODE_CCM;   /* CCM-INIT(aprsBeaconingInit)
 /* R11: готове інфо-поле кадру (повідомлення/ACK APRS) замість позиції+коментаря. NULL -- звичайний маяк. Діє лише на час
  * aprsSendPacket() з aprsModeTxMessage(); рядок -- локальний буфер викликача, з нулем у кінці (байти UTF-8, без NUL усередині). */
 static const char *s_modeInfo APRS_MODE_CCM;      /* CCM-INIT(aprsBeaconingInit) */
+/* R13 (П.6): позивний-SSID відправника, ЗАФІКСОВАНИЙ у завданні черги повідомлень («CALL» або «CALL-SSID»). Не NULL і не порожній --
+ * замінює і позивний (myCall), і SSID заголовка кадру; діє лише на час aprsSendPacket() з aprsModeTxMessage()/aprsBeaconingSendMessage(). */
+static const char *s_msgFrom APRS_MODE_CCM;       /* CCM-INIT(aprsBeaconingInit) */
+
+/* SSID з «CALL-SS» (0, якщо суфікса нема). Рядок уже нормалізовано (aprsMsgNormCall(): SSID 1..15 без нулів). */
+static uint8_t msgFromSsid(const char *from)
+{
+	const char *d = strchr(from, '-');
+	unsigned v = 0U;
+
+	if (d == NULL)
+	{
+		return 0U;
+	}
+	for (d++; (*d >= '0') && (*d <= '9'); d++)
+	{
+		v = (v * 10U) + (unsigned)(*d - '0');
+	}
+	return (uint8_t)((v > 15U) ? 0U : v);
+}
 
 /* R10-fix2: жорсткі межі кадру AX.25. Біт, що не влазить у packetBuffer, НЕ пишеться, а позиція стає сигнальним
  * значенням AX25_BITS_OVERFLOW (окремого прапорця нема -- main RAM +0). aprsSendPacket() після складання перевіряє
@@ -514,7 +534,16 @@ static void enqueueHeader(AX25Encoder_t *encoderData)
 	}
 
 	AX_TR(431);   /* заголовок: позивний записано */
-	enqueueCharNrzi(encoderData, ((aprsConfig->senderSSID + '0') << 1), true);
+#if defined(ENABLE_APRS_RX)
+	if ((s_msgFrom != NULL) && (s_msgFrom[0] != 0))
+	{
+		enqueueCharNrzi(encoderData, ((msgFromSsid(s_msgFrom) + '0') << 1), true);   /* R13 (П.6): SSID зафіксованого відправника */
+	}
+	else
+#endif
+	{
+		enqueueCharNrzi(encoderData, ((aprsConfig->senderSSID + '0') << 1), true);
+	}
 	AX_TR(432);   /* заголовок: SSID відправника записано */
 
 	uint8_t numPaths = ((AX_STRLEN(aprsConfig->paths[1].name, 6U) == 0) ? 1U : 2U);
@@ -772,6 +801,17 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 		/* R10: позивний «Режиму APRS» (ASCII, до 6 символів) замість імені рації */
 		strncpy(myCall, s_modeCall, 6U);
 		myCall[6] = 0;
+	}
+	if ((s_msgFrom != NULL) && (s_msgFrom[0] != 0))
+	{
+		/* R13 (П.6): зафіксований у завданні відправник — важливіший і за позивний режиму, і за ім'я рації */
+		size_t k = 0;
+
+		for (; (k < 6U) && (s_msgFrom[k] != 0) && (s_msgFrom[k] != '-'); k++)
+		{
+			myCall[k] = s_msgFrom[k];
+		}
+		myCall[k] = 0;
 	}
 #endif
 	AX_TR(403);   /* позивний готовий */
@@ -1664,6 +1704,7 @@ void aprsBeaconingInit(void)
 	s_modeCall = NULL;       // R10-fix5: CCM при старті -- сміття; без цього стоковий маяк читав позивний зі сміттєвої адреси
 	s_modeComment = NULL;
 	s_modeInfo = NULL;       // R11: те саме -- CCM при старті сміття
+	s_msgFrom = NULL;        // R13: те саме
 #endif
 	aprsBcnData.decayMult = APRS_BEACON_DECAY_MULT_MIN;
 	aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_ENABLED, false);
@@ -2136,7 +2177,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
  * AFSK-модулятор у перериванні TIM6), а завершення -- aprsBeaconingTick() -> APRS_TX_FINISHED ... FINAL_STAGE,
  * який повертає режим/смугу з currentChannelData (тобто з «каналу» режиму -- ті самі FM 12,5 кГц).
  * Блокує лише на затримку TX (APRS_XMIT_TX_DELAY, 50 мс), як стоковий. */
-static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info)
+static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info, const char *from)
 {
 	aprsModeRawCfg_t cfg;
 	aprsChannelSettingsInUse_t channelSettings;
@@ -2157,9 +2198,9 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info)
 	{
 		return APRS_MODE_TX_NOT_FM;
 	}
-	if (aprsModeCallValid(e->call) == false)
+	if ((aprsModeCallValid(e->call) == false) && ((from == NULL) || (from[0] == 0)))
 	{
-		return APRS_MODE_TX_NOCALL;
+		return APRS_MODE_TX_NOCALL;   // R13: у завдання черги може бути власний зафіксований відправник — тоді позивник режиму не потрібен
 	}
 	if ((info == NULL) && (e->hasPos == false))
 	{
@@ -2244,6 +2285,7 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info)
 	s_modeCall = e->call;
 	s_modeComment = comment;
 	s_modeInfo = info;   // R11: NULL для маяка
+	s_msgFrom = from;    // R13 (П.6): NULL — позивний режиму
 	_Static_assert(sizeof(aprsModeRawCfg_t) == sizeof(CodeplugAPRSConfig_t), "aprsModeRawCfg_t != CodeplugAPRSConfig_t");
 	/* R10-fix2: cfg -- ЛОКАЛЬНА змінна, а aprsSendPacket() кладе вказівник на неї в глобальний aprsConfig. Після виходу з
 	 * цієї функції він був би висячим (мертвий стек) -- нижче, одразу після виклику, його повертаємо на конфіг кодплуга. */
@@ -2254,6 +2296,7 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info)
 	s_modeCall = NULL;       // aprsSendPacket() збирає кадр синхронно; далі їх не читають
 	s_modeComment = NULL;
 	s_modeInfo = NULL;
+	s_msgFrom = NULL;
 	if (frameOk == false)
 	{
 		/* R10-fix2: кадр завеликий -- aprsSendPacket() поставив «завершено»; стани завершення вимикають TX */
@@ -2269,19 +2312,19 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info)
 #if defined(ENABLE_APRS_RX)
 aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
 {
-	return modeTxCommon(e, NULL);
+	return modeTxCommon(e, NULL, NULL);
 }
 
 /* R11: повідомлення/ACK APRS у ефір. Той самий шлях, що й маяк (modeTxCommon()): рація вже стоїть на частоті APRS у «Режимі APRS»
  * (тому QSY і повернення каналу, про які йдеться в брифі, тут не потрібні -- як і для маяка R10), aprsRxStopForTx(), TX delay,
  * той самий модулятор AFSK. Відрізняється лише інфо-поле: готовий рядок із aprs_msg.c замість позиції. info -- з нулем. */
-aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info)
+aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info, const char *from)
 {
 	if ((info == NULL) || (info[0] != ':'))
 	{
 		return APRS_MODE_TX_TOOBIG;   // не повідомлення -- не передаємо
 	}
-	return modeTxCommon(e, info);
+	return modeTxCommon(e, info, from);
 }
 
 bool aprsBeaconingMessagesAllowed(void)
@@ -2295,7 +2338,7 @@ bool aprsBeaconingMessagesAllowed(void)
  * aprsModeTxMessage()). Повернення каналу після передачі -- стокове: aprsBeaconingTick() -> APRS_TX_FINAL_STAGE за
  * aprsBcnData.hasDoneQSY. Блокує, як стоковий бікон: до 2 с анти-колізії (APRS_ANTI_COLLISION_MS_MAX) + 40 мс після QSY +
  * затримка TX. Вільну частоту (до 10 с) викликач чекає ДО цього виклику неблокуюче (aprs_mode.c, aprsMsgBgTick()). */
-aprsModeTxResult_t aprsBeaconingSendMessage(const char *info)
+aprsModeTxResult_t aprsBeaconingSendMessage(const char *info, const char *from)
 {
 	aprsChannelSettingsInUse_t channelSettings;
 	aprsBeaconingLocation_t loc;
@@ -2430,8 +2473,10 @@ aprsModeTxResult_t aprsBeaconingSendMessage(const char *info)
 	loc.coords.longitude = 0.0;
 
 	s_modeInfo = info;
+	s_msgFrom = from;   // R13 (П.6): зафіксований у завданні відправник (NULL/"" — ім'я рації + SSID зі стокового конфігу)
 	bool frameOk = aprsSendPacket(&aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL], &loc, &loc, &channelSettings, false);
 	s_modeInfo = NULL;
+	s_msgFrom = NULL;
 	if (frameOk == false)
 	{
 		aprsModeAbortTx();   // кадр не влазить: aprsSendPacket() уже поставив «завершено» -- прогнати стани, TX вимкнеться

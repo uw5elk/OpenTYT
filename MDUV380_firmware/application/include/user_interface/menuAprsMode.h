@@ -16,6 +16,8 @@
 bool menuAprsModeEnter(void);
 /* R11: пункт хабу «Повідомлення APRS» -- увійти в режим і відкрити сторінку «Повідомлення». false -- зараз не можна. */
 bool menuAprsModeEnterMessages(void);
+/* R13: екран «Повідом. APRS» БЕЗ «Режиму APRS» (див. aprsModeMsgSessionOpen()). true -- відкрито. */
+bool menuAprsMsgEnter(void);
 /* R11: «Відповісти» з картки станції: за потреби увійти в режим, відкрити набір повідомлення цій станції (адресат уже заданий).
  * false -- не вдалося (режим недоступний чи позивний станції не годиться за адресата); користувачу показано сповіщення. */
 bool menuAprsModeReplyTo(const char *call);

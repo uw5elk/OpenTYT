@@ -80,7 +80,16 @@ static inline aprsModeMem_t *mem(void)
 }
 _Static_assert(sizeof(aprsModeMem_t) <= (CALL_REPLAY_GROUPS * CALL_REPLAY_GROUP_BYTES), "aprsModeMem_t does not fit the call replay ring");
 /* R11-fix2: ПОСТІЙНИЙ блок повідомлень -- у зарезервованій частині буфера «Переслухати», яку режим не позичає (callReplay.c). */
-_Static_assert(sizeof(aprsMsgBox_t) <= CALL_REPLAY_APRS_RESERVE_BYTES, "aprsMsgBox_t does not fit the call replay APRS reserve");
+_Static_assert(sizeof(aprsMsgBox_t) <= CALL_REPLAY_APRS_BOX_BYTES, "aprsMsgBox_t does not fit the call replay APRS reserve");
+_Static_assert(sizeof(aprsModeUi_t) <= CALL_REPLAY_APRS_UI_BYTES, "aprsModeUi_t does not fit the call replay APRS reserve (standalone messages screen)");
+_Static_assert((CALL_REPLAY_APRS_BOX_BYTES % 8U) == 0U, "standalone messages screen must stay 8-aligned");
+/* R13: стан екрана «Повідом. APRS» без режиму -- за блоком повідомлень у тому самому резерві. */
+static inline aprsModeUi_t *msgSessionUi(void)
+{
+	size_t n = 0;
+
+	return (aprsModeUi_t *)(void *)((uint8_t *)callReplayReserved(&n) + CALL_REPLAY_APRS_BOX_BYTES);
+}
 static inline aprsMsgBox_t *bgBox(void)
 {
 	size_t n = 0;
@@ -94,6 +103,11 @@ static inline aprsModeMem_t *mem(void)
 	return &s_modeMem;
 }
 static aprsMsgBox_t s_msgBox __attribute__((section(".aes_ccmram"), aligned(8)));   /* CCM-INIT(aprsMsgBgInit) */
+static aprsModeUi_t s_msgUi __attribute__((section(".aes_ccmram"), aligned(8)));    /* R13: екран «Повідом. APRS» без режиму (збірка без «Переслухати»); CCM-INIT(aprsModeMsgSessionOpen) */
+static inline aprsModeUi_t *msgSessionUi(void)
+{
+	return &s_msgUi;
+}
 static inline aprsMsgBox_t *bgBox(void)
 {
 	return &s_msgBox;
@@ -225,7 +239,40 @@ bool aprsModeIsActive(void)
 
 aprsModeUi_t *aprsModeUi(void)
 {
+	if ((aprsRxUi()->modeOn == 0U) && (aprsRxUi()->msgOn != 0U))
+	{
+		return msgSessionUi();   /* R13: екран повідомлень без режиму */
+	}
 	return &mem()->ui;
+}
+
+bool aprsModeMsgSessionOpen(void)
+{
+	aprsModeUi_t *u;
+
+	if (aprsModeIsActive())
+	{
+		return false;   /* у режимі повідомлення відкриваються його власною сторінкою */
+	}
+#if defined(ENABLE_CALL_REPLAY)
+	u = msgSessionUi();
+#else
+	u = &s_msgUi;
+#endif
+	memset(u, 0, sizeof(*u));
+	u->page = APRS_MODE_PAGE_MESSAGES;
+	aprsRxUi()->msgOn = 1U;
+	return true;
+}
+
+void aprsModeMsgSessionClose(void)
+{
+	aprsRxUi()->msgOn = 0U;
+}
+
+bool aprsModeMsgSessionActive(void)
+{
+	return (aprsRxUi()->msgOn != 0U) && (aprsRxUi()->modeOn == 0U);
 }
 
 aprsModeCfg_t *aprsModeCfg(void)
@@ -438,6 +485,7 @@ bool aprsModeEnter(void)
 	{
 		return true;
 	}
+	aprsRxUi()->msgOn = 0U;   /* R13: екран «Повідом. APRS» без режиму і сам режим одночасно не живуть */
 	if (((root != UI_CHANNEL_MODE) && (root != UI_VFO_MODE)) || (settingsUsbMode == USB_MODE_HOTSPOT) ||
 			(aprsTxProgress != APRS_TX_IDLE) || trxTransmissionEnabled || trxIsTransmitting)
 	{
@@ -672,11 +720,69 @@ bool aprsModeHasCall(void)
 	return aprsModeIsActive() && aprsModeCallValid(mem()->eff.call);
 }
 
+/* R13 (П.6): ПОТОЧНИЙ власний позивний-SSID для нового завдання черги — «CALL» або «CALL-SS». У «Режимі APRS» — позивний/SSID режиму,
+ * поза ним — ім'я рації + SSID зі стокового конфігу APRS (рівно те, з чим передавав би бікон і що приймач вважає «нами»). Далі цей рядок
+ * копіюється в завдання й НЕ змінюється, де б не був користувач. false — власного допустимого позивного нема. */
+static bool ownIdent(char out[APRS_MSG_CALL_LEN])
+{
+	char call[8];
+	uint8_t ssid = 0U;
+	bool hp;
+	int32_t la, lo;
+	size_t n = 0;
+
+	memset(call, 0, sizeof(call));
+	if (aprsModeOwnInfo(call, &ssid, &hp, &la, &lo) == false)
+	{
+		aprsRxInfo_t info;
+
+		if (aprsBeaconingGetRxInfo(&info, true) == false)
+		{
+			return false;
+		}
+		for (int i = 0; (i < 6) && (info.call[i] != 0) && (info.call[i] != ' '); i++)
+		{
+			char c = info.call[i];
+
+			call[i] = ((c >= 'a') && (c <= 'z')) ? (char)(c - 'a' + 'A') : c;
+		}
+		ssid = info.ssid;
+	}
+	if ((aprsModeCallValid(call) == false) || (ssid > 15U))
+	{
+		return false;
+	}
+	n = strlen(call);
+	memcpy(out, call, n);
+	if (ssid != 0U)
+	{
+		out[n++] = '-';
+		if (ssid >= 10U)
+		{
+			out[n++] = '1';
+			out[n++] = (char)('0' + (ssid - 10U));
+		}
+		else
+		{
+			out[n++] = (char)('0' + ssid);
+		}
+	}
+	out[n] = 0;
+	return true;
+}
+
+/* Нове повідомлення в чергу. -1 — власного позивного нема; -2 — поза режимом і APRS вимкнено/призупинено (не передасться). Інакше AMSG_*. */
 int aprsModeMsgSend(const char *to, const char *cp1251Text)
 {
-	if (aprsModeHasCall() == false)
+	char from[APRS_MSG_CALL_LEN];
+
+	if (ownIdent(from) == false)
 	{
 		return -1;
+	}
+	if ((aprsModeIsActive() == false) && (aprsBeaconingMessagesAllowed() == false))
+	{
+		return -2;
 	}
 	{
 		aprsMsgBox_t *b = bgBox();
@@ -687,7 +793,7 @@ int aprsModeMsgSend(const char *to, const char *cp1251Text)
 			b->numSeeded = 1U;
 			b->lastNum = (uint8_t)(((uint32_t)getRtcTime_custom() + (ticksGetMillis() / 997U)) % 99U);
 		}
-		return aprsMsgSend(b, to, cp1251Text, ticksGetMillis());
+		return aprsMsgSend(b, to, cp1251Text, ticksGetMillis(), from);
 	}
 }
 
@@ -748,7 +854,11 @@ void aprsMsgBgTick(void)
 	{
 		return;
 	}
-	r = modeOn ? aprsModeTxMessage(&mem()->eff, info) : aprsBeaconingSendMessage(info);
+	{
+		const char *from = aprsMsgInflightFrom(b);   /* R13 (П.6): відправник зафіксовано в завданні — однаковий для всіх повторів */
+
+		r = modeOn ? aprsModeTxMessage(&mem()->eff, info, from) : aprsBeaconingSendMessage(info, from);
+	}
 	switch (r)
 	{
 		case APRS_MODE_TX_OK:
@@ -791,7 +901,7 @@ void aprsMsgBgOnMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt)
 	aprsMsgCountRx(b);
 	if (pkt->msgId[0] != 0)
 	{
-		(void)aprsMsgQueueAck(b, ax->src, pkt->msgId, ticksGetMillis());
+		(void)aprsMsgQueueAck(b, ax->src, pkt->msgId, ticksGetMillis(), pkt->msgTo);   /* R13 (П.6): ACK від того, КОМУ адресовано (msgTo), а не від поточного налаштування */
 	}
 }
 

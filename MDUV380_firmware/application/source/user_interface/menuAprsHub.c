@@ -118,7 +118,9 @@ static void openItem(int n)
 			menuAprsStationsEnter();
 			break;
 		case APRS_HUB_MESSAGES:
-			(void)menuAprsModeEnterMessages();   /* R11: режим відкривається одразу на сторінці «Повідомлення» (черга й ACK живуть у режимі) */
+			/* R13 (П.5): без входу в «Режим APRS» -- читання, «Відповісти», «Нове» працюють поза режимом (чергу й ACK веде aprsMsgBgTick()
+			 * на будь-якому екрані). Сторінка «Повідомлення» всередині «Режиму APRS» лишилась. */
+			(void)menuAprsMsgEnter();
 			break;
 		case APRS_HUB_SETTINGS:
 			menuSystemPushNewMenu(MENU_APRS);   /* стокове меню налаштувань APRS: посилання, QuickKey на нього не змінилися */
@@ -178,6 +180,7 @@ static void exitCallback(void *data)
 {
 	(void)data;
 	aprsModeExit();            /* R10: вихід із меню будь-яким шляхом -- вийти з «Режиму APRS» (ідемпотентно) */
+	aprsModeMsgSessionClose(); /* R13: те саме для екрана «Повідом. APRS» без режиму */
 	menuAprsStationsClose();   /* вихід із меню будь-яким шляхом (PopAll, PTT...) -- закрити екрани, які воно приймало */
 #if defined(APRS_RX_PROBE)
 	aprsRxProbeClose();
@@ -200,6 +203,7 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 
 		menuSystemRegisterExitCallback(exitCallback, NULL);
 		aprsModeExit();            /* R10: повернення сюди з активним режимом -- несумісно, виходимо з режиму */
+		aprsModeMsgSessionClose(); /* R13 */
 		menuAprsStationsClose();   /* повернення сюди -- екрани вже закриті (push нового меню); про всяк випадок */
 #if defined(APRS_RX_PROBE)
 		aprsRxProbeClose();
@@ -213,11 +217,11 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 
 	/* Поки активний «Режим APRS» / відкрито «APRS станції» / «APRS проба», екран і всі події належать їм
 	 * (режим -- раніше за станції: він має власні сторінки). */
-	if (aprsModeIsActive())
+	if (aprsModeIsActive() || aprsModeMsgSessionActive())
 	{
 		if (menuAprsModeTick(ev) == false)
 		{
-			updateScreen(false);   /* RED на «Моніторі»: режим уже вимкнено -- перемалювати список */
+			updateScreen(false);   /* RED на «Моніторі» (або зі списку «Повідом. APRS» без режиму): уже закрито -- перемалювати список */
 		}
 		return hubExitCode;
 	}

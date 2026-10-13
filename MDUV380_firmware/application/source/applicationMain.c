@@ -1499,6 +1499,12 @@ void applicationMainTask(void)
 #endif
 			) && KEYCHECK_SHORTUP(ev.keys, KEY_RED))
 		{
+#if defined(APRS_RX)
+			if (uiNotificationGetId() == NOTIFICATION_ID_APRS_BEACON)
+			{
+				aprsRxWindowDismiss();   /* R13: вікно маяка закрито оператором -- до наступного пакета не повертаємо */
+			}
+#endif
 			uiNotificationHide(true);
 			ev.keys.key = 0;
 			ev.keys.event = KEY_MOD_UP;

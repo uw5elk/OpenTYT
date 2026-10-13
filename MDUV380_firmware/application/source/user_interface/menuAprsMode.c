@@ -725,7 +725,7 @@ static void drawMsgList(void)
 	if (count == 0U)
 	{
 		displayPrintCentered(AM_ROW(4), APRSMSG_L_EMPTY, FONT_SIZE_1);
-		printRow(10, APRSMSG_L_HINT);
+		printRow(10, aprsModeIsActive() ? APRSMSG_L_HINT : APRSMSG_L_HINT_S);
 		return;
 	}
 	if (mu->sel >= count)
@@ -743,7 +743,7 @@ static void drawMsgList(void)
 				(e->dir == AMSG_DIR_OUT) ? msgStatusWord(e->status) : e->text, age);
 		printRow(1 + (int)i, buf);
 	}
-	printRow(10, APRSMSG_L_HINT);
+	printRow(10, aprsModeIsActive() ? APRSMSG_L_HINT : APRSMSG_L_HINT_S);   /* R13: без режиму сторінок нема */
 }
 
 /* Малює рядки [first, first + rows) тексту, розбитого aprsMsgWrapLine() з шириною cols. Повертає загальну кількість рядків. */
@@ -1088,6 +1088,10 @@ static bool msgComposeEvent(uiEvent_t *ev)
 				mu->sel = 0U;
 				mu->err = 0U;
 			}
+			else if (r == -2)
+			{
+				msgNotify(APRSMSG_E_OFF);   /* R13: поза режимом -- стоковий APRS вимкнено/призупинено, повідомлення не передалось би */
+			}
 			else if (r < 0)
 			{
 				msgNotify(APRSM_ERR_NOCALL);
@@ -1217,18 +1221,21 @@ static int msgPageEvent(uiEvent_t *ev)
 	/* список */
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
+		if (aprsModeIsActive() == false)
+		{
+			return -1;   /* R13: екран без «Режиму APRS» -- RED закриває його і повертає в меню «APRS» */
+		}
 		u->page = APRS_MODE_PAGE_MONITOR;
 		return 1;
 	}
-	if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
 	{
-		gotoPage(+1);
-		return 1;
-	}
-	if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
-	{
-		gotoPage(-1);
-		return 1;
+		if (aprsModeIsActive())
+		{
+			gotoPage(KEYCHECK_PRESS(ev->keys, KEY_RIGHT) ? +1 : -1);
+			return 1;
+		}
+		return 0;   /* R13: без режиму сторінок нема */
 	}
 	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
@@ -1592,6 +1599,19 @@ bool menuAprsModeEnterMessages(void)
 	return true;
 }
 
+/* R13 (П.5): «Повідом. APRS» у меню «APRS» -- БЕЗ входу в «Режим APRS»: канал, режим радіо й приймач не чіпаємо. Читання, «Відповісти»,
+ * «Нове»; надсилання -- у фонову чергу (aprsMsgBgTick()), як і з режиму. Закриває RED зі списку (menuAprsModeTick() -> false). */
+bool menuAprsMsgEnter(void)
+{
+	if (aprsModeMsgSessionOpen() == false)
+	{
+		return false;
+	}
+	msgOpenPage();
+	draw();
+	return true;
+}
+
 bool menuAprsModeReplyTo(const char *call)
 {
 	char norm[APRS_MSG_CALL_LEN];
@@ -1657,7 +1677,14 @@ bool menuAprsModeTick(uiEvent_t *ev)
 
 		if (r < 0)
 		{
-			aprsModeExit();
+			if (aprsModeIsActive())
+			{
+				aprsModeExit();
+			}
+			else
+			{
+				aprsModeMsgSessionClose();   /* R13: екран «Повідом. APRS» без режиму */
+			}
 			return false;
 		}
 		redraw = (r > 0);

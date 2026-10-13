@@ -40,6 +40,10 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
+#if defined(APRS_RX)
+#include "functions/aprs_rx.h"
+#include "user_interface/languages/aprsrx_ua.h"
+#endif
 
 extern uint16_t initialIntervalsInSecs[];
 
@@ -119,6 +123,9 @@ static aprsSmartBeaconingSettings_t smartPresets[SMART_BEACONING_PRESETS_MAX] =
 };
 
 static menuStatus_t menuAPRSExitCode = MENU_STATUS_SUCCESS;
+#if defined(APRS_RX)
+static uint8_t bcnWinCopy;   /* R13: робоча копія «Вікно маяка»; у налаштування потрапляє разом з рештою (applySettings()), RED її відкидає */
+#endif
 
 enum
 {
@@ -138,6 +145,9 @@ enum
 	OPTIONS_MENU_APRS_TURN_ANGLE,
 	OPTIONS_MENU_APRS_TURN_SLOPE,
 	OPTIONS_MENU_APRS_TURN_TIME,
+#if defined(APRS_RX)
+	OPTIONS_MENU_APRS_BCN_WINDOW,   /* R13: «Вікно маяка» -- останнім, індекси QuickKey стокових пунктів ті самі */
+#endif
 	NUM_APRS_MENU_ITEMS
 };
 
@@ -163,6 +173,9 @@ menuStatus_t menuAPRSOptions(uiEvent_t *ev, bool isFirstRun)
 		menuDataGlobal.menuOptionsTimeout = 0;
 		menuDataGlobal.newOptionSelected = true;
 		menuDataGlobal.numItems = NUM_APRS_MENU_ITEMS;
+#if defined(APRS_RX)
+		bcnWinCopy = aprsRxBcnWinMode();
+#endif
 
 		if (*((uint32_t *)&aprsSettingsCopy.smart.slowRate) == 0xDEADBEEF)
 		{
@@ -353,6 +366,13 @@ static void updateScreen(bool isFirstRun)
 					rightSideUnitsPrompt = PROMPT_SECONDS;
 					rightSideUnitsStr = "s";
 					break;
+
+#if defined(APRS_RX)
+				case OPTIONS_MENU_APRS_BCN_WINDOW:
+					leftSide = APRSRX_OPT_BCNWIN;
+					rightSideConst = (bcnWinCopy == 1U) ? APRSRX_OPT_BCNWIN_NEW : ((bcnWinCopy == 2U) ? APRSRX_OPT_BCNWIN_OFF : APRSRX_OPT_BCNWIN_ALL);
+					break;
+#endif
 			}
 
 			snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s:%s", leftSide, (rightSideVar[0] ? rightSideVar : (rightSideConst ? rightSideConst : "")));
@@ -626,6 +646,15 @@ static void handleEvent(uiEvent_t *ev)
 				case OPTIONS_MENU_APRS_TURN_TIME:
 					aprsSettingsCopy.smart.turnTime = getIncValue(ev, aprsSettingsCopy.smart.turnTime, 10, APRS_SMART_BEACON_TURN_TIME_MAX);
 					break;
+
+#if defined(APRS_RX)
+				case OPTIONS_MENU_APRS_BCN_WINDOW:
+					if (bcnWinCopy < 2U)
+					{
+						bcnWinCopy++;
+					}
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -712,6 +741,15 @@ static void handleEvent(uiEvent_t *ev)
 				case OPTIONS_MENU_APRS_TURN_TIME:
 					aprsSettingsCopy.smart.turnTime = getDecValue(ev, aprsSettingsCopy.smart.turnTime, 10, APRS_SMART_BEACON_TURN_TIME_MIN);
 					break;
+
+#if defined(APRS_RX)
+				case OPTIONS_MENU_APRS_BCN_WINDOW:
+					if (bcnWinCopy > 0U)
+					{
+						bcnWinCopy--;
+					}
+					break;
+#endif
 			}
 		}
 		else if ((ev->keys.event & KEY_MOD_PRESS) && (menuDataGlobal.menuOptionsTimeout > 0))
@@ -738,6 +776,9 @@ static void handleEvent(uiEvent_t *ev)
 static void applySettings(void)
 {
 	aprsBeaconingSetSettings(&aprsSettingsCopy);
+#if defined(APRS_RX)
+	aprsRxBcnWinSetMode(bcnWinCopy);
+#endif
 	settingsSaveIfNeeded(true);
 }
 

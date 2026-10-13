@@ -38,6 +38,10 @@
 #include "functions/trx.h"
 #include "functions/rxPowerSaving.h"
 #include "functions/dmr_sms.h"
+#if defined(APRS_RX)
+#include "functions/aprs_mode.h"   // R13: aprsModeMsgBox() -- лічильник непрочитаних APRS у шапці
+#include "functions/aprs_msg.h"
+#endif
 #include "crypto/dmr_aes_hook.h"
 #include "crypto/dmr_aes.h"   // DMR_AES_MAX_KEYS (межа діапазону слота ключа на каналі)
 #if defined(ENABLE_CALL_REPLAY)
@@ -2465,6 +2469,31 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 			displayDrawRect(ex, ey, 13, 9, true);              // envelope body
 			displayDrawLine(ex, ey, ex + 6, ey + 4, true);     // flap (left)
 			displayDrawLine(ex + 12, ey, ex + 6, ey + 4, true);// flap (right)
+			displayPrintCore(ex + 15, ey, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		}
+	}
+#endif
+
+#if defined(APRS_RX)
+	// R13: лічильник НЕпрочитаних повідомлень APRS -- окремий від лічильника SMS DMR (той вище, справа). Дзеркало конверта SMS по
+	// горизонталі: ліворуч (x=2) тієї ж смуги, на тому ж рядку. Конверт із залитою нижньою половиною -- щоб відрізнити від SMS DMR.
+	// Число (до 99) праворуч від конверта. Зникає, коли непрочитаних нема; оновлюється при кожному малюванні шапки (прийшло нове --
+	// шапку перемальовує сам прийом: картка повідомлення закривається через RED, після чого екран малюється з нуля).
+	{
+		const aprsMsgBox_t *ab = aprsModeMsgBox();
+		unsigned aun = (ab != NULL) ? aprsMsgUnreadCount(ab) : 0U;
+
+		if (aun > 0U)
+		{
+			char nb[4];
+			int16_t ex = 2;
+			int16_t ey = DISPLAY_Y_POS_BAR + 6;
+
+			snprintf(nb, sizeof nb, "%u", (aun > 99U) ? 99U : aun);
+			displayDrawRect(ex, ey, 13, 9, true);               // корпус конверта
+			displayDrawLine(ex, ey, ex + 6, ey + 4, true);      // клапан (ліва частина)
+			displayDrawLine(ex + 12, ey, ex + 6, ey + 4, true); // клапан (права частина)
+			displayFillRect(ex + 1, ey + 5, 11, 3, false);      // нижня половина залита (false -- колір переднього плану для FillRect)
 			displayPrintCore(ex + 15, ey, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 		}
 	}

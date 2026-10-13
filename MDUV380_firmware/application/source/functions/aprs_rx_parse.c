@@ -597,6 +597,93 @@ static void setText(aprsPacket_t *p, const uint8_t *s, size_t n)
 	(void)aprsDecodeText(s, n, p->text, sizeof(p->text));
 }
 
+/* ---- R13: символ і рух (курс/швидкість) ------------------------------------------------------------------------- */
+
+/* «DDMM.hhN/DDDMM.hhW>»: таблиця s[8], код s[18]. */
+static void p_symbol_uncompressed(aprsPacket_t *p, const uint8_t *s)
+{
+	p->symTable = (char)s[8];
+	p->symCode = (char)s[18];
+}
+
+/* Стиснута: s[0] -- таблиця (або накладка a..j = цифри 0..9), s[9] -- код, s[10..12] -- cs T. Курс = c*4, швидкість = 1.08^s - 1 вузла;
+ * T з типом "висота GGA" (біти 3..4 == 2) курсу/швидкості не дає; c == ' ' -- нема. */
+static void p_symbol_compressed(aprsPacket_t *p, const uint8_t *s)
+{
+	uint8_t t = s[0];
+
+	if ((t >= 'a') && (t <= 'j'))
+	{
+		t = (uint8_t)('0' + (t - 'a'));   /* накладка: a..j -> 0..9 */
+	}
+	p->symTable = (char)t;
+	p->symCode = (char)s[9];
+	if ((s[10] >= 33U) && (s[10] <= 122U) && (s[11] >= 33U) && (s[12] >= 33U) && (((s[12] - 33U) & 0x18U) != 0x10U))
+	{
+		unsigned c = s[10] - 33U;
+		unsigned sp = s[11] - 33U;
+
+		if (c <= 89U)
+		{
+			double v = 1.0;
+
+			p->course = (uint16_t)(c * 4U);   /* 0 -- "курсу нема" (0 і 360 не розрізняємо) */
+			for (unsigned i = 0; (i < sp) && (i < 100U); i++)
+			{
+				v *= 1.08;
+			}
+			p->speedKn = (uint16_t)(v - 1.0 + 0.5);
+		}
+	}
+}
+
+/* Коментар звичайної позиції починається з "CCC/SSS" (курс градуси, швидкість вузли)? Заповнює course/speedKn; повертає, скільки байт
+ * прибрати з тексту (7 або 0). "000/000" -- "не рухається": поля лишаються 0, але 7 байт теж прибираємо з тексту. */
+static size_t p_cse_spd(aprsPacket_t *p, const uint8_t *c, size_t n)
+{
+	if ((n < 7U) || (c[3] != '/'))
+	{
+		return 0U;
+	}
+	for (int i = 0; i < 7; i++)
+	{
+		if ((i != 3) && (isDig(c[i]) == false))
+		{
+			return 0U;
+		}
+	}
+	unsigned course = (unsigned)((c[0] - '0') * 100 + (c[1] - '0') * 10 + (c[2] - '0'));
+	unsigned speed = (unsigned)((c[4] - '0') * 100 + (c[5] - '0') * 10 + (c[6] - '0'));
+
+	p->course = (uint16_t)((course <= 360U) ? course : 0U);
+	p->speedKn = (uint16_t)speed;
+	return 7U;
+}
+
+/* Mic-E: info[4..6] = SP DC SE (+28), info[7] -- код символу, info[8] -- таблиця. */
+static void p_micE_motion(aprsPacket_t *p, const uint8_t *in)
+{
+	p->symCode = (char)in[7];
+	p->symTable = (char)in[8];
+	if ((in[4] >= 28U) && (in[5] >= 28U) && (in[6] >= 28U))
+	{
+		unsigned sp = in[4] - 28U, dc = in[5] - 28U, se = in[6] - 28U;
+		unsigned speed = sp * 10U + dc / 10U;
+		unsigned course = (dc % 10U) * 100U + se;
+
+		if (speed >= 800U)
+		{
+			speed -= 800U;
+		}
+		if (course >= 400U)
+		{
+			course -= 400U;
+		}
+		p->speedKn = (uint16_t)speed;
+		p->course = (uint16_t)((course <= 360U) ? course : 0U);
+	}
+}
+
 /* Повідомлення: ":" + адресат(9, пробіли) + ":" + текст [+ "{номер"] */
 static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 {
@@ -699,6 +786,7 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 					return;
 				}
 				used = 19U;
+				p_symbol_uncompressed(out, s);
 			}
 			else if ((s[0] == '/') || (s[0] == '\\') || ((s[0] >= 'A') && (s[0] <= 'Z')) || ((s[0] >= 'a') && (s[0] <= 'j')))
 			{
@@ -708,6 +796,7 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 				}
 				out->compressed = true;
 				used = 13U;
+				p_symbol_compressed(out, s);
 			}
 			else
 			{
@@ -715,6 +804,10 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 			}
 			out->type = APRS_T_POSITION;
 			out->hasPos = true;
+			if (out->compressed == false)
+			{
+				used += p_cse_spd(out, s + used, rest - used);   /* R13: "CCC/SSS" на початку коментаря -- курс/швидкість, з тексту прибираємо */
+			}
 			setText(out, s + used, rest - used);
 			break;
 		}
@@ -728,6 +821,7 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 				out->type = APRS_T_POSITION;
 				out->hasPos = true;
 				out->micE = true;
+				p_micE_motion(out, in);   /* R13: символ, курс, швидкість */
 				setText(out, in + 9, n - 9U);   /* після символу й таблиці (info[7], info[8]) */
 			}
 			break;
@@ -1051,6 +1145,66 @@ const aprsStation_t *aprsDbNth(const aprsRxDb_t *db, int n, uint32_t nowMs)
 		prevAge = bestAge;
 	}
 	return prev;
+}
+
+/* ===================================================================================== */
+/* R13: вікно маяка                                                                       */
+/* ===================================================================================== */
+
+bool aprsBeaconWindowWanted(aprsBcnWinMode_t mode, const aprsPacket_t *pkt, bool isNewStation)
+{
+	if ((pkt == NULL) || (pkt->type != APRS_T_POSITION))
+	{
+		return false;
+	}
+	switch (mode)
+	{
+		case APRS_BCNWIN_OFF:
+			return false;
+		case APRS_BCNWIN_NEW:
+			return isNewStation;
+		case APRS_BCNWIN_ALL:
+		default:
+			return true;
+	}
+}
+
+static int16_t iround(double v)
+{
+	return (int16_t)(v + ((v >= 0.0) ? 0.5 : -0.5));
+}
+
+void aprsArrowGeom(aprsArrow_t *a, int16_t cx, int16_t cy, int16_t len, uint16_t bearingDeg)
+{
+	const double rad = 0.017453292519943295;
+	double b = (double)(bearingDeg % 360U) * rad;
+	double dx = sin(b);
+	double dy = -cos(b);              /* екран: y росте вниз, північ -- угору */
+	double wl = (double)len * 0.4;
+	double wa = 28.0 * rad;
+	double ca = cos(wa), sa = sin(wa);
+
+	if (wl < 4.0)
+	{
+		wl = 4.0;
+	}
+	a->tx = (int16_t)iround((double)cx + dx * (double)len);
+	a->ty = (int16_t)iround((double)cy + dy * (double)len);
+	/* напрям "назад" від вістря = (-dx,-dy), повернутий на +-wa */
+	a->lx = (int16_t)iround((double)a->tx + (-dx * ca - (-dy) * sa) * wl);
+	a->ly = (int16_t)iround((double)a->ty + (-dx * sa + (-dy) * ca) * wl);
+	a->rx = (int16_t)iround((double)a->tx + (-dx * ca + (-dy) * sa) * wl);
+	a->ry = (int16_t)iround((double)a->ty + (dx * sa + (-dy) * ca) * wl);
+}
+
+bool aprsBeaconArrowVisible(bool hasGeo, uint32_t distM)
+{
+	return hasGeo && (distM > 0U);
+}
+
+uint16_t aprsKnotsToKmh(uint16_t kn)
+{
+	return (uint16_t)((((uint32_t)kn * 1852U) + 500U) / 1000U);
 }
 
 #endif /* ENABLE_APRS_RX */

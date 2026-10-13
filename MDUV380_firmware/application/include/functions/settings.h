@@ -198,6 +198,14 @@ typedef enum
 	// 1 = малий (font_8x8, як до ui6). Останній вільний біт банку 0; ні нових банків, ні зміни
 	// розкладки nonVolatileSettings. Читається лише під ENABLE_AES + ENABLE_DMR_DATA.
 	BIT_SMS_FONT_SMALL              = (SETTINGS_BITS_BANK_0 | (1 << 29)),
+#if defined(ENABLE_APRS_RX) && !defined(PLATFORM_MD2017)
+	// R13 (форк): «Вікно маяка» (меню APRS > Налаштування) -- ДВА біти: 00 = «Усі» (типово, і в усіх наявних налаштуваннях),
+	// 01 = «Лише нові станції», 10 = «Вимк.» (11 читається як «Усі»). Біти 22 і 23 у цій платформі ніким не використовуються
+	// (BIT_TRACKBALL_* належать лише MD2017; на MDUV380 вони завжди 0 -- те саме, що для «Шрифту SMS» вище, жодних нових банків
+	// чи зміни розкладки nonVolatileSettings). Читається лише під APRS_RX.
+	BIT_APRS_BCN_WIN_LO             = (SETTINGS_BITS_BANK_0 | (1 << 22)),
+	BIT_APRS_BCN_WIN_HI             = (SETTINGS_BITS_BANK_0 | (1 << 23)),
+#endif
 
 	// Last usable bit is 29
 	//BIT_xxxxxxx_xxxxxxxxxxxx      = (SETTINGS_BITS_BANK_1 | (1 << 0)),

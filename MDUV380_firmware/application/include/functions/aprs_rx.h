@@ -96,6 +96,7 @@ typedef struct
 	uint32_t  lastDrawMs;
 	char      cardCall[APRS_CALL_LEN];   /* станція на картці (за позивним: порядок списку може змінитися) */
 	uint8_t   modeOn;           /* R10: «Режим APRS» активний (aprs_mode.c); у байті вирівнювання -- розмір структури не росте */
+	uint8_t   msgOn;            /* R13: екран «Повідом. APRS» відкрито БЕЗ «Режиму APRS» (aprs_mode.c); теж байт вирівнювання */
 } aprsRxUi_t;
 aprsRxUi_t *aprsRxUi(void);
 
@@ -131,6 +132,29 @@ void aprsRxClear(void);
 uint32_t aprsRxAgeSec(const aprsStation_t *st);
 /* «850м NE» / «3.2км NE» / «120км NW» -- відстань і сектор азимуту (латиниця + «м»/«км» із aprsrx_ua.h, cp1251). */
 void aprsRxFormatGeo(char *buf, size_t size, uint32_t distM, uint16_t bearing);
+
+/* ---- R13: вікно маяка (повноекранна картка за позиційним пакетом) ------------------------------------------------ */
+/* Дані картки: копія з пакета на момент прийому (запис станції координат у градусах/курсу не тримає, тож дубль у CCM ~64 Б).
+ * Малює uiNotification.c (NOTIFICATION_ID_APRS_BEACON), стан і правила показу -- aprs_rx.c (aprsRxWindowTick()). */
+typedef struct
+{
+	bool      active;           /* вікно мусить бути на екрані (до RED / нового пакета / повідомлення / причини, що забороняє) */
+	bool      hasGeo;           /* є відстань і азимут (є позиція станції й власна) */
+	uint16_t  bearing;          /* азимут на станцію від півночі, 0..359 */
+	uint16_t  course;           /* курс станції, 1..360; 0 -- нема */
+	uint16_t  speedKn;          /* швидкість, вузли; 0 -- нема/стоїть */
+	uint32_t  distM;
+	uint32_t  rxSecs;           /* uiDataGlobal.dateTimeSecs у момент прийому */
+	char      symTable, symCode;
+	char      call[APRS_CALL_LEN];
+	char      text[APRS_STATION_TEXT];
+} aprsRxWin_t;
+const aprsRxWin_t *aprsRxWindow(void);
+/* RED на вікні (applicationMain.c): вікно закрито оператором -- чекає наступного пакета. */
+void aprsRxWindowDismiss(void);
+/* Налаштування «Вікно маяка»: aprsBcnWinMode_t (2 вільні біти bitfieldOptions). */
+uint8_t aprsRxBcnWinMode(void);
+void aprsRxBcnWinSetMode(uint8_t mode);
 
 #endif /* APRS_RX */
 #endif /* _OPENGD77_APRS_RX_H_ */

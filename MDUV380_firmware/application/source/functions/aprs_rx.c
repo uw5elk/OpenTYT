@@ -103,6 +103,7 @@ typedef struct
 		char          call[APRS_CALL_LEN];
 		char          note[APRS_RX_NOTE_TEXT];   /* «CALL: текст» для сховища SMS і картки */
 	} pend;
+	aprsRxWin_t       win;           /* R13: вікно маяка */
 	aprsRxStats_t     st;
 	aprsRxUi_t        ui;
 	aprsRxDb_t        db;
@@ -703,6 +704,104 @@ static const char *typeName(uint8_t type)
 	}
 }
 
+
+/* ============================================================================================== */
+/* R13: вікно маяка -- повноекранна картка за позиційним пакетом                                    */
+/* ============================================================================================== */
+
+/* Налаштування «Вікно маяка» -- 2 вільні біти bitfieldOptions (settings.h): 00 «Усі», 01 «Лише нові», 10 «Вимк.»; 11 читається як «Усі». */
+uint8_t aprsRxBcnWinMode(void)
+{
+	uint8_t v = (uint8_t)((settingsIsOptionBitSet(BIT_APRS_BCN_WIN_LO) ? 1U : 0U) | (settingsIsOptionBitSet(BIT_APRS_BCN_WIN_HI) ? 2U : 0U));
+
+	return (v >= 3U) ? (uint8_t)APRS_BCNWIN_ALL : v;
+}
+
+void aprsRxBcnWinSetMode(uint8_t mode)
+{
+	if (mode > (uint8_t)APRS_BCNWIN_OFF)
+	{
+		mode = (uint8_t)APRS_BCNWIN_ALL;
+	}
+	settingsSetOptionBit(BIT_APRS_BCN_WIN_LO, ((mode & 1U) != 0U));
+	settingsSetOptionBit(BIT_APRS_BCN_WIN_HI, ((mode & 2U) != 0U));
+}
+
+const aprsRxWin_t *aprsRxWindow(void)
+{
+	return &s_rx.win;
+}
+
+static bool winIsShown(void)
+{
+	return uiNotificationIsVisible() && (uiNotificationGetId() == NOTIFICATION_ID_APRS_BEACON);
+}
+
+/* Вікно можна показувати лише на головних екранах (канал/VFO) і коли нічого не заважає: не передача, не підказка, не «Переслухати»,
+ * не сканування, не хотспот/CPS. Меню налаштувань, набір тексту, «Режим APRS» -- це інші екрани (menuSystemGetCurrentMenuNumber()). */
+static bool winAllowed(void)
+{
+	int m = menuSystemGetCurrentMenuNumber();
+
+	if ((m != UI_CHANNEL_MODE) && (m != UI_VFO_MODE))
+	{
+		return false;
+	}
+	if (uiDataGlobal.Scan.active)
+	{
+		return false;
+	}
+	return (hardBlock() == APRS_RX_WHY_NONE);
+}
+
+void aprsRxWindowDismiss(void)
+{
+	if (stateValid())
+	{
+		s_rx.win.active = false;
+	}
+}
+
+/* Повернути вікно на екран і зняти, коли причина зникла. Викликається щотіку (дешево: кілька порівнянь). Правила:
+ *  - вікно активне, але показувати не можна (меню, передача, підказка, сканування...) -- знімаємо й ЗАБУВАЄМО: наступний пакет покаже нове;
+ *  - вікно активне, а на екрані стійка картка SMS / Call Alert / повідомлення APRS -- віддаємо їй екран і забуваємо;
+ *  - вікно активне, а зараз тимчасова картка (гучність, банер) -- чекаємо, поки вона зникне, тоді показуємо знову;
+ *  - канал більше не APRS (приймач вимкнувся, ми не слухаємо) -- знімаємо: вікно закривало б екран іншого каналу. */
+static void winTick(void)
+{
+	if (s_rx.win.active == false)
+	{
+		return;
+	}
+	if ((winAllowed() == false) || (s_rx.engaged == false))
+	{
+		if (winIsShown())
+		{
+			uiNotificationHide(true);
+		}
+		s_rx.win.active = false;
+		return;
+	}
+	if (winIsShown())
+	{
+		return;
+	}
+	if (uiNotificationIsVisible())
+	{
+		if (uiNotificationIsSms()
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+				|| uiNotificationIsCallAlert()
+#endif
+				)
+		{
+			s_rx.win.active = false;   /* вхідне повідомлення важливіше й стійке -- вікно не повертаємо */
+		}
+		return;   /* тимчасова картка -- дочекаємось */
+	}
+	displayLightTrigger(false);
+	uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_BEACON, 60000, NULL, true);
+}
+
 static void flushPending(void)
 {
 	if ((s_rx.pend.banner == false) && (s_rx.pend.msg == false))
@@ -808,6 +907,7 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		}
 		else if (aprsMsgBgNewMessage(&ax, &pkt))   /* у список «Повідом. APRS» (постійний блок) -- і в режимі, і поза ним */
 		{
+			s_rx.win.active = false;   /* R13: повідомлення важливіше за вікно маяка -- картка повідомлення замінить його на екрані */
 			if (s_rx.pend.msg)
 			{
 				flushPending();   /* два повідомлення за один блок -- перше віддаємо зараз */
@@ -817,8 +917,34 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		}
 	}
 
+	/* R13: позиційний пакет -- вікно маяка замість банера (якщо дозволено налаштуванням і зараз можна). Дані копіюємо з пакета: у записі
+	 * станції немає ні символу, ні курсу. Повідомлення нам важливіше -- воно залишає за собою екран (pend.msg), вікно тоді не готуємо. */
+	bool bcnWin = false;
+
+	if ((s_rx.pend.msg == false) && (msgCopy == false) &&
+			aprsBeaconWindowWanted((aprsBcnWinMode_t)aprsRxBcnWinMode(), &pkt, ((st != NULL) && (st->count <= 1U))) && winAllowed())
+	{
+		aprsRxWin_t *w = &s_rx.win;
+
+		memset(w, 0, sizeof(*w));
+		w->active = true;
+		w->hasGeo = aprsRxStationGeo(st, &w->distM, &w->bearing);
+		w->course = pkt.course;
+		w->speedKn = pkt.speedKn;
+		w->symTable = pkt.symTable;
+		w->symCode = pkt.symCode;
+		w->rxSecs = (uint32_t)uiDataGlobal.dateTimeSecs;
+		snprintf(w->call, sizeof(w->call), "%s", ax.src);
+		snprintf(w->text, sizeof(w->text), "%s", (st != NULL) ? st->text : "");
+		bcnWin = true;
+		if (winIsShown())
+		{
+			uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_BEACON, 60000, NULL, true);   /* уже на екрані -- лише оновлюємо вміст */
+		}
+	}
+
 	/* Банер: кожен новий недублікат. */
-	if ((s_rx.pend.msg == false) && (msgCopy == false))
+	if ((s_rx.pend.msg == false) && (msgCopy == false) && (bcnWin == false))
 	{
 		s_rx.pend.banner = true;
 		s_rx.pend.type = pkt.type;
@@ -899,6 +1025,7 @@ void aprsRxTick(void)
 	uint32_t now = ticksGetMillis();
 	aprsRxWhy_t why;
 
+	winTick();   /* R13: вікно маяка живе й тоді, коли приймач зупинено (передача, підказка): тік знімає його сам */
 	AM_TRACE_T(64);   /* R10-fix: aprsRxTick у режимі, перший тік (перед hardBlock) */
 	why = hardBlock();
 

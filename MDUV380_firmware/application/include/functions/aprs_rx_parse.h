@@ -82,6 +82,11 @@ typedef struct
 	char     msgTo[APRS_CALL_LEN];          /* адресат повідомлення (без пробілів, ВЕРХНІЙ регістр) */
 	char     msgId[APRS_MSGID_LEN];         /* номер після «{» (порожній -- нема) */
 	char     text[APRS_TEXT_LEN];           /* коментар / статус / текст повідомлення, cp1251 */
+	/* R13: символ станції і рух (лише для позиційних пакетів; на стеку викликача, постійної пам'яті не коштує) */
+	char     symTable;                      /* '/' основна, '\\' альтернативна, '0'..'9'/'A'..'Z' накладка; 0 -- невідомо */
+	char     symCode;                       /* код символу ('!'..'~'); 0 -- невідомо */
+	uint16_t course;                       /* градуси 1..360 (0 -- курсу в пакеті нема або "не рухається") */
+	uint16_t speedKn;                      /* швидкість, вузли (0 -- нема/стоїть) */
 } aprsPacket_t;
 
 /* Ніколи не відмовляє: невпізнане -> APRS_T_OTHER. */
@@ -145,6 +150,34 @@ const aprsStation_t *aprsDbNth(const aprsRxDb_t *db, int n, uint32_t nowMs);
 /* true -- це повідомлення (джерело, номер, текст) уже віддавали нам у межах APRS_MSG_SEEN_MS. Інакше
  * запам'ятовує й false. */
 bool aprsDbMsgSeen(aprsRxDb_t *db, const aprsAx25_t *ax, const aprsPacket_t *pkt, uint32_t nowMs);
+
+/* ---- R13: вікно маяка (чиста логіка, хост-тести) ----------------------------------------------------------------- */
+/* Режими налаштування «Вікно маяка» (2 біти nonVolatileSettings.bitfieldOptions; 0 -- типово «Усі»). */
+typedef enum
+{
+	APRS_BCNWIN_ALL = 0,    /* кожен позиційний пакет */
+	APRS_BCNWIN_NEW = 1,    /* лише перший пакет станції, якої ще нема у списку */
+	APRS_BCNWIN_OFF = 2     /* вікна нема (лишається звичайний банер) */
+} aprsBcnWinMode_t;
+
+/* Чи показувати вікно для цього пакета: позиційний (звичайна, стиснута, Mic-E; координат у пакеті може й не бути -- тоді вікно без стрілки) і режим дозволяє.
+ * isNewStation -- станцію щойно додано до списку (її перший пакет). */
+bool aprsBeaconWindowWanted(aprsBcnWinMode_t mode, const aprsPacket_t *pkt, bool isNewStation);
+
+/* Геометрія стрілки «від центру в бік станції»: центр (cx,cy), довжина len (піксели), азимут bearingDeg (0 = північ угорі, за годинниковою;
+ * будь-яке значення береться по модулю 360). Вістря (tx,ty); крила (lx,ly) і (rx,ry) -- кінці двох відрізків від вістря назад під ±28° до
+ * осі, завдовжки ~40% len (не менше 4 px). Координати округлено до цілих; екран -- y вниз. */
+typedef struct
+{
+	int16_t tx, ty;
+	int16_t lx, ly;
+	int16_t rx, ry;
+} aprsArrow_t;
+void aprsArrowGeom(aprsArrow_t *a, int16_t cx, int16_t cy, int16_t len, uint16_t bearingDeg);
+/* Чи малювати стрілку: є відстань/азимут і станція не в тій самій точці (azimut при нульовій відстані не визначений). */
+bool aprsBeaconArrowVisible(bool hasGeo, uint32_t distM);
+/* Вузли -> км/год (округлено до цілих; 1 вузол = 1.852 км/год). */
+uint16_t aprsKnotsToKmh(uint16_t kn);
 
 #endif /* ENABLE_APRS_RX */
 #endif /* _OPENGD77_APRS_RX_PARSE_H_ */

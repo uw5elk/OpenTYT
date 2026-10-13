@@ -110,10 +110,12 @@ static int s_msgTxCalls = 0;
 static bool s_autoEnd = false;   /* кінець передачі повідомлення імітує сам tickMs */
 static aprsModeTxResult_t s_msgTxResult = APRS_MODE_TX_OK;
 static char s_msgTxInfo[100];
-aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info)
+static char s_msgTxFrom[16];   /* R13 (П.6): позивник відправника, з яким пішло останнє повідомлення/ACK у режимі */
+aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info, const char *from)
 {
 	(void)e;
 	s_msgTxCalls++;
+	snprintf(s_msgTxFrom, sizeof(s_msgTxFrom), "%s", from ? from : "(null)");
 	snprintf(s_msgTxInfo, sizeof(s_msgTxInfo), "%s", info);
 	if (s_msgTxResult == APRS_MODE_TX_OK)
 	{
@@ -125,11 +127,17 @@ aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info)
 /* R11-fix2: передача повідомлень/ACK ПОЗА режимом (стокова гілка з QSY) -- справжня в aprs.c, тут заглушка */
 static int s_bgTxCalls = 0;
 static char s_bgTxInfo[100];
+static char s_bgTxFrom[16];    /* R13 (П.6): те саме для передачі поза режимом */
 static bool s_bgAllowed = true;
 static aprsModeTxResult_t s_bgTxResult = APRS_MODE_TX_OK;
-aprsModeTxResult_t aprsBeaconingSendMessage(const char *info)
+/* R13: стокова конфігурація APRS (ім'я рації + SSID) — з неї береться «позивний поза режимом» */
+static aprsRxInfo_t s_stockInfo = { .freq = 144800000U, .call = "US5EX", .ssid = 7U, .hasPos = false, .lat = 0.0, .lon = 0.0 };
+static bool s_stockInfoOk = true;
+bool aprsBeaconingGetRxInfo(aprsRxInfo_t *info, bool full) { (void)full; if (s_stockInfoOk == false) { return false; } *info = s_stockInfo; return true; }
+aprsModeTxResult_t aprsBeaconingSendMessage(const char *info, const char *from)
 {
 	s_bgTxCalls++;
+	snprintf(s_bgTxFrom, sizeof(s_bgTxFrom), "%s", from ? from : "(null)");
 	snprintf(s_bgTxInfo, sizeof(s_bgTxInfo), "%s", info);
 	if (s_bgTxResult == APRS_MODE_TX_OK)
 	{
@@ -681,7 +689,13 @@ static void testMessages(void)
 	aprsMsgBox_t *b;
 
 	resetWorld();
-	CHECK(aprsModeMsgSend("UW5ELK-1", "Hi") == -1, "поза режимом -- відмова");
+	/* R13: поза режимом складати МОЖНА (П.5), якщо APRS увімкнено і є власний позивний; інакше -- відмова */
+	s_bgAllowed = false;
+	CHECK(aprsModeMsgSend("UW5ELK-1", "Hi") == -2, "поза режимом, APRS вимкнено/призупинено -- відмова -2");
+	s_bgAllowed = true;
+	s_stockInfoOk = false;
+	CHECK(aprsModeMsgSend("UW5ELK-1", "Hi") == -1, "поза режимом, нема стокового конфігу -- відмова -1");
+	s_stockInfoOk = true;
 	CHECK(aprsModeEnter(), "вхід");
 	b = aprsModeMsgBox();
 	CHECK(b != NULL, "є список");
@@ -942,6 +956,108 @@ static void testBackground(void)
 	CHECK(s_bgTxCalls == 4 && b->stats.ackSent == 1U, "наступна копія -- ACK пішов");
 }
 
+/* R13 (П.6): один позивник-SSID для повідомлення й ВСІХ його повторів; ACK -- від адресата, на якого прийшло повідомлення */
+static void testIdentity(void)
+{
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	aprsMsgBox_t *b;
+
+	/* a) складено в режимі (UW5ELK-7), повтор після виходу -- поза режимом, але той самий позивний (не стоковий US5EX-7) */
+	resetWorld();
+	b = aprsModeMsgBox();
+	CHECK(aprsModeEnter(), "вхід");
+	CHECK(aprsModeMsgSend("UW5ELK-1", "Hi") == AMSG_OK, "у чергу в режимі");
+	CHECK(strcmp(b->q[0].from, "UW5ELK-7") == 0, "у завданні зафіксовано позивний режиму: \"%s\"", b->q[0].from);
+	tickMs(10);
+	CHECK(s_msgTxCalls == 1 && strcmp(s_msgTxFrom, "UW5ELK-7") == 0, "перша спроба (режим) -- від UW5ELK-7: \"%s\"", s_msgTxFrom);
+	aprsModeExit();
+	tickMs(31000);
+	CHECK(s_bgTxCalls == 1 && strcmp(s_bgTxFrom, "UW5ELK-7") == 0, "повтор ПОЗА режимом -- від того самого UW5ELK-7, а не від стокового: \"%s\"", s_bgTxFrom);
+
+	/* b) складено поза режимом (стоковий US5EX-7), повтор у режимі -- від US5EX-7 (не UW5ELK-7) */
+	resetWorld();
+	b = aprsModeMsgBox();
+	CHECK(aprsModeMsgSend("N0CALL-9", "Yo") == AMSG_OK, "у чергу поза режимом");
+	CHECK(strcmp(b->q[0].from, "US5EX-7") == 0, "зафіксовано стоковий позивний: \"%s\"", b->q[0].from);
+	tickMs(10);
+	CHECK(s_bgTxCalls == 1 && strcmp(s_bgTxFrom, "US5EX-7") == 0, "перша спроба -- від US5EX-7");
+	CHECK(aprsModeEnter(), "вхід у режим");
+	tickMs(31000);
+	CHECK(s_msgTxCalls == 1 && strcmp(s_msgTxFrom, "US5EX-7") == 0, "повтор У РЕЖИМІ -- від US5EX-7, а не від позивного режиму: \"%s\"", s_msgTxFrom);
+	aprsModeExit();
+
+	/* c) ACK: відправник = адресат вхідного. Прийшло в режимі на UW5ELK-7, пішло після виходу -- від UW5ELK-7 */
+	resetWorld();
+	b = aprsModeMsgBox();
+	CHECK(aprsModeEnter(), "вхід");
+	mkMsg(&ax, &pk, "UW5ELK-5", "10", "hi");
+	snprintf(pk.msgTo, sizeof(pk.msgTo), "UW5ELK-7");
+	s_pttHeld = true;                 /* передача ще неможлива: ACK мусить дочекатися */
+	aprsMsgBgOnMessage(&ax, &pk);
+	CHECK(aprsMsgAckPending(b) == 1U && strcmp(b->q[0].from, "UW5ELK-7") == 0, "ACK у черзі, джерело зафіксовано");
+	aprsModeExit();
+	s_pttHeld = false;
+	tickMs(100);
+	CHECK(s_bgTxCalls == 1 && strcmp(s_bgTxFrom, "UW5ELK-7") == 0 && strcmp(s_bgTxInfo, ":UW5ELK-5 :ack10") == 0, "ACK пішов поза режимом від UW5ELK-7: \"%s\"/\"%s\"", s_bgTxFrom, s_bgTxInfo);
+
+	/* d) адресат без SSID або з "-0": ACK від "N0CALL" (SSID 0 в ефір не пишемо як суфікс) */
+	resetWorld();
+	mkMsg(&ax, &pk, "UW5ELK-5", "11", "hi");
+	snprintf(pk.msgTo, sizeof(pk.msgTo), "N0CALL-0");
+	aprsMsgBgOnMessage(&ax, &pk);
+	tickMs(100);
+	CHECK(s_bgTxCalls == 1 && strcmp(s_bgTxFrom, "N0CALL") == 0, "ACK від адресата без SSID: \"%s\"", s_bgTxFrom);
+
+	/* e) порожній msgTo (наприклад, тест без адресата) -- без фіксації: передача піде стандартним відправником (""), ніколи не NULL-краш */
+	resetWorld();
+	mkMsg(&ax, &pk, "UW5ELK-5", "12", "hi");
+	aprsMsgBgOnMessage(&ax, &pk);
+	tickMs(100);
+	CHECK(s_bgTxCalls == 1 && s_bgTxFrom[0] == 0, "без msgTo -- from порожній (стандартний)");
+}
+
+/* R13 (П.5): екран «Повідом. APRS» без входу в «Режим APRS» -- стан у резерві блока, кільце «Переслухати» не позичається */
+static void testMsgSession(void)
+{
+	aprsModeUi_t *u;
+	size_t n = 0;
+	uint8_t *res;
+
+	resetWorld();
+	fillRing(40);
+	callReplaySetRecordingEnabled(true);
+	res = (uint8_t *)callReplayReserved(&n);
+	CHECK(aprsModeMsgSessionActive() == false, "сесії нема до відкриття");
+	CHECK(aprsModeMsgSessionOpen(), "відкрити сесію поза режимом");
+	CHECK(aprsModeMsgSessionActive() && (aprsModeIsActive() == false), "сесія активна, режим -- ні");
+	u = aprsModeUi();
+	CHECK((uint8_t *)u == (res + CALL_REPLAY_APRS_BOX_BYTES), "екран лежить у резерві за блоком повідомлень");
+	CHECK((n >= (CALL_REPLAY_APRS_BOX_BYTES + sizeof(aprsModeUi_t))) && (u->page == APRS_MODE_PAGE_MESSAGES) && (u->msg.view == APRS_MSG_VIEW_LIST), "сторінка «Повідомлення», вигляд «список»");
+	CHECK(callReplayIsBorrowed() == false && callReplayGroupCount() == 40, "кільце «Переслухати» НЕ позичене й не стерте: %lu груп", (unsigned long)callReplayGroupCount());
+	CHECK(currentChannelData == &s_userChan, "канал не підмінено");
+	{
+		aprsMsgBox_t *b = aprsModeMsgBox();
+
+		CHECK((uint8_t *)b == res && ((uint8_t *)u >= ((uint8_t *)b + sizeof(aprsMsgBox_t))), "екран не перекриває блок повідомлень");
+	}
+	/* надсилання з екрана поза режимом: у чергу з позивним зі стокового налаштування або -2/-1, якщо передавати нічим */
+	{
+		int r = aprsModeMsgSend("UW5ELK-1", "Hi");
+
+		CHECK((r == AMSG_OK) || (r == -1) || (r == -2), "надсилання поза режимом не падає: %d", r);
+	}
+	aprsModeMsgSessionClose();
+	CHECK(aprsModeMsgSessionActive() == false, "сесію закрито");
+	aprsModeMsgSessionClose();
+	CHECK(aprsModeMsgSessionActive() == false, "закриття ідемпотентне");
+	/* у режимі сесію відкрити не можна; вхід у режим скидає сесію */
+	CHECK(aprsModeMsgSessionOpen(), "знову відкрито");
+	CHECK(aprsModeEnter() && (aprsRxUi()->msgOn == 0U) && (aprsModeMsgSessionActive() == false), "вхід у режим закриває сесію");
+	CHECK(aprsModeMsgSessionOpen() == false, "у режимі сесію не відкриваємо");
+	aprsModeExit();
+}
+
 int main(void)
 {
 	testBootInit();
@@ -957,6 +1073,8 @@ int main(void)
 	testLastFrame();
 	testMessages();
 	testBackground();
+	testIdentity();
+	testMsgSession();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_mode_state: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

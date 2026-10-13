@@ -199,12 +199,14 @@ typedef enum
 	APRS_MODE_TX_TOOBIG       /* R10-fix2: кадр AX.25 не влазить у буфер -- передачу скасовано */
 } aprsModeTxResult_t;
 aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e);
-aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info);   /* R11: повідомлення/ACK APRS (info -- з aprs_msg.c) */
+/* R11: повідомлення/ACK APRS (info -- з aprs_msg.c). R13 (П.6): from — позивний-SSID відправника з завдання черги («CALL[-SS]»): замінює позивний
+ * режиму; NULL або "" — позивний режиму, як було. */
+aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info, const char *from);
 /* R11-fix2: повідомлення/ACK APRS ПОЗА «Режимом APRS» -- тим самим шляхом, що стоковий бікон «Вручну»: aprsRxStopForTx(), QSY на
  * частоту APRS з конфігу каналу (якщо вона є), анти-колізія, TX, а повернення каналу -- стоковою машиною aprsBeaconingTxStateTick()
  * (APRS_TX_FINAL_STAGE). Позивний/SSID/шлях -- зі стокового конфігу APRS (як у бікона). Позиція не потрібна. Бікон призупинено
  * клавішею (aprsBeaconingToggles()) або APRS вимкнено -- APRS_MODE_TX_INHIBIT / NOCALL (марно повторювати). */
-aprsModeTxResult_t aprsBeaconingSendMessage(const char *info);
+aprsModeTxResult_t aprsBeaconingSendMessage(const char *info, const char *from);   /* R13 (П.6): from — як в aprsModeTxMessage(); NULL/"" — ім'я рації + SSID зі стокового конфігу */
 /* APRS увімкнено у стокових налаштуваннях і не призупинено клавішею: можна передавати повідомлення поза режимом. */
 bool aprsBeaconingMessagesAllowed(void);
 void aprsModeAbortTx(void);   /* примусово обірвати маяк режиму (вихід посеред передачі) */

@@ -283,7 +283,7 @@ static void testRetries(void)
 	int sent = 0;
 
 	aprsMsgInit(b, 0U);
-	CHECK(aprsMsgSend(b, "uw5elk-7", "Hi", t) == AMSG_OK, "поставлено в чергу");
+	CHECK(aprsMsgSend(b, "uw5elk-7", "Hi", t, NULL) == AMSG_OK, "поставлено в чергу");
 	CHECK(b->list[0].status == AMSG_ST_WAIT && b->list[0].dir == AMSG_DIR_OUT && strcmp(b->list[0].call, "UW5ELK-7") == 0 && strcmp(b->list[0].id, "01") == 0, "запис «чекає», номер 01");
 	CHECK(aprsMsgPendingCount(b) == 1U, "один у черзі");
 
@@ -323,7 +323,7 @@ static void testCancelOnAck(void)
 	uint32_t t = 5000U;
 
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "UW5ELK-7", "Hi", t);
+	(void)aprsMsgSend(b, "UW5ELK-7", "Hi", t, NULL);
 	CHECK(txOnce(b, &t, info, sizeof(info)) != 0U, "спроба 1");
 	/* чужі ACK не скасовують */
 	CHECK(aprsMsgOnAckRx(b, "UW5ELK-7", "02", false) == false, "ACK іншого номера не скасовує");
@@ -338,13 +338,13 @@ static void testCancelOnAck(void)
 
 	/* REJ -> «без ACK» */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "UW5ELK-7", "Hi", t);
+	(void)aprsMsgSend(b, "UW5ELK-7", "Hi", t, NULL);
 	(void)txOnce(b, &t, info, sizeof(info));
 	CHECK(aprsMsgOnAckRx(b, "UW5ELK-7", "01", true) == true && b->list[0].status == AMSG_ST_NOACK, "rej -> «без ACK»");
 
 	/* ACK, що прийшов ПІД ЧАС нашої передачі (завдання зняли, поки кадр у ефірі): стан не ламається */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "UW5ELK-7", "Hi", t);
+	(void)aprsMsgSend(b, "UW5ELK-7", "Hi", t, NULL);
 	CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) != 0U && b->inflight >= 0, "кадр видано");
 	CHECK(aprsMsgOnAckRx(b, "UW5ELK-7", "01", false) == true && b->inflight < 0, "ACK під час передачі зняв завдання");
 	aprsMsgTxDone(b, t, true, false);
@@ -363,7 +363,7 @@ static void testAck(void)
 	/* вхідне з номером -> новий запис + ACK негайно */
 	CHECK(aprsMsgOnIncoming(b, "UW5ELK-7", "Hello", "123", t) == true, "нове вхідне");
 	CHECK(aprsMsgListCount(b) == 1U && aprsMsgUnreadCount(b) == 1U && b->list[0].dir == AMSG_DIR_IN && b->list[0].unread, "запис у списку, непрочитаний");
-	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t) == true, "ACK поставлено");
+	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t, NULL) == true, "ACK поставлено");
 	CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) == 17U && strcmp(info, ":UW5ELK-7 :ack123") == 0, "ACK пішов негайно: \"%s\"", info);
 	aprsMsgTxDone(b, t, true, false);
 	aprsMsgTxEnded(b, t + 500U);
@@ -372,9 +372,9 @@ static void testAck(void)
 
 	/* повтор того самого {NN}: повідомлення показується ОДИН раз, ACK -- знову (але не раніше 5 с від попереднього) */
 	CHECK(aprsMsgOnIncoming(b, "UW5ELK-7", "Hello", "123", t + 3000U) == false && aprsMsgListCount(b) == 1U, "повтор: повідомлення не дублюється");
-	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t + 3000U) == false, "повтор через 3 с (той самий кадр через інший діджі): ACK не множимо");
-	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t + 31000U) == true, "повтор через 31 с (відправник не почув ACK): ACK знову");
-	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t + 31001U) == false, "а другий такий самий поки в черзі -- ні");
+	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t + 3000U, NULL) == false, "повтор через 3 с (той самий кадр через інший діджі): ACK не множимо");
+	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t + 31000U, NULL) == true, "повтор через 31 с (відправник не почув ACK): ACK знову");
+	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "123", t + 31001U, NULL) == false, "а другий такий самий поки в черзі -- ні");
 	CHECK(aprsMsgPoll(b, t + 31000U, false, true, info, sizeof(info)) != 0U && strcmp(info, ":UW5ELK-7 :ack123") == 0, "повторний ACK пішов");
 	aprsMsgTxDone(b, t + 31000U, true, false);
 	aprsMsgTxEnded(b, t + 31500U);
@@ -382,7 +382,7 @@ static void testAck(void)
 	CHECK(aprsMsgOnIncoming(b, "UW5ELK-7", "Again", "124", t + 40000U) == true && aprsMsgListCount(b) == 2U, "інший номер -- нове");
 	CHECK(b->list[0].text[0] == 'A' && b->list[1].text[0] == 'H', "найновіше зверху");
 	/* без номера: ACK не потрібен */
-	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "", t) == false && aprsMsgQueueAck(b, "UW5ELK-7", NULL, t) == false, "без номера ACK не ставимо");
+	CHECK(aprsMsgQueueAck(b, "UW5ELK-7", "", t, NULL) == false && aprsMsgQueueAck(b, "UW5ELK-7", NULL, t, NULL) == false, "без номера ACK не ставимо");
 	CHECK(aprsMsgOnIncoming(b, "UW5ELK-7", "no id", "", t + 41000U) == true && aprsMsgOnIncoming(b, "UW5ELK-7", "no id", "", t + 42000U) == true,
 			"без номера дедуплікація не тут (її робить R8): обидва додаються");
 
@@ -399,9 +399,9 @@ static void testScheduling(void)
 
 	/* пріоритет ACK над повідомленням */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "msg", t);
+	(void)aprsMsgSend(b, "AAA", "msg", t, NULL);
 	(void)aprsMsgOnIncoming(b, "BBB", "x", "9", t);
-	(void)aprsMsgQueueAck(b, "BBB", "9", t);
+	(void)aprsMsgQueueAck(b, "BBB", "9", t, NULL);
 	CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) != 0U && strcmp(info, ":BBB      :ack9") == 0, "ACK раніше за повідомлення: \"%s\"", info);
 	aprsMsgTxDone(b, t, true, false);
 	/* пауза 2 с між будь-якими двома передачами -- від КІНЦЯ попередньої */
@@ -414,14 +414,14 @@ static void testScheduling(void)
 
 	/* txOk = false (PTT, DMR-TX, приймається пакет, APRS вимкнено): нічого не йде, і не «ламає» таймери */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "msg", t);
+	(void)aprsMsgSend(b, "AAA", "msg", t, NULL);
 	CHECK(aprsMsgPoll(b, t, false, false, info, sizeof(info)) == 0U && aprsMsgPoll(b, t + 100000U, false, false, info, sizeof(info)) == 0U, "txOk=false -- не передаємо");
 	CHECK(b->list[0].status == AMSG_ST_WAIT && aprsMsgPendingCount(b) == 1U, "повідомлення чекає");
 	CHECK(aprsMsgPoll(b, t + 100001U, false, true, info, sizeof(info)) != 0U, "умови з'явились -- передали");
 
 	/* зайнята частота: чекаємо до 10 с, потім передаємо */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "msg", t);
+	(void)aprsMsgSend(b, "AAA", "msg", t, NULL);
 	CHECK(aprsMsgPoll(b, t, true, true, info, sizeof(info)) == 0U, "зайнято: 0 с");
 	CHECK(aprsMsgPoll(b, t + 9999U, true, true, info, sizeof(info)) == 0U, "зайнято: 9,999 с -- ще чекаємо");
 	CHECK(aprsMsgPoll(b, t + 10000U, true, true, info, sizeof(info)) != 0U, "зайнято: 10 с -- передаємо все одно");
@@ -429,27 +429,27 @@ static void testScheduling(void)
 	aprsMsgTxEnded(b, t + 10700U);
 	/* зайнято, але звільнилась -- передаємо одразу, лічильник очікування скинуто */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "msg", t);
+	(void)aprsMsgSend(b, "AAA", "msg", t, NULL);
 	CHECK(aprsMsgPoll(b, t, true, true, info, sizeof(info)) == 0U, "зайнято");
 	CHECK(aprsMsgPoll(b, t + 4000U, false, true, info, sizeof(info)) != 0U, "звільнилась через 4 с -- передаємо");
 	aprsMsgTxDone(b, t + 4000U, true, false);
 	aprsMsgTxEnded(b, t + 4700U);
 	/* і ACK теж чекає на вільну частоту */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgQueueAck(b, "BBB", "9", t);
+	(void)aprsMsgQueueAck(b, "BBB", "9", t, NULL);
 	CHECK(aprsMsgPoll(b, t + 1000U, true, true, info, sizeof(info)) == 0U && aprsMsgPoll(b, t + 10999U, true, true, info, sizeof(info)) == 0U &&
 			aprsMsgPoll(b, t + 11000U, true, true, info, sizeof(info)) != 0U, "ACK при зайнятій частоті -- теж до 10 с");
 
 	/* фатальна відмова (TX заборонено): одразу «без ACK», без повторів */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "msg", t);
+	(void)aprsMsgSend(b, "AAA", "msg", t, NULL);
 	CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) != 0U, "кадр видано");
 	aprsMsgTxDone(b, t, false, true);
 	CHECK(b->list[0].status == AMSG_ST_NOACK && aprsMsgPendingCount(b) == 0U, "fatal: «без ACK», черга порожня");
 	CHECK(aprsMsgPoll(b, t + 100000U, false, true, info, sizeof(info)) == 0U, "після fatal повторів нема");
 	/* не фатальна невдача (частота зайнята на рівні TX): спроба рахується, повтор через 30 с */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "msg", t);
+	(void)aprsMsgSend(b, "AAA", "msg", t, NULL);
 	(void)aprsMsgPoll(b, t, false, true, info, sizeof(info));
 	aprsMsgTxDone(b, t, false, false);
 	CHECK(b->txActive == 0U && b->list[0].attempts == 1U && b->list[0].status == AMSG_ST_WAIT, "невдала спроба: рахується, статус лишається «чекає»");
@@ -457,9 +457,9 @@ static void testScheduling(void)
 
 	/* скасування всього (вихід з режиму) */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "m1", t);
-	(void)aprsMsgSend(b, "BBB", "m2", t);
-	(void)aprsMsgQueueAck(b, "CCC", "1", t);
+	(void)aprsMsgSend(b, "AAA", "m1", t, NULL);
+	(void)aprsMsgSend(b, "BBB", "m2", t, NULL);
+	(void)aprsMsgQueueAck(b, "CCC", "1", t, NULL);
 	aprsMsgCancelAll(b);
 	CHECK(aprsMsgPendingCount(b) == 0U && b->q[0].type == AMSG_JOB_FREE && b->q[1].type == AMSG_JOB_FREE && b->q[2].type == AMSG_JOB_FREE, "після скасування черга порожня");
 	CHECK(b->list[0].status == AMSG_ST_NOACK && b->list[1].status == AMSG_ST_NOACK, "повідомлення стали «без ACK»");
@@ -475,7 +475,7 @@ static void testNumbersAndOverflow(void)
 	aprsMsgInit(b, 97U);
 	for (int i = 0; i < 4; i++)
 	{
-		CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_OK, "поставлено %d", i);
+		CHECK(aprsMsgSend(b, "AAA", "x", t, NULL) == AMSG_OK, "поставлено %d", i);
 		while (aprsMsgPoll(b, t, false, true, info, sizeof(info)) != 0U)
 		{
 			aprsMsgTxDone(b, t, true, false);
@@ -489,29 +489,29 @@ static void testNumbersAndOverflow(void)
 			"номери 98 99 01 02: %s %s %s %s", b->list[3].id, b->list[2].id, b->list[1].id, b->list[0].id);
 	/* жодного "00" */
 	aprsMsgInit(b, 98U);
-	(void)aprsMsgSend(b, "AAA", "x", t);
-	(void)aprsMsgSend(b, "AAA", "x", t);
+	(void)aprsMsgSend(b, "AAA", "x", t, NULL);
+	(void)aprsMsgSend(b, "AAA", "x", t, NULL);
 	CHECK(strcmp(b->list[1].id, "99") == 0 && strcmp(b->list[0].id, "01") == 0, "після 99 -- 01, не 00");
 
 	/* seed великий */
 	aprsMsgInit(b, 1000000007U);
-	(void)aprsMsgSend(b, "AAA", "x", t);
+	(void)aprsMsgSend(b, "AAA", "x", t, NULL);
 	CHECK(strlen(b->list[0].id) == 2U && b->list[0].id[0] >= '0' && b->list[0].id[0] <= '9' && strcmp(b->list[0].id, "00") != 0, "seed великий -- номер 01..99: %s", b->list[0].id);
 
 	/* переповнення черги: 4 повідомлення, 5-те -- відмова; R11-fix2: ACK при повній черзі ВИТІСНЯЄ найстаріше наше повідомлення */
 	aprsMsgInit(b, 0U);
 	for (int i = 0; i < 4; i++)
 	{
-		CHECK(aprsMsgSend(b, "AAA", "x", t + (uint32_t)i) == AMSG_OK, "повідомлення %d у чергу", i);
+		CHECK(aprsMsgSend(b, "AAA", "x", t + (uint32_t)i, NULL) == AMSG_OK, "повідомлення %d у чергу", i);
 	}
-	CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_E_FULL, "5-те -- черга повна");
-	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U) == true, "ACK при повній черзі витісняє наше повідомлення");
+	CHECK(aprsMsgSend(b, "AAA", "x", t, NULL) == AMSG_E_FULL, "5-те -- черга повна");
+	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U, NULL) == true, "ACK при повній черзі витісняє наше повідомлення");
 	CHECK(aprsMsgPendingCount(b) == 3U && aprsMsgAckPending(b) == 1U && aprsMsgQueueLen(b) == 4U && aprsMsgListCount(b) == 4U, "у черзі 3 повідомлення + ACK, у списку 4");
 	CHECK(b->list[3].status == AMSG_ST_NOACK && strcmp(b->list[3].id, "01") == 0, "витіснене -- найстаріше (номер 01) -- стало «без ACK»");
 	CHECK(b->list[0].status == AMSG_ST_WAIT && b->list[1].status == AMSG_ST_WAIT && b->list[2].status == AMSG_ST_WAIT, "решта чекають");
 	/* відмови не псують стан: помилковий адресат/текст */
 	aprsMsgInit(b, 0U);
-	CHECK(aprsMsgSend(b, "A B", "x", t) == AMSG_E_CALL && aprsMsgSend(b, "AAA", "a:b", t) == AMSG_E_TEXT && aprsMsgSend(b, "AAA", "", t) == AMSG_E_TEXT, "помилки адресата й тексту");
+	CHECK(aprsMsgSend(b, "A B", "x", t, NULL) == AMSG_E_CALL && aprsMsgSend(b, "AAA", "a:b", t, NULL) == AMSG_E_TEXT && aprsMsgSend(b, "AAA", "", t, NULL) == AMSG_E_TEXT, "помилки адресата й тексту");
 	CHECK(aprsMsgListCount(b) == 0U && aprsMsgPendingCount(b) == 0U, "помилки нічого не додали");
 
 	/* список на 8: 10 вхідних -- лишається 8, найновіше зверху, найстаріші витіснено */
@@ -527,7 +527,7 @@ static void testNumbersAndOverflow(void)
 	CHECK(aprsMsgListCount(b) == 8U && strcmp(b->list[0].call, "ST9") == 0 && strcmp(b->list[7].call, "ST2") == 0, "8 записів: ST9 … ST2");
 	/* наше повідомлення, що ще чекає, витіснити не можна: заповнюємо список вхідними, а вихідні лишаються */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "pending", t);
+	(void)aprsMsgSend(b, "AAA", "pending", t, NULL);
 	for (int i = 0; i < 12; i++)
 	{
 		char from[12];
@@ -652,7 +652,7 @@ static void testFix2(void)
 		uint32_t ti = t + (uint32_t)i * 31000U;   /* APRSdroid повторює з інтервалом у десятки секунд */
 
 		aprsMsgCountRx(b);
-		CHECK(aprsMsgQueueAck(b, "UW5ELK-5", "5", ti) == true, "копія %d: ACK поставлено ДО рішення про дублікат", i);
+		CHECK(aprsMsgQueueAck(b, "UW5ELK-5", "5", ti, NULL) == true, "копія %d: ACK поставлено ДО рішення про дублікат", i);
 		CHECK(aprsMsgOnIncoming(b, "UW5ELK-5", "hello", "5", ti) == (i == 0), "копія %d: у списку лише перша", i);
 		CHECK(aprsMsgPoll(b, ti, false, true, info, sizeof(info)) != 0U && strcmp(info, ":UW5ELK-5 :ack5") == 0, "копія %d: ACK у ефір: \"%s\"", i, info);
 		aprsMsgTxDone(b, ti, true, false);
@@ -676,7 +676,7 @@ static void testFix2(void)
 		{
 			uint32_t ti = t + (uint32_t)i * 3000U;
 
-			CHECK(aprsMsgQueueAck(b, "UW5ELK-5", ids[i], ti) == true, "id %s: у чергу", ids[i]);
+			CHECK(aprsMsgQueueAck(b, "UW5ELK-5", ids[i], ti, NULL) == true, "id %s: у чергу", ids[i]);
 			CHECK(aprsMsgPoll(b, ti, false, true, info, sizeof(info)) != 0U && strcmp(info, want[i]) == 0, "id %s: \"%s\"", ids[i], info);
 			aprsMsgTxDone(b, ti, true, false);
 			aprsMsgTxEnded(b, ti + 700U);
@@ -701,7 +701,7 @@ static void testFix2(void)
 		CHECK(pkt.type == APRS_T_MESSAGE && strcmp(pkt.msgId, "12") == 0 && pkt.msgAck == false, "розібрано як повідомлення з номером 12");
 		CHECK(strlen(pkt.text) > 40U, "текст розкодовано (cp1251, %u символів)", (unsigned)strlen(pkt.text));
 		aprsMsgCountRx(b);
-		CHECK(aprsMsgQueueAck(b, "UW5ELK-5", pkt.msgId, t) == true, "ACK на довге поставлено (довжина не відсікає)");
+		CHECK(aprsMsgQueueAck(b, "UW5ELK-5", pkt.msgId, t, NULL) == true, "ACK на довге поставлено (довжина не відсікає)");
 		CHECK(aprsMsgOnIncoming(b, "UW5ELK-5", pkt.text, pkt.msgId, t) == true && aprsMsgListCount(b) == 1U, "довге -- у списку");
 		CHECK(strcmp(b->list[0].text, pkt.text) == 0 || strlen(b->list[0].text) < strlen(pkt.text), "у списку повний або обрізаний текст");
 		CHECK(aprsMsgOnIncoming(b, "UW5ELK-5", pkt.text, pkt.msgId, t + 31000U) == false, "копія довгого -- не дублюється (порівняння з обрізаним)");
@@ -723,44 +723,44 @@ static void testFix2(void)
 			rxInfo(wire, &pkt);
 			CHECK(pkt.type == APRS_T_MESSAGE && strcmp(pkt.msgId, "7") == 0, "200-байтовий текст: повідомлення з номером 7");
 			aprsMsgInit(b, 0U);
-			CHECK(aprsMsgQueueAck(b, "UW5ELK-5", pkt.msgId, t) == true && aprsMsgOnIncoming(b, "UW5ELK-5", pkt.text, pkt.msgId, t) == true, "ACK і запис для 200-байтового тексту");
+			CHECK(aprsMsgQueueAck(b, "UW5ELK-5", pkt.msgId, t, NULL) == true && aprsMsgOnIncoming(b, "UW5ELK-5", pkt.text, pkt.msgId, t) == true, "ACK і запис для 200-байтового тексту");
 			CHECK(strlen(b->list[0].text) < APRS_MSG_TEXT_LEN, "текст у списку обрізаний до %u символів", (unsigned)(APRS_MSG_TEXT_LEN - 1U));
 		}
 	}
 
 	/* --- ACK першим у черзі: ACK, поставлений ПІСЛЯ нашого повідомлення, іде раніше ------------------------------------------ */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "msg1", t);
-	(void)aprsMsgSend(b, "BBB", "msg2", t);
-	CHECK(aprsMsgQueueAck(b, "CCC", "9", t + 5U) == true, "ACK поставлено після двох повідомлень");
+	(void)aprsMsgSend(b, "AAA", "msg1", t, NULL);
+	(void)aprsMsgSend(b, "BBB", "msg2", t, NULL);
+	CHECK(aprsMsgQueueAck(b, "CCC", "9", t + 5U, NULL) == true, "ACK поставлено після двох повідомлень");
 	CHECK(aprsMsgPoll(b, t + 10U, false, true, info, sizeof(info)) != 0U && strcmp(info, ":CCC      :ack9") == 0, "перший у ефірі -- ACK: \"%s\"", info);
 
 	/* --- черга повна, ACK витісняє СТАРІШЕ наше повідомлення, а не навпаки ---------------------------------------------------- */
 	aprsMsgInit(b, 0U);
 	for (int i = 0; i < 4; i++)
 	{
-		CHECK(aprsMsgSend(b, "AAA", "x", t + (uint32_t)i) == AMSG_OK, "повідомлення %d", i);
+		CHECK(aprsMsgSend(b, "AAA", "x", t + (uint32_t)i, NULL) == AMSG_OK, "повідомлення %d", i);
 	}
-	CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_E_FULL, "повідомлення при повній черзі -- відмова, ACK не витісняє нічого");
-	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U) == true && aprsMsgAckPending(b) == 1U && aprsMsgPendingCount(b) == 3U, "ACK витіснив одне повідомлення");
-	CHECK(aprsMsgQueueAck(b, "BBB", "2", t + 11U) == true && aprsMsgQueueAck(b, "BBB", "3", t + 12U) == true && aprsMsgQueueAck(b, "BBB", "4", t + 13U) == true,
+	CHECK(aprsMsgSend(b, "AAA", "x", t, NULL) == AMSG_E_FULL, "повідомлення при повній черзі -- відмова, ACK не витісняє нічого");
+	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U, NULL) == true && aprsMsgAckPending(b) == 1U && aprsMsgPendingCount(b) == 3U, "ACK витіснив одне повідомлення");
+	CHECK(aprsMsgQueueAck(b, "BBB", "2", t + 11U, NULL) == true && aprsMsgQueueAck(b, "BBB", "3", t + 12U, NULL) == true && aprsMsgQueueAck(b, "BBB", "4", t + 13U, NULL) == true,
 			"ще три ACK витіснили решту повідомлень");
 	CHECK(aprsMsgAckPending(b) == 4U && aprsMsgPendingCount(b) == 0U, "тепер у черзі лише ACK");
-	CHECK(aprsMsgQueueAck(b, "BBB", "5", t + 14U) == false && b->stats.ackLost == 1U, "п'ятий ACK не вміщається (усі слоти ACK) -- лічиться як втрачений");
-	CHECK(aprsMsgSend(b, "AAA", "x", t) == AMSG_E_FULL, "наше повідомлення не витісняє ACK");
+	CHECK(aprsMsgQueueAck(b, "BBB", "5", t + 14U, NULL) == false && b->stats.ackLost == 1U, "п'ятий ACK не вміщається (усі слоти ACK) -- лічиться як втрачений");
+	CHECK(aprsMsgSend(b, "AAA", "x", t, NULL) == AMSG_E_FULL, "наше повідомлення не витісняє ACK");
 	/* повідомлення, що вже в ефірі, не витісняється */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgSend(b, "AAA", "m1", t);
+	(void)aprsMsgSend(b, "AAA", "m1", t, NULL);
 	CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) != 0U, "повідомлення m1 видано (inflight)");
 	for (int i = 0; i < 3; i++)
 	{
-		(void)aprsMsgSend(b, "AAA", "m", t + (uint32_t)i + 1U);
+		(void)aprsMsgSend(b, "AAA", "m", t + (uint32_t)i + 1U, NULL);
 	}
-	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U) == true && b->inflight >= 0 && b->q[b->inflight].type == AMSG_JOB_MSG, "ACK витіснив інше повідомлення, а не те, що в ефірі");
+	CHECK(aprsMsgQueueAck(b, "BBB", "1", t + 10U, NULL) == true && b->inflight >= 0 && b->q[b->inflight].type == AMSG_JOB_MSG, "ACK витіснив інше повідомлення, а не те, що в ефірі");
 
 	/* --- ACK, який не вдалось почати: до 3 спроб через 1,5 с, далі знято; передані не повторюються ------------------------- */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgQueueAck(b, "BBB", "1", t);
+	(void)aprsMsgQueueAck(b, "BBB", "1", t, NULL);
 	for (int k = 0; k < 3; k++)
 	{
 		uint32_t tk = t + (uint32_t)k * 1500U;
@@ -772,7 +772,7 @@ static void testFix2(void)
 	CHECK(aprsMsgQueueLen(b) == 0U && b->stats.ackLost == 1U && b->stats.ackSent == 0U, "після 3 невдач ACK знято і пораховано як втрачений");
 	/* а вже ПЕРЕДАНИЙ ACK не повторюється */
 	aprsMsgInit(b, 0U);
-	(void)aprsMsgQueueAck(b, "BBB", "1", t);
+	(void)aprsMsgQueueAck(b, "BBB", "1", t, NULL);
 	(void)aprsMsgPoll(b, t, false, true, info, sizeof(info));
 	aprsMsgTxDone(b, t, true, false);
 	aprsMsgTxEnded(b, t + 700U);
@@ -821,6 +821,93 @@ static void testSsidForms(void)
 	}
 }
 
+/* R13 (П.6): відправник фіксується в завданні й не залежить від того, що відбувається потім */
+static void testFrom(void)
+{
+	aprsMsgBox_t *b = &g_box;
+	char info[160];
+	uint32_t t = 100000U;
+
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgSend(b, "N0CALL-9", "Hi", t, "uw5elk-7") == AMSG_OK, "поставлено з відправником");
+	CHECK(strcmp(b->q[0].from, "UW5ELK-7") == 0, "відправник нормалізовано: \"%s\"", b->q[0].from);
+	CHECK(aprsMsgSend(b, "N0CALL-8", "Hi", t, "N0CALL-0") == AMSG_OK && strcmp(b->q[1].from, "N0CALL") == 0, "SSID 0 відкидається");
+	CHECK(aprsMsgSend(b, "N0CALL-7", "Hi", t, "not a call") == AMSG_OK && b->q[2].from[0] == 0, "недійсний відправник -> порожній (стандартний)");
+	CHECK(aprsMsgSend(b, "N0CALL-6", "Hi", t, NULL) == AMSG_OK && b->q[3].from[0] == 0, "NULL -> порожній");
+
+	/* аксесор: відправник завдання, що в ефірі; щойно видане -- перше завдання (нічого іншого не готове) */
+	CHECK(aprsMsgInflightFrom(b)[0] == 0, "нічого в ефірі -- порожній рядок");
+	CHECK(aprsMsgPoll(b, t, false, true, info, sizeof(info)) > 0U, "видано кадр");
+	CHECK(strcmp(aprsMsgInflightFrom(b), "UW5ELK-7") == 0, "відправник завдання в ефірі: \"%s\"", aprsMsgInflightFrom(b));
+	aprsMsgTxDone(b, t, true, false);
+	CHECK(aprsMsgInflightFrom(b)[0] == 0, "після TxDone -- порожній");
+
+	/* повтор тим самим відправником (повторні спроби не змінюють поле) */
+	aprsMsgTxEnded(b, t + 100U);
+	CHECK(strcmp(b->q[0].from, "UW5ELK-7") == 0, "поле не змінилось після спроби");
+
+	/* ACK: відправник = переданий (адресат вхідного); ACK при повній черзі, що витісняє повідомлення, теж несе його */
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgQueueAck(b, "UW5ELK-5", "10", t, "US5EX-7") && strcmp(b->q[0].from, "US5EX-7") == 0, "ACK від адресата");
+	CHECK(aprsMsgQueueAck(b, "UW5ELK-4", "11", t, NULL) && b->q[1].from[0] == 0, "ACK без відправника -- стандартний");
+	CHECK(sizeof(aprsMsgBox_t) <= 1336U, "блок влазить у резерв кільця (1336 Б): %zu", sizeof(aprsMsgBox_t));
+}
+
+/* R13: лічильник НЕпрочитаних APRS (іконка зліва на головному екрані): окремий від DMR-SMS, живе в постійному блоці. */
+static void testUnread(void)
+{
+	aprsMsgBox_t *b = &g_box;
+	uint32_t t = 90000U;
+
+	printf("== R13: лічильник непрочитаних ==\n");
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgUnreadCount(b) == 0U, "порожній блок: 0 (іконки нема)");
+	CHECK(aprsMsgOnIncoming(b, "AAA", "one", "1", t), "прийом 1");
+	CHECK(aprsMsgUnreadCount(b) == 1U, "після прийому: 1");
+	CHECK(aprsMsgOnIncoming(b, "BBB", "two", "2", t + 1U) && aprsMsgOnIncoming(b, "CCC", "three", "3", t + 2U), "прийом 2 і 3");
+	CHECK(aprsMsgUnreadCount(b) == 3U, "три непрочитані");
+	/* повтор тієї самої копії (відправник не почув ACK) лічильник не збільшує */
+	CHECK(aprsMsgOnIncoming(b, "AAA", "one", "1", t + 5000U) == false && aprsMsgUnreadCount(b) == 3U, "повтор копії: без зміни");
+	/* наше вихідне непрочитаним не вважається */
+	CHECK(aprsMsgSend(b, "DDD", "out", t + 10U, NULL) == AMSG_OK && aprsMsgUnreadCount(b) == 3U, "вихідне не рахується");
+	/* прочитали -- лічильник падає; повторне «прочитано» того самого -- ні */
+	aprsMsgMarkRead(b, 0U);
+	CHECK(aprsMsgUnreadCount(b) <= 3U, "після читання не росте");
+	{
+		unsigned u0 = aprsMsgUnreadCount(b);
+
+		aprsMsgMarkRead(b, 0U);
+		CHECK(aprsMsgUnreadCount(b) == u0, "повторне «прочитано» -- без зміни");
+	}
+	/* переповнення списку: 12 вхідних до списку на 8 -- непрочитаних не більше розміру списку, і лічильник сходиться з реальним списком */
+	aprsMsgInit(b, 0U);
+	for (int i = 0; i < 12; i++)
+	{
+		char from[12], id[8];
+
+		snprintf(from, sizeof(from), "ST%d", i);
+		snprintf(id, sizeof(id), "%d", i);
+		(void)aprsMsgOnIncoming(b, from, "x", id, t + (uint32_t)i);
+	}
+	{
+		unsigned real = 0;
+
+		for (unsigned i = 0; i < APRS_MSG_LIST_MAX; i++)
+		{
+			real += (b->list[i].used && b->list[i].unread && (b->list[i].dir == AMSG_DIR_IN)) ? 1U : 0U;
+		}
+		CHECK((aprsMsgUnreadCount(b) == real) && (real <= APRS_MSG_LIST_MAX), "переповнення: лічильник %u збігається зі списком (%u)", aprsMsgUnreadCount(b), real);
+		CHECK(aprsMsgUnreadCount(b) == APRS_MSG_LIST_MAX, "усі 8 записів списку непрочитані");
+	}
+	for (unsigned i = 0; i < APRS_MSG_LIST_MAX; i++)
+	{
+		aprsMsgMarkRead(b, i);
+	}
+	CHECK(aprsMsgUnreadCount(b) == 0U, "усе прочитано -- іконка зникає (0)");
+	/* підпис іконки обмежено двома цифрами (код шапки: min(n, 99)) */
+	CHECK(((aprsMsgUnreadCount(b) > 99U) ? 99U : aprsMsgUnreadCount(b)) == 0U, "обмеження 99");
+}
+
 int main(void)
 {
 	testCharBytes();
@@ -837,6 +924,8 @@ int main(void)
 	testWrapAndInbox();
 	testSsidForms();
 	testFix2();
+	testFrom();
+	testUnread();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_msg: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

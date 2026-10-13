@@ -143,6 +143,7 @@ typedef enum
 	NOTIFICATION_ID_SMS_ACKED,  /* форк (ui1) -- дивись NOTIFICATION_TYPE_SMS_ACKED вище */
 #endif
 #if defined(ENABLE_APRS_RX)
+	NOTIFICATION_ID_APRS_BEACON, /* форк (R13): вікно маяка -- повноекранна картка SMS-типу з позиційним пакетом APRS (стрілка, відстань, азимут) */
 	NOTIFICATION_ID_APRS_MSG,   /* форк (R11-fix2): вхідне повідомлення APRS -- картка SMS-типу з ВЛАСНИМ текстом (сховище SMS не чіпаємо) */
 #endif
 	NOTIFICATION_ID_BEARING,
