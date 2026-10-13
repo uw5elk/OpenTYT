@@ -2035,6 +2035,39 @@ void uiUtilityRenderQSOData(void)
 	displayThemeResetToDefault();
 }
 
+#if defined(APRS_RX) || (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA))
+// R15: один конверт для лічильників непрочитаних і SMS DMR, і APRS -- вигляд ідентичний, відрізняє лише літера ліворуч
+// від корпуса: "D" (DMR) / "A" (APRS). Розкладка: літера (6) + 1 + конверт (13) + 2 + число (6 на цифру).
+// msgEnvelopeWidth() дає повну ширину блока, щоб DMR міг притиснути його до правого краю.
+#define MSG_ENV_LETTER_W   6
+#define MSG_ENV_BODY_W     13
+#define MSG_ENV_BODY_H     9
+
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+static int16_t msgEnvelopeWidth(unsigned count)
+{
+	return (int16_t)(MSG_ENV_LETTER_W + 1 + MSG_ENV_BODY_W + 2 + ((count > 9U) ? 12 : 6));
+}
+#endif
+
+static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
+{
+	char nb[4];
+	char lt[2];
+	int16_t ex = (int16_t)(x + MSG_ENV_LETTER_W + 1);
+
+	snprintf(nb, sizeof nb, "%u", (count > 99U) ? 99U : count);
+	lt[0] = letter;
+	lt[1] = 0;
+
+	displayPrintCore(x, y, lt, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);               // літера: A -- APRS, D -- DMR
+	displayDrawRect(ex, y, MSG_ENV_BODY_W, MSG_ENV_BODY_H, true);                  // корпус конверта
+	displayDrawLine(ex, y, ex + 6, y + 4, true);                                   // клапан (ліва частина)
+	displayDrawLine(ex + 12, y, ex + 6, y + 4, true);                              // клапан (права частина)
+	displayPrintCore(ex + MSG_ENV_BODY_W + 2, y, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false); // число
+}
+#endif
+
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
 {
 	const int MODE_TEXT_X_OFFSET = 1;
@@ -2457,27 +2490,17 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		int unread = dmrSmsUnreadCount();
 		if (unread > 0)
 		{
-			// Лічильник більше НЕ впирається в 9: раніше стояло (unread > 9) ? 9 : unread,
-			// тож 10 і 40 непрочитаних виглядали однаково. Тепер показуємо справжнє число
-			// (до 99), а конверт зсуваємо ліворуч рівно на ширину цифр, щоб не вилізти
-			// за край екрана.
-			char nb[4];
-			snprintf(nb, sizeof nb, "%d", (unread > 99) ? 99 : unread);
-			int16_t numW = (int16_t)(strlen(nb) * 6);
-			int16_t ex = (int16_t)(DISPLAY_SIZE_X - (13 + 2 + numW) - 2);
-			int16_t ey = DISPLAY_Y_POS_BAR + 6;
-			displayDrawRect(ex, ey, 13, 9, true);              // envelope body
-			displayDrawLine(ex, ey, ex + 6, ey + 4, true);     // flap (left)
-			displayDrawLine(ex + 12, ey, ex + 6, ey + 4, true);// flap (right)
-			displayPrintCore(ex + 15, ey, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			// R15: конверт спільний з APRS (drawMsgEnvelope), справа; блок притиснутий до правого краю. Число -- справжнє (до 99).
+			int16_t ex = (int16_t)(DISPLAY_SIZE_X - 2 - msgEnvelopeWidth((unsigned)unread));
+			drawMsgEnvelope(ex, DISPLAY_Y_POS_BAR + 6, 'D', (unsigned)unread);
 		}
 	}
 #endif
 
 #if defined(APRS_RX)
-	// R13: лічильник НЕпрочитаних повідомлень APRS -- окремий від лічильника SMS DMR (той вище, справа). Дзеркало конверта SMS по
-	// горизонталі: ліворуч (x=2) тієї ж смуги, на тому ж рядку. Конверт із залитою нижньою половиною -- щоб відрізнити від SMS DMR.
-	// Число (до 99) праворуч від конверта. Зникає, коли непрочитаних нема; оновлюється при кожному малюванні шапки (прийшло нове --
+	// R13/R15: лічильник НЕпрочитаних повідомлень APRS -- окремий від лічильника SMS DMR (той вище, справа). Конверт ТОЙ САМИЙ,
+	// що й у DMR (drawMsgEnvelope), ліворуч (x=2) тієї ж смуги; відрізняє лише літера "A" (у DMR -- "D"). Число (до 99) праворуч.
+	// Зникає, коли непрочитаних нема; оновлюється при кожному малюванні шапки (прийшло нове --
 	// шапку перемальовує сам прийом: картка повідомлення закривається через RED, після чого екран малюється з нуля).
 	{
 		const aprsMsgBox_t *ab = aprsModeMsgBox();
@@ -2485,16 +2508,7 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 
 		if (aun > 0U)
 		{
-			char nb[4];
-			int16_t ex = 2;
-			int16_t ey = DISPLAY_Y_POS_BAR + 6;
-
-			snprintf(nb, sizeof nb, "%u", (aun > 99U) ? 99U : aun);
-			displayDrawRect(ex, ey, 13, 9, true);               // корпус конверта
-			displayDrawLine(ex, ey, ex + 6, ey + 4, true);      // клапан (ліва частина)
-			displayDrawLine(ex + 12, ey, ex + 6, ey + 4, true); // клапан (права частина)
-			displayFillRect(ex + 1, ey + 5, 11, 3, false);      // нижня половина залита (false -- колір переднього плану для FillRect)
-			displayPrintCore(ex + 15, ey, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			drawMsgEnvelope(2, DISPLAY_Y_POS_BAR + 6, 'A', aun);
 		}
 	}
 #endif
