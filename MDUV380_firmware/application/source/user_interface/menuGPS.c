@@ -32,7 +32,25 @@
 #include "interfaces/gps.h"
 #include "usb/usb_com.h"
 
-#if defined(HAS_GPS)
+#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU) && defined(LANGUAGE_BUILD_UKRAINIAN)
+/* R19 Е7.1 (форк): у рації нема GPS-приймача, пункти GPS у меню приховані (FORK_NO_GPS_MENU), але екран menuGPS() досі лінкувався (~2,5 КБ мертвого коду). Тіло замінено
+ * заглушкою; СЛОТ MENU_GPS у menuFunctions[] і таблиця голосових підказок (menuSystem.c) НЕ змінені -- збережена швидка клавіша на це меню не ламає нумерацію, а лише
+ * миттєво повертає назад. Pop робимо на першому ТІКУ, а не всередині першого запуску: menuSystemPopPreviousMenu() сам викликає перший запуск попереднього меню.
+ * Лише українська збірка: збірки def/aes лишаються байт-у-байт. */
+menuStatus_t menuGPS(uiEvent_t *ev, bool isFirstRun)
+{
+	UNUSED_PARAMETER(ev);
+
+	if (isFirstRun)
+	{
+		menuDataGlobal.numItems = 0;
+		return MENU_STATUS_SUCCESS;
+	}
+
+	menuSystemPopPreviousMenu();
+	return MENU_STATUS_SUCCESS;
+}
+#elif defined(HAS_GPS)
 
 static void updateScreen(bool isFirstRun, bool forceRedraw);
 static void handleEvent(uiEvent_t *ev);
