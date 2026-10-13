@@ -28,7 +28,9 @@
 #include "main.h"
 #include "user_interface/uiLocalisation.h"
 
-#include "user_interface/languages/english.h"
+#if ! defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/english.h"   // R19 Е7.2: в українській збірці англійська таблиця не лінкується (~5 КБ флешу)
+#endif
 #if defined(LANGUAGE_BUILD_JAPANESE)
 #include "user_interface/languages/japanese.h"
 #elif defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -53,7 +55,9 @@ const stringsTable_t userLanguage = { .magicNumber = { LANGUAGE_TAG_MAGIC_NUMBER
  */
 const stringsTable_t languages[]=
 {
+#if ! defined(LANGUAGE_BUILD_UKRAINIAN)
 		englishLanguage,        // englishLanguageName
+#endif
 #if defined(LANGUAGE_BUILD_JAPANESE)
 		japaneseLanguage       // japaneseLanguageName
 #elif defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -67,7 +71,9 @@ const stringsTable_t *currentLanguage;
 
 uint8_t languagesGetCount(void)
 {
-#if ! defined(LANGUAGE_BUILD_JAPANESE) && ! defined(LANGUAGE_BUILD_UKRAINIAN)
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+	return 1;   // R19 Е7.2: одна мова (біт BIT_SECONDARY_LANGUAGE ігнорується; settings.c скидає його, якщо лишився від старої прошивки)
+#elif ! defined(LANGUAGE_BUILD_JAPANESE)
 	uint8_t magic[3][4] = { LANGUAGE_TAG_MAGIC_NUMBER, LANGUAGE_TAG_VERSION };
 
 	return ((memcmp(languages[1].magicNumber, magic, sizeof(magic)) == 0) ? 2 : 1);
