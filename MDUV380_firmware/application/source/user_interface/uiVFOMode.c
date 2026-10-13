@@ -2379,7 +2379,7 @@ static void handleEvent(uiEvent_t *ev)
 				audioAmpMute(!muted);
 
 				snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s: %s", currentLanguage->mute, (muted ? currentLanguage->no : currentLanguage->yes));
-				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1000U, buf, true);
+				uiNotificationShowShort(1000U, buf, true);
 
 				if (muted)
 				{

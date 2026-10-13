@@ -415,7 +415,7 @@ static bool saveCfg(aprsModeMem_t *m)
 	if ((ok == false) && (m->saveFailShown == false))
 	{
 		m->saveFailShown = true;
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_SAVE_FAIL, true);
+		uiNotificationShowShort(1500, APRSM_SAVE_FAIL, true);
 		soundSetMelody(MELODY_ERROR_BEEP);
 	}
 	return ok;
@@ -823,7 +823,7 @@ void aprsModeBeaconOncePoll(void)
 	m->oneShot = 0U;
 	if (m->bcnState == APRS_MODE_BCN_SENT)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_BCN_SENT, true);
+		uiNotificationShowShort(1500, APRSM_BCN_SENT, true);
 	}
 	if (what == 2U)
 	{
@@ -895,7 +895,7 @@ static void beaconFeedback(aprsModeBcnState_t st)
 	}
 	if (txt != NULL)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, txt, true);
+		uiNotificationShowShort(1500, txt, true);
 		soundSetMelody(MELODY_ERROR_BEEP);
 	}
 }

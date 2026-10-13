@@ -208,13 +208,11 @@ static bool handleEvent(uiEvent_t *ev)
 		else if (callReplayIsRecordingEnabled() == false)
 		{
 			// Той самий пріоритет, що в updateScreen() вище -- сказати ЧОМУ порожньо.
-			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000,
-					currentLanguage->call_replay_disabled, true);
+			uiNotificationShowShort(2000, currentLanguage->call_replay_disabled, true);
 		}
 		else if (callReplayIsEmpty())
 		{
-			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000,
-					currentLanguage->call_replay_empty, true);
+			uiNotificationShowShort(2000, currentLanguage->call_replay_empty, true);
 		}
 		else if (selectedLastTransitionMode)
 		{

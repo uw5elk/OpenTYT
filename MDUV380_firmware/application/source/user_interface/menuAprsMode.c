@@ -375,7 +375,7 @@ static void drawMsgCompose(void)
 
 static void msgNotify(const char *txt)
 {
-	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, txt, true);
+	uiNotificationShowShort(1500, txt, true);
 	soundSetMelody(MELODY_ERROR_BEEP);
 }
 

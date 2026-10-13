@@ -482,7 +482,7 @@ static void handleEvent(uiEvent_t *ev)
 						}
 						break;
 					case APRS_PTT_BEACON_NO_FREQ:
-						uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, TXERR_APRS_NO_FREQ, true);
+						uiNotificationShowShort(1500, TXERR_APRS_NO_FREQ, true);
 						break;
 					default:   /* DEFERRED / NONE -- звичайне завершення голосу нижче */
 						break;

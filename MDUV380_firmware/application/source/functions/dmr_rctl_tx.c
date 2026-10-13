@@ -759,7 +759,7 @@ void dmrRctlTick(void)
 			s_ackGen++;
 			char note[40];
 			snprintf(note, sizeof note, RCTL_NOTE_ACK_FMT, (unsigned long)msg.issuerId);
-			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
+			uiNotificationShowShort(4000, note, true);
 			break;
 		}
 

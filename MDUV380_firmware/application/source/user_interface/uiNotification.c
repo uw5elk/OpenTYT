@@ -175,6 +175,9 @@ static uiNotificationData_t notificationData =
 static void displayMessage(void);
 static void displaySmsFullScreen(void);
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
+#if defined(ENABLE_APRS_RX)
+static void displayMessageCard(void);
+#endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 static void displayCallAlertFullScreen(void);
 static void displaySmsAckedFullScreen(void);
@@ -390,6 +393,13 @@ void uiNotificationRefresh(void)
 #endif
 
 			case NOTIFICATION_TYPE_MESSAGE:
+#if defined(ENABLE_APRS_RX)
+				if ((notificationData.id == NOTIFICATION_ID_CARD) || (notificationData.id == NOTIFICATION_ID_TX_INHIBIT))
+				{
+					displayMessageCard();   // R18 Д6: короткі підтвердження/відмови -- на весь екран, як гучність
+				}
+				else
+#endif
 				displayMessage();
 				break;
 
@@ -675,6 +685,95 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 		displayFillRect((barX + 2), (barY + 2), fillW, (barH - 4), false);
 	}
 }
+
+#if defined(ENABLE_APRS_RX)
+/* R18 Д6: повноекранна картка короткого підтвердження/відмови -- ТОЙ САМИЙ вигляд, що й displayLevelCard() (гучність, потужність, «Переслухати»): повне тло, рамка,
+ * кольори за темою (ніч -- жовтий на темному, день -- темно-синій на білому). Без смуги-індикатора. Текст -- notificationData.message; '\n' -- розрив рядка;
+ * довший за 19 символів рядок переноситься за пробілом. Шрифт 8x16 (FONT_SIZE_3): великий 16x32 не має частини кирилиці. До 4 рядків. */
+#define CARD_COLS   19
+#define CARD_LINES  4
+static void displayMessageCard(void)
+{
+	char line[CARD_LINES][CARD_COLS + 1];
+	int n = 0;
+	const char *p = notificationData.message;
+	uint16_t colBg, colFg, colDec;
+
+	while ((*p != 0) && (n < CARD_LINES))
+	{
+		int len = 0;
+		int cut;
+
+		while ((p[len] != 0) && (p[len] != '\n'))
+		{
+			len++;
+		}
+		if (len > CARD_COLS)
+		{
+			cut = CARD_COLS;
+			for (int i = CARD_COLS; i > 0; i--)
+			{
+				if (p[i] == ' ')
+				{
+					cut = i;   // розрив за пробілом
+					break;
+				}
+			}
+			memcpy(line[n], p, (size_t)cut);
+			line[n][cut] = 0;
+			p += cut;
+			if (*p == ' ')
+			{
+				p++;
+			}
+		}
+		else
+		{
+			memcpy(line[n], p, (size_t)len);
+			line[n][len] = 0;
+			p += len;
+			if (*p == '\n')
+			{
+				p++;
+			}
+		}
+		n++;
+	}
+	if (n == 0)
+	{
+		line[0][0] = 0;
+		n = 1;
+	}
+
+	if (DAYTIME_CURRENT == NIGHT)
+	{
+		colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0C0C14));
+		colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFE000));
+		colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x786914));
+	}
+	else
+	{
+		colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFFFFF));
+		colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0A2A6B));
+		colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x6E86C0));
+	}
+	displaySetForegroundAndBackgroundColours(colFg, colBg);
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displaySetForegroundAndBackgroundColours(colDec, colBg);
+	displayDrawRect(1, 1, (DISPLAY_SIZE_X - 2), (DISPLAY_SIZE_Y - 2), false);
+	displaySetForegroundAndBackgroundColours(colFg, colBg);
+	{
+		const int16_t lineStep = (FONT_SIZE_3_HEIGHT + 4);
+		int16_t y = (int16_t)((DISPLAY_SIZE_Y - ((n * lineStep) - 4)) / 2);
+
+		for (int i = 0; i < n; i++)
+		{
+			displayPrintCentered(y, line[i], FONT_SIZE_3);
+			y = (int16_t)(y + lineStep);
+		}
+	}
+}
+#endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 #if defined(APRS_RX)

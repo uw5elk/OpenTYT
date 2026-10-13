@@ -3943,13 +3943,13 @@ bool callReplayToggleOnSK1(uiEvent_t *ev)
 
 	if (callReplayIsRecordingEnabled() == false)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_disabled, true);
+		uiNotificationShowShort(2000, currentLanguage->call_replay_disabled, true);
 		return true;
 	}
 
 	if (callReplayIsEmpty())
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_empty, true);
+		uiNotificationShowShort(2000, currentLanguage->call_replay_empty, true);
 		return true;
 	}
 
@@ -5188,7 +5188,7 @@ void daytimeThemeApply(DayTime_t daytime)
 	// Need to perform a full reset on the display to change back to non-inverted
 	displayInit(((daytime == NIGHT) ^ settingsIsOptionBitSet(BIT_INVERSE_VIDEO)));
 #endif
-	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1000, ((daytime == DAY) ? currentLanguage->daytime_theme_day : currentLanguage->daytime_theme_night), true);
+	uiNotificationShowShort(1000, ((daytime == DAY) ? currentLanguage->daytime_theme_day : currentLanguage->daytime_theme_night), true);
 	menuSystemCallCurrentMenuTick(&e); // redraw the current screen.
 
 	displayLightTrigger(true);
