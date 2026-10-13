@@ -1493,6 +1493,41 @@ void applicationMainTask(void)
 		// показано на весь екран і сам він не гасне -- закриває його оператор червоною
 		// кнопкою. Клавішу тут же "з'їдаємо", щоб те саме натискання не пішло далі в меню
 		// (інакше RED заразом вийшов би з поточного екрана).
+#if defined(APRS_RX)
+		/* R17 Г4: на вікні маяка стрілки вгору/вниз (передні клавіші) і ручка перемикають станцію -- у ТОМУ Ж порядку, що в «APRS станції». Клавішу з'їдаємо,
+		 * щоб вона не змінила канал під вікном. Станція одна (перемикати нікуди) -- теж з'їдаємо: вікно не повинно мінятися каналом. */
+		if (uiNotificationIsSms() && (uiNotificationGetId() == NOTIFICATION_ID_APRS_BEACON) && ev.hasEvent)
+		{
+			int step = 0;
+
+#if defined(PLATFORM_MDUV380)
+			if (KEYCHECK_SHORTUP(ev.keys, KEY_ROTARY_INCREMENT) || KEYCHECK_SHORTUP(ev.keys, KEY_FRONT_DOWN))
+			{
+				step = 1;
+			}
+			else if (KEYCHECK_SHORTUP(ev.keys, KEY_ROTARY_DECREMENT) || KEYCHECK_SHORTUP(ev.keys, KEY_FRONT_UP))
+			{
+				step = -1;
+			}
+#else
+			if (KEYCHECK_SHORTUP(ev.keys, KEY_DOWN))
+			{
+				step = 1;
+			}
+			else if (KEYCHECK_SHORTUP(ev.keys, KEY_UP))
+			{
+				step = -1;
+			}
+#endif
+			if (step != 0)
+			{
+				(void)aprsRxWindowStep(step);
+				ev.keys.key = 0;
+				ev.keys.event = KEY_MOD_UP;
+				ev.hasEvent = false;
+			}
+		}
+#endif
 		if ((uiNotificationIsSms()
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 				|| uiNotificationIsCallAlert()

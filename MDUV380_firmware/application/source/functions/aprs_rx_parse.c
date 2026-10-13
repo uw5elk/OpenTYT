@@ -2260,6 +2260,43 @@ void aprsArrowGeom(aprsArrow_t *a, int16_t cx, int16_t cy, int16_t len, uint16_t
 	a->ry = (int16_t)iround((double)a->ty + (dx * sa + (-dy) * ca) * wl);
 }
 
+void aprsArrowPoly(aprsArrowPoly_t *p, int16_t cx, int16_t cy, int16_t len, uint16_t bearingDeg)
+{
+	const double rad = 0.017453292519943295;
+	const double b = (double)(bearingDeg % 360U) * rad;
+	const double dx = sin(b);
+	const double dy = -cos(b);        /* вісь стрілки на екрані (y вниз, північ угору) */
+	const double px = -dy;            /* перпендикуляр: вісь, повернута на +90° */
+	const double py = dx;
+	double hl = (double)len * 0.4;    /* довжина вістря */
+	const double hw = 5.0;            /* півширина вістря */
+	const double sw = 2.0;            /* півширина стрижня (4 px) */
+	double s;
+	/* (u, v) -> екран; пари для трикутників: стрижень (0,-sw)(s,-sw)(s,sw) і (0,-sw)(s,sw)(0,sw); вістря (s,-hw)(len,0)(s,hw) -- всі з додатним
+	 * орієнтованим кутом у (u, v), обертання його зберігає */
+	double u[9], v[9];
+
+	if (hl < 4.0)
+	{
+		hl = 4.0;
+	}
+	s = (double)len - hl;
+	if (s < 1.0)
+	{
+		s = 1.0;
+	}
+	u[0] = 0; v[0] = -sw;  u[1] = s; v[1] = -sw;  u[2] = s; v[2] = sw;
+	u[3] = 0; v[3] = -sw;  u[4] = s; v[4] = sw;   u[5] = 0; v[5] = sw;
+	u[6] = s; v[6] = -hw;  u[7] = (double)len; v[7] = 0;  u[8] = s; v[8] = hw;
+	for (int i = 0; i < 9; i++)
+	{
+		p->t[i / 3].x[i % 3] = iround((double)cx + (u[i] * dx) + (v[i] * px));
+		p->t[i / 3].y[i % 3] = iround((double)cy + (u[i] * dy) + (v[i] * py));
+	}
+	p->tipX = p->t[2].x[1];
+	p->tipY = p->t[2].y[1];
+}
+
 bool aprsBeaconArrowVisible(bool hasGeo, uint32_t distM)
 {
 	return hasGeo && (distM > 0U);
@@ -2311,7 +2348,7 @@ void aprsHistStationTouch(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation
 }
 
 const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s, const aprsPacket_t *pkt,
-		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs)
+		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs, int rssiDbm)
 {
 	int i = histIdx(db, s);
 	aprsBcnRec_t *r;
@@ -2322,6 +2359,7 @@ const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, cons
 	}
 	r = &h->bcn[i];
 	memset(r, 0, sizeof(*r));
+	r->rssiDbm = aprsRssiClamp(rssiDbm);
 	r->hasGeo = hasGeo;
 	r->bearing = bearing;
 	r->distM = distM;
@@ -2382,7 +2420,74 @@ const aprsBcnRec_t *aprsHistBeaconLast(const aprsHist_t *h, int *dbIdx)
 	return &h->bcn[i];
 }
 
-bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len)
+int aprsHistBeaconOrder(const aprsHist_t *h, const aprsRxDb_t *db, uint32_t nowMs, uint8_t *out, int max)
+{
+	int n = 0;
+
+	for (int rank = 0; (rank < APRS_STATIONS_MAX) && (n < max); rank++)
+	{
+		const aprsStation_t *s = aprsDbNth(db, rank, nowMs);
+
+		if (s == NULL)
+		{
+			break;
+		}
+		if (((s->flags & APRS_ST_HASPOS) != 0U) && (aprsHistBeaconOf(h, db, s) != NULL))
+		{
+			out[n++] = (uint8_t)(s - &db->st[0]);
+		}
+	}
+	return n;
+}
+
+int aprsBeaconOrderFind(const uint8_t *order, int count, int dbIdx)
+{
+	for (int i = 0; i < count; i++)
+	{
+		if ((int)order[i] == dbIdx)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+int aprsBeaconOrderStep(int pos, int count, int step)
+{
+	if (count <= 0)
+	{
+		return -1;
+	}
+	if ((pos < 0) || (pos >= count))
+	{
+		return (step < 0) ? (count - 1) : 0;
+	}
+	pos += (step < 0) ? -1 : 1;
+	if (pos < 0)
+	{
+		pos = count - 1;
+	}
+	if (pos >= count)
+	{
+		pos = 0;
+	}
+	return pos;
+}
+
+int8_t aprsRssiClamp(int dBm)
+{
+	if (dBm == 0)
+	{
+		return (int8_t)APRS_RSSI_NONE;
+	}
+	if (dBm < -127)
+	{
+		return (int8_t)-127;
+	}
+	return (int8_t)((dBm > -1) ? -1 : dBm);
+}
+
+bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len, int rssiDbm)
 {
 	aprsJrnEntry_t *e = &h->jrn[h->jrnHead % APRS_JRN_SLOTS];
 
@@ -2398,6 +2503,7 @@ bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t l
 		return false;
 	}
 	e->rxSecs = rxSecs;
+	h->jrnRssi[h->jrnHead % APRS_JRN_SLOTS] = aprsRssiClamp(rssiDbm);
 	h->jrnHead = (uint8_t)((h->jrnHead + 1U) % APRS_JRN_SLOTS);
 	if (h->jrnCount < APRS_JRN_SLOTS)
 	{
@@ -2443,6 +2549,15 @@ int aprsJrnNOfSlot(const aprsHist_t *h, int slot)
 	}
 	n = ((int)h->jrnHead + APRS_JRN_SLOTS - 1 - slot) % APRS_JRN_SLOTS;
 	return (n < (int)h->jrnCount) ? n : 0;
+}
+
+int8_t aprsJrnRssiAtSlot(const aprsHist_t *h, int slot)
+{
+	if ((slot < 0) || (slot >= APRS_JRN_SLOTS) || (h->jrn[slot].text[0] == 0))
+	{
+		return (int8_t)APRS_RSSI_NONE;
+	}
+	return h->jrnRssi[slot];
 }
 
 void aprsJrnSummary(const aprsJrnEntry_t *e, char *call, char *dti)

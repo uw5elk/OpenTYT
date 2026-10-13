@@ -861,6 +861,75 @@ bool aprsRxWindowShowStation(const char *call)
 	return true;
 }
 
+/* R17 Г4: список станцій вікна й позиція поточної (за позивним вікна). Повертає кількість; *pos = -1, якщо станції вікна в списку нема. */
+static int winOrder(uint8_t *order, int max, int *pos)
+{
+	int n = aprsHistBeaconOrder(aprsModeHist(), &s_rx.db, ticksGetMillis(), order, max);
+	const aprsStation_t *cur = stationByCall(s_rx.win.call);
+
+	*pos = (cur != NULL) ? aprsBeaconOrderFind(order, n, (int)(cur - &s_rx.db.st[0])) : -1;
+	return n;
+}
+
+bool aprsRxWindowStep(int step)
+{
+	uint8_t order[APRS_STATIONS_MAX];
+	int pos;
+	int n;
+	int to;
+	bool wasManual;
+	const aprsStation_t *st;
+	const aprsBcnRec_t *rec;
+
+	if ((stateValid() == false) || (s_rx.win.active == false))
+	{
+		return false;
+	}
+	n = winOrder(order, APRS_STATIONS_MAX, &pos);
+	if ((n == 0) || ((n == 1) && (pos == 0)))
+	{
+		return false;
+	}
+	to = aprsBeaconOrderStep(pos, n, step);
+	if (to < 0)
+	{
+		return false;
+	}
+	st = &s_rx.db.st[order[to]];
+	rec = aprsHistBeaconOf(aprsModeHist(), &s_rx.db, st);
+	if (rec == NULL)
+	{
+		return false;
+	}
+	wasManual = ((s_rx.win.flags & AWIN_F_MANUAL) != 0U);
+	winOpenFromRec(rec, st);
+	if (wasManual == false)
+	{
+		s_rx.win.flags &= (uint8_t)~AWIN_F_MANUAL;   /* вікно, відкрите пакетом, лишається «живим»: гасне за правилами winTick() */
+	}
+	return true;
+}
+
+bool aprsRxWindowPos(int *n, int *m)
+{
+	uint8_t order[APRS_STATIONS_MAX];
+	int pos;
+	int cnt;
+
+	if ((stateValid() == false) || (s_rx.win.active == false))
+	{
+		return false;
+	}
+	cnt = winOrder(order, APRS_STATIONS_MAX, &pos);
+	if (pos < 0)
+	{
+		return false;
+	}
+	*n = pos + 1;
+	*m = cnt;
+	return true;
+}
+
 void aprsRxWindowDismiss(void)
 {
 	if (stateValid())
@@ -1001,7 +1070,9 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 	s_rx.db.total++;
 	/* R16: журнал кадрів (TNC-2, 127 символів + час) для екрана «Пакети» -- ДО розгортання third-party й ДО відсіву дублікатів: показуємо те, що справді
 	 * прийшло в ефір (кадр через i-gate видно з '}'). Блок -- у резерві «Переслухати» (aprsModeHist()), вільний CCM не чіпаємо. */
-	(void)aprsJrnAdd(aprsModeHist(), (uint32_t)uiDataGlobal.dateTimeSecs, frame, len);
+	int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);   /* R17 Г6: останній відлік RSSI (оновлюється головним циклом, поки приймач слухає); на момент розбору кадру несучої могло вже й не бути -- гіпотеза, перевіряється на залізі (BC13) */
+
+	(void)aprsJrnAdd(aprsModeHist(), (uint32_t)uiDataGlobal.dateTimeSecs, frame, len, rssi);
 	/* R11-fix: i-gate загортає пакет з APRS-IS у third-party ("}SRC>DST,path:info"). Розгортаємо ДО розбору: далі (банер, список станцій,
 	 * дедуплікація, ACK відправнику) скрізь ax.src -- СПРАВЖНІЙ відправник, а не шлюз. Один рівень (див. aprsAx25Unwrap()). */
 	if (aprsAx25Unwrap(&ax))
@@ -1037,16 +1108,7 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		uint16_t bb = 0;
 		bool bg = aprsRxStationGeo(st, &bd, &bb);
 
-		(void)aprsHistBeaconFill(aprsModeHist(), &s_rx.db, st, &pkt, bg, bd, bb, (uint32_t)uiDataGlobal.dateTimeSecs);
-	}
-
-	if (aprsModeIsActive())
-	{
-		uint32_t md = 0;
-		uint16_t mb = 0;
-		bool mg = aprsRxStationGeo(st, &md, &mb);
-
-		aprsModeOnFrame(&ax, &pkt, mg, md, mb);   /* R10: «останній пакет» на «Моніторі» */
+		(void)aprsHistBeaconFill(aprsModeHist(), &s_rx.db, st, &pkt, bg, bd, bb, (uint32_t)uiDataGlobal.dateTimeSecs, rssi);
 	}
 
 	/* Повідомлення нам: тільки справжнє (не ack/rej), раніше не віддане. ACK уже поставлено вище (aprsMsgBgOnMessage(), на кожну копію);

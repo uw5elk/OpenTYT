@@ -191,8 +191,13 @@ static void drawPktList(void)
 	{
 		ui->scroll = (uint8_t)(h->jrnCount - 1U);
 	}
-	statusLine(buf, sizeof(buf));
-	printRow(0, buf);
+	{
+		char st[40];
+
+		statusLine(st, sizeof(st));
+		snprintf(buf, sizeof(buf), "%-22.22s%u/%u", st, (unsigned)ui->scroll + 1U, (unsigned)h->jrnCount);   /* R17: номер виділеного запису / скільки їх */
+		printRow(0, buf);
+	}
 	for (int r = 0; r < (int)h->jrnCount; r++)
 	{
 		const aprsJrnEntry_t *e = aprsJrnNth(h, r);
@@ -210,6 +215,16 @@ static void drawPktList(void)
 			snprintf(tm, sizeof(tm), "%s", APRSRX_PKTL_NOTIME);
 		}
 		snprintf(buf, sizeof(buf), APRSRX_PKTL_ROW, (r == (int)ui->scroll) ? '>' : ' ', tm, call, dti);
+		{
+			/* R17 Г6: RSSI кадру праворуч (дБм, без одиниці: 4 символи); невідомий -- порожньо */
+			int8_t rs = aprsJrnRssiAtSlot(h, aprsJrnSlotOf(h, r));
+			size_t l = strlen(buf);
+
+			if (rs != (int8_t)APRS_RSSI_NONE)
+			{
+				snprintf(buf + l, sizeof(buf) - l, " %4d", (int)rs);
+			}
+		}
 		printRow(1 + r, buf);
 	}
 	printRow(10, APRSRX_PKTL_HINT);
@@ -237,8 +252,22 @@ static void drawPacket(void)
 		top = maxTop;
 		ui->scroll = (uint8_t)((ui->scroll & 0xF0U) | top);
 	}
-	snprintf(buf, sizeof(buf), APRSRX_PKT_LEN, (unsigned)len);
-	printRow(0, buf);
+	{
+		char ln[24];
+
+		int8_t rs = aprsJrnRssiAtSlot(aprsModeHist(), PKT_SLOT(ui));
+
+		if (rs != (int8_t)APRS_RSSI_NONE)
+		{
+			snprintf(ln, sizeof(ln), APRSRX_PKT_LEN_RS, (unsigned)len, (int)rs);
+		}
+		else
+		{
+			snprintf(ln, sizeof(ln), APRSRX_PKT_LEN, (unsigned)len);
+		}
+		snprintf(buf, sizeof(buf), "%-22.22s%u/%u", ln, (unsigned)aprsJrnNOfSlot(aprsModeHist(), PKT_SLOT(ui)) + 1U, (unsigned)aprsModeHist()->jrnCount);   /* R17: який запис журналу */
+		printRow(0, buf);
+	}
 	for (unsigned r = 0; r < ST_PKT_ROWS; r++)
 	{
 		size_t off = (size_t)(top + r) * ST_PKT_COLS;
@@ -303,6 +332,49 @@ static void pktTextMove(aprsRxUi_t *ui, int dir)
 	if (((dir > 0) && (top < 15U)) || ((dir < 0) && (top > 0U)))
 	{
 		ui->scroll = (uint8_t)((ui->scroll & 0xF0U) | (unsigned)((int)top + dir));
+	}
+}
+
+/* R17 (Г3): напрямок прокрутки. На MDUV380 ручка в меню -- це KEY_LEFT/KEY_RIGHT (menuSystemPreProcessEvent), кнопки UP/DOWN -- KEY_UP/KEY_DOWN.
+ * Раніше екран слухав лише UP/DOWN: ручка в «Пакети» не робила нічого. Тепер DOWN і RIGHT -- далі (+1), UP і LEFT -- назад (-1). */
+static int navDir(const uiEvent_t *ev)
+{
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	{
+		return 1;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	{
+		return -1;
+	}
+	return 0;
+}
+
+/* Скільки рядків займає повний кадр відкритого запису журналу. */
+static unsigned pktLines(const aprsRxUi_t *ui)
+{
+	const aprsJrnEntry_t *e = aprsJrnAtSlot(aprsModeHist(), PKT_SLOT(ui));
+
+	return (e == NULL) ? 0U : (unsigned)((strlen(e->text) + (ST_PKT_COLS - 1U)) / ST_PKT_COLS);
+}
+
+/* Вгору/вниз у повному кадрі: довгий текст (більше ST_PKT_ROWS рядків) гортається рядками; кадр, що весь на екрані, -- нічого не гортає,
+ * тож стрілки перемикають на сусідній запис журналу (вниз -- старіший). Журнал порожній -- нічого. */
+static void pktFrameMove(aprsRxUi_t *ui, int dir)
+{
+	if (pktLines(ui) > ST_PKT_ROWS)
+	{
+		pktTextMove(ui, dir);
+	}
+	else
+	{
+		int cnt = (int)aprsModeHist()->jrnCount;
+		int n = aprsJrnNOfSlot(aprsModeHist(), PKT_SLOT(ui)) + dir;
+
+		if (cnt > 0)
+		{
+			pktOpen(ui, (n < 0) ? (cnt - 1) : ((n >= cnt) ? 0 : n));
+		}
 	}
 }
 
@@ -376,7 +448,19 @@ static void drawCard(void)
 	snprintf(buf, sizeof(buf), APRSRX_CARD_PKTS, (unsigned)s->count);
 	printRow(4, buf);
 	ageStr(b, sizeof(b), (uint32_t)(now - s->lastMs) / 1000U);
-	snprintf(buf, sizeof(buf), APRSRX_CARD_LAST, b);
+	{
+		/* R17 Г6: RSSI останнього позиційного пакета станції (запис маяка), якщо відомий */
+		const aprsBcnRec_t *br = aprsHistBeaconOf(aprsModeHist(), db, s);
+
+		if ((br != NULL) && (br->rssiDbm != (int8_t)APRS_RSSI_NONE))
+		{
+			snprintf(buf, sizeof(buf), APRSRX_CARD_LAST_RS, b, (int)br->rssiDbm);
+		}
+		else
+		{
+			snprintf(buf, sizeof(buf), APRSRX_CARD_LAST, b);
+		}
+	}
 	printRow(5, buf);
 	snprintf(buf, sizeof(buf), APRSRX_CARD_PATH, s->path);
 	printRow(6, buf);
@@ -607,12 +691,12 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 					redraw = true;
 				}
 			}
-			else if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+			else if (navDir(ev) != 0)
 			{
-				int dir = KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1;
+				int dir = navDir(ev);
 				if (ui->view == APRS_RX_VIEW_PACKET)
 				{
-					pktTextMove(ui, dir);
+					pktFrameMove(ui, dir);
 				}
 				else if (ui->view == APRS_RX_VIEW_PKTLIST)
 				{
@@ -703,126 +787,6 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 		draw();
 	}
 	return true;
-}
-
-/* ---- R10: сторінка «Станції» «Режиму APRS» -- той самий список і картка, але без власного заголовка/діагностики ---- */
-
-void menuAprsStationsDrawEmbedded(void)
-{
-	aprsRxUi_t *ui = aprsRxUi();
-
-	if ((ui->view == APRS_RX_VIEW_DIAG) || (ui->view == APRS_RX_VIEW_DIAG2))
-	{
-		ui->view = APRS_RX_VIEW_LIST;   /* діагностика (обидві сторінки) лишається в екрані «APRS станції» */
-	}
-	if (ui->view == APRS_RX_VIEW_PKTLIST)
-	{
-		drawPktList();
-	}
-	else if (ui->view == APRS_RX_VIEW_PACKET)
-	{
-		drawPacket();
-	}
-	else if (ui->view == APRS_RX_VIEW_CARD)
-	{
-		drawCard();
-	}
-	else
-	{
-		drawList(ticksGetMillis());
-		printRow(10, APRSM_ST_HINT);
-	}
-}
-
-int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
-{
-	aprsRxUi_t *ui = aprsRxUi();
-
-	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
-	{
-		return 0;
-	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
-	{
-		if (ui->view == APRS_RX_VIEW_PACKET)
-		{
-			pktBackToList(ui);   /* R16: повний кадр -> список журналу */
-			return 1;
-		}
-		if (ui->view == APRS_RX_VIEW_PKTLIST)
-		{
-			ui->scroll = 0;
-			ui->view = APRS_RX_VIEW_CARD;   /* R15: журнал відкривають лише з картки -- RED назад на картку */
-			return 1;
-		}
-		if (ui->view != APRS_RX_VIEW_CARD)
-		{
-			return -1;   // зі списку -- назад на «Монітор»
-		}
-		ui->view = APRS_RX_VIEW_LIST;
-		return 1;
-	}
-	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
-	{
-		int dir = KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1;
-
-		if (ui->view == APRS_RX_VIEW_PACKET)
-		{
-			pktTextMove(ui, dir);
-		}
-		else if (ui->view == APRS_RX_VIEW_PKTLIST)
-		{
-			pktListMove(ui, dir);
-		}
-		else if (ui->view == APRS_RX_VIEW_CARD)
-		{
-			cardGo(dir);
-		}
-		else
-		{
-			int count = aprsDbCount(aprsRxDb());
-			int n = (int)ui->sel + dir;
-
-			if (count > 0)
-			{
-				ui->sel = (uint8_t)((n < 0) ? (count - 1) : ((n >= count) ? 0 : n));   // по колу
-			}
-		}
-		return 1;
-	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_CARD))
-	{
-		ui->view = APRS_RX_VIEW_PKTLIST;   /* R16 */
-		ui->scroll = 0;
-		return 1;
-	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR) && (ui->view == APRS_RX_VIEW_CARD))
-	{
-		cardBeaconOpen(ui);   /* R16: вікно маяка САМЕ цієї станції */
-		return 1;
-	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view == APRS_RX_VIEW_PKTLIST))
-	{
-		pktOpen(ui, (int)ui->scroll);
-		return 1;
-	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view == APRS_RX_VIEW_CARD))
-	{
-		(void)menuAprsModeReplyTo(ui->cardCall);   /* R11: «Відповісти» -- режим уже активний: відкриває сторінку «Повідомлення» з набором */
-		return 1;
-	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view != APRS_RX_VIEW_CARD) && (ui->view != APRS_RX_VIEW_PACKET) && (ui->view != APRS_RX_VIEW_PKTLIST))
-	{
-		const aprsStation_t *s = aprsDbNth(aprsRxDb(), ui->sel, ticksGetMillis());
-
-		if (s != NULL)
-		{
-			snprintf(ui->cardCall, sizeof(ui->cardCall), "%s", s->call);
-			ui->view = APRS_RX_VIEW_CARD;
-		}
-		return 1;
-	}
-	return 0;
 }
 
 const char *menuAprsStationsTypeStr(uint8_t type)

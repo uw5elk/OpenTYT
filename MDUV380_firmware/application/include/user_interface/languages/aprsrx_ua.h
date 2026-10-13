@@ -119,4 +119,7 @@
 #define APRSRX_PKTL_ROW       "%c%-5s %-9s %c"              /* маркер, час, позивний, DTI = 1+5+1+9+1+1 = 18 символів <= 26 */
 #define APRSRX_BCN_NONE_ST    "Маяків від\nцієї станції\nне було"   /* сповіщення на '*' з картки: станція без позиційних пакетів (3 рядки по <= 14 символів) */
 
+#define APRSRX_CARD_LAST_RS   "Остан.: %s тому %dдБм"   /* R17 Г6: те саме + RSSI останнього маяка (-127..-1) */
+#define APRSRX_PKT_LEN_RS     "Символів: %u %dдБм"          /* R17 Г6: довжина кадру + RSSI, з яким він прийнятий */
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSRX_UA_H_ */

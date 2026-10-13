@@ -150,6 +150,7 @@ static void jrnPush(const char *text, uint32_t secs)
 
 	snprintf(e->text, sizeof(e->text), "%s", text);
 	e->rxSecs = secs;
+	s_hist.jrnRssi[s_hist.jrnHead] = (int8_t)(-60 - (int)(secs % 30U));
 	s_hist.jrnHead = (uint8_t)((s_hist.jrnHead + 1U) % APRS_JRN_SLOTS);
 	if (s_hist.jrnCount < APRS_JRN_SLOTS) { s_hist.jrnCount++; }
 }
@@ -161,6 +162,16 @@ static void keyUp(char k)
 }
 
 /* R16: «Пакети» (з меню і з картки), '*' на картці -- маяк цієї станції, «Останній маяк» */
+/* перемалювати екран «APRS станції» зараз (тік без подій після паузи) */
+static void redrawNow(void)
+{
+	uiEvent_t e;
+
+	memset(&e, 0, sizeof(e));
+	s_now += 1000;
+	menuAprsStationsTick(&e);
+}
+
 static void testPacketScreens(void)
 {
 	char w[64];
@@ -193,14 +204,23 @@ static void testPacketScreens(void)
 	CHECK(s_nrows == 10, "статус + 8 рядків + підказка (є %d)", s_nrows);
 	CHECK(strstr(s_rows[1], "N0CALL-9") != NULL && s_rows[1][0] == '>', "найновіший зверху й виділений: «%s»", s_rows[1]);
 	CHECK(strstr(s_rows[8], "UW5ELE-4") != NULL, "восьмий -- 4-й кадр з десяти (1..3 витіснено): «%s»", s_rows[8]);
-	CHECK(s_rows[1][strlen(s_rows[1]) - 1] == '`', "DTI Mic-E в кінці рядка: «%s»", s_rows[1]);
+	CHECK(s_rows[1][strlen(s_rows[1]) - 6] == '`', "DTI Mic-E перед RSSI: «%s»", s_rows[1]);
 	CHECK(strstr(s_rows[2], "UW5ELK-10") != NULL && strlen(s_rows[2]) <= 26, "довгий позивний вміщується: «%s»", s_rows[2]);
+	CHECK(strlen(s_rows[1]) >= 5 && s_rows[1][strlen(s_rows[1]) - 3] == '-' && strlen(s_rows[1]) <= 26, "рядок списку закінчується RSSI (-NN): «%s»", s_rows[1]);
 	for (int i = 0; i < 8; i++) { click(KEY_DOWN); }
 	CHECK(s_ui.scroll == 0, "8 разів DOWN -- по колу (scroll=%d)", s_ui.scroll);
 	click(KEY_UP);
 	CHECK(s_ui.scroll == 7, "UP з нуля -> останній запис (scroll=%d)", s_ui.scroll);
 	checkScreen("журнал: виділено останній");
 	click(KEY_DOWN);
+	/* R17 (Г3): ручка (KEY_RIGHT/KEY_LEFT) гортає список так само, як DOWN/UP; у шапці «n/m» */
+	CHECK(s_ui.scroll == 0 && !strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "1/8"), "шапка списку: «n/m» (%s)", s_rows[0]);
+	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);
+	CHECK(s_ui.scroll == 1 && !strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "2/8"), "ручка вправо -> наступний запис (scroll=%d, %s)", s_ui.scroll, s_rows[0]);
+	key(KEY_LEFT, KEY_MOD_PRESS); key(KEY_LEFT, KEY_MOD_UP); key(KEY_LEFT, KEY_MOD_PRESS); key(KEY_LEFT, KEY_MOD_UP);
+	CHECK(s_ui.scroll == 7, "ручка вліво з нуля -> останній запис (scroll=%d)", s_ui.scroll);
+	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);
+	CHECK(s_ui.scroll == 0, "ручка вправо з останнього -> перший (scroll=%d)", s_ui.scroll);
 
 	/* GREEN -> повний кадр (127 символів = 5 рядків по 26), RED -> назад із тим самим виділенням */
 	click(KEY_GREEN);
@@ -209,9 +229,18 @@ static void testPacketScreens(void)
 	CHECK(s_nrows == 1 + 5 + 1, "рядок довжини + 5 рядків тексту + підказка (є %d)", s_nrows);
 	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "перший рядок -- початок кадру: «%s»", s_rows[1]);
 	tri0 = s_tri;
-	click(KEY_DOWN); click(KEY_DOWN);
-	CHECK(s_tri == tri0 && (s_ui.scroll & 0x0F) == 0, "кадр вміщується без прокрутки (scroll=%02x)", s_ui.scroll);
-	for (int i = 0; i < 20; i++) { click(KEY_UP); }
+	/* R17 (Г3): кадр вміщується на екран (5 рядків з 9) -- тексту гортати нема чого, тож стрілки перемикають на сусідній запис журналу */
+	click(KEY_DOWN);
+	CHECK(s_ui.view == APRS_RX_VIEW_PACKET && !strncmp(s_rows[1], "UW5ELK-10>", 10), "DOWN у кадрі -> старіший запис: «%s»", s_rows[1]);
+	CHECK(!strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "2/8"), "у шапці кадру номер запису «n/8»: «%s»", s_rows[0]);
+	CHECK(strchr(s_rows[0], '-') != NULL && strlen(s_rows[0]) <= 26, "у шапці кадру видно RSSI: «%s»", s_rows[0]);
+	click(KEY_UP);
+	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "UP у кадрі -> назад на найновіший: «%s»", s_rows[1]);
+	click(KEY_UP);
+	CHECK(!strncmp(s_rows[1], "UW5ELE-4>", 9), "UP з найновішого -- по колу на найстаріший: «%s»", s_rows[1]);
+	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);
+	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "ручка вправо (RIGHT) у кадрі -- як DOWN (по колу): «%s»", s_rows[1]);
+	CHECK(s_tri == tri0 && (s_ui.scroll & 0x0F) == 0, "стрілок прокрутки тексту нема (scroll=%02x)", s_ui.scroll);
 	jrnPush("A1B>APRS:>new", 1800002000U);
 	checkScreen("повний кадр після нового"); CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "новий кадр не підміняє кадр на екрані");
 	click(KEY_RED);
@@ -229,18 +258,10 @@ static void testPacketScreens(void)
 	click(KEY_RED);
 	CHECK(s_ui.on == 1 && s_ui.view == APRS_RX_VIEW_CARD, "RED зі списку, відкритого з картки -> картка");
 
-	/* вбудована сторінка «Станцій» «Режиму APRS» */
 	click(KEY_HASH);
-	menuAprsStationsDrawEmbedded();
-	CHECK(s_ui.view == APRS_RX_VIEW_PKTLIST, "вбудований екран лишає список журналу");
-	{ uiEvent_t e; memset(&e, 0, sizeof(e)); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = KEY_GREEN; e.keys.event = KEY_MOD_UP;
-	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_PACKET, "вбудований: GREEN -> повний кадр");
-	  menuAprsStationsDrawEmbedded(); checkScreen("вбудований: кадр");
-	  e.keys.key = KEY_RED;
-	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_PKTLIST, "вбудований: RED з кадру -> список");
-	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_CARD, "вбудований: RED зі списку -> картка"); }
-	{ uiEvent_t e; memset(&e, 0, sizeof(e)); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = KEY_HASH; e.keys.event = KEY_MOD_UP;
-	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_PKTLIST, "вбудований: # з картки -> «Пакети»"); }
+	CHECK(s_ui.view == APRS_RX_VIEW_PKTLIST, "# на картці -> «Пакети» (повторно)");
+	click(KEY_RED);
+	CHECK(s_ui.view == APRS_RX_VIEW_CARD, "RED -> картка");
 
 	/* «Останній маяк»: нема даних -> сповіщення, ShowAgain не викликається */
 	aprsHistClearBeacons(&s_hist);
@@ -250,7 +271,7 @@ static void testPacketScreens(void)
 	/* маяк однієї станції (ІНДЕКС 2) -> вікно */
 	{
 		aprsPacket_t pk; memset(&pk, 0, sizeof(pk)); pk.type = APRS_T_POSITION; pk.hasPos = true; pk.symTable = '/'; pk.symCode = '[';
-		aprsHistBeaconFill(&s_hist, &s_db, &s_db.st[2], &pk, true, 3200, 45, 1800000000U);
+		aprsHistBeaconFill(&s_hist, &s_db, &s_db.st[2], &pk, true, 3200, 45, 1800000000U, -87);
 	}
 	menuAprsBeaconShow();
 	CHECK(s_notes == 1 && s_showAgain == 1, "є дані: вікно відкрито, сповіщення нема");
@@ -262,13 +283,18 @@ static void testPacketScreens(void)
 	s_notes = 0; s_showStation = 0;
 	click(KEY_STAR);
 	CHECK(s_showStation == 0 && s_notes == 1 && !strcmp(s_lastNote, APRSRX_BCN_NONE_ST), "'*' на картці станції без маяка -- «Маяків від цієї станції не було», вікна нема");
-	menuAprsStationsDrawEmbedded();
+	redrawNow();
 	{ int found = 0; for (int i = 0; i < s_nrows; i++) { if (!strcmp(s_rows[i], APRSRX_HINT_CARD2)) { found = 1; } } CHECK(found, "підказка без «*:маяк» для станції без маяка"); }
 	snprintf(s_ui.cardCall, sizeof(s_ui.cardCall), "%s", s_db.st[2].call);
 	s_notes = 0; s_showStation = 0;
 	click(KEY_STAR);
 	CHECK(s_showStation == 1 && s_notes == 0 && !strcmp(s_lastShown, s_db.st[2].call), "'*' на картці станції з маяком -- вікно саме цієї станції");
-	menuAprsStationsDrawEmbedded();
+	redrawNow();
+	{
+		/* R17 Г6: у картці станції з маяком видно RSSI (-87 дБм), у картці без маяка -- нема */
+		int found = 0; for (int i = 0; i < s_nrows; i++) { if (strstr(s_rows[i], "-87") != NULL) { found = 1; } }
+		CHECK(found, "картка станції з маяком показує RSSI -87");
+	}
 	CHECK(s_nrows > 0, "вбудована картка з підказкою маяка");
 	{ int found = 0; for (int i = 0; i < s_nrows; i++) { if (!strcmp(s_rows[i], APRSRX_HINT_CARD2B)) { found = 1; } } CHECK(found, "підказка «#:пакет  *:маяк» на картці"); }
 	s_maxWidth = 0;
@@ -286,12 +312,6 @@ int main(void)
 	fill(1);            walkAll("1 станція");
 	memset(&s_st, 0, sizeof(s_st));
 	fill(APRS_STATIONS_MAX); walkAll("повна база");
-	/* R10: вбудована сторінка «Станції» «Режиму APRS» не повинна лишатися на діагностичних сторінках */
-	for (int v = APRS_RX_VIEW_DIAG; v <= APRS_RX_VIEW_DIAG2; v++)
-	{
-		s_ui.view = (uint8_t)v; menuAprsStationsDrawEmbedded();
-		CHECK(s_ui.view == APRS_RX_VIEW_LIST, "вбудований екран має скинути діагностику (%d) у список", v);
-	}
 	testPacketScreens();
 	/* періодичне перемальовування без подій не повинно падати */
 	menuAprsStationsEnter();

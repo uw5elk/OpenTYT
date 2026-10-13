@@ -159,6 +159,23 @@ uint16_t aprsModeCp1251ToUcs2(uint8_t c);
 const char *aprsModeSymbolName(uint8_t table, uint8_t index);
 /* R14: назва за символом пакета: table '/' -- первинна, інакше (у т.ч. накладка) -- додаткова; NULL -- нема в таблиці */
 const char *aprsSymbolNameEx(char table, char code);
+/* R17: вибір символу в налаштуваннях. Перелік -- усі названі: спершу первинна таблиця, потім додаткова. Символ без назви (решта з 188)
+ * вибирають «вручну»: таблиця + код. Це чиста логіка стану вибору (без екрана) -- її перевіряє хост-тест; екран -- menuAprsMode.c. */
+typedef struct
+{
+	uint8_t manual;   /* 0 -- перелік назв, 1 -- вручну (таблиця + код) */
+	uint8_t table;    /* 0 -- '/', 1 -- '\\' (вручну) */
+	uint8_t index;    /* код - '!' (вручну) */
+	uint8_t pos;      /* номер у переліку (перелік) */
+} aprsSymPick_t;
+unsigned aprsSymbolListCount(void);
+bool aprsSymbolListGet(unsigned i, uint8_t *table, uint8_t *index, const char **name);
+int  aprsSymbolListFind(uint8_t table, uint8_t index);          /* -1 -- такого символу в переліку нема */
+void aprsSymPickInit(aprsSymPick_t *p, uint8_t table, uint8_t index);   /* названий -- перелік на ньому; без назви -- вручну */
+void aprsSymPickStep(aprsSymPick_t *p, int dir);                /* ручка / ←→: перелік -- ±1 по колу; вручну -- код ±1 по колу (0..APRSM_ICON_MAX) */
+void aprsSymPickTable(aprsSymPick_t *p);                        /* вручну: інша таблиця */
+void aprsSymPickToggle(aprsSymPick_t *p);                       /* перелік <-> вручну (символ переноситься) */
+void aprsSymPickResult(const aprsSymPick_t *p, uint8_t *table, uint8_t *index);
 /* Наступний символ із названих (для швидкого перебору); починає з наступного після (table,index). */
 void aprsModeSymbolNextNamed(uint8_t *table, uint8_t *index);
 /* 24-бітна позиція кодплуга (знак -- біт 23; ціла частина -- біти 22..15; частка -- молодші 15 біт у

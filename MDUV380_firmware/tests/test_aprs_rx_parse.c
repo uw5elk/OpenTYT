@@ -772,7 +772,7 @@ static bool jrnFrame(const char *src, const char *info, int infoLen, uint32_t se
 	uint8_t fr[700];
 	int n = buildFrame(fr, "APDW18", src, 0, 0, 0, (const uint8_t *)info, infoLen);
 	uint8_t *h = exactCopy(fr, n);
-	bool ok = aprsJrnAdd(&s_h, secs, h, (uint16_t)n);
+	bool ok = aprsJrnAdd(&s_h, secs, h, (uint16_t)n, -90);
 
 	free(h);
 	return ok;
@@ -791,7 +791,7 @@ static const aprsStation_t *feedPkt(const char *src, int ssid, const char *info,
 	aprsHistStationTouch(&s_h, &s_db, st);
 	if (pk.type == APRS_T_POSITION)
 	{
-		aprsHistBeaconFill(&s_h, &s_db, st, &pk, true, 1000U + now, (uint16_t)(now % 360U), 1800000000U + now);
+		aprsHistBeaconFill(&s_h, &s_db, st, &pk, true, 1000U + now, (uint16_t)(now % 360U), 1800000000U + now, -100 + (int)(now % 50U));
 	}
 	return st;
 }
@@ -867,7 +867,7 @@ static void testHist(void)
 		char keep[APRS_JRN_TEXT];
 
 		snprintf(keep, sizeof(keep), "%s", e0->text);
-		CHECK(!aprsJrnAdd(&s_h, 5U, h, 6) && (s_h.jrnCount <= before) && !strcmp(aprsJrnNth(&s_h, 0)->text, keep), "не AX.25: не додано, найновіший цілий");
+		CHECK(!aprsJrnAdd(&s_h, 5U, h, 6, -50) && (s_h.jrnCount <= before) && !strcmp(aprsJrnNth(&s_h, 0)->text, keep), "не AX.25: не додано, найновіший цілий");
 		free(h);
 	}
 
@@ -946,6 +946,260 @@ static void testHist(void)
 
 			CHECK((r == NULL) || (s_db.st[idx].call[0] != 0 && strcmp(s_db.st[idx].call, "EVICTR-0") != 0), "найсвіжіший маяк не вказує на нову станцію без маяка");
 		}
+	}
+}
+
+/* ---- R17 Г5: стрілка залитими трикутниками ----------------------------------------------------------------- */
+static long triCross(const aprsTri_t *t)
+{
+	return ((long)(t->x[1] - t->x[0]) * (long)(t->y[2] - t->y[0])) - ((long)(t->y[1] - t->y[0]) * (long)(t->x[2] - t->x[0]));
+}
+
+static void testArrowPoly(void)
+{
+	static const uint16_t named[] = { 0, 45, 90, 180, 270, 359 };
+	const int16_t cx = 121, cy = 64, len = 22;
+	const int ringR = 31;
+	aprsArrowPoly_t ref;
+	long sign0[3];
+
+	printf("== R17 Г5: aprsArrowPoly ==\n");
+	aprsArrowPoly(&ref, cx, cy, len, 0);
+	for (int i = 0; i < 3; i++) { sign0[i] = triCross(&ref.t[i]); }
+	CHECK(sign0[0] > 0 && sign0[1] > 0 && sign0[2] > 0, "північ: орієнтація всіх трикутників додатна (%ld %ld %ld)", sign0[0], sign0[1], sign0[2]);
+	CHECK(ref.tipX == cx && ref.tipY == cy - len, "північ: вістря (%d,%d)", ref.tipX, ref.tipY);
+	{
+		/* стрижень: два трикутники, разом чотирикутник 4 px шириною від центру; вістря ширше стрижня */
+		int shaftW = abs(ref.t[0].y[0] - ref.t[0].y[2]);   /* вершини (0,-sw) і (s,sw): різниця по x для півночі */
+		int headW = abs(ref.t[2].x[0] - ref.t[2].x[2]);
+
+		(void)shaftW;
+		CHECK(headW >= 8 && headW <= 12, "вістря шириною %d px (10)", headW);
+		CHECK(abs(ref.t[0].x[0] - ref.t[0].x[1]) == 0 && abs(ref.t[0].x[0] - ref.t[1].x[2]) == 4, "північ: стрижень завтовшки 4 px");
+	}
+	for (unsigned k = 0; k < sizeof(named) / sizeof(named[0]); k++)
+	{
+		aprsArrowPoly_t p;
+		aprsArrow_t g;
+		bool inside = true, same = true;
+		long minArea = 1000000L;
+
+		aprsArrowPoly(&p, cx, cy, len, named[k]);
+		aprsArrowGeom(&g, cx, cy, len, named[k]);
+		for (int i = 0; i < 3; i++)
+		{
+			long cr = triCross(&p.t[i]);
+
+			same = same && ((cr > 0) == (sign0[i] > 0));
+			if (labs(cr) < minArea) { minArea = labs(cr); }
+			for (int j = 0; j < 3; j++)
+			{
+				long dx = p.t[i].x[j] - cx, dy = p.t[i].y[j] - cy;
+
+				inside = inside && ((dx * dx + dy * dy) <= (long)(ringR - 7) * (ringR - 7));
+			}
+		}
+		CHECK(inside, "азимут %u: усі точки всередині кільця і не заходять на риски (R-7)", named[k]);
+		CHECK(same && (minArea >= 20), "азимут %u: жоден трикутник не перевернутий і не виродився (мін. 2*площа = %ld)", named[k], minArea);
+		CHECK(abs(p.tipX - g.tx) <= 1 && abs(p.tipY - g.ty) <= 1, "азимут %u: вістря збігається з aprsArrowGeom (%d,%d) / (%d,%d)", named[k], p.tipX, p.tipY, g.tx, g.ty);
+	}
+	{
+		/* усі 360 азимутів */
+		int bad = 0;
+
+		for (unsigned b = 0; b < 360; b++)
+		{
+			aprsArrowPoly_t p;
+			double dd;
+
+			aprsArrowPoly(&p, cx, cy, len, (uint16_t)b);
+			dd = sqrt((double)((p.tipX - cx) * (p.tipX - cx) + (p.tipY - cy) * (p.tipY - cy)));
+			if (fabs(dd - (double)len) > 1.01) { bad++; }
+			for (int i = 0; i < 3; i++)
+			{
+				if ((triCross(&p.t[i]) > 0) != (sign0[i] > 0)) { bad++; }
+				for (int j = 0; j < 3; j++)
+				{
+					long dx = p.t[i].x[j] - cx, dy = p.t[i].y[j] - cy;
+
+					if ((dx * dx + dy * dy) > (long)(ringR - 7) * (ringR - 7)) { bad++; }
+				}
+			}
+		}
+		CHECK(bad == 0, "усі 360 азимутів: довжина, орієнтація і межі кільця й рисок (%d порушень)", bad);
+	}
+}
+
+/* ---- R17 Г6: RSSI у журналі та в записі маяка ------------------------------------------------------------------ */
+static void testRssi(void)
+{
+	char info[64];
+
+	printf("== R17 Г6: RSSI ==\n");
+	CHECK(sizeof(aprsBcnRec_t) == 72U, "sizeof(aprsBcnRec_t) = %zu (72: запис не виріс)", sizeof(aprsBcnRec_t));
+	CHECK(sizeof(aprsHist_t) <= 2224U, "sizeof(aprsHist_t) = %zu <= 2224 (наявний резерв, CALL_REPLAY_APRS_HIST_BYTES не росте)", sizeof(aprsHist_t));
+	CHECK(aprsRssiClamp(0) == 0 && aprsRssiClamp(-87) == -87 && aprsRssiClamp(-200) == -127 && aprsRssiClamp(-127) == -127 && aprsRssiClamp(5) == -1 && aprsRssiClamp(-1) == -1,
+			"межі: 0 -- невідомо, -87 як є, -200 -> -127, +5 -> -1");
+
+	aprsHistClear(&s_h);
+	for (int i = 0; i < 11; i++)
+	{
+		char src[8];
+		uint8_t fr[700];
+		int n;
+		uint8_t *h;
+
+		snprintf(src, sizeof(src), "R%d", i);
+		snprintf(info, sizeof(info), "!4903.50N/07201.75W-r%d", i);
+		n = buildFrame(fr, "APDW18", src, 0, 0, 0, (const uint8_t *)info, (int)strlen(info));
+		h = exactCopy(fr, n);
+		CHECK(aprsJrnAdd(&s_h, 100U + (uint32_t)i, h, (uint16_t)n, -50 - i), "кадр %d записано", i);
+		free(h);
+	}
+	{
+		bool ok = true;
+
+		for (int n = 0; n < 8; n++)
+		{
+			int slot = aprsJrnSlotOf(&s_h, n);
+			const aprsJrnEntry_t *e = aprsJrnNth(&s_h, n);
+			int want = -50 - (10 - n);
+
+			ok = ok && (slot >= 0) && (e != NULL) && (aprsJrnRssiAtSlot(&s_h, slot) == want) && (e->rxSecs == 100U + (uint32_t)(10 - n));
+		}
+		CHECK(ok, "після обертання кільця (11 кадрів у 8 слотах) RSSI кожного запису -- його власний");
+	}
+	CHECK(aprsJrnRssiAtSlot(&s_h, -1) == 0 && aprsJrnRssiAtSlot(&s_h, 8) == 0, "слот поза межами -- невідомо");
+	{
+		/* невдалий розбір не лишає «чужого» RSSI в слоті */
+		uint8_t junk[6] = { 1, 2, 3, 4, 5, 6 };
+		uint8_t *h = exactCopy(junk, 6);
+		int slotBefore = (int)(s_h.jrnHead % APRS_JRN_SLOTS);
+
+		CHECK(!aprsJrnAdd(&s_h, 5U, h, 6, -33), "сміття не записано");
+		CHECK(aprsJrnRssiAtSlot(&s_h, slotBefore) == 0, "зіпсований слот -- порожній, RSSI не показується");
+		free(h);
+	}
+	/* запис маяка */
+	aprsHistClear(&s_h);
+	aprsDbInit(&s_db);
+	{
+		const aprsStation_t *a = feedPkt("RSA", 0, "!4903.50N/07201.75W>a", 5000U);
+		const aprsBcnRec_t *r = aprsHistBeaconOf(&s_h, &s_db, a);
+		int first;
+
+		CHECK(r != NULL && r->rssiDbm >= -127 && r->rssiDbm <= -1, "маяк: RSSI збережено (%d)", r ? (int)r->rssiDbm : 0);
+		first = r ? r->rssiDbm : 0;
+		a = feedPkt("RSA", 0, "!4903.51N/07201.75W>b", 5017U);
+		r = aprsHistBeaconOf(&s_h, &s_db, a);
+		CHECK(r != NULL && r->rssiDbm != first && r->rssiDbm == aprsRssiClamp(-100 + (int)(5017U % 50U)), "новий маяк тієї ж станції перезаписує RSSI (%d -> %d)", first, r ? (int)r->rssiDbm : 0);
+		{
+			/* поля поряд не зіпсовані */
+			CHECK(r != NULL && r->text[0] == 'b' && r->symCode == '>' && r->hasGeo, "сусідні поля запису (коментар, символ) цілі");
+		}
+	}
+	{
+		/* станція без позиційного пакета -- запису нема, RSSI не вигадується */
+		const aprsStation_t *b = feedPkt("RSB", 0, ">status", 6000U);
+
+		CHECK(aprsHistBeaconOf(&s_h, &s_db, b) == NULL, "станція без позиції: запису маяка (і RSSI) нема");
+	}
+	{
+		/* витіснена станція не лишає RSSI наступній */
+		aprsHistClear(&s_h);
+		aprsDbInit(&s_db);
+		for (int i = 0; i < APRS_STATIONS_MAX; i++)
+		{
+			char src[8];
+
+			snprintf(src, sizeof(src), "EV%02d", i);
+			feedPkt(src, 0, "!4903.50N/07201.75W>x", 1000U + (uint32_t)i * 1000U);
+		}
+		{
+			const aprsStation_t *n = feedPkt("NEWCOM", 0, ">no position", 90000U);
+			const aprsBcnRec_t *r = aprsHistBeaconOf(&s_h, &s_db, n);
+
+			CHECK(r == NULL, "нова станція на місці витісненої: без запису й без чужого RSSI");
+		}
+		aprsHistClearBeacons(&s_h);
+		CHECK(aprsHistBeaconLast(&s_h, NULL) == NULL, "скидання маяків обнуляє записи");
+	}
+}
+
+/* ---- R17 Г4: порядок станцій у вікні маяка -------------------------------------------------------------------- */
+static void testBeaconOrder(void)
+{
+	uint8_t ord[APRS_STATIONS_MAX];
+	int n;
+
+	printf("== R17 Г4: порядок станцій вікна маяка ==\n");
+	aprsHistClear(&s_h);
+	aprsDbInit(&s_db);
+	CHECK(aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX) == 0, "порожньо: 0 станцій");
+	CHECK(aprsBeaconOrderStep(-1, 0, 1) == -1 && aprsBeaconOrderStep(0, 0, -1) == -1, "порожній список: крок -1");
+
+	feedPkt("AAA", 0, "!4903.50N/07201.75W>a", 10000U);      /* старша, з позицією */
+	feedPkt("BBB", 0, ">status only", 20000U);               /* без позиції -- пропускається */
+	feedPkt("CCC", 0, "!4903.50N/07201.75W>c", 30000U);
+	feedPkt("DDD", 0, "!4903.50N/07201.75W>d", 40000U);      /* найновіша */
+	n = aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX);
+	CHECK(n == 3, "4 станції, одна без позиції -> %d у списку (3)", n);
+	CHECK(n == 3 && !strcmp(s_db.st[ord[0]].call, "DDD") && !strcmp(s_db.st[ord[1]].call, "CCC") && !strcmp(s_db.st[ord[2]].call, "AAA"),
+			"порядок новіша->старіша: DDD, CCC, AAA");
+	{
+		/* той самий порядок, що в «APRS станції» (aprsDbNth), лише без пропущених */
+		bool same = true;
+		int k = 0;
+
+		for (int r = 0; r < APRS_STATIONS_MAX; r++)
+		{
+			const aprsStation_t *st = aprsDbNth(&s_db, r, 100000U);
+
+			if (st == NULL) { break; }
+			if (st->flags & APRS_ST_HASPOS)
+			{
+				same = same && (k < n) && (&s_db.st[ord[k]] == st);
+				k++;
+			}
+		}
+		CHECK(same && (k == n), "порядок збігається з aprsDbNth() (список станцій)");
+	}
+	CHECK(aprsBeaconOrderFind(ord, n, (int)ord[1]) == 1 && aprsBeaconOrderFind(ord, n, 15) == -1, "Find: позиція є / нема");
+	/* крок кільцем */
+	CHECK(aprsBeaconOrderStep(0, 3, 1) == 1 && aprsBeaconOrderStep(2, 3, 1) == 0, "вниз: 1, з останньої -- на першу");
+	CHECK(aprsBeaconOrderStep(0, 3, -1) == 2 && aprsBeaconOrderStep(2, 3, -1) == 1, "вгору: з першої -- на останню");
+	CHECK(aprsBeaconOrderStep(-1, 3, 1) == 0 && aprsBeaconOrderStep(-1, 3, -1) == 2, "станції нема у списку: вниз -- перша, вгору -- остання");
+	CHECK(aprsBeaconOrderStep(0, 1, 1) == 0, "одна станція: лишається");
+	/* обмеження max */
+	CHECK(aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, 2) == 2, "max = 2 обмежує список");
+	/* станція без запису маяка (є позиція, запис обнулено) -- пропускається */
+	memset(&s_h.bcn[ord[0]], 0, sizeof(s_h.bcn[0]));
+	CHECK(aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX) == 2, "без запису маяка -- пропуск");
+	/* заповнений список: 16 станцій з позицією */
+	aprsHistClear(&s_h);
+	aprsDbInit(&s_db);
+	for (int i = 0; i < APRS_STATIONS_MAX; i++)
+	{
+		char src[8];
+
+		snprintf(src, sizeof(src), "Z%02d", i);
+		feedPkt(src, 0, "!4903.50N/07201.75W>x", 1000U + (uint32_t)i * 1000U);
+	}
+	n = aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX);
+	CHECK(n == APRS_STATIONS_MAX && !strcmp(s_db.st[ord[0]].call, "Z15") && !strcmp(s_db.st[ord[n - 1]].call, "Z00"), "16 станцій: Z15 .. Z00");
+	{
+		/* обхід кільцем повертається на початок за n кроків і відвідує кожну рівно раз */
+		bool seen[APRS_STATIONS_MAX] = { false };
+		int pos = 0;
+		bool once = true;
+
+		for (int i = 0; i < n; i++)
+		{
+			once = once && !seen[pos];
+			seen[pos] = true;
+			pos = aprsBeaconOrderStep(pos, n, 1);
+		}
+		CHECK(once && pos == 0, "кільце з 16 станцій: кожна по разу, далі знову перша");
 	}
 }
 
@@ -1700,6 +1954,9 @@ int main(void)
 	testR14();
 	testR16Mice();
 	testHist();
+	testBeaconOrder();
+	testRssi();
+	testArrowPoly();
 	testStage3();
 	testRawText();
 	testFuzz();

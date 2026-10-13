@@ -34,6 +34,7 @@
 #include "functions/aprs_msg.h"
 
 /* Сторінки режиму. R11: «Повідомлення» -- між «Станціями» і «Налаштуваннями». */
+/* R17 Г1: «Монітор» і «Станції» прибрано з режиму (залишились числові значення: aprsModeEnter() ставить MONITOR у свій mem()->ui, яким екрани більше не користуються). */
 enum { APRS_MODE_PAGE_MONITOR = 0, APRS_MODE_PAGE_STATIONS, APRS_MODE_PAGE_MESSAGES, APRS_MODE_PAGE_SETTINGS, APRS_MODE_PAGES };
 
 /* R11: вигляди сторінки «Повідомлення». R15: HOME -- перший екран (Нове / Вхідні / Надіслані); LIST показує лише один напрямок. */
@@ -59,10 +60,10 @@ typedef struct
 	char     text[APRS_MSG_JOB_TEXT_LEN + 2]; /* текст (набір), cp1251 */
 } aprsMsgUi_t;
 
-/* Поля сторінки «Налаштування» (порядок рядків). */
+/* Поля сторінки «Налаштування» (порядок рядків). R17: «Табл.сим.» і «Код сим.» -> один пункт «Символ» (APRSM_F_SYMBOL). */
 enum
 {
-	APRSM_F_FREQ = 0, APRSM_F_CALL, APRSM_F_SSID, APRSM_F_PATH1, APRSM_F_PATH2, APRSM_F_ICON_TABLE, APRSM_F_ICON_CODE,
+	APRSM_F_FREQ = 0, APRSM_F_CALL, APRSM_F_SSID, APRSM_F_PATH1, APRSM_F_PATH2, APRSM_F_SYMBOL,
 	APRSM_F_COMMENT, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB, APRSM_F_INTERVAL, APRSM_F_SQL, APRSM_F_RESET, APRSM_F_COUNT
 };
 
@@ -79,21 +80,6 @@ typedef struct
 	uint32_t keyMs;           /* ticksGetMillis() останнього натискання тексту */
 	char     buf[APRSM_COMMENT_LEN + 2];
 } aprsModeEdit_t;
-
-/* Інфо про останній прийнятий пакет (для «Монітора»). */
-typedef struct
-{
-	bool     valid;
-	uint8_t  type;
-	bool     hasGeo;
-	uint32_t distM;
-	uint16_t bearing;
-	uint32_t ms;              /* ticksGetMillis() прийому */
-	char     src[APRS_CALL_LEN];      /* справжній відправник (для third-party -- з вкладеного кадру) */
-	char     dst[APRS_CALL_LEN];
-	bool     tp;                      /* R11-fix: кадр розгорнуто з third-party */
-	char     gate[APRS_CALL_LEN];     /* ... і шлюз, що його ретранслював */
-} aprsModeLast_t;
 
 /* Чому маяк не пішов / результат останньої спроби (для екрана). */
 typedef enum
@@ -135,7 +121,18 @@ aprsModeUi_t        *aprsModeUi(void);
 /* R16: історія прийому APRS (aprsHist_t: журнал 8 останніх кадрів + дані маяка кожної станції). Живе в резерві постійного блока повідомлень
  * (callReplay.h: CALL_REPLAY_APRS_HIST_BYTES) і не залежить від того, чи відкрито «Режим APRS». Пише aprs_rx.c, читають екрани «Пакети»/маяк. */
 aprsHist_t *aprsModeHist(void);
+/* R17 Г1: сесії екранів меню «APRS» (стан екрана -- завжди в блоці сесії; режим «Слухати APRS» від них не залежить):
+ *  - MsgSessionOpen -- «Повідом. APRS» (msgOn == 1);
+ *  - SettingsSessionOpen -- «Налаштування» (msgOn == 2): вимикає «Слухати», позичає кільце під cfg/def/eff, читає налаштування з флешу; радіо не чіпає. false -- не можна (передача).
+ *  Close закриває будь-яку (для налаштувань: записує, якщо змінено, і віддає кільце), ідемпотентно. */
 bool aprsModeMsgSessionOpen(void);
+bool aprsModeSettingsSessionOpen(void);
+bool aprsModeCfgSessionActive(void);
+void aprsModeCfgSessionTick(void);               /* запис у флеш після паузи в редагуванні */
+/* R17 Г1: «Передати маяк» (див. aprs_mode.c). Poll -- кожен тік меню. */
+bool aprsModeBeaconOnce(void);
+bool aprsModeBeaconOnceBusy(void);
+void aprsModeBeaconOncePoll(void);
 void aprsModeMsgSessionClose(void);
 bool aprsModeMsgSessionActive(void);
 aprsModeCfg_t       *aprsModeCfg(void);
@@ -144,7 +141,6 @@ const aprsModeDefaults_t *aprsModeDefaults(void);
 void aprsModeCfgChanged(uint16_t whatChanged);   /* оверрайди/налаштування змінено: перерахувати, підлаштувати радіо, відкласти запис */
 void aprsModeCfgReset(void);                     /* зняти всі оверрайди, інтервал 0, шумодав типовий */
 void aprsModeRequestBeacon(void);                /* ручний маяк (GREEN на «Моніторі») */
-const aprsModeLast_t *aprsModeLast(void);
 uint32_t aprsModeBeaconCount(void);
 uint32_t aprsModeLastBeaconAgeSec(void);         /* 0xFFFFFFFF -- ще не було */
 uint32_t aprsModeNextBeaconSec(void);            /* 0xFFFFFFFF -- періодичного нема */
@@ -174,8 +170,6 @@ void aprsMsgBgOnMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt);
 bool aprsMsgBgNewMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt);
 /* Власний позивний/SSID/позиція режиму (замість конфігу каналу). false -- режим не активний. */
 bool aprsModeOwnInfo(char call[8], uint8_t *ssid, bool *hasPos, int32_t *latU, int32_t *lonU);
-/* Кожен розібраний недублікат (CRC ок) -- для «останнього пакета» на «Моніторі». */
-void aprsModeOnFrame(const aprsAx25_t *ax, const aprsPacket_t *pkt, bool hasGeo, uint32_t distM, uint16_t bearing);
 
 #endif /* APRS_RX */
 #endif /* _OPENGD77_APRS_MODE_H_ */

@@ -501,6 +501,249 @@ static void testMisc(void)
 	CHECK(t == 0 && aprsModeSymbolName(0, i) != NULL, "з не названого -- до першого названого");
 }
 
+/* R17 (Г2.1): символ -- ланцюжок "змінили -> блок у флеші -> читання -> ефективне значення" для ВСІХ 2 x 94 символів і для перебору названих */
+static void testSymbolChain(void)
+{
+	aprsModeCfg_t c, r;
+	aprsModeDefaults_t d;
+	aprsModeEff_t e;
+	uint8_t blk[APRSM_BLOCK_LEN];
+	int bad = 0;
+
+	memset(&d, 0, sizeof(d));
+	d.iconTable = 0;
+	d.iconIndex = (uint8_t)('[' - '!');   /* у кодплузі -- «людина» */
+	for (int t = 0; t < 2; t++)
+	{
+		for (int i = 0; i <= APRSM_ICON_MAX; i++)
+		{
+			aprsModeCfgInit(&c);
+			c.iconTable = (uint8_t)t;
+			c.iconIndex = (uint8_t)i;
+			c.ov |= APRSM_OV_ICON;
+			aprsModeEffective(&c, &d, &e);
+			if ((e.iconTable != t) || (e.iconIndex != i)) { bad++; }
+			aprsModeCfgToBytes(&c, blk);
+			if (!aprsModeCfgFromBytes(&r, blk, sizeof(blk)) || !(r.ov & APRSM_OV_ICON)) { bad++; continue; }
+			aprsModeEffective(&r, &d, &e);
+			if ((e.iconTable != t) || (e.iconIndex != i)) { bad++; }
+		}
+	}
+	CHECK(bad == 0, "символ: 188 значень проходять блок і ефективне значення без втрат (збоїв %d)", bad);
+	CHECK(APRSM_ICON_MAX == 93, "APRSM_ICON_MAX = 93 = '~' - '!' (%d)", (int)('~' - '!'));
+	/* перебір названих (GREEN): із «людини» кожен крок дає ІНШИЙ символ, коло замикається */
+	{
+		uint8_t tb = 0, ix = (uint8_t)('[' - '!'), t0, i0;
+		int steps = 0;
+
+		aprsModeSymbolNextNamed(&tb, &ix);
+		t0 = tb; i0 = ix;
+		CHECK(!(tb == 0 && ix == (uint8_t)('[' - '!')), "з «людини» перший крок дає інший символ (%c)", '!' + ix);
+		do { aprsModeSymbolNextNamed(&tb, &ix); steps++; } while (!((tb == t0) && (ix == i0)) && (steps < 100));
+		CHECK(steps < 100 && steps >= 2, "коло названих замикається за %d кроків", steps);
+	}
+}
+
+/* R17 (Г2.4): вибір символу -- чиста логіка (aprsSymPick*). Ключі екрана: ручка/←→ = Step, ↑↓ = Step (перелік) або Table (вручну), # = Toggle, GREEN = Result. */
+static void testSymbolPicker(void)
+{
+	unsigned n = aprsSymbolListCount();
+	int bad = 0, dup = 0, badFind = 0;
+
+	CHECK(n >= 60U && n < 200U, "перелік символів: %u записів", n);
+	for (unsigned i = 0; i < n; i++)
+	{
+		uint8_t t, x, t2, x2;
+		const char *nm = NULL;
+
+		if (!aprsSymbolListGet(i, &t, &x, &nm) || (nm == NULL) || (nm[0] == 0) || (x > APRSM_ICON_MAX)) { bad++; continue; }
+		if (aprsSymbolListFind(t, x) != (int)i) { badFind++; }
+		for (unsigned j = i + 1U; j < n; j++)
+		{
+			if (aprsSymbolListGet(j, &t2, &x2, NULL) && (t2 == t) && (x2 == x)) { dup++; }
+		}
+	}
+	CHECK(bad == 0 && dup == 0 && badFind == 0, "перелік: назви непорожні, без дублів, Find повертає номер (збоїв %d/%d/%d)", bad, dup, badFind);
+	{ uint8_t t, x; CHECK(aprsSymbolListGet(n, &t, &x, NULL) == false, "поза переліком -- false"); }
+
+	/* усі 188 символів: Init -> Result повертає ТОЙ САМИЙ символ; названий -- у переліку, без назви -- вручну */
+	bad = 0;
+	for (int t = 0; t < 2; t++)
+	{
+		for (int i = 0; i <= APRSM_ICON_MAX; i++)
+		{
+			aprsSymPick_t p;
+			uint8_t rt, ri;
+			bool named = (aprsSymbolListFind((uint8_t)t, (uint8_t)i) >= 0);
+
+			aprsSymPickInit(&p, (uint8_t)t, (uint8_t)i);
+			aprsSymPickResult(&p, &rt, &ri);
+			if ((rt != t) || (ri != i) || (p.manual == 0U) == (named == false)) { bad++; }
+		}
+	}
+	CHECK(bad == 0, "Init/Result: усі 188 символів повертаються без змін, без назви -- вручну (збоїв %d)", bad);
+
+	/* ручка по переліку: коло замикається за n кроків і КОЖЕН крок дає інший символ */
+	{
+		aprsSymPick_t p;
+		uint8_t t0, i0, t, x;
+		int diff = 0;
+
+		aprsSymPickInit(&p, 0, (uint8_t)('[' - '!'));
+		aprsSymPickResult(&p, &t0, &i0);
+		for (unsigned k = 1; k <= n; k++)
+		{
+			aprsSymPickStep(&p, 1);
+			aprsSymPickResult(&p, &t, &x);
+			if ((k < n) && (t == t0) && (x == i0)) { diff++; }
+			if ((k == n) && !((t == t0) && (x == i0))) { diff++; }
+		}
+		CHECK(diff == 0, "ручка вправо: n кроків замикають коло, раніше повторів нема (%d)", diff);
+		aprsSymPickStep(&p, -1);
+		aprsSymPickStep(&p, 1);
+		aprsSymPickResult(&p, &t, &x);
+		CHECK((t == t0) && (x == i0), "вліво-вправо повертає на місце");
+	}
+
+	/* символ без назви: вручну; код по колу 0..93; таблиця перемикається лише вручну */
+	{
+		aprsSymPick_t p;
+		uint8_t t, x;
+
+		aprsSymPickInit(&p, 1, (uint8_t)('Z' - '!'));   /* '\\Z' -- у переліку нема */
+		CHECK(p.manual == 1U, "'\\Z' без назви -- одразу вручну");
+		aprsSymPickStep(&p, 1);
+		aprsSymPickResult(&p, &t, &x);
+		CHECK((t == 1) && (x == (uint8_t)('[' - '!')), "вручну: код +1 -> '[' (%c)", '!' + x);
+		aprsSymPickTable(&p);
+		aprsSymPickResult(&p, &t, &x);
+		CHECK((t == 0) && (x == (uint8_t)('[' - '!')), "вручну: таблиця -> '/' ('[' \\ людина)");
+		p.index = APRSM_ICON_MAX; aprsSymPickStep(&p, 1);
+		CHECK(p.index == 0, "код 93 +1 -> 0 (по колу)");
+		aprsSymPickStep(&p, -1);
+		CHECK(p.index == APRSM_ICON_MAX, "код 0 -1 -> 93 (по колу)");
+		/* # -> перелік: названий символ переноситься, без назви лишається в переліку на останньому місці */
+		aprsSymPickInit(&p, 0, (uint8_t)('>' - '!'));
+		aprsSymPickToggle(&p);
+		CHECK(p.manual == 1U && p.table == 0U && p.index == (uint8_t)('>' - '!'), "# з переліку -> вручну, символ той самий");
+		aprsSymPickToggle(&p);
+		aprsSymPickResult(&p, &t, &x);
+		CHECK(p.manual == 0U && t == 0 && x == (uint8_t)('>' - '!'), "# назад -> перелік на тому ж символі");
+		aprsSymPickTable(&p);
+		CHECK(p.table == 0U, "у переліку таблиця не перемикається");
+	}
+
+	/* ПОВНИЙ СЦЕНАРІЙ користувача (Г2.1/BC4): було «людина» з кодплуга, вибрали «авто» -> блок -> «вимкнули/ввімкнули» -> «авто» */
+	{
+		aprsModeCfg_t c, r;
+		aprsModeDefaults_t d;
+		aprsModeEff_t e;
+		aprsSymPick_t p;
+		uint8_t blk[APRSM_BLOCK_LEN], t, x;
+		int steps = 0;
+
+		memset(&d, 0, sizeof(d));
+		d.iconTable = 0; d.iconIndex = (uint8_t)('[' - '!');
+		aprsModeCfgInit(&c);
+		aprsModeEffective(&c, &d, &e);
+		CHECK(e.iconIndex == (uint8_t)('[' - '!'), "до вибору -- «людина» з кодплуга");
+		aprsSymPickInit(&p, e.iconTable, e.iconIndex);
+		do { aprsSymPickStep(&p, -1); aprsSymPickResult(&p, &t, &x); steps++; } while (!((t == 0) && (x == (uint8_t)('>' - '!'))) && (steps < 200));
+		CHECK(steps < 200, "«авто» знайдено ручкою за %d кроків", steps);
+		c.iconTable = t; c.iconIndex = x; c.ov |= APRSM_OV_ICON;
+		aprsModeEffective(&c, &d, &e);
+		CHECK((e.iconTable == 0) && (e.iconIndex == (uint8_t)('>' - '!')), "ефективне значення після GREEN -- «авто»");
+		aprsModeCfgToBytes(&c, blk);
+		CHECK(aprsModeCfgFromBytes(&r, blk, sizeof(blk)), "блок розібрано");
+		aprsModeEffective(&r, &d, &e);
+		CHECK((e.iconTable == 0) && (e.iconIndex == (uint8_t)('>' - '!')) && (r.ov & APRSM_OV_ICON), "після збереження/читання (вихід-вхід, перезавантаження) -- «авто», у ефір піде '/>'");
+	}
+}
+
+/* R17 (Г2.3): АУДИТ полів налаштувань режиму -- «пережило збереження»: кожне поле по одному -> блок 72 Б -> читання -> ефективне; скидання знімає. */
+static void testAuditCfg(void)
+{
+	aprsModeDefaults_t d;
+	aprsModeCfg_t c, r;
+	aprsModeEff_t base, e;
+	uint8_t blk[APRSM_BLOCK_LEN];
+	int fails = 0;
+	enum { F_FREQ, F_CALL, F_SSID, F_P1, F_P2, F_ICON, F_COMMENT, F_LAT, F_LON, F_AMB, F_INT, F_SQL, F_N };
+
+	memset(&d, 0, sizeof(d));
+	strcpy(d.call, "DEFCAL"); d.ssid = 7;
+	strcpy(d.path[0], "WIDE1"); d.pathSsid[0] = 1; strcpy(d.path[1], "WIDE2"); d.pathSsid[1] = 2;
+	d.iconTable = 0; d.iconIndex = (uint8_t)('[' - '!'); strcpy(d.comment, "TYT");
+	d.hasPos = true; d.latU = 50500000; d.lonU = 30250000;
+	aprsModeCfgInit(&c);
+	aprsModeEffective(&c, &d, &base);
+
+	for (int f = 0; f < F_N; f++)
+	{
+		aprsModeCfgInit(&c);
+		switch (f)
+		{
+			case F_FREQ:    c.freq = 14482500UL; c.ov |= APRSM_OV_FREQ; break;
+			case F_CALL:    strcpy(c.call, "R2ABC"); c.ov |= APRSM_OV_CALL; break;
+			case F_SSID:    c.ssid = 9; c.ov |= APRSM_OV_SSID; break;
+			case F_P1:      strcpy(c.path[0], "RELAY"); c.pathSsid[0] = 3; c.ov |= APRSM_OV_PATH1; break;
+			case F_P2:      strcpy(c.path[1], "TRACE"); c.pathSsid[1] = 4; c.ov |= APRSM_OV_PATH2; break;
+			case F_ICON:    c.iconTable = 1; c.iconIndex = (uint8_t)('Z' - '!'); c.ov |= APRSM_OV_ICON; break;
+			case F_COMMENT: strcpy(c.comment, "Hello 73"); c.ov |= APRSM_OV_COMMENT; break;
+			case F_LAT:     c.latU = -33868800; c.ov |= APRSM_OV_LAT; break;
+			case F_LON:     c.lonU = 151209300; c.ov |= APRSM_OV_LON; break;
+			case F_AMB:     c.ambiguity = 3; c.ov |= APRSM_OV_AMB; break;
+			case F_INT:     c.interval = 3; break;
+			default:        c.sql = 8; break;
+		}
+		aprsModeCfgToBytes(&c, blk);
+		if (!aprsModeCfgFromBytes(&r, blk, sizeof(blk))) { fails++; printf("   поле %d: блок не розібрано\n", f); continue; }
+		aprsModeEffective(&r, &d, &e);
+		if (memcmp(&e, &base, sizeof(e)) == 0) { fails++; printf("   поле %d: після збереження нічого не змінилось\n", f); continue; }
+		switch (f)
+		{
+			case F_FREQ:    fails += (e.freq != 14482500UL); break;
+			case F_CALL:    fails += strcmp(e.call, "R2ABC") != 0; break;
+			case F_SSID:    fails += (e.ssid != 9); break;
+			case F_P1:      fails += strcmp(e.path[0], "RELAY") != 0 || e.pathSsid[0] != 3 || strcmp(e.path[1], "WIDE2") != 0; break;
+			case F_P2:      fails += strcmp(e.path[1], "TRACE") != 0 || e.pathSsid[1] != 4 || strcmp(e.path[0], "WIDE1") != 0; break;
+			case F_ICON:    fails += (e.iconTable != 1) || (e.iconIndex != (uint8_t)('Z' - '!')); break;
+			case F_COMMENT: fails += strcmp(e.comment, "Hello 73") != 0; break;
+			case F_LAT:     fails += (e.latU != -33868800) || (e.lonU != 30250000) || !e.hasPos; break;
+			case F_LON:     fails += (e.lonU != 151209300) || (e.latU != 50500000) || !e.hasPos; break;
+			case F_AMB:     fails += (e.ambiguity != 3); break;
+			case F_INT:     fails += (e.interval != 3); break;
+			default:        fails += (e.sql != 8); break;
+		}
+		/* усе інше -- типове (поле не зачепило сусідів) */
+		{
+			aprsModeEff_t x = e;
+
+			switch (f)
+			{
+				case F_FREQ:    x.freq = base.freq; break;
+				case F_CALL:    memcpy(x.call, base.call, sizeof(x.call)); break;
+				case F_SSID:    x.ssid = base.ssid; break;
+				case F_P1:      memcpy(x.path[0], base.path[0], sizeof(x.path[0])); x.pathSsid[0] = base.pathSsid[0]; break;
+				case F_P2:      memcpy(x.path[1], base.path[1], sizeof(x.path[1])); x.pathSsid[1] = base.pathSsid[1]; break;
+				case F_ICON:    x.iconTable = base.iconTable; x.iconIndex = base.iconIndex; break;
+				case F_COMMENT: memcpy(x.comment, base.comment, sizeof(x.comment)); break;
+				case F_LAT:     x.latU = base.latU; break;
+				case F_LON:     x.lonU = base.lonU; break;
+				case F_AMB:     x.ambiguity = base.ambiguity; break;
+				case F_INT:     x.interval = base.interval; break;
+				default:        x.sql = base.sql; break;
+			}
+			if (memcmp(&x, &base, sizeof(x)) != 0) { fails++; printf("   поле %d: змінилось ще щось\n", f); }
+		}
+		/* «Скинути»: все знято */
+		aprsModeCfgInit(&r);
+		aprsModeEffective(&r, &d, &e);
+		if (memcmp(&e, &base, sizeof(e)) != 0) { fails++; }
+	}
+	CHECK(fails == 0, "аудит: кожне з %d полів переживає збереження/читання й не чіпає сусідів (збоїв %d)", (int)F_N, fails);
+}
+
 int main(void)
 {
 	testStruct();
@@ -512,6 +755,9 @@ int main(void)
 	testFreqCoord();
 	testFixed24();
 	testMisc();
+	testSymbolChain();
+	testSymbolPicker();
+	testAuditCfg();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_mode: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

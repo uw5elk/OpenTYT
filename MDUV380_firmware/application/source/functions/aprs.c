@@ -337,8 +337,10 @@ _Static_assert(((((30U + 84U + 2U) * 8U) * 6U) / 5U) + ((16U + 3U) * 8U) + 8U <=
 #endif
 #endif
 
-/* R10-fix2 (R10-fix5: постійне): трасування складання кадру (лише в «Режимі APRS»: s_modeCall != NULL). Номери -- TESTING.md, блок AP. */
-#if defined(APRS_MODE_TRACE)
+/* R10-fix2 (R10-fix5: постійне): трасування складання кадру (лише в «Режимі APRS»: s_modeCall != NULL). Номери -- TESTING.md, блок AP.
+ * R17: за замовчуванням ВИМКНЕНО (-DAPRS_FRAME_TRACE вмикає). Збірка кадру вже підтверджена на залізі, а ці виклики з'їдали ~860 Б флешу --
+ * без них діагностична збірка (ENABLE_APRS_RX_PROBE) не вміщається до фіксованої адреси кодека. */
+#if defined(APRS_MODE_TRACE) && defined(APRS_FRAME_TRACE)
 #define AX_TR(n)       do { if (s_modeCall != NULL) { AM_TRACE(n); } } while (0)
 #define AX_TRV(n, v)   do { if (s_modeCall != NULL) { AM_TRACE_V(n, v); } } while (0)
 #define AX_TRH(n, v)   do { if (s_modeCall != NULL) { AM_TRACE_H(n, v); } } while (0)
@@ -383,7 +385,7 @@ static void enqueueBit(AX25Encoder_t *encoderData, bool data)
 		encoderData->packetBuffer[encoderData->packetBufferBitPosition / 8U] |= 0x01 << (encoderData->packetBufferBitPosition % 8U);
 	}
 	encoderData->packetBufferBitPosition++;
-#if defined(APRS_MODE_TRACE)
+#if defined(APRS_MODE_TRACE) && defined(APRS_FRAME_TRACE)
 	if ((encoderData->packetBufferBitPosition & 0x3FU) == 0U)
 	{
 		AX_TRV(455, encoderData->packetBufferBitPosition);   // кожні 64 біти: позиція в кадрі
@@ -1460,7 +1462,7 @@ static void aprsBeaconingDecayTick(bool reset)
 	}
 }
 
-#if defined(APRS_MODE_TRACE)
+#if defined(APRS_MODE_TRACE) && defined(APRS_FRAME_TRACE)
 /* R10-fix: трасування завершення передачі -- лише поки активний «Режим APRS» (стоковий бікон не чіпаємо). */
 #define AM_TRACE_TX(n)  do { if (aprsModeIsActive()) { AM_TRACE(n); } } while (0)
 #else

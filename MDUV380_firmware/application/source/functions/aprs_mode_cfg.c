@@ -453,6 +453,137 @@ const char *aprsSymbolNameEx(char table, char code)
 	return NULL;
 }
 
+/* ---- R17: вибір символу в налаштуваннях ----------------------------------------------------------------- */
+
+unsigned aprsSymbolListCount(void)
+{
+	return (unsigned)(NAMED_COUNT + NAMEDALT_COUNT);
+}
+
+bool aprsSymbolListGet(unsigned i, uint8_t *table, uint8_t *index, const char **name)
+{
+	const namedSym_t *t;
+
+	if (i >= aprsSymbolListCount())
+	{
+		return false;
+	}
+	if (i < NAMED_COUNT)
+	{
+		t = &named[i];
+		*table = 0U;
+	}
+	else
+	{
+		t = &namedAlt[i - NAMED_COUNT];
+		*table = 1U;
+	}
+	*index = (uint8_t)(t->code - '!');
+	if (name != NULL)
+	{
+		*name = t->name;
+	}
+	return true;
+}
+
+int aprsSymbolListFind(uint8_t table, uint8_t index)
+{
+	for (unsigned i = 0; i < aprsSymbolListCount(); i++)
+	{
+		uint8_t t, x;
+
+		if (aprsSymbolListGet(i, &t, &x, NULL) && (t == ((table == 0U) ? 0U : 1U)) && (x == index))
+		{
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
+void aprsSymPickInit(aprsSymPick_t *p, uint8_t table, uint8_t index)
+{
+	int f = aprsSymbolListFind(table, index);
+
+	memset(p, 0, sizeof(*p));
+	p->table = (table == 0U) ? 0U : 1U;
+	p->index = (index > APRSM_ICON_MAX) ? APRSM_ICON_MAX : index;
+	if (f >= 0)
+	{
+		p->pos = (uint8_t)f;   /* названий -- одразу в переліку */
+	}
+	else
+	{
+		p->manual = 1U;        /* без назви (напр. '\\' + 'Z') -- лише вручну: таблиця й код */
+	}
+}
+
+void aprsSymPickStep(aprsSymPick_t *p, int dir)
+{
+	if (p->manual)
+	{
+		int v = (int)p->index + dir;
+
+		p->index = (uint8_t)((v < 0) ? APRSM_ICON_MAX : ((v > APRSM_ICON_MAX) ? 0 : v));
+	}
+	else
+	{
+		int n = (int)aprsSymbolListCount();
+		int v = (int)p->pos + dir;
+
+		p->pos = (uint8_t)((v < 0) ? (n - 1) : ((v >= n) ? 0 : v));
+	}
+}
+
+void aprsSymPickTable(aprsSymPick_t *p)
+{
+	if (p->manual)
+	{
+		p->table ^= 1U;
+	}
+}
+
+void aprsSymPickToggle(aprsSymPick_t *p)
+{
+	if (p->manual)
+	{
+		int f = aprsSymbolListFind(p->table, p->index);
+
+		if (f >= 0)
+		{
+			p->pos = (uint8_t)f;
+		}
+		p->manual = 0U;
+	}
+	else
+	{
+		uint8_t t, x;
+
+		if (aprsSymbolListGet(p->pos, &t, &x, NULL))
+		{
+			p->table = t;
+			p->index = x;
+		}
+		p->manual = 1U;
+	}
+}
+
+void aprsSymPickResult(const aprsSymPick_t *p, uint8_t *table, uint8_t *index)
+{
+	if (p->manual == 0U)
+	{
+		uint8_t t, x;
+
+		if (aprsSymbolListGet(p->pos, &t, &x, NULL))
+		{
+			*table = t;
+			*index = x;
+			return;
+		}
+	}
+	*table = (p->table == 0U) ? 0U : 1U;
+	*index = (p->index > APRSM_ICON_MAX) ? APRSM_ICON_MAX : p->index;
+}
+
 const char *aprsModeSymbolName(uint8_t table, uint8_t index)
 {
 	return aprsSymbolNameEx((table == 0U) ? '/' : '\\', (char)('!' + index));

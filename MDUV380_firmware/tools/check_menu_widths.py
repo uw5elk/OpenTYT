@@ -323,6 +323,7 @@ if os.path.exists(aprs_path):
         'APRSRX_CARD_POS': ['-179.1234 -179.1234'],
         'APRSRX_CARD_DIST': ['20000' + aprs.get('APRSRX_KM', '') + ' NW'],
         'APRSRX_CARD_LAST': ['59' + 'хв'],
+        'APRSRX_CARD_LAST_RS': ['59' + 'хв'],
         'APRSRX_CARD_PATH': ['W' * 20],
         'APRSRX_CARD_TYPE': [aprs.get('APRSRX_T_MSG', '')],
         'APRSRX_BANNER_FMT': ['UW5ELK-15', '20000' + aprs.get('APRSRX_KM', '') + ' NW'],
@@ -353,7 +354,7 @@ if os.path.exists(aprs_path):
         limit = LINE_CHARS if name in ('APRSRX_TITLE', 'APRSRX_DIAG_TITLE', 'APRSRX_DIAG2_TITLE', 'APRSRX_HUB_SETTINGS', 'APRSRX_HUB_PROBE') else 26
         t = val
         subs = WORST_S.get(name)
-        for rx, rep in (('%lu', '99999'), ('%u', '65535')):
+        for rx, rep in (('%lu', '99999'), ('%u', '65535'), ('%d', '-127')):
             t = t.replace(rx, rep)
         if '%s' in t:
             t = t.replace('%s', subs[0] if subs else 'XXXXXXXXXXXXXXX')
@@ -391,6 +392,8 @@ if os.path.exists(mode_path):
         'APRSM_V_FREQ': '430.0750',
         'APRSM_V_PATH_FMT': 'WIDE22',
         'APRSM_V_CALL_FMT': 'UW5ELK',
+        'APRSM_H_LISTEN_FMT': 'Увімк',
+        'APRSM_H_TITLE_ON': '144.8000',
     }
     def worst(name, val):
         t = val.replace('%%', '\x01')
@@ -405,18 +408,34 @@ if os.path.exists(mode_path):
         return t.replace('\x01', '%')
     for name, val in am.items():
         t = worst(name, val).replace('\\\\', '\\')
-        if name == 'APRSM_TITLE_FMT' or name == 'APRSM_MENU':
+        if name == 'APRSM_TITLE_FMT' or name == 'APRSM_MENU' or name.startswith('APRSM_H_') or name == 'APRSM_SET_TITLE':
             lim = LINE_CHARS
         elif name.startswith('APRSM_L_'):
             lim = 9
+        elif name.startswith('APRSM_G_'):
+            lim = 25   # маркер + назва групи в рядку екрана (26)
         elif name.startswith('APRSM_V_'):
             if name == 'APRSM_V_INT_FMT':
                 t = val.replace('%u', '60')
+            if name in ('APRSM_V_MIN_D',):
+                t = val.replace('%u', '99999')
             if name == 'APRSM_V_SQL_FMT':
                 t = val.replace('%u', '100').replace('%%', '%')
             lim = 15
-        elif name.startswith('APRSM_ERR_') or name == 'APRSM_NOT_NOW':
+        elif name.startswith('APRSM_ERR_') or name in ('APRSM_NOT_NOW', 'APRSM_TX_BUSY', 'APRSM_SAVE_FAIL', 'APRSM_BCN_SENT'):
             lim = LINE_CHARS
+        elif name.startswith('APRSM_PK_T_'):
+            lim = LINE_CHARS   # R17: заголовок вибору символу
+            t = val.replace('%u', '99')   # номер і кількість записів переліку -- до 99
+        elif name in ('APRSM_PK_VAL', 'APRSM_PK_VAL_RAW'):
+            lim = 15           # R17: значення пункту «Символ» у рядку налаштувань: таблиця+код+пробіл+назва (назва до 12)
+            if name == 'APRSM_PK_VAL_RAW':
+                t = val.replace('%c', '*').replace('%u', '93')
+            else:
+                t = val.replace('%c', '*').replace('%s', 'позашляховик')
+        elif name == 'APRSM_PK_CODE':
+            lim = 26
+            t = val.replace('%c', '*').replace('%u', '93')
         elif name.startswith('APRSM_SYM_'):
             lim = 13   # значення поля «Код сим.»: знак + пробіл + назва = 15 символів
         else:
