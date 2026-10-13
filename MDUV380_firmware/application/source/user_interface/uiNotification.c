@@ -176,6 +176,7 @@ static void displayMessage(void);
 static void displaySmsFullScreen(void);
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
 #if defined(ENABLE_APRS_RX)
+static void displayLevelCardEx(const char *title, const char *valueText, int16_t pct, const char *extra);
 static void displayMessageCard(void);
 #endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
@@ -387,7 +388,38 @@ void uiNotificationRefresh(void)
 						currentLanguage->call_replay_mode_last : currentLanguage->call_replay_mode_all);
 
 				snprintf(valueText, SCREEN_LINE_BUFFER_SIZE, "%lu:%02lu", (unsigned long)mm, (unsigned long)ss);
+#if defined(ENABLE_APRS_RX)
+				/* R18 Д10: хто говорив -- позивний (перше слово запису останньої прийнятої станції), інакше DMR ID, інакше без рядка. У буфері запису
+				 * джерело не зберігається (RAM 0 додано), тож береться ОСТАННЯ прийнята станція списку «Останні прийняті» -- під час відтворення нового прийому
+				 * не буває (він його перериває), тож це та сама станція, чий виклик грає (для режиму «Останні 30 с» -- останній у ній). */
+				char whoText[16];
+				const char *who = NULL;
+
+				whoText[0] = 0;
+				if (LinkHead != NULL)
+				{
+					size_t n = 0U;
+
+					while ((n < (sizeof(whoText) - 1U)) && (LinkHead->contact[n] != 0) && (LinkHead->contact[n] != ' '))
+					{
+						whoText[n] = LinkHead->contact[n];
+						n++;
+					}
+					whoText[n] = 0;
+
+					if ((n == 0U) && ((LinkHead->id & 0xFFFFFFU) != 0U))
+					{
+						snprintf(whoText, sizeof(whoText), "%lu", (unsigned long)(LinkHead->id & 0xFFFFFFU));
+					}
+					if (whoText[0] != 0)
+					{
+						who = whoText;
+					}
+				}
+				displayLevelCardEx(title, valueText, pct, who);
+#else
 				displayLevelCard(title, valueText, pct);
+#endif
 			}
 			break;
 #endif
@@ -627,7 +659,22 @@ bool uiNotificationIsPendingRender(void)
  * шумоподавлення, "500mW"/"1W"/"5W" для потужності -- формат не змінюємо, лише переносимо
  * малювання). pct (0-100) -- де саме заповнена смуга; для потужності це позиція серед
  * дискретних рівнів (mW/W), а не відсоток від безперервного діапазону. */
+#if defined(ENABLE_APRS_RX)
+/* R18 Д10: displayLevelCardEx() -- та сама картка + необов'язковий третій рядок (FONT_SIZE_3) між значенням і смугою (extra == NULL -- макет без змін:
+ * гучність, потужність, шумоподавлення). Окрема функція, а не зміна сигнатури displayLevelCard(), щоб код без ENABLE_APRS_RX лишився таким же, і без
+ * статичної змінної (RAM 0). */
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct)
+{
+	displayLevelCardEx(title, valueText, pct, NULL);
+}
+#define LC_Y_TITLE ((extra != NULL) ? 6 : 16)
+#define LC_Y_VALUE ((extra != NULL) ? 28 : 44)
+static void displayLevelCardEx(const char *title, const char *valueText, int16_t pct, const char *extra)
+#else
+#define LC_Y_TITLE 16
+#define LC_Y_VALUE 44
+static void displayLevelCard(const char *title, const char *valueText, int16_t pct)
+#endif
 {
 	char buffer[SCREEN_LINE_BUFFER_SIZE];
 	const int16_t barX = 14;
@@ -667,12 +714,21 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 	displaySetForegroundAndBackgroundColours(colFg, colBg);
 	strncpy(buffer, title, (SCREEN_LINE_BUFFER_SIZE - 1));
 	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
-	displayPrintCentered(16, buffer, FONT_SIZE_3);
+	displayPrintCentered(LC_Y_TITLE, buffer, FONT_SIZE_3);
 
 	// Велике значення по центру (готовий рядок -- "42%" або "500mW" тощо)
 	strncpy(buffer, valueText, (SCREEN_LINE_BUFFER_SIZE - 1));
 	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
-	displayPrintCentered(44, buffer, FONT_SIZE_4);
+	displayPrintCentered(LC_Y_VALUE, buffer, FONT_SIZE_4);
+
+#if defined(ENABLE_APRS_RX)
+	if (extra != NULL)
+	{
+		strncpy(buffer, extra, (SCREEN_LINE_BUFFER_SIZE - 1));
+		buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
+		displayPrintCentered(66, buffer, FONT_SIZE_3);
+	}
+#endif
 
 	// Смуга-індикатор
 	displaySetForegroundAndBackgroundColours(colDec, colBg);
