@@ -1,5 +1,5 @@
 /*
- * aprs_icons.h -- R14: піктограми символів APRS 16x16 (монохромний XBM, const у flash, 0 байт RAM/CCM) для вікна маяка.
+ * aprs_icons.h -- R14: піктограми символів APRS 24x24 (R17; були 16x16) (монохромний XBM, const у flash, 0 байт RAM/CCM) для вікна маяка.
  * Малює uiNotification.c через displayDrawXBitmap(). Чистий C -- перевіряє хост-тест test_aprs_rx_parse.
  */
 #ifndef FUNCTIONS_APRS_ICONS_H_
@@ -9,8 +9,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define APRS_ICON_W   16
-#define APRS_ICON_H   16
+#define APRS_ICON_W   24
+#define APRS_ICON_H   24
 
 /* Піктограма для символу (таблиця, код). Таблиця '/' -- первинна, '\\' -- додаткова, цифра/літера -- ДОДАТКОВА з накладкою
  * (*overlay = true: знак таблиці малюють у центрі). NULL -- піктограми нема (малюють рамку з кодом). */

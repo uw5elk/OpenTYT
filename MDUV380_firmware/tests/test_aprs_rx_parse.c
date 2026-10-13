@@ -949,6 +949,87 @@ static void testHist(void)
 	}
 }
 
+/* ---- R17 Г5: стрілка залитими трикутниками ----------------------------------------------------------------- */
+static long triCross(const aprsTri_t *t)
+{
+	return ((long)(t->x[1] - t->x[0]) * (long)(t->y[2] - t->y[0])) - ((long)(t->y[1] - t->y[0]) * (long)(t->x[2] - t->x[0]));
+}
+
+static void testArrowPoly(void)
+{
+	static const uint16_t named[] = { 0, 45, 90, 180, 270, 359 };
+	const int16_t cx = 121, cy = 64, len = 22;
+	const int ringR = 31;
+	aprsArrowPoly_t ref;
+	long sign0[3];
+
+	printf("== R17 Г5: aprsArrowPoly ==\n");
+	aprsArrowPoly(&ref, cx, cy, len, 0);
+	for (int i = 0; i < 3; i++) { sign0[i] = triCross(&ref.t[i]); }
+	CHECK(sign0[0] > 0 && sign0[1] > 0 && sign0[2] > 0, "північ: орієнтація всіх трикутників додатна (%ld %ld %ld)", sign0[0], sign0[1], sign0[2]);
+	CHECK(ref.tipX == cx && ref.tipY == cy - len, "північ: вістря (%d,%d)", ref.tipX, ref.tipY);
+	{
+		/* стрижень: два трикутники, разом чотирикутник 4 px шириною від центру; вістря ширше стрижня */
+		int shaftW = abs(ref.t[0].y[0] - ref.t[0].y[2]);   /* вершини (0,-sw) і (s,sw): різниця по x для півночі */
+		int headW = abs(ref.t[2].x[0] - ref.t[2].x[2]);
+
+		(void)shaftW;
+		CHECK(headW >= 8 && headW <= 12, "вістря шириною %d px (10)", headW);
+		CHECK(abs(ref.t[0].x[0] - ref.t[0].x[1]) == 0 && abs(ref.t[0].x[0] - ref.t[1].x[2]) == 4, "північ: стрижень завтовшки 4 px");
+	}
+	for (unsigned k = 0; k < sizeof(named) / sizeof(named[0]); k++)
+	{
+		aprsArrowPoly_t p;
+		aprsArrow_t g;
+		bool inside = true, same = true;
+		long minArea = 1000000L;
+
+		aprsArrowPoly(&p, cx, cy, len, named[k]);
+		aprsArrowGeom(&g, cx, cy, len, named[k]);
+		for (int i = 0; i < 3; i++)
+		{
+			long cr = triCross(&p.t[i]);
+
+			same = same && ((cr > 0) == (sign0[i] > 0));
+			if (labs(cr) < minArea) { minArea = labs(cr); }
+			for (int j = 0; j < 3; j++)
+			{
+				long dx = p.t[i].x[j] - cx, dy = p.t[i].y[j] - cy;
+
+				inside = inside && ((dx * dx + dy * dy) <= (long)(ringR - 7) * (ringR - 7));
+			}
+		}
+		CHECK(inside, "азимут %u: усі точки всередині кільця і не заходять на риски (R-7)", named[k]);
+		CHECK(same && (minArea >= 20), "азимут %u: жоден трикутник не перевернутий і не виродився (мін. 2*площа = %ld)", named[k], minArea);
+		CHECK(abs(p.tipX - g.tx) <= 1 && abs(p.tipY - g.ty) <= 1, "азимут %u: вістря збігається з aprsArrowGeom (%d,%d) / (%d,%d)", named[k], p.tipX, p.tipY, g.tx, g.ty);
+	}
+	{
+		/* усі 360 азимутів */
+		int bad = 0;
+
+		for (unsigned b = 0; b < 360; b++)
+		{
+			aprsArrowPoly_t p;
+			double dd;
+
+			aprsArrowPoly(&p, cx, cy, len, (uint16_t)b);
+			dd = sqrt((double)((p.tipX - cx) * (p.tipX - cx) + (p.tipY - cy) * (p.tipY - cy)));
+			if (fabs(dd - (double)len) > 1.01) { bad++; }
+			for (int i = 0; i < 3; i++)
+			{
+				if ((triCross(&p.t[i]) > 0) != (sign0[i] > 0)) { bad++; }
+				for (int j = 0; j < 3; j++)
+				{
+					long dx = p.t[i].x[j] - cx, dy = p.t[i].y[j] - cy;
+
+					if ((dx * dx + dy * dy) > (long)(ringR - 7) * (ringR - 7)) { bad++; }
+				}
+			}
+		}
+		CHECK(bad == 0, "усі 360 азимутів: довжина, орієнтація і межі кільця й рисок (%d порушень)", bad);
+	}
+}
+
 /* ---- R17 Г6: RSSI у журналі та в записі маяка ------------------------------------------------------------------ */
 static void testRssi(void)
 {
@@ -1875,6 +1956,7 @@ int main(void)
 	testHist();
 	testBeaconOrder();
 	testRssi();
+	testArrowPoly();
 	testStage3();
 	testRawText();
 	testFuzz();

@@ -211,6 +211,19 @@ typedef struct
 	int16_t rx, ry;
 } aprsArrow_t;
 void aprsArrowGeom(aprsArrow_t *a, int16_t cx, int16_t cy, int16_t len, uint16_t bearingDeg);
+/* R17 Г5: та сама стрілка як ЗАЛИТІ трикутники (displayFillTriangle): стрижень завтовшки 4 px -- два трикутники (чотирикутник від центру до основи вістря),
+ * вістря -- один трикутник завдовжки ~40% len і шириною 10 px. Вістря (кінчик) на відстані len від центру. Обхід вершин у кожному трикутнику однаковий для
+ * будь-якого азимуту (обертання не перевертає трикутник), тож заливка не «вивертається». */
+typedef struct
+{
+	int16_t x[3], y[3];
+} aprsTri_t;
+typedef struct
+{
+	aprsTri_t t[3];     /* 0, 1 -- стрижень; 2 -- вістря */
+	int16_t   tipX, tipY;
+} aprsArrowPoly_t;
+void aprsArrowPoly(aprsArrowPoly_t *p, int16_t cx, int16_t cy, int16_t len, uint16_t bearingDeg);
 /* Чи малювати стрілку: є відстань/азимут і станція не в тій самій точці (azimut при нульовій відстані не визначений). */
 bool aprsBeaconArrowVisible(bool hasGeo, uint32_t distM);
 /* Вузли -> км/год (округлено до цілих; 1 вузол = 1.852 км/год). */

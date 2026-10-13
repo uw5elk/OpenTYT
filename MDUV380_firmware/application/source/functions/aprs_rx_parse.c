@@ -2260,6 +2260,43 @@ void aprsArrowGeom(aprsArrow_t *a, int16_t cx, int16_t cy, int16_t len, uint16_t
 	a->ry = (int16_t)iround((double)a->ty + (dx * sa + (-dy) * ca) * wl);
 }
 
+void aprsArrowPoly(aprsArrowPoly_t *p, int16_t cx, int16_t cy, int16_t len, uint16_t bearingDeg)
+{
+	const double rad = 0.017453292519943295;
+	const double b = (double)(bearingDeg % 360U) * rad;
+	const double dx = sin(b);
+	const double dy = -cos(b);        /* вісь стрілки на екрані (y вниз, північ угору) */
+	const double px = -dy;            /* перпендикуляр: вісь, повернута на +90° */
+	const double py = dx;
+	double hl = (double)len * 0.4;    /* довжина вістря */
+	const double hw = 5.0;            /* півширина вістря */
+	const double sw = 2.0;            /* півширина стрижня (4 px) */
+	double s;
+	/* (u, v) -> екран; пари для трикутників: стрижень (0,-sw)(s,-sw)(s,sw) і (0,-sw)(s,sw)(0,sw); вістря (s,-hw)(len,0)(s,hw) -- всі з додатним
+	 * орієнтованим кутом у (u, v), обертання його зберігає */
+	double u[9], v[9];
+
+	if (hl < 4.0)
+	{
+		hl = 4.0;
+	}
+	s = (double)len - hl;
+	if (s < 1.0)
+	{
+		s = 1.0;
+	}
+	u[0] = 0; v[0] = -sw;  u[1] = s; v[1] = -sw;  u[2] = s; v[2] = sw;
+	u[3] = 0; v[3] = -sw;  u[4] = s; v[4] = sw;   u[5] = 0; v[5] = sw;
+	u[6] = s; v[6] = -hw;  u[7] = (double)len; v[7] = 0;  u[8] = s; v[8] = hw;
+	for (int i = 0; i < 9; i++)
+	{
+		p->t[i / 3].x[i % 3] = iround((double)cx + (u[i] * dx) + (v[i] * px));
+		p->t[i / 3].y[i % 3] = iround((double)cy + (u[i] * dy) + (v[i] * py));
+	}
+	p->tipX = p->t[2].x[1];
+	p->tipY = p->t[2].y[1];
+}
+
 bool aprsBeaconArrowVisible(bool hasGeo, uint32_t distM)
 {
 	return hasGeo && (distM > 0U);

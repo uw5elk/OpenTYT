@@ -336,8 +336,8 @@ static void drawSettings(void)
 
 /* ---- R17: вибір символу (один пункт «Символ»: перелік назв із піктограмою; для символів без назви -- «вручну»: таблиця + код) ----------------- */
 
-#define AM_SYM_VISIBLE   5
-#define AM_SYM_ROW_H     19    /* піктограма 16x16 + проміжок */
+#define AM_SYM_VISIBLE   3     /* R17 Г5: піктограми 24x24 -- три рядки в списку */
+#define AM_SYM_ROW_H     27    /* піктограма 24x24 + проміжок 3 px */
 
 /* Стан вибору лежить у полях редактора (розмір aprsModeUi_t не росте): mtMode -- вручну, cap -- таблиця, err -- код, pos -- номер у переліку. */
 static void symPickLoad(const aprsModeEdit_t *ed, aprsSymPick_t *p)
@@ -356,7 +356,7 @@ static void symPickStore(aprsModeEdit_t *ed, const aprsSymPick_t *p)
 	ed->pos = (int16_t)p->pos;
 }
 
-/* Піктограма 16x16; символу без піктограми -- рамка зі знаком. onBar -- малюємо на смузі вибору (кольори навпаки). */
+/* Піктограма 24x24; символу без піктограми -- рамка зі знаком. onBar -- малюємо на смузі вибору (кольори навпаки). */
 static void symDrawIcon(int16_t x, int16_t y, uint8_t table, uint8_t index, bool onBar)
 {
 	char t = (table == 0U) ? '/' : '\\';
@@ -374,7 +374,7 @@ static void symDrawIcon(int16_t x, int16_t y, uint8_t table, uint8_t index, bool
 		one[0] = c;
 		one[1] = 0;
 		displayDrawRect(x, y, APRS_ICON_W, APRS_ICON_H, (onBar == false));
-		displayPrintCore((int16_t)(x + 5), (int16_t)(y + 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, onBar);
+		displayPrintCore((int16_t)(x + 9), (int16_t)(y + 8), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, onBar);
 	}
 }
 
@@ -399,7 +399,7 @@ static void symEditDraw(void)
 		aprsSymPickResult(&p, &tt, &ii);
 		symDrawIcon(4, AM_ROW(3), tt, ii, false);
 		nm = aprsSymbolNameEx((tt == 0U) ? '/' : '\\', (char)('!' + ii));
-		displayPrintCore(26, (int16_t)(AM_ROW(3) + 4), (nm != NULL) ? nm : APRSM_PK_NONAME, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		displayPrintCore(32, (int16_t)(AM_ROW(3) + 8), (nm != NULL) ? nm : APRSM_PK_NONAME, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 		printRow(10, APRSM_PK_H_MAN);
 	}
 	else
@@ -422,7 +422,7 @@ static void symEditDraw(void)
 			uint8_t tt, ii;
 			const char *nm = NULL;
 			bool sel = ((top + r) == (int)p.pos);
-			int16_t y = (int16_t)(16 + (r * AM_SYM_ROW_H));
+			int16_t y = (int16_t)(19 + (r * AM_SYM_ROW_H));
 
 			if (aprsSymbolListGet((unsigned)(top + r), &tt, &ii, &nm) == false)
 			{
@@ -430,11 +430,11 @@ static void symEditDraw(void)
 			}
 			if (sel)
 			{
-				displayFillRect(0, (int16_t)(y - 1), DISPLAY_SIZE_X, 18, false);   /* смуга вибору */
+				displayFillRect(0, (int16_t)(y - 1), DISPLAY_SIZE_X, 26, false);   /* смуга вибору */
 			}
 			symDrawIcon(3, y, tt, ii, sel);
 			snprintf(buf, sizeof(buf), APRSM_PK_VAL, (tt == 0U) ? '/' : '\\', (char)('!' + ii), nm);
-			displayPrintCore(24, (int16_t)(y + 4), buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, sel);
+			displayPrintCore(32, (int16_t)(y + 8), buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, sel);
 		}
 		printRow(10, APRSM_PK_H_LIST);
 	}

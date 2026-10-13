@@ -689,26 +689,37 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 #define APRS_WIN_CX      121
 #define APRS_WIN_CY      64
 #define APRS_WIN_R       31
-#define APRS_WIN_ARROW   26
+#define APRS_WIN_ARROW   22    /* R17 Г5: довжина стрілки; кінчик (22) не заходить на риски кільця (R-6..R-2 = 25..29) */
 
+/* R17 Г5: стрілка залитими трикутниками (aprsArrowPoly(): стрижень 4 px -- два трикутники, вістря -- один) + контур кожного (щоб шви між трикутниками
+ * не лишали пропусків) і диск r = 2 у центрі. */
 static void aprsWinDrawArrow(uint16_t bearing)
 {
-	aprsArrow_t a;
-	bool steep;
+	aprsArrowPoly_t p;
 
-	aprsArrowGeom(&a, APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_ARROW, bearing);
-	steep = (abs(a.tx - APRS_WIN_CX) < abs(a.ty - APRS_WIN_CY));   /* стрижень майже вертикальний -- товщимо по x, інакше по y */
-	for (int16_t o = -1; o <= 1; o++)
+	aprsArrowPoly(&p, APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_ARROW, bearing);
+	for (int i = 0; i < 3; i++)
 	{
-		displayDrawLine((int16_t)(APRS_WIN_CX + (steep ? o : 0)), (int16_t)(APRS_WIN_CY + (steep ? 0 : o)),
-				(int16_t)(a.tx + (steep ? o : 0)), (int16_t)(a.ty + (steep ? 0 : o)), true);
-	}
-	/* вістря -- залитий трикутник: лінії від кінчика до точок на відрізку між крилами */
-	for (int16_t k = 0; k <= 4; k++)
-	{
-		displayDrawLine(a.tx, a.ty, (int16_t)(a.lx + (((a.rx - a.lx) * k) / 4)), (int16_t)(a.ly + (((a.ry - a.ly) * k) / 4)), true);
+		const aprsTri_t *t = &p.t[i];
+
+		displayFillTriangle(t->x[0], t->y[0], t->x[1], t->y[1], t->x[2], t->y[2], true);
+		displayDrawLine(t->x[0], t->y[0], t->x[1], t->y[1], true);
+		displayDrawLine(t->x[1], t->y[1], t->x[2], t->y[2], true);
+		displayDrawLine(t->x[2], t->y[2], t->x[0], t->y[0], true);
 	}
 	displayFillCircle(APRS_WIN_CX, APRS_WIN_CY, 2, true);
+}
+
+/* R17 Г5: кільце з двох кіл (R і R-1: лінія завтовшки 2 px), чотири внутрішні риски R-2..R-6 (Пн, Сх, Пд, Зх) і мітка «Пн» над кільцем. */
+static void aprsWinDrawRing(void)
+{
+	displayDrawCircle(APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_R, true);
+	displayDrawCircle(APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_R - 1, true);
+	displayDrawLine(APRS_WIN_CX, (int16_t)(APRS_WIN_CY - APRS_WIN_R + 2), APRS_WIN_CX, (int16_t)(APRS_WIN_CY - APRS_WIN_R + 6), true);
+	displayDrawLine(APRS_WIN_CX, (int16_t)(APRS_WIN_CY + APRS_WIN_R - 2), APRS_WIN_CX, (int16_t)(APRS_WIN_CY + APRS_WIN_R - 6), true);
+	displayDrawLine((int16_t)(APRS_WIN_CX - APRS_WIN_R + 2), APRS_WIN_CY, (int16_t)(APRS_WIN_CX - APRS_WIN_R + 6), APRS_WIN_CY, true);
+	displayDrawLine((int16_t)(APRS_WIN_CX + APRS_WIN_R - 2), APRS_WIN_CY, (int16_t)(APRS_WIN_CX + APRS_WIN_R - 6), APRS_WIN_CY, true);
+	displayPrintCore((int16_t)(APRS_WIN_CX - 6), 22, APRSRX_WIN_N, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 }
 
 #define APRS_WIN_ROW_H    9
@@ -854,7 +865,9 @@ static void aprsWinInfoRows(const aprsRxWin_t *w, int16_t y)
 	}
 }
 
-/* Піктограма символу 16x16; невідомий символ -- рамка з самим знаком; накладка (таблиця -- цифра/літера) -- знак у центрі поверх піктограми. */
+/* Піктограма символу 24x24 (R17 Г5; була 16x16). Накладка (таблиця -- цифра/літера): знак у блоці 8x8 у правому нижньому куті піктограми з ІНВЕРСНИМ
+ * тлом (суцільний блок кольору переднього плану, знак -- кольором тла): читається на будь-якій піктограмі. Невідомий символ -- рамка 24x24 з самим
+ * знаком коду (FONT_SIZE_1, по центру). */
 static void aprsWinDrawSymbol(int16_t x, int16_t y, const aprsRxWin_t *w)
 {
 	bool ov = false;
@@ -868,15 +881,15 @@ static void aprsWinDrawSymbol(int16_t x, int16_t y, const aprsRxWin_t *w)
 		if (ov)
 		{
 			one[0] = w->symTable;
-			displayFillRect((int16_t)(x + 4), (int16_t)(y + 3), 8, 10, true);   /* true -- колір тла: стерти під знаком */
-			displayPrintCore((int16_t)(x + 5), (int16_t)(y + 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			displayFillRect((int16_t)(x + APRS_ICON_W - 8), (int16_t)(y + APRS_ICON_H - 8), 8, 8, false);   /* false -- колір переднього плану: інверсне тло */
+			displayPrintCore((int16_t)(x + APRS_ICON_W - 7), (int16_t)(y + APRS_ICON_H - 8), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
 		}
 	}
 	else
 	{
 		displayDrawRect(x, y, APRS_ICON_W, APRS_ICON_H, true);
 		one[0] = ((w->symCode >= 0x20) && (w->symCode < 0x7F)) ? w->symCode : '?';
-		displayPrintCore((int16_t)(x + 5), (int16_t)(y + 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		displayPrintCore((int16_t)(x + (APRS_ICON_W / 2) - 3), (int16_t)(y + (APRS_ICON_H / 2) - 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	}
 }
 
@@ -931,13 +944,8 @@ static void displayAprsBeaconWindow(void)
 		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
 		y += 18;
 
-		/* Кільце, чотири риски (Пн, Сх, Пд, Зх), мітка «Пн» угорі й стрілка. Дистанція 0 -- азимут не визначений, стрілки нема. */
-		displayDrawCircle(APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_R, true);
-		displayDrawLine(APRS_WIN_CX, (int16_t)(APRS_WIN_CY - APRS_WIN_R), APRS_WIN_CX, (int16_t)(APRS_WIN_CY - APRS_WIN_R + 4), true);
-		displayDrawLine(APRS_WIN_CX, (int16_t)(APRS_WIN_CY + APRS_WIN_R), APRS_WIN_CX, (int16_t)(APRS_WIN_CY + APRS_WIN_R - 4), true);
-		displayDrawLine((int16_t)(APRS_WIN_CX - APRS_WIN_R), APRS_WIN_CY, (int16_t)(APRS_WIN_CX - APRS_WIN_R + 4), APRS_WIN_CY, true);
-		displayDrawLine((int16_t)(APRS_WIN_CX + APRS_WIN_R), APRS_WIN_CY, (int16_t)(APRS_WIN_CX + APRS_WIN_R - 4), APRS_WIN_CY, true);
-		displayPrintCore((int16_t)(APRS_WIN_CX - 6), 22, APRSRX_WIN_N, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		/* Кільце, риски, мітка «Пн» і стрілка. Дистанція 0 -- азимут не визначений, стрілки нема. */
+		aprsWinDrawRing();
 		if (aprsBeaconArrowVisible(true, w->distM))
 		{
 			aprsWinDrawArrow(w->bearing);
@@ -953,16 +961,17 @@ static void displayAprsBeaconWindow(void)
 	/* R14: решта даних пакета -- по рядку, лише наявні, x = 4..86 (13 символів: правіше кільце), крок 9 px, до y = 97. */
 	aprsWinInfoRows(w, y);
 
-	/* Символ APRS: піктограма 16x16 (x = 4, y = 99), праворуч назва (R15: без другого рядка «таблиця+код» -- він лишається ЛИШЕ тоді, коли назви нема:
-	 * кадр із кодом, якого немає в нашій таблиці назв), нижче коментар у ДВА рядки з перенесенням за словами (aprsMsgWrapLine()). Перший рядок
-	 * коментаря -- праворуч від піктограми (x = 24, 22 символи), другий -- під нею (x = 4, 25 символів). Коментар до 27 символів: влізає цілком. */
+	/* Символ APRS: піктограма 24x24 (x = 4, y = 100..123), праворуч назва (R15: без другого рядка «таблиця+код» -- він лишається ЛИШЕ тоді, коли назви нема:
+	 * кадр із кодом, якого немає в нашій таблиці назв), нижче коментар у ДВА рядки з перенесенням за словами (aprsMsgWrapLine()). R17 Г5: піктограма
+	 * зайняла висоту обох рядків коментаря, тож з піктограмою ОБИДВА рядки йдуть праворуч від неї (x = 32, по 20 символів: 40 >= 27, коментар влізає
+	 * цілком); без символу -- як було: x = 4, 25 символів. */
 	bool haveSym = (w->symCode != 0);
 
 	if (haveSym)
 	{
 		const char *nm = aprsSymbolNameEx(w->symTable, w->symCode);
 
-		aprsWinDrawSymbol(4, 99, w);
+		aprsWinDrawSymbol(4, 100, w);
 		if (nm != NULL)
 		{
 			snprintf(buf, sizeof buf, "%s", nm);
@@ -971,15 +980,15 @@ static void displayAprsBeaconWindow(void)
 		{
 			snprintf(buf, sizeof buf, APRSRX_WIN_SYM2_FMT, (w->symTable != 0) ? w->symTable : ' ', w->symCode);
 		}
-		buf[(DISPLAY_SIZE_X - 28) / 6] = 0;
-		displayPrintCore(24, 101, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		buf[(DISPLAY_SIZE_X - 36) / 6] = 0;
+		displayPrintCore(32, 101, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	}
 	if (w->text[0])
 	{
 		const int len = (int)strlen(w->text);
-		const int16_t x1 = haveSym ? 24 : 4;
+		const int16_t x1 = haveSym ? 32 : 4;
 		const int w1 = (DISPLAY_SIZE_X - x1 - 4) / 6;
-		const int w2 = (DISPLAY_SIZE_X - 8) / 6;
+		const int w2 = w1;
 		int ls = 0, nx = 0, n;
 
 		n = aprsMsgWrapLine(w->text, len, 0, w1, &ls, &nx);
@@ -996,7 +1005,7 @@ static void displayAprsBeaconWindow(void)
 			{
 				memcpy(buf, w->text + ls, (size_t)n);
 				buf[n] = 0;
-				displayPrintCore(4, 117, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+				displayPrintCore(x1, 117, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 			}
 		}
 	}
