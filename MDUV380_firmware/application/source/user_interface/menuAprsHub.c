@@ -27,11 +27,13 @@
 #include "user_interface/languages/aprsmsg_ua.h"
 
 /* Порядок пунктів = порядок на екрані. Нові пункти додавати СЮДИ, у відповідному місці:
- *   APRS_HUB_MODE, APRS_HUB_STATIONS, APRS_HUB_MESSAGES (R11), APRS_HUB_SETTINGS, [APRS_HUB_PROBE] */
+ *   APRS_HUB_MODE, APRS_HUB_STATIONS, APRS_HUB_BEACON (R15), APRS_HUB_PACKET (R15), APRS_HUB_MESSAGES (R11), APRS_HUB_SETTINGS, [APRS_HUB_PROBE] */
 enum
 {
 	APRS_HUB_MODE = 0,
 	APRS_HUB_STATIONS,
+	APRS_HUB_BEACON,      /* R15: «Останній маяк» -- вікно маяка за збереженими даними */
+	APRS_HUB_PACKET,      /* R15: «Останній пакет» -- сирий текст останнього кадру */
 	APRS_HUB_MESSAGES,
 	APRS_HUB_SETTINGS,
 #if defined(APRS_RX_PROBE)
@@ -48,6 +50,8 @@ static const char *itemName(int n, char *buf, size_t cap)
 	{
 		case APRS_HUB_MODE:     return APRSM_MENU;
 		case APRS_HUB_STATIONS: return APRSRX_TITLE;
+		case APRS_HUB_BEACON:   return APRSRX_HUB_BCN;
+		case APRS_HUB_PACKET:   return APRSRX_HUB_PKT;
 		case APRS_HUB_MESSAGES:
 		{
 			/* R11-fix2: непрочитані повідомлення APRS -- у назві пункту (вхідні більше не потрапляють у «Повідомлення» DMR).
@@ -116,6 +120,12 @@ static void openItem(int n)
 			break;
 		case APRS_HUB_STATIONS:
 			menuAprsStationsEnter();
+			break;
+		case APRS_HUB_BEACON:
+			menuAprsBeaconShow();   /* R15: вікно маяка ще раз; RED закриває (applicationMain.c); порожньо -- сповіщення */
+			break;
+		case APRS_HUB_PACKET:
+			menuAprsPacketEnter();
 			break;
 		case APRS_HUB_MESSAGES:
 			/* R13 (П.5): без входу в «Режим APRS» -- читання, «Відповісти», «Нове» працюють поза режимом (чергу й ACK веде aprsMsgBgTick()

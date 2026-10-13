@@ -258,6 +258,112 @@ bool aprsAx25Unwrap(aprsAx25_t *ax)
 	return true;
 }
 
+/* ---- R15: кадр у текстовому вигляді (TNC-2) -------------------------------------------------------------- */
+static size_t rawPut(char *out, size_t cap, size_t n, const char *s, size_t sl)
+{
+	for (size_t i = 0; (i < sl) && ((n + 1U) < cap); i++)
+	{
+		out[n++] = s[i];
+	}
+	return n;
+}
+
+static size_t rawPutInfo(char *out, size_t cap, size_t n, const uint8_t *info, size_t len)
+{
+	for (size_t i = 0; (i < len) && ((n + 1U) < cap); i++)
+	{
+		out[n++] = ((info[i] < 0x20U) || (info[i] > 0x7EU)) ? '.' : (char)info[i];
+	}
+	return n;
+}
+
+size_t aprsAx25ToText(const uint8_t *f, uint16_t len, char *out, size_t cap)
+{
+	char c[APRS_CALL_LEN];
+	size_t n = 0;
+	uint16_t pos = 14;
+	bool last;
+	int digis = 0;
+
+	if ((out == NULL) || (cap == 0U))
+	{
+		return 0;
+	}
+	out[0] = 0;
+	if ((f == NULL) || (len < 16U) || (!addrToStr(f + 7, c, NULL)))
+	{
+		return 0;
+	}
+	n = rawPut(out, cap, n, c, strlen(c));
+	n = rawPut(out, cap, n, ">", 1U);
+	if (!addrToStr(f, c, NULL))
+	{
+		out[0] = 0;
+		return 0;
+	}
+	n = rawPut(out, cap, n, c, strlen(c));
+	last = ((f[13] & 0x01U) != 0U);
+	while (!last)
+	{
+		bool h = false;
+
+		if ((digis >= 8) || ((uint16_t)(pos + 7U + 2U) > len) || (!addrToStr(f + pos, c, &h)))
+		{
+			out[0] = 0;
+			return 0;
+		}
+		n = rawPut(out, cap, n, ",", 1U);
+		n = rawPut(out, cap, n, c, strlen(c));
+		if (h)
+		{
+			n = rawPut(out, cap, n, "*", 1U);
+		}
+		last = ((f[pos + 6U] & 0x01U) != 0U);
+		pos = (uint16_t)(pos + 7U);
+		digis++;
+	}
+	if (((uint16_t)(pos + 2U) > len) || (f[pos] != 0x03U) || (f[pos + 1U] != 0xF0U))
+	{
+		out[0] = 0;
+		return 0;
+	}
+	n = rawPut(out, cap, n, ":", 1U);
+	n = rawPutInfo(out, cap, n, f + pos + 2U, (size_t)(len - pos - 2U));
+	out[n] = 0;
+	return n;
+}
+
+size_t aprsAx25AppendUnwrapped(char *out, size_t cap, size_t curLen, const aprsAx25_t *ax)
+{
+	static const char mark[] = " => ";
+	size_t need, n;
+
+	if ((out == NULL) || (ax == NULL) || (!ax->tp) || (ax->info == NULL) || (cap == 0U) || (curLen >= cap))
+	{
+		return curLen;
+	}
+	/* спершу рахуємо, скільки треба, щоб не тримати зайвий буфер на стеку: вкладений кадр або влазить цілком, або не дописується */
+	need = (sizeof(mark) - 1U) + strlen(ax->src) + 1U + strlen(ax->dst) + ((ax->path[0] != 0) ? (1U + strlen(ax->path)) : 0U) + 1U + ax->infoLen;
+	if ((curLen + need + 1U) > cap)
+	{
+		return curLen;
+	}
+	n = curLen;
+	n = rawPut(out, cap, n, mark, sizeof(mark) - 1U);
+	n = rawPut(out, cap, n, ax->src, strlen(ax->src));
+	n = rawPut(out, cap, n, ">", 1U);
+	n = rawPut(out, cap, n, ax->dst, strlen(ax->dst));
+	if (ax->path[0] != 0)
+	{
+		n = rawPut(out, cap, n, ",", 1U);
+		n = rawPut(out, cap, n, ax->path, strlen(ax->path));
+	}
+	n = rawPut(out, cap, n, ":", 1U);
+	n = rawPutInfo(out, cap, n, ax->info, ax->infoLen);
+	out[n] = 0;
+	return n;
+}
+
 /* ===================================================================================== */
 /* Текст                                                                                  */
 /* ===================================================================================== */

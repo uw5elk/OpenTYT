@@ -47,8 +47,14 @@
  * лише ~1,6 КБ, CCM ~0,3 КБ, а позичати кільце не можна (воно стерло б історію «Переслухати»). Тож резерв = блок + 160 Б екрана
  * (вирівняно на 8); кільце коротшає з 450 до 444 груп (~26,6 с). Сумарно CCM-буфер не росте. */
 #define CALL_REPLAY_APRS_UI_BYTES       160U
-#define CALL_REPLAY_APRS_RESERVE_BYTES  (CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES)
-#define CALL_REPLAY_GROUPS        ((13500U - CALL_REPLAY_APRS_RESERVE_BYTES) / CALL_REPLAY_GROUP_BYTES)
+/* R15: ОСТАННІЙ прийнятий кадр APRS у текстовому вигляді TNC-2 (до 255 символів + NUL) для екрана «Останній пакет». Вільний CCM (264 Б)
+ * не чіпаємо -- беремо з цього ж резерву (за блоком і станом екрана). Кільце коротшає з 444 до 435 груп (~26,1 с замість ~26,6 с).
+ * Сумарно CCM-буфер не росте. Значення те саме, що APRS_RAW_TEXT_MAX (aprs_rx_parse.h) -- _Static_assert в aprs_mode.c. */
+#define CALL_REPLAY_APRS_RAW_BYTES      256U
+#define CALL_REPLAY_APRS_RESERVE_BYTES  (CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES + CALL_REPLAY_APRS_RAW_BYTES)
+/* R15: бюджет кільця + резерву -- 13484 Б, а НЕ 13500: стільки реально займали кільце й резерв після R14 (1496 + 444 x 27). Поділ на 13500 дав би 435
+ * груп (11745 Б) і +12..16 Б CCM у порівнянні з R14, тобто з вільних 264 Б, яких чіпати не можна. З 13484 -- 434 групи (~26,0 с), CCM не росте. */
+#define CALL_REPLAY_GROUPS        ((13484U - CALL_REPLAY_APRS_RESERVE_BYTES) / CALL_REPLAY_GROUP_BYTES)
 #else
 #define CALL_REPLAY_GROUPS        500U
 #endif

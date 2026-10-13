@@ -21,6 +21,14 @@
 #define APRSMSG_TITLE_NEW     "Нове повідом."
 #define APRSMSG_TITLE_REPLY   "Відповідь"
 #define APRSMSG_TITLE_READ    "Повідом. APRS"
+#define APRSMSG_TITLE_IN      "Вхідні APRS"       /* R15: список «Вхідні» */
+#define APRSMSG_TITLE_OUT     "Надіслані APRS"    /* R15: список «Надіслані» */
+
+/* ---- R15: перший екран «Повідом. APRS» (як «Повідомлення» DMR): Нове / Вхідні / Надіслані; великий шрифт, до 20 символів ---- */
+#define APRSMSG_H_NEW         "Нове повідомлення"
+#define APRSMSG_H_IN          "Вхідні (%u)"       /* число -- непрочитані */
+#define APRSMSG_H_OUT         "Надіслані (%u)"    /* число -- ще не завершені (чекають передачі/ACK) */
+#define APRSMSG_H_HINT        "GREEN:вибір RED:назад"
 
 /* ---- слова стану вихідного повідомлення (у рядку списку -- 9 символів) ---- */
 #define APRSMSG_ST_WAIT       "чекає"
@@ -29,10 +37,11 @@
 #define APRSMSG_ST_NOACK      "без ACK"
 
 /* ---- список ---- */
-#define APRSMSG_L_HDR         "Нових: %u  В черзі: %u"
+#define APRSMSG_L_HDR         "Нових: %u  Усього: %u"       /* R15: «Вхідні» */
+#define APRSMSG_L_HDR_OUT     "В черзі: %u  Усього: %u"     /* R15: «Надіслані» */
 #define APRSMSG_L_EMPTY       "Повідомлень нема"
-#define APRSMSG_L_HINT        "GREEN:чит. *:нове <>:стор"
-#define APRSMSG_L_HINT_S      "GREEN:читати *:нове"   /* R13: екран без «Режиму APRS» -- сторінок нема */
+#define APRSMSG_L_HINT        "GREEN:чит. RED:назад"        /* R15: «Нове» -- у першому екрані; сторінки -- <> (в режимі) */
+#define APRSMSG_L_HINT_S      "GREEN:читати RED:назад"   /* R13: екран без «Режиму APRS» -- сторінок нема */
 #define APRSMSG_L_NOTIME      "--"
 
 /* ---- читання ---- */

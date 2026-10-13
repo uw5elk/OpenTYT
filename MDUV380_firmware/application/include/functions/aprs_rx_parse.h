@@ -70,6 +70,17 @@ bool aprsAx25Parse(const uint8_t *f, uint16_t len, aprsAx25_t *out);
  * Нічого не копіює з info: вказівник лише зсувається всередині того самого кадру. */
 bool aprsAx25Unwrap(aprsAx25_t *ax);
 
+/* R15: ЗНАЧЕННЯ "сирого" пакета для екрана «Останній пакет»: кадр у текстовому вигляді TNC-2, "SRC>DST,DIGI1*,DIGI2:info".
+ * Адреси беруться ПРЯМО з кадру (а не з aprsAx25_t, де шлях обрізано до APRS_PATH_LEN), тож усі 8 цифіпітерів збережено. Байти info
+ * < 0x20 або > 0x7E показуються як '.'. Вихід завжди завершено NUL (cap >= 1); довше за cap-1 -- обрізається. Повертає довжину без NUL;
+ * 0 і out = "" -- кадр не розібрати як AX.25 UI. Викликати ДО aprsAx25Unwrap() (або з тим самим кадром). */
+#define APRS_RAW_TEXT_MAX    256U    /* 255 символів + NUL; те саме число в callReplay.h: CALL_REPLAY_APRS_RAW_BYTES */
+size_t aprsAx25ToText(const uint8_t *f, uint16_t len, char *out, size_t cap);
+
+/* R15: якщо кадр був third-party і розгорнутий (ax->tp), дописує до out (вже завершеного NUL, довжина curLen) " => SRC>DST[,path]:info"
+ * розгорнутого кадру -- ЛИШЕ якщо все влазить у cap-1; інакше out не змінюється. Повертає нову довжину. */
+size_t aprsAx25AppendUnwrapped(char *out, size_t cap, size_t curLen, const aprsAx25_t *ax);
+
 /* ---- пакет APRS ------------------------------------------------------------------------ */
 typedef struct
 {

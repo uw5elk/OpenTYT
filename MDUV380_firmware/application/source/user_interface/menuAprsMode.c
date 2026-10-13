@@ -682,9 +682,29 @@ static bool editEvent(uiEvent_t *ev)
 /* ---- R11: сторінка «Повідомлення» ---------------------------------------------------------------------------- */
 
 #define AM_MSG_REDRAW_MS    500U
-#define AM_MSG_COLS         20           /* великий шрифт 8x16 на екрані 160 px */
-#define AM_MSG_FONT         FONT_SIZE_3
-#define AM_MSG_LINE_H       FONT_SIZE_3_HEIGHT
+#define AM_MSG_COLS         20           /* і великий шрифт 8x16, і малий 8x8 -- по 8 px на символ, 20 у рядку на екрані 160 px (як UI_SMS_COLS у DMR) */
+
+/* R15: шрифт тексту повідомлень -- ТОЙ САМИЙ біт «Шрифт SMS» (BIT_SMS_FONT_SMALL), що й у SMS DMR (menuMessages.c): великий 8x16 (типово)
+ * або малий 8x8. Правило те саме, що в читанні/наборі DMR. lineH -- крок рядків читання, lineHc -- крок рядків набору. */
+typedef struct
+{
+	ucFont_t font;
+	int16_t  glyphH;
+	int16_t  lineH;    /* читання */
+	int16_t  lineHc;   /* набір */
+} amMsgFont_t;
+
+static amMsgFont_t amMsgFont(void)
+{
+	amMsgFont_t f;
+	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+
+	f.font   = big ? FONT_SIZE_3 : FONT_SIZE_2;
+	f.glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;
+	f.lineH  = big ? FONT_SIZE_3_HEIGHT : 11;
+	f.lineHc = big ? FONT_SIZE_3_HEIGHT : 14;
+	return f;
+}
 
 static void gotoPage(int dir);
 
@@ -712,15 +732,45 @@ static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
 	}
 }
 
+/* R15: перший екран «Повідом. APRS» -- Нове / Вхідні (непрочитані) / Надіслані (ще не завершені). Великий шрифт, смуга вибору. */
+static void drawMsgHome(void)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	char buf[24];
+
+	for (int i = 0; i < 3; i++)
+	{
+		int16_t y = (int16_t)(24 + (i * 22));
+		bool sel = (i == (int)mu->scroll);
+
+		switch (i)
+		{
+			case 0:  snprintf(buf, sizeof(buf), "%s", APRSMSG_H_NEW); break;
+			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgUnreadCount(b)); break;
+			default: snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgPendingCount(b)); break;
+		}
+		if (sel)
+		{
+			displayFillRect(0, (int16_t)(y - 1), DISPLAY_SIZE_X, 18, false);   /* смуга вибору (false -- колір переднього плану) */
+		}
+		displayPrintCore(2, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, sel);
+	}
+	displayPrintCentered(112, APRSMSG_H_HINT, FONT_SIZE_1);
+}
+
+/* R15: список одного напрямку (mu->dirFilter): «Вхідні» -- маркер '*' у непрочитаних; «Надіслані» -- слово стану (чекає/надіслано/ACK).
+ * mu->sel -- номер у відфільтрованому списку; індекс у b->list дає aprsMsgNth(). */
 static void drawMsgList(void)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
 	aprsMsgUi_t *mu = &aprsModeUi()->msg;
-	unsigned count = aprsMsgListCount(b);
+	const bool out = (mu->dirFilter == AMSG_DIR_OUT);
+	unsigned count = aprsMsgDirCount(b, mu->dirFilter);
 	uint32_t now = ticksGetMillis();
 	char buf[40], age[8];
 
-	snprintf(buf, sizeof(buf), APRSMSG_L_HDR, aprsMsgUnreadCount(b), aprsMsgPendingCount(b));
+	snprintf(buf, sizeof(buf), out ? APRSMSG_L_HDR_OUT : APRSMSG_L_HDR, out ? aprsMsgPendingCount(b) : aprsMsgUnreadCount(b), count);
 	printRow(0, buf);
 	if (count == 0U)
 	{
@@ -734,20 +784,27 @@ static void drawMsgList(void)
 	}
 	for (unsigned i = 0; i < count; i++)
 	{
-		const aprsMsgEntry_t *e = &b->list[i];
-		char mark = (e->dir == AMSG_DIR_OUT) ? '<' : (e->unread ? '*' : ' ');
+		int ri = aprsMsgNth(b, mu->dirFilter, i);
+		const aprsMsgEntry_t *e;
+		char mark;
 
+		if (ri < 0)
+		{
+			break;
+		}
+		e = &b->list[ri];
+		mark = (out == false) && e->unread ? '*' : ' ';
 		msgAgeStr(age, sizeof(age), e, now);
-		/* маркер(1) + ознака(1) + позивний(9) + пробіл(1) + текст або стан(9) + вік(5) = 26 символів */
+		/* маркер вибору(1) + ознака(1) + позивний(9) + пробіл(1) + текст або стан(9) + вік(5) = 26 символів */
 		snprintf(buf, sizeof(buf), "%c%c%-9.9s %-9.9s%5.5s", (i == mu->sel) ? '>' : ' ', mark, e->call,
-				(e->dir == AMSG_DIR_OUT) ? msgStatusWord(e->status) : e->text, age);
+				out ? msgStatusWord(e->status) : e->text, age);
 		printRow(1 + (int)i, buf);
 	}
 	printRow(10, aprsModeIsActive() ? APRSMSG_L_HINT : APRSMSG_L_HINT_S);   /* R13: без режиму сторінок нема */
 }
 
 /* Малює рядки [first, first + rows) тексту, розбитого aprsMsgWrapLine() з шириною cols. Повертає загальну кількість рядків. */
-static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0)
+static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0, ucFont_t font, int16_t lineH)
 {
 	int pos = 0, line = 0;
 
@@ -766,7 +823,7 @@ static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0)
 
 			memcpy(one, t + ls, (size_t)n);
 			one[n] = 0;
-			displayPrintCore(0, (int16_t)(y0 + ((line - first) * AM_MSG_LINE_H)), one, AM_MSG_FONT, TEXT_ALIGN_LEFT, false);
+			displayPrintCore(0, (int16_t)(y0 + ((line - first) * lineH)), one, font, TEXT_ALIGN_LEFT, false);
 		}
 		line++;
 		pos = nx;
@@ -778,10 +835,12 @@ static void drawMsgRead(void)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
 	aprsMsgUi_t *mu = &aprsModeUi()->msg;
-	const aprsMsgEntry_t *e = &b->list[(mu->sel < APRS_MSG_LIST_MAX) ? mu->sel : 0U];
+	int ri = aprsMsgNth(b, mu->dirFilter, mu->sel);
+	const aprsMsgEntry_t *e = &b->list[(ri >= 0) ? ri : 0];
 	char buf[48], age[8];
 	const int16_t y0 = 38;
-	const int rows = ((111 - y0 - AM_MSG_LINE_H) / AM_MSG_LINE_H) + 1;
+	const amMsgFont_t f = amMsgFont();
+	const int rows = ((111 - y0 - f.glyphH) / f.lineH) + 1;
 	int total, maxTop;
 
 	snprintf(buf, sizeof(buf), (e->dir == AMSG_DIR_OUT) ? APRSMSG_R_TO : APRSMSG_R_FROM, e->call);
@@ -801,13 +860,13 @@ static void drawMsgRead(void)
 	}
 	printRow(1, buf);
 
-	total = drawWrapped(e->text, (int)strlen(e->text), 0, 0, y0);   /* лише порахувати */
+	total = drawWrapped(e->text, (int)strlen(e->text), 0, 0, y0, f.font, f.lineH);   /* лише порахувати */
 	maxTop = (total > rows) ? (total - rows) : 0;
 	if (mu->readTop > maxTop)
 	{
 		mu->readTop = (uint8_t)maxTop;
 	}
-	(void)drawWrapped(e->text, (int)strlen(e->text), mu->readTop, rows, y0);
+	(void)drawWrapped(e->text, (int)strlen(e->text), mu->readTop, rows, y0, f.font, f.lineH);
 	displayPrintCentered(112, APRSMSG_R_HINT, FONT_SIZE_1);
 	if (mu->readTop > 0U)
 	{
@@ -819,14 +878,37 @@ static void drawMsgRead(void)
 	}
 }
 
+/* R15: заголовок сторінки «Повідомлення» за виглядом */
+static const char *msgPageTitle(void)
+{
+	const aprsMsgUi_t *mu = &aprsModeUi()->msg;
+
+	if (mu->view == APRS_MSG_VIEW_READ)
+	{
+		return APRSMSG_TITLE_READ;
+	}
+	if (mu->view == APRS_MSG_VIEW_LIST)
+	{
+		return (mu->dirFilter == AMSG_DIR_OUT) ? APRSMSG_TITLE_OUT : APRSMSG_TITLE_IN;
+	}
+	return APRSMSG_TITLE;
+}
+
 static void drawMsgPage(void)
 {
-	if (aprsModeUi()->msg.view == APRS_MSG_VIEW_READ)
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+
+	if (mu->view == APRS_MSG_VIEW_HOME)
+	{
+		drawMsgHome();
+	}
+	else if ((mu->view == APRS_MSG_VIEW_READ) && (aprsMsgNth(aprsModeMsgBox(), mu->dirFilter, mu->sel) >= 0))
 	{
 		drawMsgRead();
 	}
 	else
 	{
+		mu->view = (mu->view == APRS_MSG_VIEW_READ) ? APRS_MSG_VIEW_LIST : mu->view;   /* запис зник (витіснено новими) -- назад до списку */
 		drawMsgList();
 	}
 }
@@ -849,8 +931,10 @@ static void drawMsgCompose(void)
 	char buf[40];
 	const char *lbl = smsMtModeLabel(mu->mtMode);
 	int16_t chipW = (int16_t)((strlen(lbl) * 6U) + 4U);
-	int16_t y0 = isCall ? 30 : 26;
-	int rows = isCall ? 2 : 4;
+	const amMsgFont_t f = amMsgFont();
+	const bool big = (f.font == FONT_SIZE_3);
+	int16_t y0 = isCall ? 30 : (big ? 26 : 22);                  /* малий шрифт -- як у наборі DMR: 5 рядків по 14 px від y = 22, усе над рядком режиму (y 95) */
+	int rows = isCall ? 2 : (big ? 4 : 5);
 	int len, total, first;
 
 	if (mu->layout)
@@ -874,9 +958,9 @@ static void drawMsgCompose(void)
 	/* текст із курсором: символ, що гортається, вже в буфері; без нього -- підкреслення */
 	snprintf(cur, sizeof(cur), "%s%s", src, (mu->mt.key == 0) ? "_" : "");
 	len = (int)strlen(cur);
-	total = drawWrapped(cur, len, 0, 0, y0);
+	total = drawWrapped(cur, len, 0, 0, y0, f.font, f.lineHc);
 	first = (total > rows) ? (total - rows) : 0;   /* вікно іде за курсором: показуємо останні рядки */
-	(void)drawWrapped(cur, len, first, rows, y0);
+	(void)drawWrapped(cur, len, first, rows, y0, f.font, f.lineHc);
 	if (mu->err)
 	{
 		printRow(isCall ? 6 : 7, isCall ? APRSMSG_E_CALL : APRSMSG_E_TEXT);
@@ -1053,7 +1137,7 @@ static bool msgComposeEvent(uiEvent_t *ev)
 		}
 		else
 		{
-			mu->view = APRS_MSG_VIEW_LIST;
+			mu->view = (mu->reply == 0U) ? APRS_MSG_VIEW_HOME : APRS_MSG_VIEW_LIST;   /* R15: «Нове» -- назад до першого екрана; «Відповісти» -- до списку */
 		}
 		mu->err = 0U;
 		return true;
@@ -1085,6 +1169,8 @@ static bool msgComposeEvent(uiEvent_t *ev)
 			if (r == AMSG_OK)
 			{
 				mu->view = APRS_MSG_VIEW_LIST;
+				mu->dirFilter = AMSG_DIR_OUT;   /* R15: показуємо «Надіслані» -- нове повідомлення там найперше */
+				mu->scroll = 2U;
 				mu->sel = 0U;
 				mu->err = 0U;
 			}
@@ -1152,14 +1238,20 @@ static void msgReadGo(int dir)
 	aprsMsgBox_t *b = aprsModeMsgBox();
 	aprsMsgUi_t *mu = &aprsModeUi()->msg;
 	int n = (int)mu->sel + dir;
+	int ri;
 
-	if ((n < 0) || (n >= (int)aprsMsgListCount(b)))
+	if ((n < 0) || (n >= (int)aprsMsgDirCount(b, mu->dirFilter)))
+	{
+		return;
+	}
+	ri = aprsMsgNth(b, mu->dirFilter, (unsigned)n);
+	if (ri < 0)
 	{
 		return;
 	}
 	mu->sel = (uint8_t)n;
 	mu->readTop = 0U;
-	aprsMsgMarkRead(b, (unsigned)n);
+	aprsMsgMarkRead(b, (unsigned)ri);
 }
 
 /* Подія списку/читання. Повертає: 0 -- нічого, 1 -- перемалювати. */
@@ -1168,10 +1260,53 @@ static int msgPageEvent(uiEvent_t *ev)
 	aprsModeUi_t *u = aprsModeUi();
 	aprsMsgUi_t *mu = &u->msg;
 	aprsMsgBox_t *b = aprsModeMsgBox();
-	unsigned count = aprsMsgListCount(b);
+	unsigned count = aprsMsgDirCount(b, mu->dirFilter);
 
 	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
 	{
+		return 0;
+	}
+	if (mu->view == APRS_MSG_VIEW_HOME)
+	{
+		/* R15: перший екран -- Нове / Вхідні / Надіслані (як «Повідомлення» DMR) */
+		if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+		{
+			int n = (int)mu->scroll + (KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1);
+
+			mu->scroll = (uint8_t)((n < 0) ? 2 : ((n > 2) ? 0 : n));
+			return 1;
+		}
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+		{
+			if (mu->scroll == 0U)
+			{
+				msgComposeStart(NULL);
+			}
+			else
+			{
+				mu->dirFilter = (mu->scroll == 1U) ? AMSG_DIR_IN : AMSG_DIR_OUT;
+				mu->view = APRS_MSG_VIEW_LIST;
+				mu->sel = 0U;
+			}
+			return 1;
+		}
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+		{
+			if (aprsModeIsActive() == false)
+			{
+				return -1;   /* екран без «Режиму APRS» -- RED закриває його і повертає в меню «APRS» */
+			}
+			u->page = APRS_MODE_PAGE_MONITOR;
+			return 1;
+		}
+		if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+		{
+			if (aprsModeIsActive())
+			{
+				gotoPage(KEYCHECK_PRESS(ev->keys, KEY_RIGHT) ? +1 : -1);
+				return 1;
+			}
+		}
 		return 0;
 	}
 	if (mu->view == APRS_MSG_VIEW_READ)
@@ -1201,11 +1336,11 @@ static int msgPageEvent(uiEvent_t *ev)
 			msgReadGo(-1);
 			return 1;
 		}
-		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (mu->sel < count))
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (mu->sel < count) && (aprsMsgNth(b, mu->dirFilter, mu->sel) >= 0))
 		{
 			char norm[APRS_MSG_CALL_LEN];
 
-			if (aprsMsgNormCall(norm, b->list[mu->sel].call))
+			if (aprsMsgNormCall(norm, b->list[aprsMsgNth(b, mu->dirFilter, mu->sel)].call))
 			{
 				msgComposeStart(norm);
 			}
@@ -1218,14 +1353,10 @@ static int msgPageEvent(uiEvent_t *ev)
 		return 0;
 	}
 
-	/* список */
+	/* список (R15: одного напрямку); RED -- назад до першого екрана */
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
-		if (aprsModeIsActive() == false)
-		{
-			return -1;   /* R13: екран без «Режиму APRS» -- RED закриває його і повертає в меню «APRS» */
-		}
-		u->page = APRS_MODE_PAGE_MONITOR;
+		mu->view = APRS_MSG_VIEW_HOME;
 		return 1;
 	}
 	if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
@@ -1255,12 +1386,7 @@ static int msgPageEvent(uiEvent_t *ev)
 		}
 		mu->view = APRS_MSG_VIEW_READ;
 		mu->readTop = 0U;
-		aprsMsgMarkRead(b, mu->sel);
-		return 1;
-	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR))
-	{
-		msgComposeStart(NULL);
+		aprsMsgMarkRead(b, (unsigned)aprsMsgNth(b, mu->dirFilter, mu->sel));
 		return 1;
 	}
 	return 0;
@@ -1273,7 +1399,9 @@ static void msgOpenPage(void)
 
 	u->page = APRS_MODE_PAGE_MESSAGES;
 	u->resetArmed = 0U;
-	u->msg.view = APRS_MSG_VIEW_LIST;
+	u->msg.view = APRS_MSG_VIEW_HOME;   /* R15: спершу Нове / Вхідні / Надіслані */
+	u->msg.dirFilter = AMSG_DIR_IN;
+	u->msg.scroll = 0U;
 	u->msg.sel = 0U;
 	u->msg.readTop = 0U;
 	u->msg.err = 0U;
@@ -1551,7 +1679,7 @@ static void draw(void)
 	}
 	displayClearBuf();
 	snprintf(title, sizeof(title), APRSM_TITLE_FMT, (unsigned)(u->page + 1U), (unsigned)APRS_MODE_PAGES);
-	menuDisplayTitle((u->page == APRS_MODE_PAGE_MESSAGES) ? ((u->msg.view == APRS_MSG_VIEW_READ) ? APRSMSG_TITLE_READ : APRSMSG_TITLE) : title);
+	menuDisplayTitle((u->page == APRS_MODE_PAGE_MESSAGES) ? msgPageTitle() : title);
 	AM_TRACE_T(85);   /* draw(): перед малюванням сторінки */
 	switch (u->page)
 	{

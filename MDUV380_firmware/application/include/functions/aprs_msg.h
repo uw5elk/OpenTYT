@@ -188,6 +188,8 @@ int aprsMsgWrapLine(const char *s, int len, int start, int w, int *lineStart, in
 unsigned aprsMsgPendingCount(const aprsMsgBox_t *b);   /* наших повідомлень, що чекають передачі/ACK */
 unsigned aprsMsgUnreadCount(const aprsMsgBox_t *b);
 unsigned aprsMsgListCount(const aprsMsgBox_t *b);
+unsigned aprsMsgDirCount(const aprsMsgBox_t *b, uint8_t dir);        /* R15: записів одного напрямку (AMSG_DIR_IN/OUT) */
+int aprsMsgNth(const aprsMsgBox_t *b, uint8_t dir, unsigned n);      /* R15: індекс у b->list n-го (0 -- найновішого) запису напрямку dir; -1 -- нема */
 void aprsMsgMarkRead(aprsMsgBox_t *b, unsigned idx);
 
 #endif /* ENABLE_APRS_RX */
