@@ -157,6 +157,8 @@ size_t aprsModeCommentToUtf8(const char *cp1251, char *out, size_t cap);
 uint16_t aprsModeCp1251ToUcs2(uint8_t c);
 /* Коротка назва найуживаніших символів первинної таблиці (cp1251); NULL -- назви нема. */
 const char *aprsModeSymbolName(uint8_t table, uint8_t index);
+/* R14: назва за символом пакета: table '/' -- первинна, інакше (у т.ч. накладка) -- додаткова; NULL -- нема в таблиці */
+const char *aprsSymbolNameEx(char table, char code);
 /* Наступний символ із названих (для швидкого перебору); починає з наступного після (table,index). */
 void aprsModeSymbolNextNamed(uint8_t *table, uint8_t *index);
 /* 24-бітна позиція кодплуга (знак -- біт 23; ціла частина -- біти 22..15; частка -- молодші 15 біт у

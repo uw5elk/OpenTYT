@@ -163,7 +163,8 @@ static uiNotificationData_t notificationData =
 
 #if defined(APRS_RX)
 #include "functions/aprs_rx.h"        /* R13: вікно маяка -- aprsRxWindow() */
-#include "functions/aprs_mode_cfg.h"  /* aprsModeSymbolName() */
+#include "functions/aprs_mode_cfg.h"  /* aprsSymbolNameEx() */
+#include "functions/aprs_icons.h"     /* R14: піктограми символів */
 #include "user_interface/languages/aprsrx_ua.h"
 #endif
 #if defined(ENABLE_CALL_REPLAY)
@@ -709,6 +710,175 @@ static void aprsWinDrawArrow(uint16_t bearing)
 	displayFillCircle(APRS_WIN_CX, APRS_WIN_CY, 2, true);
 }
 
+#define APRS_WIN_ROW_H    9
+#define APRS_WIN_ROW_MAX  89   /* верх останнього рядка: рядок займає 8 px, далі -- рядок символу (y = 100) */
+#define APRS_WIN_COLS     13   /* (APRS_WIN_CX - APRS_WIN_R - 4 - 4) / 6 */
+
+static void aprsWinRow(int16_t *y, const char *txt)
+{
+	char b[APRS_WIN_COLS + 1];
+
+	if (*y > APRS_WIN_ROW_MAX)
+	{
+		return;
+	}
+	snprintf(b, sizeof b, "%s", txt);
+	displayPrintCore(4, *y, b, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	*y = (int16_t)(*y + APRS_WIN_ROW_H);
+}
+
+/* Зсув у кГц -> «-7.6» / «+0.6» / «-12.5» (без зайвих нулів); 0 -- порожньо. */
+static void aprsWinShiftStr(char *o, size_t size, int shiftKHz)
+{
+	unsigned a = (unsigned)((shiftKHz < 0) ? -shiftKHz : shiftKHz);
+	unsigned frac = (a % 1000U) / 10U;   /* соті частки МГц */
+
+	if (shiftKHz == 0)
+	{
+		o[0] = 0;
+		return;
+	}
+	if ((frac % 10U) == 0U)
+	{
+		snprintf(o, size, "%c%u.%u", (shiftKHz < 0) ? '-' : '+', a / 1000U, frac / 10U);
+	}
+	else
+	{
+		snprintf(o, size, "%c%u.%02u", (shiftKHz < 0) ? '-' : '+', a / 1000U, frac);
+	}
+}
+
+static void aprsWinInfoRows(const aprsRxWin_t *w, int16_t y)
+{
+	char buf[24];
+
+	if (w->course != 0U)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_COURSE, (unsigned)w->course);
+		aprsWinRow(&y, buf);
+	}
+	if (w->speedKn != 0U)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_SPEED, (unsigned)aprsKnotsToKmh(w->speedKn));
+		aprsWinRow(&y, buf);
+	}
+	if (w->flags & AWIN_F_ALT)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_ALT, (long)w->altM);
+		aprsWinRow(&y, buf);
+	}
+	if (w->wxMask != 0U)
+	{
+		/* погода: °F->°C і mph->км/год перераховані в парсері/тут; тиск 0.1 гПа */
+		if ((w->wxMask & APRS_WX_TEMP) && (w->wxMask & APRS_WX_HUM))
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_TEMPHUM, (int)w->u.wx.tempC, (unsigned)w->u.wx.humPct);
+			aprsWinRow(&y, buf);
+		}
+		else if (w->wxMask & APRS_WX_TEMP)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_TEMP, (int)w->u.wx.tempC);
+			aprsWinRow(&y, buf);
+		}
+		else if (w->wxMask & APRS_WX_HUM)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_HUM, (unsigned)w->u.wx.humPct);
+			aprsWinRow(&y, buf);
+		}
+		if (w->wxMask & APRS_WX_PRESS)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_PRESS, (unsigned)(w->u.wx.pressDhPa / 10U), (unsigned)(w->u.wx.pressDhPa % 10U));
+			aprsWinRow(&y, buf);
+		}
+		if (w->wxMask & APRS_WX_WIND)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_WIND, (unsigned)w->u.wx.windDeg);
+			aprsWinRow(&y, buf);
+			snprintf(buf, sizeof buf, APRSRX_WIN_SPEED, (unsigned)(((unsigned long)w->u.wx.windMph * 1609UL + 500UL) / 1000UL));
+			aprsWinRow(&y, buf);
+		}
+		if (w->wxMask & APRS_WX_GUST)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_GUST, (unsigned)(((unsigned long)w->u.wx.gustMph * 1609UL + 500UL) / 1000UL));
+			aprsWinRow(&y, buf);
+		}
+	}
+	else
+	{
+		char sh[10];
+
+		if (w->u.r.freqKHz != 0U)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_FREQ, (unsigned long)(w->u.r.freqKHz / 1000U), (unsigned long)(w->u.r.freqKHz % 1000U));
+			aprsWinRow(&y, buf);
+		}
+		sh[0] = 0;
+		if (w->flags & AWIN_F_SHIFT)
+		{
+			aprsWinShiftStr(sh, sizeof sh, w->u.r.shiftKHz);
+		}
+		if (w->u.r.tone[0] != 0)
+		{
+			snprintf(buf, sizeof buf, "%s%s%s%s", w->u.r.tone, (sh[0] != 0) ? " " : "", sh, (sh[0] != 0) ? APRSRX_WIN_MHZ : "");
+			aprsWinRow(&y, buf);
+		}
+		else if (sh[0] != 0)
+		{
+			snprintf(buf, sizeof buf, "%s %s", sh, APRSRX_WIN_MHZ);
+			aprsWinRow(&y, buf);
+		}
+		if ((w->extKind == APRS_EXT_PHG) || (w->extKind == APRS_EXT_DFS))
+		{
+			snprintf(buf, sizeof buf, "%s%04X", (w->extKind == APRS_EXT_PHG) ? "PHG" : "DFS", (unsigned)w->u.r.extVal);
+			aprsWinRow(&y, buf);
+		}
+		{
+			/* радіус: з коментаря/стисненої позиції (милі або км) або поле RNGnnnn (милі) */
+			unsigned km = 0;
+
+			if (w->u.r.rangeVal != 0U)
+			{
+				km = (w->flags & AWIN_F_RANGE_KM) ? (unsigned)w->u.r.rangeVal : (unsigned)(((unsigned long)w->u.r.rangeVal * 1609UL + 500UL) / 1000UL);
+			}
+			else if ((w->extKind == APRS_EXT_RNG) && (w->u.r.extVal != 0U))
+			{
+				km = (unsigned)(((unsigned long)w->u.r.extVal * 1609UL + 500UL) / 1000UL);
+			}
+			if (km != 0U)
+			{
+				snprintf(buf, sizeof buf, APRSRX_WIN_RANGE, km);
+				aprsWinRow(&y, buf);
+			}
+		}
+	}
+}
+
+/* Піктограма символу 16x16; невідомий символ -- рамка з самим знаком; накладка (таблиця -- цифра/літера) -- знак у центрі поверх піктограми. */
+static void aprsWinDrawSymbol(int16_t x, int16_t y, const aprsRxWin_t *w)
+{
+	bool ov = false;
+	const uint8_t *ic = aprsIconFind(w->symTable, w->symCode, &ov);
+	char one[2];
+
+	one[1] = 0;
+	if (ic != NULL)
+	{
+		displayDrawXBitmap(x, y, ic, APRS_ICON_W, APRS_ICON_H, true);
+		if (ov)
+		{
+			one[0] = w->symTable;
+			displayFillRect((int16_t)(x + 4), (int16_t)(y + 3), 8, 10, true);   /* true -- колір тла: стерти під знаком */
+			displayPrintCore((int16_t)(x + 5), (int16_t)(y + 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		}
+	}
+	else
+	{
+		displayDrawRect(x, y, APRS_ICON_W, APRS_ICON_H, true);
+		one[0] = ((w->symCode >= 0x20) && (w->symCode < 0x7F)) ? w->symCode : '?';
+		displayPrintCore((int16_t)(x + 5), (int16_t)(y + 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	}
+}
+
 static void displayAprsBeaconWindow(void)
 {
 	const aprsRxWin_t *w = aprsRxWindow();
@@ -737,15 +907,13 @@ static void displayAprsBeaconWindow(void)
 	y = 26;
 	if (w->hasGeo)
 	{
-		/* Ліва колонка: відстань і сектор, азимут цифрою, пояснення, що це відносно півночі. */
-		aprsRxFormatGeo(buf, sizeof buf, w->distM, w->bearing);
+		/* Ліва колонка: «відстань азимут°» одним рядком (R14: без буквеного сектора й пояснення «від Пн» -- є стрілка). */
+		char d[12];
+
+		aprsRxFormatDist(d, sizeof d, w->distM);
+		snprintf(buf, sizeof buf, APRSRX_WIN_DIST_AZ, d, (unsigned)w->bearing);
 		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
 		y += 18;
-		snprintf(buf, sizeof buf, APRSRX_WIN_AZ_FMT, (unsigned)w->bearing);
-		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
-		y += 17;
-		displayPrintCore(4, y, APRSRX_WIN_AZ, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
-		y += 10;
 
 		/* Кільце, чотири риски (Пн, Сх, Пд, Зх), мітка «Пн» угорі й стрілка. Дистанція 0 -- азимут не визначений, стрілки нема. */
 		displayDrawCircle(APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_R, true);
@@ -763,43 +931,32 @@ static void displayAprsBeaconWindow(void)
 	{
 		/* Нашої або станційної позиції нема: ні стрілки, ні відстані -- лише це й решта даних. */
 		displayPrintCore(4, y, APRSRX_WIN_NOPOS, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
-		y += 20;
+		y += 18;
 	}
 
-	/* Курс і швидкість, якщо є в пакеті. */
-	if (w->course != 0U)
-	{
-		snprintf(buf, sizeof buf, APRSRX_WIN_COURSE, (unsigned)w->course);
-		displayPrintCore(4, y, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
-		y += 9;
-	}
-	if (w->speedKn != 0U)
-	{
-		snprintf(buf, sizeof buf, APRSRX_WIN_SPEED, (unsigned)aprsKnotsToKmh(w->speedKn));
-		displayPrintCore(4, y, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
-	}
+	/* R14: решта даних пакета -- по рядку, лише наявні, x = 4..86 (13 символів: правіше кільце), крок 9 px, до y = 97. */
+	aprsWinInfoRows(w, y);
 
-	/* Символ APRS (таблиця + код, назва -- якщо є в нашій таблиці) і коментар, обрізаний до ширини. */
+	/* Символ APRS: піктограма 16x16 (x = 4, y = 99), праворуч назва й «таблиця+код» (діагностика), нижче коментар, обрізаний по ширині. */
 	if (w->symCode != 0)
 	{
-		const char *nm = (w->symTable != 0) ? aprsModeSymbolName((uint8_t)((w->symTable == '/') ? 0 : 1), (uint8_t)(w->symCode - '!')) : NULL;
+		const char *nm = aprsSymbolNameEx(w->symTable, w->symCode);
 
+		aprsWinDrawSymbol(4, 99, w);
 		if (nm != NULL)
 		{
-			snprintf(buf, sizeof buf, APRSRX_WIN_SYM_FMT, w->symTable, w->symCode, nm);
+			snprintf(buf, sizeof buf, "%s", nm);
+			buf[(DISPLAY_SIZE_X - 28) / 6] = 0;
+			displayPrintCore(24, 101, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 		}
-		else
-		{
-			snprintf(buf, sizeof buf, APRSRX_WIN_SYM2_FMT, w->symTable, w->symCode);
-		}
-		buf[(DISPLAY_SIZE_X - 8) / 6] = 0;
-		displayPrintCore(4, 100, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		snprintf(buf, sizeof buf, APRSRX_WIN_SYM2_FMT, (w->symTable != 0) ? w->symTable : ' ', w->symCode);
+		displayPrintCore(24, 109, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	}
 	if (w->text[0])
 	{
 		snprintf(buf, sizeof buf, "%s", w->text);
 		buf[(DISPLAY_SIZE_X - 8) / 6] = 0;
-		displayPrintCore(4, 112, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		displayPrintCore(4, 117, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	}
 }
 #endif /* APRS_RX */

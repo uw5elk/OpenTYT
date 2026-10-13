@@ -21,7 +21,7 @@
 #define APRSRX_T_POS          "позиція"
 #define APRSRX_T_MSG          "повідомл."
 #define APRSRX_T_STATUS       "статус"
-#define APRSRX_T_OTHER        "пакет"
+#define APRSRX_T_OTHER        "інше"
 
 /* ---- банер: перший рядок «APRS ПОЗИВНИЙ» формується в коді (латиниця) ---- */
 #define APRSRX_BANNER_FMT     "APRS %s\n%s"
@@ -60,6 +60,7 @@
 #define APRSRX_DIAG_NOBITS    "?"
 #define APRSRX_CARD_PATH      "Шлях: %s"
 #define APRSRX_CARD_MICE      "Mic-E"
+#define APRSRX_CARD_TP        "i-gate"            /* R14: останній кадр прийшов через i-gate (third-party) */
 #define APRSRX_DIAG_TITLE     "APRS приймач"
 
 /* ---- R8-fix: друга діагностична сторінка (лічильники I2S) ---- */
@@ -79,11 +80,20 @@
 /* ---- R13: ВІКНО МАЯКА (повноекранна картка за позиційним пакетом) ---- */
 #define APRSRX_WIN_N          "Пн"                 /* північ -- мітка угорі стрілки */
 #define APRSRX_WIN_NOPOS      "позиції нема"
-#define APRSRX_WIN_AZ         "Азимут від Пн"      /* пояснення до цифри: напрям відносно півночі (магнітометра в рації нема) */
 #define APRSRX_WIN_AZ_FMT     "%u\260"            /* 45° (cp1251: \260 -- знак градуса) */
 #define APRSRX_WIN_COURSE     "Курс %u\260"
 #define APRSRX_WIN_SPEED      "%u км/год"
-#define APRSRX_WIN_SYM_FMT    "%c%c %s"            /* таблиця, код, назва */
+#define APRSRX_WIN_DIST_AZ    "%s %u\260"         /* відстань і азимут одним рядком: «850м 216°» (FONT_SIZE_3, до 10 символів) */
+#define APRSRX_WIN_ALT        "Вис. %ld м"
+#define APRSRX_WIN_FREQ       "%lu.%03lu МГц"
+#define APRSRX_WIN_RANGE      "Радіус %u км"      /* радіус дії; милі перераховуємо в км */
+#define APRSRX_WIN_TEMPHUM    "%d\260C %u%%"       /* «25°C 50%»: температура і вологість */
+#define APRSRX_WIN_TEMP       "%d\260C"
+#define APRSRX_WIN_HUM        "вол. %u%%"
+#define APRSRX_WIN_PRESS      "%u.%u гПа"
+#define APRSRX_WIN_WIND       "Вітер %u\260"
+#define APRSRX_WIN_GUST       "Порив %u км/г"
+#define APRSRX_WIN_MHZ        "МГц"              /* одиниця біля зсуву, коли поруч тон: «T082 -7.6МГц» */
 #define APRSRX_WIN_SYM2_FMT   "%c%c"               /* таблиця, код, коли назви в нашій таблиці нема */
 
 /* Пункт «Вікно маяка» у меню APRS -> Налаштування (menuAPRSOptions.c; значення праворуч після «:») */

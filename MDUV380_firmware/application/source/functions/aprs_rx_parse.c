@@ -232,7 +232,7 @@ bool aprsAx25Unwrap(aprsAx25_t *ax)
 			{
 				c = (uint8_t)(c - 'a' + 'A');
 			}
-			if (!(((c >= 'A') && (c <= 'Z')) || isDig(c) || (c == ',') || (c == '*') || (c == '-')))
+			if (!(((c >= 'A') && (c <= 'Z')) || isDig(c) || (c == ',') || (c == '*') || (c == '-') || (c == '.') || (c == '_')))
 			{
 				return false;   /* побитий байт у шляху */
 			}
@@ -618,7 +618,29 @@ static void p_symbol_compressed(aprsPacket_t *p, const uint8_t *s)
 	}
 	p->symTable = (char)t;
 	p->symCode = (char)s[9];
-	if ((s[10] >= 33U) && (s[10] <= 122U) && (s[11] >= 33U) && (s[12] >= 33U) && (((s[12] - 33U) & 0x18U) != 0x10U))
+	/* R14 (Б2): порядок перевірок за специфікацією -- c == ' ' нема даних; тип-байт GGA -- стиснена ВИСОТА; c == '{' -- РАДІУС дії
+	 * (а не курс 360 градусів); інакше курс/швидкість. */
+	if ((s[10] == ' ') || (s[10] < 33U) || (s[11] < 33U) || (s[12] < 33U))
+	{
+		return;
+	}
+	if (((s[12] - 33U) & 0x18U) == 0x10U)
+	{
+		/* alt(фути) = 1.002^((c-33)*91 + (s-33)) */
+		double ft = pow(1.002, (double)((s[10] - 33) * 91 + (s[11] - 33)));
+
+		p->altM = (int32_t)(ft * 0.3048 + 0.5);
+		p->hasAlt = true;
+	}
+	else if (s[10] == '{')
+	{
+		/* радіус, милі = 2 * 1.08^(s-33) */
+		double mi = 2.0 * pow(1.08, (double)(s[11] - 33));
+
+		p->rangeVal = (uint16_t)((mi > 65000.0) ? 65000 : (int)(mi + 0.5));
+		p->rangeKm = false;
+	}
+	else if (s[10] <= 122U)
 	{
 		unsigned c = s[10] - 33U;
 		unsigned sp = s[11] - 33U;
@@ -635,29 +657,6 @@ static void p_symbol_compressed(aprsPacket_t *p, const uint8_t *s)
 			p->speedKn = (uint16_t)(v - 1.0 + 0.5);
 		}
 	}
-}
-
-/* Коментар звичайної позиції починається з "CCC/SSS" (курс градуси, швидкість вузли)? Заповнює course/speedKn; повертає, скільки байт
- * прибрати з тексту (7 або 0). "000/000" -- "не рухається": поля лишаються 0, але 7 байт теж прибираємо з тексту. */
-static size_t p_cse_spd(aprsPacket_t *p, const uint8_t *c, size_t n)
-{
-	if ((n < 7U) || (c[3] != '/'))
-	{
-		return 0U;
-	}
-	for (int i = 0; i < 7; i++)
-	{
-		if ((i != 3) && (isDig(c[i]) == false))
-		{
-			return 0U;
-		}
-	}
-	unsigned course = (unsigned)((c[0] - '0') * 100 + (c[1] - '0') * 10 + (c[2] - '0'));
-	unsigned speed = (unsigned)((c[4] - '0') * 100 + (c[5] - '0') * 10 + (c[6] - '0'));
-
-	p->course = (uint16_t)((course <= 360U) ? course : 0U);
-	p->speedKn = (uint16_t)speed;
-	return 7U;
 }
 
 /* Mic-E: info[4..6] = SP DC SE (+28), info[7] -- код символу, info[8] -- таблиця. */
@@ -684,6 +683,555 @@ static void p_micE_motion(aprsPacket_t *p, const uint8_t *in)
 	}
 }
 
+/* ---- R14: розширення коментаря --------------------------------------------------------------------------------- */
+
+#define CS_MAXCUT   8U
+#define CS_EXT7     0x01U   /* на початку коментаря може бути 7-байтове поле розширення (звичайна позиція, об'єкт, предмет) */
+
+typedef struct
+{
+	uint16_t s[CS_MAXCUT];
+	uint16_t l[CS_MAXCUT];
+	uint8_t  n;
+} csCuts_t;
+
+static void csCut(csCuts_t *k, size_t s, size_t l)
+{
+	if ((k->n < CS_MAXCUT) && (l > 0U))
+	{
+		k->s[k->n] = (uint16_t)s;
+		k->l[k->n] = (uint16_t)l;
+		k->n++;
+	}
+}
+
+static bool csCovered(const csCuts_t *k, size_t i)
+{
+	for (uint8_t j = 0; j < k->n; j++)
+	{
+		if ((i >= k->s[j]) && (i < ((size_t)k->s[j] + k->l[j])))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Ціле з w цифр підряд; -1, якщо не вистачає байтів або не цифра. */
+static int csNum(const uint8_t *c, size_t n, int w)
+{
+	int v = 0;
+
+	if ((size_t)w > n)
+	{
+		return -1;
+	}
+	for (int i = 0; i < w; i++)
+	{
+		if (isDig(c[i]) == false)
+		{
+			return -1;
+		}
+		v = v * 10 + (c[i] - '0');
+	}
+	return v;
+}
+
+/* Поле розширення, 7 байт: "ddd/sss" (курс/швидкість; для погодної станції -- вітер у милях/год), "PHGphgd", "RNGnnnn", "DFSshgd".
+ * Повертає, скільки байт з'їдено (7 або 0). */
+static size_t csExt7(aprsPacket_t *p, const uint8_t *c, size_t n)
+{
+	if (n < 7U)
+	{
+		return 0U;
+	}
+	if (c[3] == '/')
+	{
+		int a = csNum(c, n, 3);
+		int b = csNum(c + 4, n - 4U, 3);
+
+		if ((a < 0) || (b < 0))
+		{
+			return 0U;
+		}
+		if (p->symCode == '_')
+		{
+			/* Б1: у погодній станції це ВІТЕР (мили/год), а не курс станції */
+			p->windDeg = (uint16_t)((a <= 360) ? a : 0);
+			p->windMph = (uint8_t)((b > 255) ? 255 : b);
+			p->wxMask |= APRS_WX_WIND;
+		}
+		else
+		{
+			p->course = (uint16_t)((a <= 360) ? a : 0);
+			p->speedKn = (uint16_t)b;
+		}
+		return 7U;
+	}
+	if ((memcmp(c, "PHG", 3) == 0) || (memcmp(c, "DFS", 3) == 0))
+	{
+		int v = csNum(c + 3, n - 3U, 4);
+
+		if (v >= 0)
+		{
+			p->extKind = (c[0] == 'P') ? APRS_EXT_PHG : APRS_EXT_DFS;
+			p->extVal = (uint16_t)(((v / 1000) << 12) | (((v / 100) % 10) << 8) | (((v / 10) % 10) << 4) | (v % 10));
+			return 7U;
+		}
+		return 0U;
+	}
+	if (memcmp(c, "RNG", 3) == 0)
+	{
+		int v = csNum(c + 3, n - 3U, 4);
+
+		if (v >= 0)
+		{
+			p->extKind = APRS_EXT_RNG;
+			p->extVal = (uint16_t)v;
+			return 7U;
+		}
+	}
+	return 0U;
+}
+
+/* "nnn.nnnMHz" (10 байт) і необов'язкові " Tnnn"/" Toff"/" Cnnn", " +nnn"/" -nnn" (зсув у десятках кГц), " Rnnm"/" Rnnk". Повертає з'їдене. */
+static size_t csFreq(aprsPacket_t *p, const uint8_t *c, size_t n)
+{
+	size_t at = 10U;
+
+	if ((n < 10U) || (c[3] != '.') || (memcmp(c + 7, "MHz", 3) != 0))
+	{
+		return 0U;
+	}
+	int a = csNum(c, n, 3);
+	int b = csNum(c + 4, n - 4U, 3);
+
+	if ((a < 0) || (b < 0))
+	{
+		return 0U;
+	}
+	p->freqKHz = (uint32_t)a * 1000U + (uint32_t)b;
+	if (((at + 5U) <= n) && (c[at] == ' ') && ((c[at + 1U] == 'T') || (c[at + 1U] == 'C') || (c[at + 1U] == 'D')) &&
+			((memcmp(c + at + 2U, "off", 3) == 0) || (csNum(c + at + 2U, n - at - 2U, 3) >= 0)))
+	{
+		memcpy(p->tone, c + at + 1U, 4);
+		p->tone[4] = 0;
+		at += 5U;
+	}
+	if (((at + 5U) <= n) && (c[at] == ' ') && ((c[at + 1U] == '+') || (c[at + 1U] == '-')) && (csNum(c + at + 2U, n - at - 2U, 3) >= 0))
+	{
+		int v = csNum(c + at + 2U, n - at - 2U, 3);
+
+		p->shiftKHz = (int16_t)(((c[at + 1U] == '-') ? -v : v) * 10);
+		p->hasShift = true;
+		at += 5U;
+	}
+	if (((at + 5U) <= n) && (c[at] == ' ') && (c[at + 1U] == 'R') && ((c[at + 4U] == 'm') || (c[at + 4U] == 'k')) && (csNum(c + at + 2U, n - at - 2U, 2) >= 0))
+	{
+		p->rangeVal = (uint16_t)csNum(c + at + 2U, n - at - 2U, 2);
+		p->rangeKm = (c[at + 4U] == 'k');
+		at += 5U;
+	}
+	return at;
+}
+
+/* Поле погоди: літера + цифри. Повертає ширину значення для відомих літер, 0 -- літера не погодна. */
+static int csWxWidth(uint8_t l)
+{
+	switch (l)
+	{
+		case 'c': case 's': case 'g': case 'r': case 'p': case 'P': case 'L': case 'l': case '#': case 't': return 3;
+		case 'h': return 2;
+		case 'b': return 5;
+		default:  return 0;
+	}
+}
+
+/* Погодні поля: послідовність "літера + N цифр" підряд (невідома літера зупиняє розбір -- далі вільний текст/код ПЗ).
+ * Значення "..." / пробіли ("немає даних") пропускаються. Повертає з'їдене. */
+static size_t csWeather(aprsPacket_t *p, const uint8_t *c, size_t n)
+{
+	size_t i = 0;
+	bool sawC = false;
+
+	while (i < n)
+	{
+		int w = csWxWidth(c[i]);
+		bool ok = true, num = true, neg = false;
+		int v = 0;
+
+		if ((w == 0) || ((i + 1U + (size_t)w) > n))
+		{
+			break;
+		}
+		for (int k = 0; k < w; k++)
+		{
+			uint8_t ch = c[i + 1U + (size_t)k];
+
+			if (isDig(ch))
+			{
+				v = v * 10 + (ch - '0');
+			}
+			else if ((ch == '-') && (k == 0))
+			{
+				neg = true;
+			}
+			else if ((ch == '.') || (ch == ' '))
+			{
+				num = false;
+			}
+			else
+			{
+				ok = false;
+			}
+		}
+		if (ok == false)
+		{
+			break;
+		}
+		if (num)
+		{
+			switch (c[i])
+			{
+				case 'c': p->windDeg = (uint16_t)((v <= 360) ? v : 0); p->wxMask |= APRS_WX_WIND; sawC = true; break;
+				case 's': if (sawC) { p->windMph = (uint8_t)((v > 255) ? 255 : v); } break;   /* "s" після "c" -- швидкість вітру; сама по собі -- сніг */
+				case 'g': p->gustMph = (uint8_t)((v > 255) ? 255 : v); p->wxMask |= APRS_WX_GUST; break;
+				case 't':
+				{
+					int f = neg ? -v : v;
+
+					p->tempC = (int16_t)(((f - 32) * 5 + (((f - 32) >= 0) ? 4 : -4)) / 9);   /* °F -> °C з округленням */
+					p->wxMask |= APRS_WX_TEMP;
+					break;
+				}
+				case 'h': p->humPct = (uint8_t)((v == 0) ? 100 : v); p->wxMask |= APRS_WX_HUM; break;   /* "h00" -- 100 % */
+				case 'b': p->pressDhPa = (uint16_t)v; p->wxMask |= APRS_WX_PRESS; break;
+				default: break;
+			}
+		}
+		i += 1U + (size_t)w;
+	}
+	return i;
+}
+
+static bool csIsB91(uint8_t c)
+{
+	return (c >= 33U) && (c <= 123U);
+}
+
+/* '!DAO!': додаткова точність до мінут позиції. Велика літера датуму -- цифра = тисячні частки хвилини (1/60000 градуса ~ 16.7 мкград);
+ * мала -- base91, (знак - 33) * 1.10 соту частку сотої хвилини (~ 1.83 мкград на одиницю). Пробіл -- точності нема. Знак -- від нуля (S/W -- у мінус). */
+static void csDao(aprsPacket_t *p, uint8_t datum, uint8_t a, uint8_t o)
+{
+	int32_t la = 0, lo = 0;
+
+	if ((datum >= 'A') && (datum <= 'Z'))
+	{
+		la = isDig(a) ? (((int32_t)(a - '0') * 1000 + 30) / 60) : 0;
+		lo = isDig(o) ? (((int32_t)(o - '0') * 1000 + 30) / 60) : 0;
+	}
+	else if ((a >= 33U) && (a <= 123U) && (o >= 33U) && (o <= 123U))
+	{
+		la = ((int32_t)(a - 33U) * 11 + 3) / 6;
+		lo = ((int32_t)(o - 33U) * 11 + 3) / 6;
+	}
+	p->latU += (p->latU < 0) ? -la : la;
+	p->lonU += (p->lonU < 0) ? -lo : lo;
+}
+
+/* Витягти з коментаря розширення (за порядком специфікації: розширення, частота, погода; далі "/A=", телеметрія "|..|", "!DAO!" де завгодно),
+ * решту -- чистий текст у cp1251 (aprsDecodeText) у out. c -- сирі байти коментаря (n байт). Один прохід; на стеку лише список вирізок
+ * (8 x 4 Б). ';' як розділювач ніде не використовується (коментар може його містити). */
+static void commentStrip(aprsPacket_t *p, const uint8_t *c, size_t n, char *out, size_t outSize, unsigned flags)
+{
+	csCuts_t k;
+	size_t pos = 0;
+	size_t o = 0;
+	bool pendingCut = false;
+
+	k.n = 0;
+	if (outSize == 0U)
+	{
+		return;
+	}
+	if (flags & CS_EXT7)
+	{
+		pos += csExt7(p, c, n);
+	}
+	pos += csFreq(p, c + pos, n - pos);
+	if (p->symCode == '_')
+	{
+		pos += csWeather(p, c + pos, n - pos);
+	}
+	csCut(&k, 0, pos);
+
+	for (size_t i = pos; i < n; i++)
+	{
+		if (csCovered(&k, i))
+		{
+			continue;
+		}
+		/* висота "/A=nnnnnn" (9 байт, у футах, може бути "/A=-00123") */
+		if (((i + 9U) <= n) && (c[i] == '/') && (c[i + 1U] == 'A') && (c[i + 2U] == '=') && (isDig(c[i + 3U]) || (c[i + 3U] == '-')) &&
+				(csNum(c + i + 4U, n - i - 4U, 5) >= 0))
+		{
+			long ft = (long)csNum(c + i + 4U, n - i - 4U, 5);
+
+			if (c[i + 3U] == '-')
+			{
+				ft = -ft;
+			}
+			else
+			{
+				ft += (long)(c[i + 3U] - '0') * 100000L;
+			}
+			p->altM = (int32_t)((ft * 3048L + ((ft >= 0) ? 5000L : -5000L)) / 10000L);
+			p->hasAlt = true;
+			csCut(&k, i, 9U);
+			i += 8U;
+			continue;
+		}
+		/* телеметрія base91: '|' + 2..7 пар знаків + '|' */
+		if (c[i] == '|')
+		{
+			size_t j = i + 1U;
+
+			while ((j < n) && csIsB91(c[j]))
+			{
+				j++;
+			}
+			if ((j < n) && (c[j] == '|') && ((j - i - 1U) >= 4U) && ((j - i - 1U) <= 14U) && (((j - i - 1U) & 1U) == 0U))
+			{
+				csCut(&k, i, j - i + 1U);
+				i = j;
+				continue;
+			}
+		}
+		/* '!DAO!' (5 байт): '!' датум точність точність '!' */
+		if ((c[i] == '!') && ((i + 5U) <= n) && (c[i + 4U] == '!'))
+		{
+			uint8_t d = c[i + 1U];
+			bool up = (d >= 'A') && (d <= 'Z');
+			bool lo = (d >= 'a') && (d <= 'z');
+
+			if ((up && (isDig(c[i + 2U]) || (c[i + 2U] == ' ')) && (isDig(c[i + 3U]) || (c[i + 3U] == ' '))) ||
+					(lo && ((csIsB91(c[i + 2U]) && csIsB91(c[i + 3U])) || ((c[i + 2U] == ' ') && (c[i + 3U] == ' ')))))
+			{
+				csCut(&k, i, 5U);
+				csDao(p, d, c[i + 2U], c[i + 3U]);
+				i += 4U;
+				continue;
+			}
+		}
+	}
+
+	/* зібрати решту: пропустити вирізки, не лишати подвійні пробіли на швах і пробіли на початку */
+	for (size_t i = 0; (i < n) && (o + 1U < outSize); i++)
+	{
+		if (csCovered(&k, i))
+		{
+			pendingCut = true;
+			continue;
+		}
+		if ((c[i] == ' ') && ((o == 0U) || (pendingCut && (out[o - 1U] == ' '))))
+		{
+			pendingCut = false;
+			continue;
+		}
+		pendingCut = false;
+		out[o++] = (char)c[i];
+	}
+	if (k.n > 0U)
+	{
+		while ((o > 0U) && (out[o - 1U] == ' '))
+		{
+			o--;   /* після вирізок на кінці лишається пробіл -- прибрати */
+		}
+	}
+	/* не лишати обірваного UTF-8 на хвості (текст обрізано по місцю) */
+	{
+		size_t b = o;
+
+		while ((b > 0U) && ((((uint8_t)out[b - 1U]) & 0xC0U) == 0x80U))
+		{
+			b--;
+		}
+		if ((b > 0U) && (((uint8_t)out[b - 1U]) >= 0xC0U))
+		{
+			uint8_t lead = (uint8_t)out[b - 1U];
+			size_t need = (lead >= 0xF0U) ? 4U : ((lead >= 0xE0U) ? 3U : 2U);
+
+			if ((o - (b - 1U)) < need)
+			{
+				o = b - 1U;
+			}
+		}
+	}
+	(void)aprsDecodeText((const uint8_t *)out, o, out, outSize);   /* на місці: результат не довший за вхід */
+}
+
+/* Поле позиції (звичайне 19 Б або стиснуте 13 Б) на s: координати, символ, курс/швидкість/висота/радіус зі стисненої. used -- довжина поля. */
+static bool parsePosField(aprsPacket_t *p, const uint8_t *s, size_t rest, size_t *used)
+{
+	if (rest == 0U)
+	{
+		return false;
+	}
+	if (isDig(s[0]) || (s[0] == ' '))
+	{
+		if (!parseUncompressed(s, rest, p))
+		{
+			return false;
+		}
+		*used = 19U;
+		p_symbol_uncompressed(p, s);
+		return true;
+	}
+	if ((s[0] == '/') || (s[0] == '\\') || ((s[0] >= 'A') && (s[0] <= 'Z')) || ((s[0] >= 'a') && (s[0] <= 'j')))
+	{
+		if (!parseCompressed(s, rest, p))
+		{
+			return false;
+		}
+		p->compressed = true;
+		*used = 13U;
+		p_symbol_compressed(p, s);
+		return true;
+	}
+	return false;
+}
+
+/* Ім'я об'єкта/предмета перед коментарем: збігається зі src -- не пишемо; знятий з обліку -- "[знято]" (cp1251, рядок з ескейпами, щоб
+ * файл лишався ASCII). Результат: "ІМ'Я: ", "ІМ'Я [знято]: ", "[знято]: " або порожньо. Повертає довжину префікса в p->text. */
+static size_t namePrefix(aprsPacket_t *p, const aprsAx25_t *ax, const uint8_t *nm, size_t nl, bool killed)
+{
+	char tmp[10];
+	size_t l = (nl > 9U) ? 9U : nl;
+	size_t o = 0;
+
+	for (size_t i = 0; i < l; i++)
+	{
+		tmp[i] = ((nm[i] >= 0x20U) && (nm[i] < 0x7FU)) ? (char)nm[i] : '?';
+	}
+	while ((l > 0U) && (tmp[l - 1U] == ' '))
+	{
+		l--;
+	}
+	tmp[l] = 0;
+	p->text[0] = 0;
+	if ((l > 0U) && (strcmp(tmp, ax->src) != 0))
+	{
+		o = (size_t)snprintf(p->text, sizeof(p->text), "%s", tmp);
+	}
+	if (killed)
+	{
+		o += (size_t)snprintf(p->text + o, sizeof(p->text) - o, "%s[\xE7\xED\xFF\xF2\xEE]", (o > 0U) ? " " : "");
+	}
+	if (o > 0U)
+	{
+		o += (size_t)snprintf(p->text + o, sizeof(p->text) - o, ": ");
+	}
+	return (o < sizeof(p->text)) ? o : (sizeof(p->text) - 1U);
+}
+
+/* Об'єкт ';' (відмітка часу 7 байт) або предмет ')' (часу нема). true -- розібрано. */
+static bool parseNamed(const aprsAx25_t *ax, aprsPacket_t *p, bool isObject)
+{
+	const uint8_t *in = ax->info;
+	size_t n = ax->infoLen;
+	size_t nameLen, at, used = 0, pre;
+	const uint8_t *s;
+
+	if (isObject)
+	{
+		if ((n < 31U) || ((in[10] != '*') && (in[10] != '_')))
+		{
+			return false;
+		}
+		for (int i = 11; i < 17; i++)
+		{
+			if (isDig(in[i]) == false)
+			{
+				return false;
+			}
+		}
+		if ((in[17] != 'z') && (in[17] != 'h') && (in[17] != '/'))
+		{
+			return false;
+		}
+		nameLen = 9U;
+		p->killed = (in[10] == '_');
+		at = 18U;
+	}
+	else
+	{
+		size_t t = 0;
+
+		for (size_t i = 4U; (i < n) && (i <= 10U); i++)
+		{
+			if ((in[i] == '!') || (in[i] == '_'))
+			{
+				t = i;
+				break;
+			}
+		}
+		if ((t == 0U) || (n < (t + 1U + 13U)))
+		{
+			return false;
+		}
+		nameLen = t - 1U;
+		p->killed = (in[t] == '_');
+		at = t + 1U;
+	}
+	s = in + at;
+	if (!parsePosField(p, s, n - at, &used))
+	{
+		return false;
+	}
+	pre = namePrefix(p, ax, in + 1, nameLen, p->killed);
+	commentStrip(p, s + used, n - at - used, p->text + pre, sizeof(p->text) - pre, p->compressed ? 0U : CS_EXT7);
+	return true;
+}
+
+/* Mic-E: висота "xxx}" (3 знаки base91 + '}') на початку коментаря, можливо після байта типу пристрою (` ' > ]). */
+static size_t micEAlt(aprsPacket_t *p, const uint8_t *c, size_t n)
+{
+	for (size_t off = 0; off <= 1U; off++)
+	{
+		if ((n >= (off + 4U)) && (c[off + 3U] == '}') && csIsB91(c[off]) && csIsB91(c[off + 1U]) && csIsB91(c[off + 2U]) &&
+				((off == 0U) || (c[0] == '`') || (c[0] == '\'') || (c[0] == '>') || (c[0] == ']')))
+		{
+			long v = (long)(c[off] - 33U) * 8281L + (long)(c[off + 1U] - 33U) * 91L + (long)(c[off + 2U] - 33U) - 10000L;
+
+			p->altM = (int32_t)v;
+			p->hasAlt = true;
+			return off + 4U;
+		}
+	}
+	return 0U;
+}
+
+/* Текст повідомлення -- спрямований запит ("?APRS?", "?APRSP", "?PING?", "?IGATE?", "?WX?": '?' + ВЕЛИКІ літери/цифри) або метадані телеметрії
+ * ("PARM.", "UNIT.", "EQNS.", "BITS."). Людське "?де ти?" (малі літери) запитом не вважається. */
+static bool msgIsQueryOrMeta(const uint8_t *t, size_t n)
+{
+	if ((n >= 5U) && ((memcmp(t, "PARM.", 5) == 0) || (memcmp(t, "UNIT.", 5) == 0) || (memcmp(t, "EQNS.", 5) == 0) || (memcmp(t, "BITS.", 5) == 0)))
+	{
+		return true;
+	}
+	if ((n >= 2U) && (t[0] == '?'))
+	{
+		size_t i = 1;
+
+		while ((i < n) && (((t[i] >= 'A') && (t[i] <= 'Z')) || isDig(t[i])))
+		{
+			i++;
+		}
+		return (i >= 3U) && ((i == n) || (t[i] == '?') || (t[i] == ' ') || (t[i] == '{'));
+	}
+	return false;
+}
+
 /* Повідомлення: ":" + адресат(9, пробіли) + ":" + текст [+ "{номер"] */
 static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 {
@@ -693,6 +1241,10 @@ static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 	if ((n < 11U) || (in[10] != ':'))
 	{
 		return;   /* лишається APRS_T_OTHER */
+	}
+	if (msgIsQueryOrMeta(in + 11, n - 11U))
+	{
+		return;   /* R14: запит ("?APRS?") або метадані телеметрії -- не повідомлення: без ACK, у чат не потрапляє, текст видно як «інше» */
 	}
 	size_t k = 0;
 	for (size_t i = 0; i < 9U; i++)
@@ -750,6 +1302,321 @@ static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 	setText(p, t, tl);
 }
 
+/* ---- R14 етап 3: сирий NMEA ('$GPRMC', '$GPGGA') і Maidenhead-грід '[IO91SX]' ----------------------------------------------------- */
+
+/* NMEA: поле n (0 -- назва речення) без копіювання; false -- поля нема. */
+static bool nmeaField(const uint8_t *s, size_t len, unsigned n, const uint8_t **f, size_t *fl)
+{
+	size_t i = 0;
+
+	for (unsigned k = 0; k < n; k++)
+	{
+		while ((i < len) && (s[i] != ','))
+		{
+			i++;
+		}
+		if (i >= len)
+		{
+			return false;
+		}
+		i++;
+	}
+	*f = s + i;
+	*fl = 0;
+	while (((i + *fl) < len) && (s[i + *fl] != ','))
+	{
+		(*fl)++;
+	}
+	return true;
+}
+
+/* "ddmm.mmmm" (або dddmm.mmmm) + N/S/E/W -> мікроградуси; degDigits 2 або 3. */
+static bool nmeaCoord(const uint8_t *f, size_t fl, const uint8_t *h, size_t hl, unsigned degDigits, int32_t *out)
+{
+	long deg = 0, minx = 0;
+	unsigned dec = 0;
+	size_t i = degDigits;
+	bool dot = false;
+
+	if ((fl < (size_t)(degDigits + 3U)) || (hl != 1U))
+	{
+		return false;
+	}
+	for (size_t k = 0; k < degDigits; k++)
+	{
+		if (isDig(f[k]) == false) { return false; }
+		deg = deg * 10 + (f[k] - '0');
+	}
+	if ((isDig(f[i]) == false) || (isDig(f[i + 1U]) == false))
+	{
+		return false;
+	}
+	minx = (f[i] - '0') * 10 + (f[i + 1U] - '0');
+	for (i += 2U; i < fl; i++)
+	{
+		if ((f[i] == '.') && (dot == false))
+		{
+			dot = true;
+		}
+		else if (dot && isDig(f[i]))
+		{
+			if (dec < 4U)
+			{
+				minx = minx * 10 + (f[i] - '0');
+				dec++;
+			}
+		}
+		else
+		{
+			return false;
+		}
+	}
+	while (dec < 4U)
+	{
+		minx *= 10;
+		dec++;
+	}
+	/* хвилини * 10000 -> мікроградуси: (minx / 1e4) * 1e6 / 60 = minx * 5 / 3 */
+	long v = deg * 1000000L + (minx * 5L + 1L) / 3L;
+	if (((h[0] != 'N') && (h[0] != 'S') && (h[0] != 'E') && (h[0] != 'W')) || (v > ((degDigits == 2U) ? 90000000L : 180000000L)))
+	{
+		return false;
+	}
+	*out = (int32_t)(((h[0] == 'S') || (h[0] == 'W')) ? -v : v);
+	return true;
+}
+
+/* Число з десятковою крапкою (до 3 знаків) -> округлене ціле. */
+static bool nmeaNum(const uint8_t *f, size_t fl, long *out)
+{
+	long v = 0;
+	size_t i = 0;
+	bool neg = false;
+
+	if ((fl > 0U) && (f[0] == '-'))
+	{
+		neg = true;
+		i = 1U;
+	}
+	if (i >= fl)
+	{
+		return false;
+	}
+	for (; (i < fl) && isDig(f[i]); i++)
+	{
+		v = v * 10 + (f[i] - '0');
+	}
+	if ((i < fl) && (f[i] == '.'))
+	{
+		if (((i + 1U) < fl) && isDig(f[i + 1U]) && ((f[i + 1U] - '0') >= 5))
+		{
+			v++;
+		}
+		i = fl;
+	}
+	if (i != fl)
+	{
+		return false;
+	}
+	*out = neg ? -v : v;
+	return true;
+}
+
+/* '$GPRMC' / '$GPGGA' (талкер будь-який: другий символ -- літера) з перевіркою контрольної суми '*hh'. true -- позицію взято. */
+static bool parseNmea(const aprsAx25_t *ax, aprsPacket_t *p)
+{
+	const uint8_t *in = ax->info;
+	size_t n = ax->infoLen;
+	const uint8_t *f1, *f2, *f3, *f4;
+	size_t l1, l2, l3, l4;
+	size_t star = 0;
+	uint8_t x = 0;
+	bool rmc;
+	long v;
+
+	if ((n < 20U) || (in[1] != 'G') || (in[2] < 'A') || (in[2] > 'Z') || (in[6] != ','))
+	{
+		return false;
+	}
+	for (size_t i = 1; i < n; i++)
+	{
+		if (in[i] == '*')
+		{
+			star = i;
+			break;
+		}
+		x ^= in[i];
+	}
+	if ((star == 0U) || ((star + 3U) > n))
+	{
+		return false;
+	}
+	{
+		int h1 = (in[star + 1U] >= 'a') ? (in[star + 1U] - 'a' + 10) : ((in[star + 1U] >= 'A') ? (in[star + 1U] - 'A' + 10) : (in[star + 1U] - '0'));
+		int h2 = (in[star + 2U] >= 'a') ? (in[star + 2U] - 'a' + 10) : ((in[star + 2U] >= 'A') ? (in[star + 2U] - 'A' + 10) : (in[star + 2U] - '0'));
+
+		if ((h1 < 0) || (h1 > 15) || (h2 < 0) || (h2 > 15) || (((h1 << 4) | h2) != x))
+		{
+			return false;   /* контрольна сума не збіглась */
+		}
+	}
+	rmc = (memcmp(in + 3, "RMC", 3) == 0);
+	if ((rmc == false) && (memcmp(in + 3, "GGA", 3) != 0))
+	{
+		return false;
+	}
+	{
+		const uint8_t *s = in + 1;
+		size_t len = star - 1U;
+		const uint8_t *fv;
+		size_t lv;
+
+		if (rmc)
+		{
+			/* 0 name, 1 time, 2 status, 3 lat, 4 N/S, 5 lon, 6 E/W, 7 speed(kn), 8 course */
+			if ((nmeaField(s, len, 2, &fv, &lv) == false) || (lv != 1U) || (fv[0] != 'A'))
+			{
+				return false;
+			}
+			if ((nmeaField(s, len, 3, &f1, &l1) == false) || (nmeaField(s, len, 4, &f2, &l2) == false) ||
+					(nmeaField(s, len, 5, &f3, &l3) == false) || (nmeaField(s, len, 6, &f4, &l4) == false))
+			{
+				return false;
+			}
+		}
+		else
+		{
+			/* 0 name, 1 time, 2 lat, 3 N/S, 4 lon, 5 E/W, 6 quality, 7 sats, 8 hdop, 9 alt, 10 M */
+			if ((nmeaField(s, len, 6, &fv, &lv) == false) || (lv != 1U) || (fv[0] == '0'))
+			{
+				return false;
+			}
+			if ((nmeaField(s, len, 2, &f1, &l1) == false) || (nmeaField(s, len, 3, &f2, &l2) == false) ||
+					(nmeaField(s, len, 4, &f3, &l3) == false) || (nmeaField(s, len, 5, &f4, &l4) == false))
+			{
+				return false;
+			}
+		}
+		if ((nmeaCoord(f1, l1, f2, l2, 2U, &p->latU) == false) || (nmeaCoord(f3, l3, f4, l4, 3U, &p->lonU) == false))
+		{
+			return false;
+		}
+		if (rmc)
+		{
+			if (nmeaField(s, len, 7, &fv, &lv) && nmeaNum(fv, lv, &v) && (v >= 0))
+			{
+				p->speedKn = (uint16_t)((v > 999) ? 999 : v);
+			}
+			if (nmeaField(s, len, 8, &fv, &lv) && nmeaNum(fv, lv, &v) && (v > 0) && (v <= 360))
+			{
+				p->course = (uint16_t)v;
+			}
+		}
+		else if (nmeaField(s, len, 9, &fv, &lv) && nmeaNum(fv, lv, &v))
+		{
+			p->altM = (int32_t)v;
+			p->hasAlt = true;
+		}
+	}
+	snprintf(p->text, sizeof(p->text), "NMEA G%c%s", (char)in[2], rmc ? "RMC" : "GGA");
+	return true;
+}
+
+/* Maidenhead '[IO91SX]' / '[IO91]': центр квадрата (4 знаки -- 2 x 1 град., 6 знаків -- 5' x 2.5'). */
+static bool parseGrid(const aprsAx25_t *ax, aprsPacket_t *p)
+{
+	const uint8_t *in = ax->info;
+	size_t n = ax->infoLen;
+	uint8_t g[6];
+	size_t gl;
+	int32_t lon, lat;
+
+	if (n < 5U)
+	{
+		return false;
+	}
+	for (size_t i = 0; i < 4U; i++)
+	{
+		g[i] = in[1U + i];
+		if (i < 2U)
+		{
+			if ((g[i] >= 'a') && (g[i] <= 'z')) { g[i] = (uint8_t)(g[i] - 'a' + 'A'); }
+			if ((g[i] < 'A') || (g[i] > 'R')) { return false; }
+		}
+		else if (isDig(g[i]) == false)
+		{
+			return false;
+		}
+	}
+	gl = 4U;
+	if ((n >= 7U) && (in[5] != ']'))
+	{
+		g[4] = in[5];
+		g[5] = in[6];
+		for (size_t i = 4; i < 6U; i++)
+		{
+			if ((g[i] >= 'a') && (g[i] <= 'z')) { g[i] = (uint8_t)(g[i] - 'a' + 'A'); }
+			if ((g[i] < 'A') || (g[i] > 'X')) { return false; }
+		}
+		gl = 6U;
+	}
+	lon = -180000000 + (int32_t)(g[0] - 'A') * 20000000 + (int32_t)(g[2] - '0') * 2000000;
+	lat = -90000000 + (int32_t)(g[1] - 'A') * 10000000 + (int32_t)(g[3] - '0') * 1000000;
+	if (gl == 4U)
+	{
+		lon += 1000000;
+		lat += 500000;
+	}
+	else
+	{
+		lon += (int32_t)(g[4] - 'A') * 83333 + 41667;   /* підквадрат 5' = 1/12 градуса */
+		lat += (int32_t)(g[5] - 'A') * 41667 + 20833;   /* 2.5' = 1/24 градуса */
+	}
+	p->lonU = lon;
+	p->latU = lat;
+	snprintf(p->text, sizeof(p->text), "grid %.*s", (int)gl, (const char *)g);
+	return true;
+}
+
+/* R14: погода без позиції ("_" + MMDDHHMM + поля) -- розібрані поля текстом ("25C 50% 1026.5hPa w310/6km/h g10"), далі хвіст (код ПЗ). */
+static void wxText(aprsPacket_t *p, const uint8_t *rest, size_t rn)
+{
+	char *t = p->text;
+	size_t cap = sizeof(p->text);
+	size_t o = 0;
+
+	t[0] = 0;
+	if (p->wxMask & APRS_WX_TEMP)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "%dC ", (int)p->tempC);
+	}
+	if (p->wxMask & APRS_WX_HUM)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "%u%% ", (unsigned)p->humPct);
+	}
+	if (p->wxMask & APRS_WX_PRESS)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "%u.%uhPa ", (unsigned)(p->pressDhPa / 10U), (unsigned)(p->pressDhPa % 10U));
+	}
+	if (p->wxMask & APRS_WX_WIND)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "w%u/%ukm/h ", (unsigned)p->windDeg, (unsigned)(((unsigned long)p->windMph * 1609UL + 500UL) / 1000UL));
+	}
+	if (p->wxMask & APRS_WX_GUST)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "g%u ", (unsigned)(((unsigned long)p->gustMph * 1609UL + 500UL) / 1000UL));
+	}
+	for (size_t i = 0; (i < rn) && ((o + 1U) < cap); i++)
+	{
+		t[o++] = ((rest[i] >= 0x20U) && (rest[i] < 0x7FU)) ? (char)rest[i] : ' ';
+	}
+	while ((o > 0U) && (t[o - 1U] == ' '))
+	{
+		o--;
+	}
+	t[(o < cap) ? o : (cap - 1U)] = 0;
+}
+
 void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 {
 	memset(out, 0, sizeof(*out));
@@ -762,6 +1629,9 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 	size_t n = ax->infoLen;
 	uint8_t c = in[0];
 
+	/* R14: для усього, що не розібрано (тип «інше»), у картці видно сире інфополе -- це і є діагностика */
+	setText(out, in, n);
+
 	switch (c)
 	{
 		case '!':
@@ -770,47 +1640,37 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 		case '@':
 		{
 			size_t at = ((c == '/') || (c == '@')) ? 8U : 1U;   /* з відміткою часу: ще 7 символів */
+			size_t used = 0;
 
 			if (n <= at)
 			{
 				return;
 			}
-			const uint8_t *s = in + at;
-			size_t rest = n - at;
-			size_t used;
-
-			if (isDig(s[0]) || (s[0] == ' '))
+			if (parsePosField(out, in + at, n - at, &used) == false)
 			{
-				if (!parseUncompressed(s, rest, out))
-				{
-					return;
-				}
-				used = 19U;
-				p_symbol_uncompressed(out, s);
-			}
-			else if ((s[0] == '/') || (s[0] == '\\') || ((s[0] >= 'A') && (s[0] <= 'Z')) || ((s[0] >= 'a') && (s[0] <= 'j')))
-			{
-				if (!parseCompressed(s, rest, out))
-				{
-					return;
-				}
-				out->compressed = true;
-				used = 13U;
-				p_symbol_compressed(out, s);
-			}
-			else
-			{
-				return;
+				return;   /* "!!" (Ultimeter) та інше -- «інше» із сирим текстом */
 			}
 			out->type = APRS_T_POSITION;
 			out->hasPos = true;
-			if (out->compressed == false)
-			{
-				used += p_cse_spd(out, s + used, rest - used);   /* R13: "CCC/SSS" на початку коментаря -- курс/швидкість, з тексту прибираємо */
-			}
-			setText(out, s + used, rest - used);
+			commentStrip(out, in + at + used, n - at - used, out->text, sizeof(out->text), out->compressed ? 0U : CS_EXT7);
 			break;
 		}
+
+		case ';':
+			if (parseNamed(ax, out, true))
+			{
+				out->type = APRS_T_POSITION;
+				out->hasPos = true;
+			}
+			break;
+
+		case ')':
+			if (parseNamed(ax, out, false))
+			{
+				out->type = APRS_T_POSITION;
+				out->hasPos = true;
+			}
+			break;
 
 		case '`':
 		case '\'':
@@ -818,16 +1678,54 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 		case 0x1D:
 			if (parseMicE(ax, out))
 			{
+				size_t alt;
+
 				out->type = APRS_T_POSITION;
 				out->hasPos = true;
 				out->micE = true;
 				p_micE_motion(out, in);   /* R13: символ, курс, швидкість */
-				setText(out, in + 9, n - 9U);   /* після символу й таблиці (info[7], info[8]) */
+				alt = micEAlt(out, in + 9, n - 9U);   /* R14 (Б3): висота "xxx}" на початку коментаря */
+				commentStrip(out, in + 9 + alt, n - 9U - alt, out->text, sizeof(out->text), 0U);
 			}
 			break;
 
 		case ':':
 			parseMessage(ax, out);
+			break;
+
+		case '_':
+			/* погода без позиції: позиції нема -- тип лишається «інше» (вікно маяка не відкривається), але поля розбираємо в текст */
+			if ((n > 9U) && isDig(in[1]) && isDig(in[2]) && isDig(in[3]) && isDig(in[4]) && isDig(in[5]) && isDig(in[6]) && isDig(in[7]) && isDig(in[8]))
+			{
+				size_t used = csWeather(out, in + 9, n - 9U);
+
+				if (out->wxMask != 0U)
+				{
+					wxText(out, in + 9 + used, n - 9U - used);
+				}
+			}
+			break;
+
+		case '$':
+			if (parseNmea(ax, out))
+			{
+				out->type = APRS_T_POSITION;
+				out->hasPos = true;
+			}
+			break;
+
+		case '[':
+			if (parseGrid(ax, out))
+			{
+				out->type = APRS_T_POSITION;
+				out->hasPos = true;
+			}
+			break;
+
+		case '<':
+			/* можливості станції (Direwolf IBEACON: "<IGATE,MSG_CNT=0,...") */
+			out->type = APRS_T_STATUS;
+			setText(out, in + 1, n - 1U);
 			break;
 
 		case '>':
@@ -845,7 +1743,7 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 		}
 
 		default:
-			break;   /* об'єкти, погода, телеметрія, запити... -- «інше» */
+			break;   /* решта DTI -- «інше» із сирим текстом */
 	}
 }
 
@@ -1068,6 +1966,14 @@ aprsStation_t *aprsDbUpdate(aprsRxDb_t *db, const aprsAx25_t *ax, const aprsPack
 		s->count++;
 	}
 	copyTrunc(s->path, sizeof(s->path), ax->path);
+	if (ax->tp)
+	{
+		s->flags |= APRS_ST_TP;
+	}
+	else
+	{
+		s->flags &= (uint8_t)~APRS_ST_TP;
+	}
 	if (pkt->hasPos)
 	{
 		s->flags |= APRS_ST_HASPOS;
