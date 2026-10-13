@@ -191,8 +191,13 @@ static void drawPktList(void)
 	{
 		ui->scroll = (uint8_t)(h->jrnCount - 1U);
 	}
-	statusLine(buf, sizeof(buf));
-	printRow(0, buf);
+	{
+		char st[40];
+
+		statusLine(st, sizeof(st));
+		snprintf(buf, sizeof(buf), "%-22.22s%u/%u", st, (unsigned)ui->scroll + 1U, (unsigned)h->jrnCount);   /* R17: номер виділеного запису / скільки їх */
+		printRow(0, buf);
+	}
 	for (int r = 0; r < (int)h->jrnCount; r++)
 	{
 		const aprsJrnEntry_t *e = aprsJrnNth(h, r);
@@ -237,8 +242,13 @@ static void drawPacket(void)
 		top = maxTop;
 		ui->scroll = (uint8_t)((ui->scroll & 0xF0U) | top);
 	}
-	snprintf(buf, sizeof(buf), APRSRX_PKT_LEN, (unsigned)len);
-	printRow(0, buf);
+	{
+		char ln[24];
+
+		snprintf(ln, sizeof(ln), APRSRX_PKT_LEN, (unsigned)len);
+		snprintf(buf, sizeof(buf), "%-22.22s%u/%u", ln, (unsigned)aprsJrnNOfSlot(aprsModeHist(), PKT_SLOT(ui)) + 1U, (unsigned)aprsModeHist()->jrnCount);   /* R17: який запис журналу */
+		printRow(0, buf);
+	}
 	for (unsigned r = 0; r < ST_PKT_ROWS; r++)
 	{
 		size_t off = (size_t)(top + r) * ST_PKT_COLS;
@@ -303,6 +313,49 @@ static void pktTextMove(aprsRxUi_t *ui, int dir)
 	if (((dir > 0) && (top < 15U)) || ((dir < 0) && (top > 0U)))
 	{
 		ui->scroll = (uint8_t)((ui->scroll & 0xF0U) | (unsigned)((int)top + dir));
+	}
+}
+
+/* R17 (Г3): напрямок прокрутки. На MDUV380 ручка в меню -- це KEY_LEFT/KEY_RIGHT (menuSystemPreProcessEvent), кнопки UP/DOWN -- KEY_UP/KEY_DOWN.
+ * Раніше екран слухав лише UP/DOWN: ручка в «Пакети» не робила нічого. Тепер DOWN і RIGHT -- далі (+1), UP і LEFT -- назад (-1). */
+static int navDir(const uiEvent_t *ev)
+{
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	{
+		return 1;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	{
+		return -1;
+	}
+	return 0;
+}
+
+/* Скільки рядків займає повний кадр відкритого запису журналу. */
+static unsigned pktLines(const aprsRxUi_t *ui)
+{
+	const aprsJrnEntry_t *e = aprsJrnAtSlot(aprsModeHist(), PKT_SLOT(ui));
+
+	return (e == NULL) ? 0U : (unsigned)((strlen(e->text) + (ST_PKT_COLS - 1U)) / ST_PKT_COLS);
+}
+
+/* Вгору/вниз у повному кадрі: довгий текст (більше ST_PKT_ROWS рядків) гортається рядками; кадр, що весь на екрані, -- нічого не гортає,
+ * тож стрілки перемикають на сусідній запис журналу (вниз -- старіший). Журнал порожній -- нічого. */
+static void pktFrameMove(aprsRxUi_t *ui, int dir)
+{
+	if (pktLines(ui) > ST_PKT_ROWS)
+	{
+		pktTextMove(ui, dir);
+	}
+	else
+	{
+		int cnt = (int)aprsModeHist()->jrnCount;
+		int n = aprsJrnNOfSlot(aprsModeHist(), PKT_SLOT(ui)) + dir;
+
+		if (cnt > 0)
+		{
+			pktOpen(ui, (n < 0) ? (cnt - 1) : ((n >= cnt) ? 0 : n));
+		}
 	}
 }
 
@@ -607,12 +660,12 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 					redraw = true;
 				}
 			}
-			else if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+			else if (navDir(ev) != 0)
 			{
-				int dir = KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1;
+				int dir = navDir(ev);
 				if (ui->view == APRS_RX_VIEW_PACKET)
 				{
-					pktTextMove(ui, dir);
+					pktFrameMove(ui, dir);
 				}
 				else if (ui->view == APRS_RX_VIEW_PKTLIST)
 				{
@@ -762,13 +815,13 @@ int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
 		ui->view = APRS_RX_VIEW_LIST;
 		return 1;
 	}
-	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	if (navDir(ev) != 0)
 	{
-		int dir = KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1;
+		int dir = navDir(ev);
 
 		if (ui->view == APRS_RX_VIEW_PACKET)
 		{
-			pktTextMove(ui, dir);
+			pktFrameMove(ui, dir);
 		}
 		else if (ui->view == APRS_RX_VIEW_PKTLIST)
 		{

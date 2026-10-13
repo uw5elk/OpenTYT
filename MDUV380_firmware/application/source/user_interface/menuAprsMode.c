@@ -1599,15 +1599,19 @@ static int pageEvent(uiEvent_t *ev)
 			return 0;
 
 		case APRS_MODE_PAGE_STATIONS:
-			if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+			/* R17 (Г3): у журналі «Пакети» і повному кадрі ручка (LEFT/RIGHT) гортає, а не перемикає сторінки режиму */
+			if ((aprsRxUi()->view != APRS_RX_VIEW_PKTLIST) && (aprsRxUi()->view != APRS_RX_VIEW_PACKET))
 			{
-				gotoPage(+1);
-				return 1;
-			}
-			if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
-			{
-				gotoPage(-1);
-				return 1;
+				if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+				{
+					gotoPage(+1);
+					return 1;
+				}
+				if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+				{
+					gotoPage(-1);
+					return 1;
+				}
 			}
 			{
 				int r = menuAprsStationsKeyEmbedded(ev);

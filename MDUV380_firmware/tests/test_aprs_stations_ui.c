@@ -201,6 +201,14 @@ static void testPacketScreens(void)
 	CHECK(s_ui.scroll == 7, "UP з нуля -> останній запис (scroll=%d)", s_ui.scroll);
 	checkScreen("журнал: виділено останній");
 	click(KEY_DOWN);
+	/* R17 (Г3): ручка (KEY_RIGHT/KEY_LEFT) гортає список так само, як DOWN/UP; у шапці «n/m» */
+	CHECK(s_ui.scroll == 0 && !strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "1/8"), "шапка списку: «n/m» (%s)", s_rows[0]);
+	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);
+	CHECK(s_ui.scroll == 1 && !strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "2/8"), "ручка вправо -> наступний запис (scroll=%d, %s)", s_ui.scroll, s_rows[0]);
+	key(KEY_LEFT, KEY_MOD_PRESS); key(KEY_LEFT, KEY_MOD_UP); key(KEY_LEFT, KEY_MOD_PRESS); key(KEY_LEFT, KEY_MOD_UP);
+	CHECK(s_ui.scroll == 7, "ручка вліво з нуля -> останній запис (scroll=%d)", s_ui.scroll);
+	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);
+	CHECK(s_ui.scroll == 0, "ручка вправо з останнього -> перший (scroll=%d)", s_ui.scroll);
 
 	/* GREEN -> повний кадр (127 символів = 5 рядків по 26), RED -> назад із тим самим виділенням */
 	click(KEY_GREEN);
@@ -209,9 +217,17 @@ static void testPacketScreens(void)
 	CHECK(s_nrows == 1 + 5 + 1, "рядок довжини + 5 рядків тексту + підказка (є %d)", s_nrows);
 	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "перший рядок -- початок кадру: «%s»", s_rows[1]);
 	tri0 = s_tri;
-	click(KEY_DOWN); click(KEY_DOWN);
-	CHECK(s_tri == tri0 && (s_ui.scroll & 0x0F) == 0, "кадр вміщується без прокрутки (scroll=%02x)", s_ui.scroll);
-	for (int i = 0; i < 20; i++) { click(KEY_UP); }
+	/* R17 (Г3): кадр вміщується на екран (5 рядків з 9) -- тексту гортати нема чого, тож стрілки перемикають на сусідній запис журналу */
+	click(KEY_DOWN);
+	CHECK(s_ui.view == APRS_RX_VIEW_PACKET && !strncmp(s_rows[1], "UW5ELK-10>", 10), "DOWN у кадрі -> старіший запис: «%s»", s_rows[1]);
+	CHECK(!strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "2/8"), "у шапці кадру номер запису «n/8»: «%s»", s_rows[0]);
+	click(KEY_UP);
+	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "UP у кадрі -> назад на найновіший: «%s»", s_rows[1]);
+	click(KEY_UP);
+	CHECK(!strncmp(s_rows[1], "UW5ELE-4>", 9), "UP з найновішого -- по колу на найстаріший: «%s»", s_rows[1]);
+	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);
+	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "ручка вправо (RIGHT) у кадрі -- як DOWN (по колу): «%s»", s_rows[1]);
+	CHECK(s_tri == tri0 && (s_ui.scroll & 0x0F) == 0, "стрілок прокрутки тексту нема (scroll=%02x)", s_ui.scroll);
 	jrnPush("A1B>APRS:>new", 1800002000U);
 	checkScreen("повний кадр після нового"); CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "новий кадр не підміняє кадр на екрані");
 	click(KEY_RED);
