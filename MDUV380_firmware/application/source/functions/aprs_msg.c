@@ -936,6 +936,33 @@ unsigned aprsMsgListCount(const aprsMsgBox_t *b)
 	return n;
 }
 
+unsigned aprsMsgDirCount(const aprsMsgBox_t *b, uint8_t dir)
+{
+	unsigned n = 0;
+
+	for (unsigned i = 0; i < APRS_MSG_LIST_MAX; i++)
+	{
+		n += (b->list[i].used && (b->list[i].dir == dir)) ? 1U : 0U;
+	}
+	return n;
+}
+
+int aprsMsgNth(const aprsMsgBox_t *b, uint8_t dir, unsigned n)
+{
+	for (unsigned i = 0; i < APRS_MSG_LIST_MAX; i++)
+	{
+		if (b->list[i].used && (b->list[i].dir == dir))
+		{
+			if (n == 0U)
+			{
+				return (int)i;
+			}
+			n--;
+		}
+	}
+	return -1;
+}
+
 void aprsMsgMarkRead(aprsMsgBox_t *b, unsigned idx)
 {
 	if (idx < APRS_MSG_LIST_MAX)

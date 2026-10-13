@@ -908,6 +908,61 @@ static void testUnread(void)
 	CHECK(((aprsMsgUnreadCount(b) > 99U) ? 99U : aprsMsgUnreadCount(b)) == 0U, "обмеження 99");
 }
 
+/* R15: фільтр списку за напрямком (Вхідні / Надіслані) -- лічильники й n-й запис напрямку */
+static void testDirFilter(void)
+{
+	aprsMsgBox_t *b = &g_box;
+	uint32_t t = 95000U;
+	unsigned nin = 0, nout = 0;
+
+	printf("== R15: фільтр Вхідні/Надіслані ==\n");
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) == 0U && aprsMsgDirCount(b, AMSG_DIR_OUT) == 0U, "порожній блок: 0 і 0");
+	CHECK(aprsMsgNth(b, AMSG_DIR_IN, 0U) == -1 && aprsMsgNth(b, AMSG_DIR_OUT, 0U) == -1, "порожній блок: запису нема");
+	CHECK(aprsMsgOnIncoming(b, "AAA", "one", "1", t), "вхідне 1");
+	CHECK(aprsMsgSend(b, "DDD", "out1", t + 1U, NULL) == AMSG_OK, "вихідне 1");
+	CHECK(aprsMsgOnIncoming(b, "BBB", "two", "2", t + 2U), "вхідне 2");
+	CHECK(aprsMsgSend(b, "EEE", "out2", t + 3U, NULL) == AMSG_OK, "вихідне 2");
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) == 2U && aprsMsgDirCount(b, AMSG_DIR_OUT) == 2U, "2 вхідних і 2 вихідних");
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) + aprsMsgDirCount(b, AMSG_DIR_OUT) == aprsMsgListCount(b), "сума напрямків = усі записи");
+	/* n-й запис напрямку: найновіший першим, напрямок не змішується */
+	for (unsigned n = 0; n < 2U; n++)
+	{
+		int ri = aprsMsgNth(b, AMSG_DIR_IN, n), ro = aprsMsgNth(b, AMSG_DIR_OUT, n);
+
+		CHECK(ri >= 0 && b->list[ri].dir == AMSG_DIR_IN, "Nth(IN,%u) -- вхідне", n);
+		CHECK(ro >= 0 && b->list[ro].dir == AMSG_DIR_OUT, "Nth(OUT,%u) -- вихідне", n);
+	}
+	CHECK(aprsMsgNth(b, AMSG_DIR_IN, 2U) == -1 && aprsMsgNth(b, AMSG_DIR_OUT, 2U) == -1, "за межею напрямку -- -1");
+	{
+		int r0 = aprsMsgNth(b, AMSG_DIR_IN, 0U), r1 = aprsMsgNth(b, AMSG_DIR_IN, 1U);
+
+		CHECK(r0 < r1, "найновіше вхідне (BBB) перед старішим (AAA): %d < %d", r0, r1);
+		CHECK(strcmp(b->list[r0].call, "BBB") == 0 && strcmp(b->list[r1].call, "AAA") == 0, "порядок вхідних");
+	}
+	/* «прочитати» n-те вхідне через індекс Nth зменшує лише лічильник вхідних */
+	CHECK(aprsMsgUnreadCount(b) == 2U, "2 непрочитаних");
+	aprsMsgMarkRead(b, (unsigned)aprsMsgNth(b, AMSG_DIR_IN, 1U));
+	CHECK(aprsMsgUnreadCount(b) == 1U, "після читання старшого вхідного -- 1");
+	/* переповнення списку: сума напрямків завжди дорівнює кількості записів, кожен індекс Nth унікальний */
+	for (unsigned i = 0; i < 12U; i++)
+	{
+		(void)aprsMsgOnIncoming(b, (i & 1U) ? "XXX" : "YYY", "m", (i < 10U) ? "1" : "2", t + 10U + i);
+		(void)aprsMsgSend(b, "ZZZ", "o", t + 100U + i, NULL);
+	}
+	nin = aprsMsgDirCount(b, AMSG_DIR_IN);
+	nout = aprsMsgDirCount(b, AMSG_DIR_OUT);
+	CHECK(nin + nout == aprsMsgListCount(b) && aprsMsgListCount(b) <= APRS_MSG_LIST_MAX, "після переповнення: %u + %u = %u", nin, nout, aprsMsgListCount(b));
+	{
+		bool seen[APRS_MSG_LIST_MAX] = { false };
+		bool ok = true;
+
+		for (unsigned n = 0; n < nin; n++) { int r = aprsMsgNth(b, AMSG_DIR_IN, n); ok = ok && (r >= 0) && !seen[r] && (b->list[r].dir == AMSG_DIR_IN); if (r >= 0) { seen[r] = true; } }
+		for (unsigned n = 0; n < nout; n++) { int r = aprsMsgNth(b, AMSG_DIR_OUT, n); ok = ok && (r >= 0) && !seen[r] && (b->list[r].dir == AMSG_DIR_OUT); if (r >= 0) { seen[r] = true; } }
+		CHECK(ok, "індекси Nth не перетинаються і покривають весь список");
+	}
+}
+
 int main(void)
 {
 	testCharBytes();
@@ -926,6 +981,7 @@ int main(void)
 	testFix2();
 	testFrom();
 	testUnread();
+	testDirFilter();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_msg: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);
