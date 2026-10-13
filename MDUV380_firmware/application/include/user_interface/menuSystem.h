@@ -310,9 +310,9 @@ void uiChannelModeHeartBeatActivityForGD77S(uiEvent_t *ev);
 
 
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t msTimeout, const char *message, bool immediateRender);
-/* Форк (R18 Д6): коротке підтвердження дії / відмова ("Маяк передано", "Немає запису"). У збірках з ENABLE_APRS_RX -- повноекранна картка в стилі гучності
+/* Форк (R18 Д6): коротке підтвердження дії / відмова ("Маяк передано", "Немає запису"). У збірках з ENABLE_APRS_RX (крім діагностичної) -- повноекранна картка в стилі гучності
  * (id NOTIFICATION_ID_CARD, тип MESSAGE); без нього -- стокове вузьке вікно, тож типова збірка не змінюється. */
-#if defined(ENABLE_APRS_RX)
+#if defined(APRS_R18_UI)
 #define uiNotificationShowShort(msTimeout, text, imm)  uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_CARD, (msTimeout), (text), (imm))
 #else
 #define uiNotificationShowShort(msTimeout, text, imm)  uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, (msTimeout), (text), (imm))

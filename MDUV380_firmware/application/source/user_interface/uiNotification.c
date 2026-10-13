@@ -175,7 +175,7 @@ static uiNotificationData_t notificationData =
 static void displayMessage(void);
 static void displaySmsFullScreen(void);
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
-#if defined(ENABLE_APRS_RX)
+#if defined(APRS_R18_UI)
 static void displayLevelCardEx(const char *title, const char *valueText, int16_t pct, const char *extra);
 static void displayMessageCard(void);
 #endif
@@ -388,7 +388,7 @@ void uiNotificationRefresh(void)
 						currentLanguage->call_replay_mode_last : currentLanguage->call_replay_mode_all);
 
 				snprintf(valueText, SCREEN_LINE_BUFFER_SIZE, "%lu:%02lu", (unsigned long)mm, (unsigned long)ss);
-#if defined(ENABLE_APRS_RX)
+#if defined(APRS_R18_UI)
 				/* R18 Д10: хто говорив -- позивний (перше слово запису останньої прийнятої станції), інакше DMR ID, інакше без рядка. У буфері запису
 				 * джерело не зберігається (RAM 0 додано), тож береться ОСТАННЯ прийнята станція списку «Останні прийняті» -- під час відтворення нового прийому
 				 * не буває (він його перериває), тож це та сама станція, чий виклик грає (для режиму «Останні 30 с» -- останній у ній). */
@@ -425,7 +425,7 @@ void uiNotificationRefresh(void)
 #endif
 
 			case NOTIFICATION_TYPE_MESSAGE:
-#if defined(ENABLE_APRS_RX)
+#if defined(APRS_R18_UI)
 				if ((notificationData.id == NOTIFICATION_ID_CARD) || (notificationData.id == NOTIFICATION_ID_TX_INHIBIT))
 				{
 					displayMessageCard();   // R18 Д6: короткі підтвердження/відмови -- на весь екран, як гучність
@@ -659,7 +659,7 @@ bool uiNotificationIsPendingRender(void)
  * шумоподавлення, "500mW"/"1W"/"5W" для потужності -- формат не змінюємо, лише переносимо
  * малювання). pct (0-100) -- де саме заповнена смуга; для потужності це позиція серед
  * дискретних рівнів (mW/W), а не відсоток від безперервного діапазону. */
-#if defined(ENABLE_APRS_RX)
+#if defined(APRS_R18_UI)
 /* R18 Д10: displayLevelCardEx() -- та сама картка + необов'язковий третій рядок (FONT_SIZE_3) між значенням і смугою (extra == NULL -- макет без змін:
  * гучність, потужність, шумоподавлення). Окрема функція, а не зміна сигнатури displayLevelCard(), щоб код без ENABLE_APRS_RX лишився таким же, і без
  * статичної змінної (RAM 0). */
@@ -721,7 +721,7 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
 	displayPrintCentered(LC_Y_VALUE, buffer, FONT_SIZE_4);
 
-#if defined(ENABLE_APRS_RX)
+#if defined(APRS_R18_UI)
 	if (extra != NULL)
 	{
 		strncpy(buffer, extra, (SCREEN_LINE_BUFFER_SIZE - 1));
@@ -742,7 +742,7 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 	}
 }
 
-#if defined(ENABLE_APRS_RX)
+#if defined(APRS_R18_UI)
 /* R18 Д6: повноекранна картка короткого підтвердження/відмови -- ТОЙ САМИЙ вигляд, що й displayLevelCard() (гучність, потужність, «Переслухати»): повне тло, рамка,
  * кольори за темою (ніч -- жовтий на темному, день -- темно-синій на білому). Без смуги-індикатора. Текст -- notificationData.message; '\n' -- розрив рядка;
  * довший за 19 символів рядок переноситься за пробілом. Шрифт 8x16 (FONT_SIZE_3): великий 16x32 не має частини кирилиці. До 4 рядків. */

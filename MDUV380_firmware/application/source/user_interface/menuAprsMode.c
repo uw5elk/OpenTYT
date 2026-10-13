@@ -85,7 +85,12 @@ static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
 
 /* R15: перший екран «Повідом. APRS» -- Нове / Вхідні / Надіслані. R18: «Вхідні n/m» (n -- прочитані, m -- усього вхідних), «Надіслані» -- усі записи
  * напрямку (раніше рахувалась черга передачі і після відправки була 0), четвертий пункт -- «[Видалити всі]». Великий шрифт, смуга вибору. */
+/* R18: у діагностичній збірці (ENABLE_APRS_RX_PROBE) видалення вимкнено -- не вистачає місця до адреси кодека (aprs_rx_cfg.h, APRS_R18_UI). */
+#if defined(APRS_R18_UI)
 #define AM_HOME_ITEMS  4
+#else
+#define AM_HOME_ITEMS  3
+#endif
 static void drawMsgHome(void)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
@@ -102,7 +107,11 @@ static void drawMsgHome(void)
 			case 0:  snprintf(buf, sizeof(buf), "%s", APRSMSG_H_NEW); break;
 			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN)); break;
 			case 2:  snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgDirCount(b, AMSG_DIR_OUT)); break;
+#if defined(APRS_R18_UI)
 			default: snprintf(buf, sizeof(buf), "%s", APRSMSG_H_DELALL); break;
+#else
+			default: buf[0] = 0; break;
+#endif
 		}
 		if (sel)
 		{
@@ -154,10 +163,13 @@ static void drawMsgList(void)
 				out ? msgStatusWord(e->status) : e->text, age);
 		printRow(1 + (int)i, buf);
 	}
+#if defined(APRS_R18_UI)
 	printRow(9, APRSMSG_L_HINT_D);    /* R18: видалення -- SK2+GREEN, як у «Повідомленнях» DMR */
+#endif
 	printRow(10, APRSMSG_L_HINT_S);   /* R17: сторінок режиму нема */
 }
 
+#if defined(APRS_R18_UI)
 /* R18 Д1: підтвердження видалення (один запис або всі). mu->err: 1 -- всі; mu->reply -- вигляд, куди повернутись по RED. Видаляє лише GREEN. */
 static void drawMsgConfirm(void)
 {
@@ -185,6 +197,7 @@ static void drawMsgConfirm(void)
 	}
 	displayPrintCentered(112, APRSMSG_Q_HINT, FONT_SIZE_1);
 }
+#endif
 
 /* Малює рядки [first, first + rows) тексту, розбитого aprsMsgWrapLine() з шириною cols. Повертає загальну кількість рядків. */
 static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0, ucFont_t font, int16_t lineH)
@@ -285,10 +298,12 @@ static void drawMsgPage(void)
 	{
 		drawMsgHome();
 	}
+#if defined(APRS_R18_UI)
 	else if (mu->view == APRS_MSG_VIEW_CONFIRM)
 	{
 		drawMsgConfirm();
 	}
+#endif
 	else if ((mu->view == APRS_MSG_VIEW_READ) && (aprsMsgNth(aprsModeMsgBox(), mu->dirFilter, mu->sel) >= 0))
 	{
 		drawMsgRead();
@@ -670,6 +685,7 @@ static int msgPageEvent(uiEvent_t *ev)
 			{
 				msgComposeStart(NULL);
 			}
+#if defined(APRS_R18_UI)
 			else if (mu->scroll == 3U)
 			{
 				if (aprsMsgListCount(b) == 0U)
@@ -683,6 +699,7 @@ static int msgPageEvent(uiEvent_t *ev)
 					mu->view = APRS_MSG_VIEW_CONFIRM;
 				}
 			}
+#endif
 			else
 			{
 				mu->dirFilter = (mu->scroll == 1U) ? AMSG_DIR_IN : AMSG_DIR_OUT;
@@ -697,6 +714,7 @@ static int msgPageEvent(uiEvent_t *ev)
 		}
 		return 0;
 	}
+#if defined(APRS_R18_UI)
 	if (mu->view == APRS_MSG_VIEW_CONFIRM)
 	{
 		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
@@ -737,6 +755,7 @@ static int msgPageEvent(uiEvent_t *ev)
 		mu->view = APRS_MSG_VIEW_CONFIRM;
 		return 1;
 	}
+#endif
 	if (mu->view == APRS_MSG_VIEW_READ)
 	{
 		if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
