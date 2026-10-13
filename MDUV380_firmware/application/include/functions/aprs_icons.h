@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "functions/aprs_rx_cfg.h"
 
 #define APRS_ICON_W   16
 #define APRS_ICON_H   16
