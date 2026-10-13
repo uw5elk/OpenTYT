@@ -2,6 +2,7 @@
  * aprs_icons.c -- R14: піктограми символів APRS 16x16 (див. aprs_icons.h). Кожна -- 32 байти (16 рядків по 2 байти, XBM: молодший біт
  * ліворуч, формат displayDrawXBitmap()). Намальовані вручну, у flash (const), вигляд -- у docs/aprs-icons.md.
  */
+#include "functions/aprs_rx_cfg.h"   /* ENABLE_APRS_RX (у т.ч. з ENABLE_APRS_RX_PROBE); без нього діагностична збірка не бачить піктограми */
 #include "functions/aprs_icons.h"
 
 #if defined(ENABLE_APRS_RX)
