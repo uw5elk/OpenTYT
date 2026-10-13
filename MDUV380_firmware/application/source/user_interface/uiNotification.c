@@ -165,6 +165,7 @@ static uiNotificationData_t notificationData =
 #include "functions/aprs_rx.h"        /* R13: вікно маяка -- aprsRxWindow() */
 #include "functions/aprs_mode_cfg.h"  /* aprsSymbolNameEx() */
 #include "functions/aprs_icons.h"     /* R14: піктограми символів */
+#include "functions/aprs_msg.h"       /* R15: aprsMsgWrapLine() -- коментар у два рядки */
 #include "user_interface/languages/aprsrx_ua.h"
 #endif
 #if defined(ENABLE_CALL_REPLAY)
@@ -937,8 +938,12 @@ static void displayAprsBeaconWindow(void)
 	/* R14: решта даних пакета -- по рядку, лише наявні, x = 4..86 (13 символів: правіше кільце), крок 9 px, до y = 97. */
 	aprsWinInfoRows(w, y);
 
-	/* Символ APRS: піктограма 16x16 (x = 4, y = 99), праворуч назва й «таблиця+код» (діагностика), нижче коментар, обрізаний по ширині. */
-	if (w->symCode != 0)
+	/* Символ APRS: піктограма 16x16 (x = 4, y = 99), праворуч назва (R15: без другого рядка «таблиця+код» -- він лишається ЛИШЕ тоді, коли назви нема:
+	 * кадр із кодом, якого немає в нашій таблиці назв), нижче коментар у ДВА рядки з перенесенням за словами (aprsMsgWrapLine()). Перший рядок
+	 * коментаря -- праворуч від піктограми (x = 24, 22 символи), другий -- під нею (x = 4, 25 символів). Коментар до 27 символів: влізає цілком. */
+	bool haveSym = (w->symCode != 0);
+
+	if (haveSym)
 	{
 		const char *nm = aprsSymbolNameEx(w->symTable, w->symCode);
 
@@ -946,17 +951,39 @@ static void displayAprsBeaconWindow(void)
 		if (nm != NULL)
 		{
 			snprintf(buf, sizeof buf, "%s", nm);
-			buf[(DISPLAY_SIZE_X - 28) / 6] = 0;
-			displayPrintCore(24, 101, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 		}
-		snprintf(buf, sizeof buf, APRSRX_WIN_SYM2_FMT, (w->symTable != 0) ? w->symTable : ' ', w->symCode);
-		displayPrintCore(24, 109, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		else
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_SYM2_FMT, (w->symTable != 0) ? w->symTable : ' ', w->symCode);
+		}
+		buf[(DISPLAY_SIZE_X - 28) / 6] = 0;
+		displayPrintCore(24, 101, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	}
 	if (w->text[0])
 	{
-		snprintf(buf, sizeof buf, "%s", w->text);
-		buf[(DISPLAY_SIZE_X - 8) / 6] = 0;
-		displayPrintCore(4, 117, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		const int len = (int)strlen(w->text);
+		const int16_t x1 = haveSym ? 24 : 4;
+		const int w1 = (DISPLAY_SIZE_X - x1 - 4) / 6;
+		const int w2 = (DISPLAY_SIZE_X - 8) / 6;
+		int ls = 0, nx = 0, n;
+
+		n = aprsMsgWrapLine(w->text, len, 0, w1, &ls, &nx);
+		if ((n > 0) && (n < (int)sizeof buf))
+		{
+			memcpy(buf, w->text + ls, (size_t)n);
+			buf[n] = 0;
+			displayPrintCore(x1, 109, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		}
+		if (nx < len)
+		{
+			n = aprsMsgWrapLine(w->text, len, nx, w2, &ls, &nx);
+			if ((n > 0) && (n < (int)sizeof buf))
+			{
+				memcpy(buf, w->text + ls, (size_t)n);
+				buf[n] = 0;
+				displayPrintCore(4, 117, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			}
+		}
 	}
 }
 #endif /* APRS_RX */
