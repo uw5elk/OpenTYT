@@ -1060,6 +1060,11 @@ static void commentStrip(aprsPacket_t *p, const uint8_t *c, size_t n, char *out,
 	{
 		return;
 	}
+	/* R16 (ВА1): службові байти в кінці (CR 0x0D, LF 0x0A, усе < 0x20) -- не частина коментаря */
+	while ((n > 0U) && (c[n - 1U] < 0x20U))
+	{
+		n--;
+	}
 	if (flags & CS_EXT7)
 	{
 		pos += csExt7(p, c, n);
@@ -1299,22 +1304,71 @@ static bool parseNamed(const aprsAx25_t *ax, aprsPacket_t *p, bool isObject)
 	return true;
 }
 
-/* Mic-E: висота "xxx}" (3 знаки base91 + '}') на початку коментаря, можливо після байта типу пристрою (` ' > ]). */
-static size_t micEAlt(aprsPacket_t *p, const uint8_t *c, size_t n)
+/* R16 (ВА2/ВА3): ідентифікатор пристрою Mic-E у коментарі (aprsorg/aprs-deviceid, "Mic-E index").
+ * НОВИЙ формат: перший байт '`' (пристрій з повідомленнями) або '\'' (тракер), далі справжній коментар, у кінці ДВА байти-ідентифікатори.
+ * СТАРИЙ (Kenwood): перший байт '>' або ']', у кінці ОДИН байт-ідентифікатор або нічого (якщо останній не буква і не цифра -- це він).
+ * Повертає TRUE, якщо префікс знайдено; *start / *end -- межі справжнього коментаря всередині c[0..n). */
+static bool micEDeviceId(const uint8_t *c, size_t n, size_t *start, size_t *end)
 {
-	for (size_t off = 0; off <= 1U; off++)
+	*start = 0U;
+	*end = n;
+	if (n == 0U)
 	{
-		if ((n >= (off + 4U)) && (c[off + 3U] == '}') && csIsB91(c[off]) && csIsB91(c[off + 1U]) && csIsB91(c[off + 2U]) &&
-				((off == 0U) || (c[0] == '`') || (c[0] == '\'') || (c[0] == '>') || (c[0] == ']')))
+		return false;
+	}
+	if ((c[0] == '`') || (c[0] == '\''))
+	{
+		*start = 1U;
+		*end = (n >= 3U) ? (n - 2U) : 1U;   /* коротше за префікс + 2 -- коментаря нема */
+		return true;
+	}
+	if ((c[0] == '>') || (c[0] == ']'))
+	{
+		uint8_t l = c[n - 1U];
+
+		*start = 1U;
+		if ((n >= 2U) && !isDig(l) && !(((l >= 'A') && (l <= 'Z')) || ((l >= 'a') && (l <= 'z'))))
 		{
-			long v = (long)(c[off] - 33U) * 8281L + (long)(c[off + 1U] - 33U) * 91L + (long)(c[off + 2U] - 33U) - 10000L;
+			*end = n - 1U;
+		}
+		return true;
+	}
+	return false;
+}
+
+/* Mic-E: висота "xxx}" (3 знаки base91 + '}'). Шукаємо '}' у перших 8 байтах c (c -- те, що лишилось після зняття префікса). Байти перед висотою
+ * (їх у реальних кадрах нема) вважаємо службовими й відкидаємо. Без префікса -- лише з початку (як раніше). Повертає, скільки байт з початку c зайнято. */
+static size_t micEAlt(aprsPacket_t *p, const uint8_t *c, size_t n, bool hadPrefix)
+{
+	size_t last = hadPrefix ? 7U : 3U;
+
+	for (size_t j = 3U; (j <= last) && (j < n); j++)
+	{
+		if ((c[j] == '}') && csIsB91(c[j - 3U]) && csIsB91(c[j - 2U]) && csIsB91(c[j - 1U]))
+		{
+			long v = (long)(c[j - 3U] - 33U) * 8281L + (long)(c[j - 2U] - 33U) * 91L + (long)(c[j - 1U] - 33U) - 10000L;
 
 			p->altM = (int32_t)v;
 			p->hasAlt = true;
-			return off + 4U;
+			return j + 1U;
 		}
 	}
 	return 0U;
+}
+
+/* Коментар Mic-E: порядок -- керівні байти в кінці (ВА1), префікс/суфікс пристрою (ВА2/ВА3), потім висота й інші розширення (ВА4). */
+static void micEComment(aprsPacket_t *out, const uint8_t *c, size_t n)
+{
+	size_t st, en, alt;
+	bool pre;
+
+	while ((n > 0U) && (c[n - 1U] < 0x20U))
+	{
+		n--;
+	}
+	pre = micEDeviceId(c, n, &st, &en);
+	alt = micEAlt(out, c + st, en - st, pre);
+	commentStrip(out, c + st + alt, en - st - alt, out->text, sizeof(out->text), 0U);
 }
 
 /* Текст повідомлення -- спрямований запит ("?APRS?", "?APRSP", "?PING?", "?IGATE?", "?WX?": '?' + ВЕЛИКІ літери/цифри) або метадані телеметрії
@@ -1784,14 +1838,11 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 		case 0x1D:
 			if (parseMicE(ax, out))
 			{
-				size_t alt;
-
 				out->type = APRS_T_POSITION;
 				out->hasPos = true;
 				out->micE = true;
 				p_micE_motion(out, in);   /* R13: символ, курс, швидкість */
-				alt = micEAlt(out, in + 9, n - 9U);   /* R14 (Б3): висота "xxx}" на початку коментаря */
-				commentStrip(out, in + 9 + alt, n - 9U - alt, out->text, sizeof(out->text), 0U);
+				micEComment(out, in + 9, n - 9U);   /* R16 (ВА): ідентифікатор пристрою, висота "xxx}", решта коментаря */
 			}
 			break;
 

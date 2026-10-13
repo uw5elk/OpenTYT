@@ -269,21 +269,21 @@ static void testR14(void)
 		int n;
 
 		encodeMicE(dst, info, 33, 25, 64, 1, 112, 7, 58, 1);
-		memcpy(&info[9], "`\"3z}_", 6);
-		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 15);
+		memcpy(&info[9], "`\"3z}_$", 8);   /* R16: префікс + висота + порожній коментар + суфікс */
+		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 17);
 		aprsAx25Parse(fr, (uint16_t)n, &ax);
 		aprsPacketParse(&ax, &pk);
-		CHECK(pk.micE && pk.hasAlt && (pk.altM == 8) && !strcmp(pk.text, "_"), "висота %d м, текст «%s» (без \"3z})", pk.altM, pk.text);
+		CHECK(pk.micE && pk.hasAlt && (pk.altM == 8) && !pk.text[0], "висота %d м, текст «%s» (без \"3z}, суфікса)", pk.altM, pk.text);
 		memcpy(&info[9], "\"3z}hello", 9);
 		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 18);
 		aprsAx25Parse(fr, (uint16_t)n, &ax);
 		aprsPacketParse(&ax, &pk);
 		CHECK(pk.hasAlt && (pk.altM == 8) && !strcmp(pk.text, "hello"), "висота без байта типу: текст «%s»", pk.text);
-		memcpy(&info[9], "`plain", 6);
-		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 15);
+		memcpy(&info[9], "`plain_$", 8);
+		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 17);
 		aprsAx25Parse(fr, (uint16_t)n, &ax);
 		aprsPacketParse(&ax, &pk);
-		CHECK(!pk.hasAlt && !strcmp(pk.text, "`plain"), "без висоти текст не чіпаємо: «%s»", pk.text);
+		CHECK(!pk.hasAlt && !strcmp(pk.text, "plain"), "без висоти: префікс і суфікс знято, текст «%s»", pk.text);
 	}
 
 	printf("== R14 T12: '/A=' у середині ==\n");
@@ -666,6 +666,99 @@ static void testRawText(void)
 		l = aprsAx25ToText(h, (uint16_t)n, out, sizeof(out));
 		CHECK(aprsAx25AppendUnwrapped(out, l + 20U, l, &ax) == l && out[l] == 0, "не влазить -- без змін");
 		free(h);
+	}
+}
+
+/* ---- R16 (ВА): ідентифікатор пристрою Mic-E ------------------------------------------------------------ */
+static void parseMicEInfo(const uint8_t *head9, const uint8_t *tail, int tailLen, int lonDeg, int lonMin, int lonHun, aprsPacket_t *pk)
+{
+	uint8_t info[64], fr[160];
+	char dst[8];
+	aprsAx25_t ax;
+	int n;
+
+	encodeMicE(dst, info, 49, 3, 50, 1, lonDeg, lonMin, lonHun, 0);
+	memcpy(info, head9, 9);
+	memcpy(&info[9], tail, (size_t)tailLen);
+	n = buildFrame(fr, dst, "UW5ELK", 6, 0, 0, info, 9 + tailLen);
+	memset(pk, 0, sizeof *pk);
+	CHECK(aprsAx25Parse(fr, (uint16_t)n, &ax), "кадр розібрано на рівні AX.25");
+	aprsPacketParse(&ax, pk);
+}
+
+static void testR16Mice(void)
+{
+	aprsPacket_t pk;
+
+	printf("== R16 ВА: ідентифікатор пристрою Mic-E ==\n");
+	{
+		/* UW5ELK-7 (Yaesu FT1D), кадр з Direwolf: info = `=6$l<SP><0x1c>[/ + `_$ + CR */
+		static const uint8_t h[9] = { '`', '=', '6', '$', 'l', ' ', 0x1c, '[', '/' };
+		static const uint8_t t[] = { '`', '_', '$', 0x0d };
+
+		parseMicEInfo(h, t, 4, 33, 26, 8, &pk);
+		CHECK(pk.micE && (pk.type == APRS_T_POSITION) && (pk.symTable == '/') && (pk.symCode == '[') && !pk.hasAlt && (pk.text[0] == 0),
+				"FT1D: символ %c%c, висота %d, текст «%s» (порожній)", pk.symTable, pk.symCode, pk.hasAlt, pk.text);
+	}
+	{
+		/* UW5ELK-6 (Kenwood TH-D74): info = '=,ll<SP><0x1c>K\ + >"4B}^ + CR */
+		static const uint8_t h[9] = { '\'', '=', ',', 'l', 'l', ' ', 0x1c, 'K', '\\' };
+		static const uint8_t t[] = { '>', '"', '4', 'B', '}', '^', 0x0d };
+
+		parseMicEInfo(h, t, 7, 33, 16, 80, &pk);
+		CHECK(pk.micE && (pk.symTable == '\\') && (pk.symCode == 'K') && pk.hasAlt && (pk.altM == 43) && (pk.text[0] == 0),
+				"TH-D74: символ %c%c, висота %d м, текст «%s» (порожній)", pk.symTable, pk.symCode, pk.altM, pk.text);
+	}
+	{
+		/* новий формат зі справжнім коментарем між префіксом і суфіксом */
+		static const uint8_t h[9] = { '`', '=', '6', '$', 'l', ' ', 0x1c, '[', '/' };
+		static const uint8_t t[] = { '`', 'H', 'e', 'l', 'l', 'o', ' ', 'U', 'A', '_', '$', 0x0d };
+
+		parseMicEInfo(h, t, 12, 33, 26, 8, &pk);
+		CHECK(!strcmp(pk.text, "Hello UA") && !pk.hasAlt, "новий формат + коментар: «%s»", pk.text);
+	}
+	{
+		/* старий формат: висота, справжній коментар, суфікс */
+		static const uint8_t h[9] = { '\'', '=', ',', 'l', 'l', ' ', 0x1c, 'K', '\\' };
+		static const uint8_t t[] = { '>', '"', '4', 'B', '}', 'q', 'S', 'l', 'o', 'n', '=', 0x0d, 0x0a };
+
+		parseMicEInfo(h, t, 13, 33, 16, 80, &pk);
+		CHECK(pk.hasAlt && (pk.altM == 43) && !strcmp(pk.text, "qSlon"), "старий формат + коментар: «%s» висота %d", pk.text, pk.altM);
+	}
+	{
+		/* старий формат без суфікса: останній байт -- буква, лишається */
+		static const uint8_t h[9] = { '\'', '=', ',', 'l', 'l', ' ', 0x1c, 'K', '\\' };
+		static const uint8_t t[] = { ']', 'o', 'k', 'D' };
+
+		parseMicEInfo(h, t, 4, 33, 16, 80, &pk);
+		CHECK(!strcmp(pk.text, "okD"), "старий формат, суфікса нема: «%s»", pk.text);
+	}
+	{
+		/* вироджені: лише префікс; префікс + 1 байт; новий формат з двох байтів */
+		static const uint8_t h[9] = { '`', '=', '6', '$', 'l', ' ', 0x1c, '[', '/' };
+		static const uint8_t t1[] = { '`' };
+		static const uint8_t t2[] = { '`', '_' };
+		static const uint8_t t3[] = { '>' };
+
+		parseMicEInfo(h, t1, 1, 33, 26, 8, &pk);
+		CHECK(pk.micE && !pk.text[0], "лише префікс '`': порожньо");
+		parseMicEInfo(h, t2, 2, 33, 26, 8, &pk);
+		CHECK(pk.micE && !pk.text[0], "'`' + 1 байт: порожньо");
+		parseMicEInfo(h, t3, 1, 33, 26, 8, &pk);
+		CHECK(pk.micE && !pk.text[0], "лише '>': порожньо");
+		parseMicEInfo(h, t1, 0, 33, 26, 8, &pk);
+		CHECK(pk.micE && !pk.text[0], "коментаря нема взагалі");
+	}
+	{
+		/* ВА1: керівні байти в кінці зрізаються й у звичайному (не Mic-E) коментарі */
+		aprsAx25_t ax;
+		aprsPacket_t q;
+		uint8_t b[160];
+
+		pf("N0CALL", 7, "!4903.50N/07201.75W>Hello\r\n", &ax, &q, b);
+		CHECK(!strcmp(q.text, "Hello"), "CR LF зрізано в звичайному коментарі: «%s»", q.text);
+		pf("N0CALL", 7, "!4903.50N/07201.75W>\r", &ax, &q, b);
+		CHECK(!q.text[0], "лише CR -- порожній коментар");
 	}
 }
 
@@ -1418,6 +1511,7 @@ int main(void)
 	}
 
 	testR14();
+	testR16Mice();
 	testStage3();
 	testRawText();
 	testFuzz();
