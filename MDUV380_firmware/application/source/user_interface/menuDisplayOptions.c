@@ -125,6 +125,73 @@ enum
 	NUM_DISPLAY_MENU_ITEMS
 };
 
+#if defined(HAS_COLOURS) && defined(LANGUAGE_BUILD_UKRAINIAN)
+/* R19 Е4 (форк): пункт «Розмір тексту» (DISPLAY_TYPE_STYLE) прибрано -- розмір завжди 1. ВІН ПЕРШИЙ У enum, тому з enum його НЕ видаляємо: це зсунуло б номери всіх
+ * стокових пунктів, а швидкі клавіші на пункти цього меню зберігають саме НОМЕР ПУНКТУ (QUICKKEY_ENTRYID) -- яскравість, підсвітка, таймаут мовчки стали б іншими.
+ * Тож enum лишається як був, а показуються пункти з цієї таблиці (значення enum у порядку показу). Позиція в списку (menuDataGlobal.currentItemIndex) -- індекс
+ * ТАБЛИЦІ; у значення enum її переводить displayItemAt(), а старе значення швидкої клавіші -- displayItemPosition(). Таблиця має ті самі #if, що й enum. */
+#define DISPLAY_HIDE_TYPE_STYLE 1
+static const uint8_t displayVisibleItems[] =
+{
+	DISPLAY_MENU_BRIGHTNESS,
+#if ! defined(PLATFORM_GD77S)
+	DISPLAY_MENU_BRIGHTNESS_NIGHT,
+#endif
+	DISPLAY_MENU_BRIGHTNESS_OFF,
+#if ! (defined(PLATFORM_MDUV380) || defined(PLATFORM_MD380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017))
+	DISPLAY_MENU_CONTRAST,
+#endif
+	DISPLAY_MENU_BACKLIGHT_MODE,
+	DISPLAY_MENU_TIMEOUT,
+	DISPLAY_MENU_SCREEN_INVERT,
+#if ! defined(PLATFORM_GD77S)
+	DISPLAY_AUTO_NIGHT,
+#endif
+	DISPLAY_MENU_CONTACT_DISPLAY_ORDER,
+	DISPLAY_MENU_CONTACT_DISPLAY_SPLIT_CONTACT,
+	DISPLAY_TIME_IN_HEADER,
+#if ! defined(PLATFORM_MD9600)
+	DISPLAY_BATTERY_UNIT_IN_HEADER,
+#endif
+	DISPLAY_EXTENDED_INFOS,
+#if defined(HAS_SOFT_VOLUME)
+	DISPLAY_VISUAL_VOLUME,
+#endif
+#if ! defined(PLATFORM_MD9600)
+	DISPLAY_ALL_LEDS_ENABLED,
+#endif
+	DISPLAY_TIMEZONE_VALUE,
+	DISPLAY_TIME_UTC_OR_LOCAL,
+	DISPLAY_SHOW_DISTANCE,
+	DISPLAY_DMR_LAST_TALKER_ON_SCREEN
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	,DISPLAY_SMS_FONT
+#endif
+};
+#define DISPLAY_NUM_VISIBLE   ((int)(sizeof(displayVisibleItems) / sizeof(displayVisibleItems[0])))
+
+static int displayItemAt(int position)
+{
+	return (((position >= 0) && (position < DISPLAY_NUM_VISIBLE)) ? (int)displayVisibleItems[position] : (int)displayVisibleItems[0]);
+}
+
+/* Позиція пункту за значенням enum; -1, якщо такого пункту в списку нема (напр. стара швидка клавіша на прибраний «Розмір тексту»). */
+static int displayItemPosition(int item)
+{
+	for (int i = 0; i < DISPLAY_NUM_VISIBLE; i++)
+	{
+		if ((int)displayVisibleItems[i] == item)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+#else
+#define DISPLAY_NUM_VISIBLE   NUM_DISPLAY_MENU_ITEMS
+#define displayItemAt(position)  (position)
+#endif
+
 menuStatus_t menuDisplayOptions(uiEvent_t *ev, bool isFirstRun)
 {
 	if (isFirstRun)
@@ -132,7 +199,7 @@ menuStatus_t menuDisplayOptions(uiEvent_t *ev, bool isFirstRun)
 		menuDataGlobal.menuOptionsSetQuickkey = 0;
 		menuDataGlobal.menuOptionsTimeout = 0;
 		menuDataGlobal.newOptionSelected = true;
-		menuDataGlobal.numItems = NUM_DISPLAY_MENU_ITEMS;
+		menuDataGlobal.numItems = DISPLAY_NUM_VISIBLE;
 
 		if (originalNonVolatileSettings.magicNumber == 0xDEADBEEF)
 		{
@@ -181,7 +248,7 @@ static void updateScreen(bool isFirstRun)
 	{
 		if ((settingOption == false) || (i == 0))
 		{
-			mNum = menuGetMenuOffset(NUM_DISPLAY_MENU_ITEMS, i);
+			mNum = menuGetMenuOffset(DISPLAY_NUM_VISIBLE, i);
 			if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
 			{
 				continue;
@@ -201,9 +268,9 @@ static void updateScreen(bool isFirstRun)
 			rightSideUnitsPrompt = PROMPT_SILENCE;// use PROMPT_SILENCE as flag that the unit has not been set
 			rightSideUnitsStr = NULL;
 
-			switch(mNum)
+			switch(displayItemAt(mNum))
 			{
-#if defined(HAS_COLOURS)
+#if defined(HAS_COLOURS) && !defined(DISPLAY_HIDE_TYPE_STYLE)
 				case DISPLAY_TYPE_STYLE:
 					leftSide = currentLanguage->text_size;
 					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%d", settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT) ? 2 : 1);
@@ -474,12 +541,26 @@ static void handleEvent(uiEvent_t *ev)
 		}
 		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) < NUM_DISPLAY_MENU_ITEMS))
 		{
+#if defined(DISPLAY_HIDE_TYPE_STYLE)
+			/* R19 Е4: збережена швидка клавіша містить значення enum (номер пункту до R19) -- перевести в позицію списку. Клавіша на прибраний «Розмір тексту» нічого не робить. */
+			int quickItem = (int)QUICKKEY_ENTRYID(ev->function);
+
+			if (displayItemPosition(quickItem) < 0)
+			{
+				return;
+			}
+			menuDataGlobal.currentItemIndex = displayItemPosition(quickItem);
+#else
 			menuDataGlobal.currentItemIndex = QUICKKEY_ENTRYID(ev->function);
+#endif
 
 #if ! defined(PLATFORM_GD77S)
 			// Control the brightness of the current daytime.
-			if ((menuDataGlobal.currentItemIndex == DISPLAY_MENU_BRIGHTNESS) || (menuDataGlobal.currentItemIndex == DISPLAY_MENU_BRIGHTNESS_NIGHT))
+			if ((displayItemAt(menuDataGlobal.currentItemIndex) == DISPLAY_MENU_BRIGHTNESS) || (displayItemAt(menuDataGlobal.currentItemIndex) == DISPLAY_MENU_BRIGHTNESS_NIGHT))
 			{
+#if defined(DISPLAY_HIDE_TYPE_STYLE)
+				menuDataGlobal.currentItemIndex = displayItemPosition((DAYTIME_CURRENT == DAY) ? DISPLAY_MENU_BRIGHTNESS : DISPLAY_MENU_BRIGHTNESS_NIGHT);
+#else
 				if (DAYTIME_CURRENT == DAY)
 				{
 					menuDataGlobal.currentItemIndex = DISPLAY_MENU_BRIGHTNESS;
@@ -488,6 +569,7 @@ static void handleEvent(uiEvent_t *ev)
 				{
 					menuDataGlobal.currentItemIndex = DISPLAY_MENU_BRIGHTNESS_NIGHT;
 				}
+#endif
 			}
 #endif
 		}
@@ -511,14 +593,14 @@ static void handleEvent(uiEvent_t *ev)
 		if (KEYCHECK_PRESS(ev->keys, KEY_DOWN) && (menuDataGlobal.numItems != 0))
 		{
 			isDirty = true;
-			menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, NUM_DISPLAY_MENU_ITEMS);
+			menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, DISPLAY_NUM_VISIBLE);
 			menuDataGlobal.newOptionSelected = true;
 			menuDisplayOptionsExitCode |= MENU_STATUS_LIST_TYPE;
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_UP))
 		{
 			isDirty = true;
-			menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, NUM_DISPLAY_MENU_ITEMS);
+			menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, DISPLAY_NUM_VISIBLE);
 			menuDataGlobal.newOptionSelected = true;
 			menuDisplayOptionsExitCode |= MENU_STATUS_LIST_TYPE;
 		}
@@ -557,9 +639,9 @@ static void handleEvent(uiEvent_t *ev)
 			}
 			isDirty = true;
 			menuDataGlobal.newOptionSelected = false;
-			switch(menuDataGlobal.currentItemIndex)
+			switch(displayItemAt(menuDataGlobal.currentItemIndex))
 			{
-#if defined(HAS_COLOURS)
+#if defined(HAS_COLOURS) && !defined(DISPLAY_HIDE_TYPE_STYLE)
 				case DISPLAY_TYPE_STYLE:
 					if (settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT) == false)
 					{
@@ -788,9 +870,9 @@ static void handleEvent(uiEvent_t *ev)
 			}
 			isDirty = true;
 			menuDataGlobal.newOptionSelected = false;
-			switch(menuDataGlobal.currentItemIndex)
+			switch(displayItemAt(menuDataGlobal.currentItemIndex))
 			{
-#if defined(HAS_COLOURS)
+#if defined(HAS_COLOURS) && !defined(DISPLAY_HIDE_TYPE_STYLE)
 				case DISPLAY_TYPE_STYLE:
 					if (settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT))
 					{
@@ -1006,7 +1088,16 @@ static void handleEvent(uiEvent_t *ev)
 
 	if (uiQuickKeysIsStoring(ev))
 	{
+#if defined(DISPLAY_HIDE_TYPE_STYLE)
+		/* R19 Е4: у флеш має піти значення enum (як до R19), а не позиція в скороченому списку; uiQuickKeysStore() бере menuDataGlobal.currentItemIndex. */
+		int quickPos = menuDataGlobal.currentItemIndex;
+
+		menuDataGlobal.currentItemIndex = displayItemAt(quickPos);
 		uiQuickKeysStore(ev, &menuDisplayOptionsExitCode);
+		menuDataGlobal.currentItemIndex = quickPos;
+#else
+		uiQuickKeysStore(ev, &menuDisplayOptionsExitCode);
+#endif
 		isDirty = true;
 	}
 

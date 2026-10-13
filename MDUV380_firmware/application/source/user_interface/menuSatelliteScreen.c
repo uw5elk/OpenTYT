@@ -293,7 +293,7 @@ static void updateScreen(uiEvent_t *ev, bool firstRun, bool announceVP)
 	{
 		char buffer[SCREEN_LINE_BUFFER_SIZE];
 #if defined(HAS_COLOURS)
-		bool dblHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+		bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #else
 		const bool dblHeight = false;
 #endif

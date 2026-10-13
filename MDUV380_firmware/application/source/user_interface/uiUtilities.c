@@ -1577,7 +1577,7 @@ static void displaySplitOrSpanText(uint8_t y, char *text)
 	{
 		uint8_t len = strlen(text);
 #if defined(HAS_COLOURS)
-		bool dblHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+		bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #else
 		const bool dblHeight = false;
 #endif
@@ -1748,7 +1748,7 @@ void uiUtilityDisplayInformation(const char *str, displayInformation_t line, int
 {
 	bool inverted = false;
 #if defined(HAS_COLOURS)
-	bool dblHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+	bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #else
 	const bool dblHeight = false;
 #endif
@@ -2737,7 +2737,7 @@ static bool smeterBlockIsAllowed(void)
 	// ЗНАЙДЕНО НА ЖИВІЙ РАЦІЇ (2026-09-04, фото каналу в DMR з розміром тексту 2): попередня
 	// умова перевіряла подвійну висоту ЛИШЕ для аналогового режиму, тож у DMR блок усе одно
 	// малювався й розрізав назву групи навпіл.
-	if (settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT))
+	if (UI_USES_DOUBLE_HEIGHT())
 	{
 		return false;
 	}
@@ -2920,7 +2920,7 @@ void uiUtilityDisplayFrequency(uint8_t y, bool isTX, bool hasFocus, uint32_t fre
 	uint16_t yFont3 = y;
 	uint16_t yFont1 = y;
 #else
-	bool dblHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+	bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 	bool isTransmitting = isTransmittingIgnoringAPRSBeaconing();
 	bool displayDblHeightAndRX = (dblHeight && !isTX && !isScanMode && !isTransmitting);
 	bool displayFocusAndDblHeight = (dblHeight && ((hasFocus || !displayVFOChannel) && !isScanMode && !isTransmitting));

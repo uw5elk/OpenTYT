@@ -1025,7 +1025,7 @@ void uiVFOModeUpdateScreen(int txTimeSecs)
 					int16_t xCursor = -1;
 					int16_t yCursor = -1;
 #if defined(HAS_COLOURS)
-					bool dblHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+					bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #else
 					const bool dblHeight = false;
 #endif

@@ -147,7 +147,7 @@ static void updateScreen(bool inputModeHasChanged)
 	size_t sLen = strlen(menuName[menuDataGlobal.currentItemIndex]) * 8;
 	int16_t y = 8;
 #if defined(HAS_COLOURS)
-	bool dblHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+	bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #else
 	const bool dblHeight = false;
 #endif
