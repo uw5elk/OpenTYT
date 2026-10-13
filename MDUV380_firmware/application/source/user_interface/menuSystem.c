@@ -755,7 +755,11 @@ static const menuItemNewData_t optionsMenuItems[] =
 	{ 191, MENU_RADIO           },
 	{  10, MENU_DISPLAY         },
 	{  11, MENU_SOUND           },
+#if !defined(LANGUAGE_BUILD_UKRAINIAN)
+	// R19 Е6 (форк): в українській збірці одна мова -- пункт «Мова» прибрано з «Опцій». Безпечно для швидких клавіш: меню верхнього рівня зберігає ID меню, а не
+	// позицію пункту (як MENU_RSSI_SCREEN вище). Екран menuLanguage() і MENU_LANGUAGE у menuFunctions[] лишились.
 	{  13, MENU_LANGUAGE        },
+#endif
 	{ 206, MENU_CALIBRATION     },
 #if defined(HAS_COLOURS)
 	{ 218, MENU_THEME           },
