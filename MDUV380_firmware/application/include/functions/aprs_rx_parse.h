@@ -70,11 +70,11 @@ bool aprsAx25Parse(const uint8_t *f, uint16_t len, aprsAx25_t *out);
  * Нічого не копіює з info: вказівник лише зсувається всередині того самого кадру. */
 bool aprsAx25Unwrap(aprsAx25_t *ax);
 
-/* R15: ЗНАЧЕННЯ "сирого" пакета для екрана «Останній пакет»: кадр у текстовому вигляді TNC-2, "SRC>DST,DIGI1*,DIGI2:info".
+/* R15: ЗНАЧЕННЯ "сирого" пакета для екрана «Пакети» (журнал, R16): кадр у текстовому вигляді TNC-2, "SRC>DST,DIGI1*,DIGI2:info".
  * Адреси беруться ПРЯМО з кадру (а не з aprsAx25_t, де шлях обрізано до APRS_PATH_LEN), тож усі 8 цифіпітерів збережено. Байти info
  * < 0x20 або > 0x7E показуються як '.'. Вихід завжди завершено NUL (cap >= 1); довше за cap-1 -- обрізається. Повертає довжину без NUL;
  * 0 і out = "" -- кадр не розібрати як AX.25 UI. Викликати ДО aprsAx25Unwrap() (або з тим самим кадром). */
-#define APRS_RAW_TEXT_MAX    256U    /* 255 символів + NUL; те саме число в callReplay.h: CALL_REPLAY_APRS_RAW_BYTES */
+#define APRS_RAW_TEXT_MAX    256U    /* 255 символів + NUL (R16: журнал кадрів обрізає до APRS_JRN_TEXT-1 = 127) */
 size_t aprsAx25ToText(const uint8_t *f, uint16_t len, char *out, size_t cap);
 
 /* R15: якщо кадр був third-party і розгорнутий (ax->tp), дописує до out (вже завершеного NUL, довжина curLen) " => SRC>DST[,path]:info"
@@ -215,6 +215,96 @@ void aprsArrowGeom(aprsArrow_t *a, int16_t cx, int16_t cy, int16_t len, uint16_t
 bool aprsBeaconArrowVisible(bool hasGeo, uint32_t distM);
 /* Вузли -> км/год (округлено до цілих; 1 вузол = 1.852 км/год). */
 uint16_t aprsKnotsToKmh(uint16_t kn);
+
+/* ---- R16: історія прийому (журнал кадрів + дані маяка кожної станції) ------------------------------------------- */
+/* Поля даних маяка -- ОДИН список для запису станції (aprsBcnRec_t) і для вікна маяка (aprsRxWin_t, aprs_rx.h): вікно = запис + active + call,
+ * тож відкриття вікна станції -- один memcpy. Позивного в записі нема (він у db.st[i].call), прапорець "активне" -- у вікні.
+ * Радіо (частота/тон/зсув/PHG/радіус) і погода ділять одне місце (union, 16 Б): вони не зустрічаються разом -- погода розбирається лише
+ * для символу '_', і тоді має перевагу. */
+#define APRS_BCN_REC_FIELDS \
+	bool      hasGeo;           /* є відстань і азимут (є позиція станції й власна) */ \
+	uint16_t  bearing;          /* азимут на станцію від півночі, 0..359 */ \
+	uint16_t  course;           /* курс станції, 1..360; 0 -- нема */ \
+	uint16_t  speedKn;          /* швидкість, вузли; 0 -- нема/стоїть */ \
+	uint32_t  distM; \
+	uint32_t  rxSecs;           /* uiDataGlobal.dateTimeSecs у момент прийому */ \
+	int32_t   altM;             /* висота, м (AWIN_F_ALT) */ \
+	union \
+	{ \
+		struct \
+		{ \
+			uint32_t freqKHz;   /* 0 -- нема */ \
+			int16_t  shiftKHz;  /* AWIN_F_SHIFT */ \
+			uint16_t extVal;    /* PHG/DFS: 4 hex-цифри phgd; RNG: милі */ \
+			uint16_t rangeVal;  /* радіус, милі або км (AWIN_F_RANGE_KM); 0 -- нема */ \
+			char     tone[5];   /* "T082" / "Toff" / "" */ \
+		} r; \
+		struct \
+		{ \
+			int16_t  tempC; \
+			uint16_t pressDhPa; /* 0.1 гПа */ \
+			uint16_t windDeg; \
+			uint8_t  humPct, windMph, gustMph; \
+		} wx; \
+	} u; \
+	uint8_t   flags;            /* AWIN_F_* */ \
+	uint8_t   extKind;          /* APRS_EXT_* */ \
+	uint8_t   wxMask;           /* APRS_WX_*; ненульовий -- у u діє wx */ \
+	char      symTable, symCode; \
+	char      text[APRS_STATION_TEXT];
+#define AWIN_F_ALT       0x01
+#define AWIN_F_SHIFT     0x02
+#define AWIN_F_RANGE_KM  0x04
+#define AWIN_F_MANUAL    0x08   /* R15: вікно відкрито з меню («Останній маяк») -- живе до RED незалежно від екрана й каналу */
+#define AWIN_F_VALID     0x10   /* R16: запис маяка заповнено (нуль у flags -- маяка від цієї станції не було) */
+typedef struct
+{
+	APRS_BCN_REC_FIELDS
+} aprsBcnRec_t;
+
+#define APRS_JRN_SLOTS   8      /* скільки останніх кадрів тримає журнал */
+#define APRS_JRN_TEXT    128    /* кадр у вигляді TNC-2: 127 символів + NUL */
+typedef struct
+{
+	uint32_t rxSecs;            /* uiDataGlobal.dateTimeSecs у момент прийому */
+	char     text[APRS_JRN_TEXT];
+} aprsJrnEntry_t;
+
+/* Увесь стан історії -- ОДИН блок у резерві «Переслухати» (callReplay.h: CALL_REPLAY_APRS_HIST_BYTES; _Static_assert у aprs_mode.c).
+ * bcn[] індексований ТАК САМО, як aprsRxDb_t.st[]. Нулі = порожньо, тож обнулення резерву на старті (callReplayBorrowReset()) його ініціалізує. */
+typedef struct
+{
+	aprsBcnRec_t   bcn[APRS_STATIONS_MAX];
+	aprsJrnEntry_t jrn[APRS_JRN_SLOTS];
+	uint8_t        jrnHead;     /* куди писати наступний кадр */
+	uint8_t        jrnCount;    /* 0..APRS_JRN_SLOTS */
+	uint8_t        lastBcn1;    /* 1 + індекс найсвіжішого запису маяка; 0 -- маяків ще не було */
+} aprsHist_t;
+
+void aprsHistClear(aprsHist_t *h);            /* усе в нуль */
+void aprsHistClearBeacons(aprsHist_t *h);     /* лише дані маяків (після скидання списку станцій) */
+/* ГОЛОВНА ПАСТКА: aprsDbUpdate() витісняє найстарішу станцію й займає її слот -- запис маяка цього слота мусить бути обнулений, інакше нова
+ * станція покаже чужі дані. Викликати ПІСЛЯ aprsDbUpdate() для кожного пакета: нова станція (count == 1) -- запис обнуляється. */
+void aprsHistStationTouch(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s);
+/* Записати маяк станції s (за позиційним пакетом): geo -- відстань/азимут, якщо відомі. stText -- коментар станції (обрізаний). Робить запис
+ * "найсвіжішим". Повертає запис. */
+const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s, const aprsPacket_t *pkt,
+		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs);
+/* Запис маяка станції; NULL -- маяків від неї не було (або s не з db). */
+const aprsBcnRec_t *aprsHistBeaconOf(const aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s);
+/* Найсвіжіший запис маяка і індекс його станції в db.st[]; NULL -- нема. */
+const aprsBcnRec_t *aprsHistBeaconLast(const aprsHist_t *h, int *dbIdx);
+/* Журнал: кадр -> TNC-2 (aprsAx25ToText(), непечатні -> '.'), обрізано до APRS_JRN_TEXT-1. false -- кадр не розібрати як AX.25 UI (не записано).
+ * Викликати ДО aprsAx25Unwrap(). */
+bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len);
+/* n-й за новизною (0 -- найновіший); NULL -- n поза межами. */
+const aprsJrnEntry_t *aprsJrnNth(const aprsHist_t *h, int n);
+/* Номер слота журналу (0..APRS_JRN_SLOTS-1), у якому лежить n-й за новизною кадр; -1 -- n поза межами. І навпаки: запис слота (NULL -- слот порожній), n за новизною. */
+int aprsJrnSlotOf(const aprsHist_t *h, int n);
+const aprsJrnEntry_t *aprsJrnAtSlot(const aprsHist_t *h, int slot);
+int aprsJrnNOfSlot(const aprsHist_t *h, int slot);
+/* Для рядка списку: позивний джерела (до '>', не довше APRS_CALL_LEN-1) і DTI (перший байт info після першого ':'; '-' -- info порожнє). */
+void aprsJrnSummary(const aprsJrnEntry_t *e, char *call, char *dti);
 
 #endif /* ENABLE_APRS_RX */
 #endif /* _OPENGD77_APRS_RX_PARSE_H_ */

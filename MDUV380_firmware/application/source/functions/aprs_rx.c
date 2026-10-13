@@ -224,6 +224,7 @@ void aprsRxClear(void)
 		return;
 	}
 	aprsDbInit(&s_rx.db);
+	aprsHistClear(aprsModeHist());   /* R16: список станцій скинуто -- дані маяків (індекс як у db.st[]) і журнал теж */
 	memset(&s_rx.pend, 0, sizeof(s_rx.pend));
 	/* лічильники подій -- до нуля, поточні стани лишаємо */
 	uint8_t state = s_rx.st.state, why = s_rx.st.why, nbits = s_rx.st.nbits, tries = s_rx.st.triesLeft;
@@ -286,6 +287,12 @@ void aprsRxI2SBlock(uint32_t bufNum)
 /* ============================================================================================== */
 /* DSP                                                                                             */
 /* ============================================================================================== */
+
+/* R16: вікно = запис маяка (ті самі поля, ПЕРШІ в структурі) + active + call: відкриття вікна станції -- один memcpy запису. Хвостове вирівнювання запису
+ * може накрити байт active -- тому active і call завжди виставляються ПІСЛЯ memcpy (winOpenFromRec(), frameDispatch()). */
+_Static_assert(sizeof(aprsRxWin_t) >= sizeof(aprsBcnRec_t), "aprsRxWin_t must be able to hold the aprsBcnRec_t fields");
+_Static_assert(offsetof(aprsRxWin_t, hasGeo) == offsetof(aprsBcnRec_t, hasGeo) && offsetof(aprsRxWin_t, text) == offsetof(aprsBcnRec_t, text) && offsetof(aprsRxWin_t, symCode) == offsetof(aprsBcnRec_t, symCode),
+		"aprsRxWin_t and aprsBcnRec_t field layout must match");
 
 static void frameDispatch(const uint8_t *frame, uint16_t len);
 
@@ -771,17 +778,87 @@ static bool winAllowed(void)
 	return (hardBlock() == APRS_RX_WHY_NONE);
 }
 
-/* R15: «Останній маяк» -- показати вікно ще раз за збереженими даними. Дані НЕ переписуються (час прийому лишається старий). Нема що показувати
- * (call[0] == 0) -- нічого не робить; викликач сам перевіряє це і пише користувачеві. Далі вікно живе за правилами winTick() (ручний режим). */
+/* R16: показати вікно за записом маяка станції dbIdx (позивний -- з db.st[]). Запис копіюється у s_rx.win -- це лише буфер малювання, дані
+ * в історії (aprsModeHist()) не змінюються. Далі вікно живе за правилами winTick() (ручний режим). */
+static void winOpenFromRec(const aprsBcnRec_t *rec, const aprsStation_t *st)
+{
+	aprsRxWin_t *w = &s_rx.win;
+
+	memset(w, 0, sizeof(*w));
+	memcpy(w, rec, sizeof(*rec));
+	snprintf(w->call, sizeof(w->call), "%s", st->call);
+	w->flags |= AWIN_F_MANUAL;
+	w->active = true;
+	uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_BEACON, 60000, NULL, true);
+}
+
+static const aprsStation_t *stationByCall(const char *call)
+{
+	for (int i = 0; i < APRS_STATIONS_MAX; i++)
+	{
+		if ((s_rx.db.st[i].call[0] != 0) && (strcmp(s_rx.db.st[i].call, call) == 0))
+		{
+			return &s_rx.db.st[i];
+		}
+	}
+	return NULL;
+}
+
+bool aprsRxBeaconAvail(const char *call)
+{
+	if (stateValid() == false)
+	{
+		return false;
+	}
+	if (call == NULL)
+	{
+		int i = -1;
+
+		return (aprsHistBeaconLast(aprsModeHist(), &i) != NULL);
+	}
+	{
+		const aprsStation_t *st = stationByCall(call);
+
+		return (st != NULL) && (aprsHistBeaconOf(aprsModeHist(), &s_rx.db, st) != NULL);
+	}
+}
+
+/* R15: «Останній маяк» -- показати вікно ще раз за збереженими даними найсвіжішого маяка. Дані НЕ переписуються (час прийому лишається старий). Нема що
+ * показувати -- нічого не робить; викликач сам перевіряє це (aprsRxBeaconAvail(NULL)) і пише користувачеві. */
 void aprsRxWindowShowAgain(void)
 {
-	if ((stateValid() == false) || (s_rx.win.call[0] == 0))
+	int i = -1;
+	const aprsBcnRec_t *rec;
+
+	if (stateValid() == false)
 	{
 		return;
 	}
-	s_rx.win.flags |= AWIN_F_MANUAL;
-	s_rx.win.active = true;
-	uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_BEACON, 60000, NULL, true);
+	rec = aprsHistBeaconLast(aprsModeHist(), &i);
+	if (rec != NULL)
+	{
+		winOpenFromRec(rec, &s_rx.db.st[i]);
+	}
+}
+
+/* R16: вікно маяка САМЕ цієї станції. false -- станції нема або позиційних пакетів від неї не було. */
+bool aprsRxWindowShowStation(const char *call)
+{
+	const aprsStation_t *st;
+	const aprsBcnRec_t *rec;
+
+	if ((stateValid() == false) || (call == NULL))
+	{
+		return false;
+	}
+	st = stationByCall(call);
+	rec = (st != NULL) ? aprsHistBeaconOf(aprsModeHist(), &s_rx.db, st) : NULL;
+	if (rec == NULL)
+	{
+		return false;
+	}
+	winOpenFromRec(rec, st);
+	return true;
 }
 
 void aprsRxWindowDismiss(void)
@@ -916,16 +993,15 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 	aprsAx25_t ax;
 	aprsPacket_t pkt;
 	uint32_t now = ticksGetMillis();
-	size_t rawLen;
 
 	if (aprsAx25Parse(frame, len, &ax) == false)
 	{
 		return;   /* не AX.25 UI (або адреси не схожі) */
 	}
 	s_rx.db.total++;
-	/* R15: сирий текст кадру (TNC-2) для екрана «Останній пакет» -- ДО розгортання third-party й ДО відсіву дублікатів: показуємо те, що справді
-	 * прийшло в ефір. Буфер -- у резерві «Переслухати» (aprsModeRawPkt()), вільний CCM не чіпаємо. */
-	rawLen = aprsAx25ToText(frame, len, aprsModeRawPkt(), APRS_RAW_TEXT_MAX);
+	/* R16: журнал кадрів (TNC-2, 127 символів + час) для екрана «Пакети» -- ДО розгортання third-party й ДО відсіву дублікатів: показуємо те, що справді
+	 * прийшло в ефір (кадр через i-gate видно з '}'). Блок -- у резерві «Переслухати» (aprsModeHist()), вільний CCM не чіпаємо. */
+	(void)aprsJrnAdd(aprsModeHist(), (uint32_t)uiDataGlobal.dateTimeSecs, frame, len);
 	/* R11-fix: i-gate загортає пакет з APRS-IS у third-party ("}SRC>DST,path:info"). Розгортаємо ДО розбору: далі (банер, список станцій,
 	 * дедуплікація, ACK відправнику) скрізь ax.src -- СПРАВЖНІЙ відправник, а не шлюз. Один рівень (див. aprsAx25Unwrap()). */
 	if (aprsAx25Unwrap(&ax))
@@ -934,7 +1010,6 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		{
 			s_rx.db.tpUnwrapped++;
 		}
-		(void)aprsAx25AppendUnwrapped(aprsModeRawPkt(), APRS_RAW_TEXT_MAX, rawLen, &ax);   /* R15: розгорнутий варіант -- слідом, якщо влізе */
 	}
 	aprsPacketParse(&ax, &pkt);   /* R11: розбір ДО відсіву дублікатів -- ACK на повторене відправником повідомлення потрібен і для дубліката */
 	if ((pkt.type == APRS_T_MESSAGE) && s_rx.ownCall[0] && aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid))
@@ -953,6 +1028,17 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		s_rx.db.other++;
 	}
 	aprsStation_t *st = aprsDbUpdate(&s_rx.db, &ax, &pkt, now);
+	/* R16: дані маяка КОЖНОЇ станції -- паралельний масив, індекс як у db.st[]. Нова станція (в тому числі та, що витіснила найстарішу) -- запис слота
+	 * обнуляється ПЕРШИМ ділом, інакше вона показала б чужий маяк. Далі кожен позиційний пакет перезаписує запис станції. */
+	aprsHistStationTouch(aprsModeHist(), &s_rx.db, st);
+	if ((pkt.type == APRS_T_POSITION) && (st != NULL))
+	{
+		uint32_t bd = 0;
+		uint16_t bb = 0;
+		bool bg = aprsRxStationGeo(st, &bd, &bb);
+
+		(void)aprsHistBeaconFill(aprsModeHist(), &s_rx.db, st, &pkt, bg, bd, bb, (uint32_t)uiDataGlobal.dateTimeSecs);
+	}
 
 	if (aprsModeIsActive())
 	{
@@ -1001,38 +1087,15 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 	if (canFill)
 	{
 		aprsRxWin_t *w = &s_rx.win;
+		const aprsBcnRec_t *rec = aprsHistBeaconOf(aprsModeHist(), &s_rx.db, st);
 
 		memset(w, 0, sizeof(*w));
+		if (rec != NULL)
+		{
+			memcpy(w, rec, sizeof(*rec));   /* R16: вікно = запис маяка (ті самі поля) + active + call; час і відстань -- на момент прийому */
+		}
 		w->active = wantShow;
-		w->hasGeo = aprsRxStationGeo(st, &w->distM, &w->bearing);
-		w->course = pkt.course;
-		w->speedKn = pkt.speedKn;
-		w->altM = pkt.altM;
-		w->flags = (uint8_t)((pkt.hasAlt ? AWIN_F_ALT : 0U) | (pkt.hasShift ? AWIN_F_SHIFT : 0U) | (pkt.rangeKm ? AWIN_F_RANGE_KM : 0U));
-		w->extKind = pkt.extKind;
-		w->wxMask = pkt.wxMask;
-		if (pkt.wxMask != 0U)
-		{
-			w->u.wx.tempC = pkt.tempC;
-			w->u.wx.pressDhPa = pkt.pressDhPa;
-			w->u.wx.windDeg = pkt.windDeg;
-			w->u.wx.humPct = pkt.humPct;
-			w->u.wx.windMph = pkt.windMph;
-			w->u.wx.gustMph = pkt.gustMph;
-		}
-		else
-		{
-			w->u.r.freqKHz = pkt.freqKHz;
-			w->u.r.shiftKHz = pkt.shiftKHz;
-			w->u.r.extVal = pkt.extVal;
-			w->u.r.rangeVal = pkt.rangeVal;
-			memcpy(w->u.r.tone, pkt.tone, sizeof(w->u.r.tone));
-		}
-		w->symTable = pkt.symTable;
-		w->symCode = pkt.symCode;
-		w->rxSecs = (uint32_t)uiDataGlobal.dateTimeSecs;
 		snprintf(w->call, sizeof(w->call), "%s", ax.src);
-		snprintf(w->text, sizeof(w->text), "%s", (st != NULL) ? st->text : "");
 		bcnWin = wantShow;
 		if (wantShow && winIsShown())
 		{
@@ -1058,6 +1121,7 @@ void aprsRxInit(void)
 {
 	memset(&s_rx, 0, sizeof(s_rx));
 	aprsDbInit(&s_rx.db);
+	aprsHistClearBeacons(aprsModeHist());   /* R16: список станцій порожній -- записи маяків (індекс як у db.st[]) теж */
 	apFmtDetInit(&s_rx.det);
 	s_rx.magic = APRS_RX_MAGIC;
 }

@@ -86,7 +86,9 @@ typedef struct
 
 /* Стан екрана «APRS станції» (user_interface/menuAprsStations.c) -- у тому самому CCM-блоці, що й приймач
  * (окремі статичні змінні екрана коштували б main RAM, а її вільно ~212 Б). */
-enum { APRS_RX_VIEW_LIST = 0, APRS_RX_VIEW_CARD, APRS_RX_VIEW_DIAG, APRS_RX_VIEW_DIAG2, APRS_RX_VIEW_PACKET };   /* R15: PACKET -- «Останній пакет» (scroll = перший видимий рядок тексту) */
+enum { APRS_RX_VIEW_LIST = 0, APRS_RX_VIEW_CARD, APRS_RX_VIEW_DIAG, APRS_RX_VIEW_DIAG2, APRS_RX_VIEW_PACKET, APRS_RX_VIEW_PKTLIST };
+/* R16: PKTLIST -- «Пакети», список журналу (scroll = виділений рядок: 0 -- найновіший кадр); PACKET -- повний кадр: scroll = слот журналу << 4 | перший видимий
+ * рядок тексту (журнал кільцевий: слот, а не «n-й за новизною», щоб кадр на екрані не мінявся, коли приходить новий). */
 typedef struct
 {
 	uint8_t   on;               /* екран відкрито */
@@ -140,50 +142,20 @@ void aprsRxFormatDist(char *buf, size_t size, uint32_t distM);
  * Малює uiNotification.c (NOTIFICATION_ID_APRS_BEACON), стан і правила показу -- aprs_rx.c (aprsRxWindowTick()). */
 typedef struct
 {
+	APRS_BCN_REC_FIELDS            /* R16: поля даних маяка -- спільні із записом станції (aprsBcnRec_t, aprs_rx_parse.h); ПЕРШІ, щоб memcpy запису збігався з початком вікна */
 	bool      active;           /* вікно мусить бути на екрані (до RED / нового пакета / повідомлення / причини, що забороняє) */
-	bool      hasGeo;           /* є відстань і азимут (є позиція станції й власна) */
-	uint16_t  bearing;          /* азимут на станцію від півночі, 0..359 */
-	uint16_t  course;           /* курс станції, 1..360; 0 -- нема */
-	uint16_t  speedKn;          /* швидкість, вузли; 0 -- нема/стоїть */
-	uint32_t  distM;
-	uint32_t  rxSecs;           /* uiDataGlobal.dateTimeSecs у момент прийому */
-	/* R14: розібрані розширення коментаря. Радіо (частота/тон/зсув/PHG/радіус) і погода ділять одне місце (union, 16 Б): вони не зустрічаються
-	 * разом -- погода розбирається лише для символу '_', і тоді має перевагу. Усе разом +24 Б у CCM (одна копія). */
-	int32_t   altM;             /* висота, м (AWIN_F_ALT) */
-	union
-	{
-		struct
-		{
-			uint32_t freqKHz;   /* 0 -- нема */
-			int16_t  shiftKHz;  /* AWIN_F_SHIFT */
-			uint16_t extVal;    /* PHG/DFS: 4 hex-цифри phgd; RNG: милі */
-			uint16_t rangeVal;  /* радіус, милі або км (AWIN_F_RANGE_KM); 0 -- нема */
-			char     tone[5];   /* "T082" / "Toff" / "" */
-		} r;
-		struct
-		{
-			int16_t  tempC;
-			uint16_t pressDhPa; /* 0.1 гПа */
-			uint16_t windDeg;
-			uint8_t  humPct, windMph, gustMph;
-		} wx;
-	} u;
-	uint8_t   flags;            /* AWIN_F_* */
-	uint8_t   extKind;          /* APRS_EXT_* */
-	uint8_t   wxMask;           /* APRS_WX_*; ненульовий -- у u діє wx */
-	char      symTable, symCode;
 	char      call[APRS_CALL_LEN];
-	char      text[APRS_STATION_TEXT];
-#define AWIN_F_ALT       0x01
-#define AWIN_F_SHIFT     0x02
-#define AWIN_F_RANGE_KM  0x04
-#define AWIN_F_MANUAL    0x08   /* R15: вікно відкрито з меню («Останній маяк») -- живе до RED незалежно від екрана й каналу */
 } aprsRxWin_t;
 const aprsRxWin_t *aprsRxWindow(void);
 /* RED на вікні (applicationMain.c): вікно закрито оператором -- чекає наступного пакета. */
 void aprsRxWindowDismiss(void);
-/* R15: «Останній маяк» -- показати вікно ще раз за збереженими даними (call[0] == 0 -- нічого). Дані й час прийому не змінює. */
+/* R15: «Останній маяк» -- показати вікно ще раз за збереженими даними найсвіжішого маяка (aprsRxBeaconAvail(NULL) == false -- нічого). Час прийому не змінює. */
 void aprsRxWindowShowAgain(void);
+/* R16: вікно маяка САМЕ цієї станції (за позивним) із її збереженими даними. false -- станції нема у списку або позиційних пакетів від неї не було
+ * (вікно не відкривається). */
+bool aprsRxWindowShowStation(const char *call);
+/* R16: чи є що показувати: call == NULL -- найсвіжіший маяк узагалі, інакше -- маяк цієї станції. */
+bool aprsRxBeaconAvail(const char *call);
 /* Налаштування «Вікно маяка»: aprsBcnWinMode_t (2 вільні біти bitfieldOptions). */
 uint8_t aprsRxBcnWinMode(void);
 void aprsRxBcnWinSetMode(uint8_t mode);
