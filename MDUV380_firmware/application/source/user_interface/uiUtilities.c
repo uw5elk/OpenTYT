@@ -3933,6 +3933,15 @@ bool callReplayToggleOnSK1(uiEvent_t *ev)
 		return false; // голосові підказки увімкнені -- ця гілка не наша (дивись коментар вище)
 	}
 
+#if defined(APRS_RX)
+	/* R18 Д10 (стик із Д5): акорд SK1+3 (разовий маяк) відпускають швидше за поріг «довгого» натискання -- SK1 тоді дає SHORT_UP, як звичайне коротке
+	 * натискання, і запустив би «Переслухати» поверх маяка. Поки маяк іде (рація запаркована на частоті APRS), коротке SK1 мовчки ковтаємо. */
+	if (aprsModeBeaconOnceBusy())
+	{
+		return true;
+	}
+#endif
+
 	if (callReplayIsPlaying())
 	{
 		// "Будь-яке натискання SK1 під час відтворення -- стоп" (задача 2026-09-20,
@@ -3943,13 +3952,13 @@ bool callReplayToggleOnSK1(uiEvent_t *ev)
 
 	if (callReplayIsRecordingEnabled() == false)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_disabled, true);
+		uiNotificationShowShort(2000, currentLanguage->call_replay_disabled, true);
 		return true;
 	}
 
 	if (callReplayIsEmpty())
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_empty, true);
+		uiNotificationShowShort(2000, currentLanguage->call_replay_empty, true);
 		return true;
 	}
 
@@ -5188,7 +5197,7 @@ void daytimeThemeApply(DayTime_t daytime)
 	// Need to perform a full reset on the display to change back to non-inverted
 	displayInit(((daytime == NIGHT) ^ settingsIsOptionBitSet(BIT_INVERSE_VIDEO)));
 #endif
-	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1000, ((daytime == DAY) ? currentLanguage->daytime_theme_day : currentLanguage->daytime_theme_night), true);
+	uiNotificationShowShort(1000, ((daytime == DAY) ? currentLanguage->daytime_theme_day : currentLanguage->daytime_theme_night), true);
 	menuSystemCallCurrentMenuTick(&e); // redraw the current screen.
 
 	displayLightTrigger(true);

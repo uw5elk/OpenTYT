@@ -581,7 +581,7 @@ void applicationMainTask(void)
 #if defined(LOG_GPS_DATA)
 	if (((buttons & BUTTON_SK1) == BUTTON_SK1) && (keyboardRead() == KEY_5))
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, "NMEA Clearing", true);
+		uiNotificationShowShort(1500, "NMEA Clearing", true);
 		gpsLoggingClear();
 		settingsSet(nonVolatileSettings.gpsLogMemOffset, 0U);
 	}
@@ -1675,7 +1675,7 @@ void applicationMainTask(void)
 				{
 					keypadLocked = PTTLocked = true;
 					ticksTimerReset(&autolockTimer);
-					uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1000, currentLanguage->auto_lock, true);
+					uiNotificationShowShort(1000, currentLanguage->auto_lock, true);
 				}
 			}
 		}
@@ -1769,7 +1769,7 @@ void applicationMainTask(void)
 						char buf[NOTIFICATION_MESSAGE_LEN_MAX];
 
 						snprintf(buf, sizeof(buf), (deniedWhy == 2) ? AES_STR_WRONG_KEY : AES_STR_NO_KEY, deniedKeyId);
-						uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, buf, true);
+						uiNotificationShowShort(2000, buf, true);
 					}
 				}
 			}

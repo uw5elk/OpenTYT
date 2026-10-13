@@ -32,6 +32,9 @@
 #include "user_interface/uiLocalisation.h"
 #include "functions/voicePrompts.h"
 #include "functions/rxPowerSaving.h"
+#if defined(APRS_RX)
+#include "functions/aprs_mode.h"   // R18 Д5: aprsModeBeaconHotkey()/aprsModeBeaconOnceBusy()
+#endif
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 #include "hardware/radioHardwareInterface.h"
 #endif
@@ -271,6 +274,14 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 #else
 		// Don't go any further while APRS is beaconing
 		if (aprsBeaconingForcedManualBeaconingTriggered() && aprsBeaconingIsTransmitting())
+		{
+			return menuChannelExitStatus;
+		}
+#endif
+#if defined(APRS_RX)
+		// R18 Д5: поки іде разовий маяк (SK1+3), рація «запаркована» на частоті APRS, currentChannelData -- власний канал режиму: події екрана
+		// (ручка, клавіші) його не чіпають, інакше змінили б не те.
+		if (aprsModeBeaconOnceBusy())
 		{
 			return menuChannelExitStatus;
 		}
@@ -1765,7 +1776,7 @@ static void handleEvent(uiEvent_t *ev)
 			audioAmpMute(!muted);
 
 			snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s: %s", currentLanguage->mute, (muted ? currentLanguage->no : currentLanguage->yes));
-			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1000U, buf, true);
+			uiNotificationShowShort(1000U, buf, true);
 
 			if (muted)
 			{
@@ -1816,6 +1827,12 @@ static void handleEvent(uiEvent_t *ev)
 				{
 					aprsBeaconingToggles();
 				}
+#if defined(APRS_RX)
+				else if (keyval == 3)
+				{
+					aprsModeBeaconHotkey();   // R18 Д5: разовий маяк «Режиму APRS» (колишній пункт меню «Передати маяк»)
+				}
+#endif
 				else if (keyval == 2)
 				{
 					switch (aprsBeaconingGetMode())

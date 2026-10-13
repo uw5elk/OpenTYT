@@ -963,6 +963,44 @@ int aprsMsgNth(const aprsMsgBox_t *b, uint8_t dir, unsigned n)
 	return -1;
 }
 
+/* R18 Д1: прибрати запис idx зі списку. Якщо це наше повідомлення, що ще чекає передачі/ACK, -- його завдання з черги теж знімаємо (інакше воно
+ * пішло б в ефір без запису в списку, а ACK на нього нікуди б не лягав). Записи нижче зсуваються вгору: [0] лишається найновішим. */
+bool aprsMsgDelete(aprsMsgBox_t *b, unsigned idx)
+{
+	if ((idx >= APRS_MSG_LIST_MAX) || (b->list[idx].used == 0U))
+	{
+		return false;
+	}
+	if (isPending(&b->list[idx]))
+	{
+		for (unsigned i = 0; i < APRS_MSG_QUEUE_MAX; i++)
+		{
+			if ((b->q[i].type == AMSG_JOB_MSG) && eqCI(b->q[i].to, b->list[idx].call) && (strcmp(b->q[i].id, b->list[idx].id) == 0))
+			{
+				jobFree(b, i);
+			}
+		}
+	}
+	for (unsigned i = idx; (i + 1U) < APRS_MSG_LIST_MAX; i++)
+	{
+		b->list[i] = b->list[i + 1U];
+	}
+	memset(&b->list[APRS_MSG_LIST_MAX - 1U], 0, sizeof(b->list[0]));
+	return true;
+}
+
+/* R18 Д1: видалити всі записи (обидва напрямки). Повертає, скільки видалено. Завдання ACK (відповіді на чужі повідомлення) не чіпаємо. */
+unsigned aprsMsgDeleteAll(aprsMsgBox_t *b)
+{
+	unsigned n = 0;
+
+	for (int i = (int)APRS_MSG_LIST_MAX - 1; i >= 0; i--)
+	{
+		n += aprsMsgDelete(b, (unsigned)i) ? 1U : 0U;
+	}
+	return n;
+}
+
 void aprsMsgMarkRead(aprsMsgBox_t *b, unsigned idx)
 {
 	if (idx < APRS_MSG_LIST_MAX)

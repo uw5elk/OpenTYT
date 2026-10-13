@@ -175,6 +175,10 @@ static uiNotificationData_t notificationData =
 static void displayMessage(void);
 static void displaySmsFullScreen(void);
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
+#if defined(APRS_R18_UI)
+static void displayLevelCardEx(const char *title, const char *valueText, int16_t pct, const char *extra);
+static void displayMessageCard(void);
+#endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 static void displayCallAlertFullScreen(void);
 static void displaySmsAckedFullScreen(void);
@@ -384,12 +388,50 @@ void uiNotificationRefresh(void)
 						currentLanguage->call_replay_mode_last : currentLanguage->call_replay_mode_all);
 
 				snprintf(valueText, SCREEN_LINE_BUFFER_SIZE, "%lu:%02lu", (unsigned long)mm, (unsigned long)ss);
+#if defined(APRS_R18_UI)
+				/* R18 Д10: хто говорив -- позивний (перше слово запису останньої прийнятої станції), інакше DMR ID, інакше без рядка. У буфері запису
+				 * джерело не зберігається (RAM 0 додано), тож береться ОСТАННЯ прийнята станція списку «Останні прийняті» -- під час відтворення нового прийому
+				 * не буває (він його перериває), тож це та сама станція, чий виклик грає (для режиму «Останні 30 с» -- останній у ній). */
+				char whoText[16];
+				const char *who = NULL;
+
+				whoText[0] = 0;
+				if (LinkHead != NULL)
+				{
+					size_t n = 0U;
+
+					while ((n < (sizeof(whoText) - 1U)) && (LinkHead->contact[n] != 0) && (LinkHead->contact[n] != ' '))
+					{
+						whoText[n] = LinkHead->contact[n];
+						n++;
+					}
+					whoText[n] = 0;
+
+					if ((n == 0U) && ((LinkHead->id & 0xFFFFFFU) != 0U))
+					{
+						snprintf(whoText, sizeof(whoText), "%lu", (unsigned long)(LinkHead->id & 0xFFFFFFU));
+					}
+					if (whoText[0] != 0)
+					{
+						who = whoText;
+					}
+				}
+				displayLevelCardEx(title, valueText, pct, who);
+#else
 				displayLevelCard(title, valueText, pct);
+#endif
 			}
 			break;
 #endif
 
 			case NOTIFICATION_TYPE_MESSAGE:
+#if defined(APRS_R18_UI)
+				if ((notificationData.id == NOTIFICATION_ID_CARD) || (notificationData.id == NOTIFICATION_ID_TX_INHIBIT))
+				{
+					displayMessageCard();   // R18 Д6: короткі підтвердження/відмови -- на весь екран, як гучність
+				}
+				else
+#endif
 				displayMessage();
 				break;
 
@@ -617,7 +659,22 @@ bool uiNotificationIsPendingRender(void)
  * шумоподавлення, "500mW"/"1W"/"5W" для потужності -- формат не змінюємо, лише переносимо
  * малювання). pct (0-100) -- де саме заповнена смуга; для потужності це позиція серед
  * дискретних рівнів (mW/W), а не відсоток від безперервного діапазону. */
+#if defined(APRS_R18_UI)
+/* R18 Д10: displayLevelCardEx() -- та сама картка + необов'язковий третій рядок (FONT_SIZE_3) між значенням і смугою (extra == NULL -- макет без змін:
+ * гучність, потужність, шумоподавлення). Окрема функція, а не зміна сигнатури displayLevelCard(), щоб код без ENABLE_APRS_RX лишився таким же, і без
+ * статичної змінної (RAM 0). */
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct)
+{
+	displayLevelCardEx(title, valueText, pct, NULL);
+}
+#define LC_Y_TITLE ((extra != NULL) ? 6 : 16)
+#define LC_Y_VALUE ((extra != NULL) ? 28 : 44)
+static void displayLevelCardEx(const char *title, const char *valueText, int16_t pct, const char *extra)
+#else
+#define LC_Y_TITLE 16
+#define LC_Y_VALUE 44
+static void displayLevelCard(const char *title, const char *valueText, int16_t pct)
+#endif
 {
 	char buffer[SCREEN_LINE_BUFFER_SIZE];
 	const int16_t barX = 14;
@@ -657,12 +714,21 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 	displaySetForegroundAndBackgroundColours(colFg, colBg);
 	strncpy(buffer, title, (SCREEN_LINE_BUFFER_SIZE - 1));
 	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
-	displayPrintCentered(16, buffer, FONT_SIZE_3);
+	displayPrintCentered(LC_Y_TITLE, buffer, FONT_SIZE_3);
 
 	// Велике значення по центру (готовий рядок -- "42%" або "500mW" тощо)
 	strncpy(buffer, valueText, (SCREEN_LINE_BUFFER_SIZE - 1));
 	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
-	displayPrintCentered(44, buffer, FONT_SIZE_4);
+	displayPrintCentered(LC_Y_VALUE, buffer, FONT_SIZE_4);
+
+#if defined(APRS_R18_UI)
+	if (extra != NULL)
+	{
+		strncpy(buffer, extra, (SCREEN_LINE_BUFFER_SIZE - 1));
+		buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
+		displayPrintCentered(66, buffer, FONT_SIZE_3);
+	}
+#endif
 
 	// Смуга-індикатор
 	displaySetForegroundAndBackgroundColours(colDec, colBg);
@@ -675,6 +741,95 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 		displayFillRect((barX + 2), (barY + 2), fillW, (barH - 4), false);
 	}
 }
+
+#if defined(APRS_R18_UI)
+/* R18 Д6: повноекранна картка короткого підтвердження/відмови -- ТОЙ САМИЙ вигляд, що й displayLevelCard() (гучність, потужність, «Переслухати»): повне тло, рамка,
+ * кольори за темою (ніч -- жовтий на темному, день -- темно-синій на білому). Без смуги-індикатора. Текст -- notificationData.message; '\n' -- розрив рядка;
+ * довший за 19 символів рядок переноситься за пробілом. Шрифт 8x16 (FONT_SIZE_3): великий 16x32 не має частини кирилиці. До 4 рядків. */
+#define CARD_COLS   19
+#define CARD_LINES  4
+static void displayMessageCard(void)
+{
+	char line[CARD_LINES][CARD_COLS + 1];
+	int n = 0;
+	const char *p = notificationData.message;
+	uint16_t colBg, colFg, colDec;
+
+	while ((*p != 0) && (n < CARD_LINES))
+	{
+		int len = 0;
+		int cut;
+
+		while ((p[len] != 0) && (p[len] != '\n'))
+		{
+			len++;
+		}
+		if (len > CARD_COLS)
+		{
+			cut = CARD_COLS;
+			for (int i = CARD_COLS; i > 0; i--)
+			{
+				if (p[i] == ' ')
+				{
+					cut = i;   // розрив за пробілом
+					break;
+				}
+			}
+			memcpy(line[n], p, (size_t)cut);
+			line[n][cut] = 0;
+			p += cut;
+			if (*p == ' ')
+			{
+				p++;
+			}
+		}
+		else
+		{
+			memcpy(line[n], p, (size_t)len);
+			line[n][len] = 0;
+			p += len;
+			if (*p == '\n')
+			{
+				p++;
+			}
+		}
+		n++;
+	}
+	if (n == 0)
+	{
+		line[0][0] = 0;
+		n = 1;
+	}
+
+	if (DAYTIME_CURRENT == NIGHT)
+	{
+		colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0C0C14));
+		colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFE000));
+		colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x786914));
+	}
+	else
+	{
+		colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFFFFF));
+		colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0A2A6B));
+		colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x6E86C0));
+	}
+	displaySetForegroundAndBackgroundColours(colFg, colBg);
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displaySetForegroundAndBackgroundColours(colDec, colBg);
+	displayDrawRect(1, 1, (DISPLAY_SIZE_X - 2), (DISPLAY_SIZE_Y - 2), false);
+	displaySetForegroundAndBackgroundColours(colFg, colBg);
+	{
+		const int16_t lineStep = (FONT_SIZE_3_HEIGHT + 4);
+		int16_t y = (int16_t)((DISPLAY_SIZE_Y - ((n * lineStep) - 4)) / 2);
+
+		for (int i = 0; i < n; i++)
+		{
+			displayPrintCentered(y, line[i], FONT_SIZE_3);
+			y = (int16_t)(y + lineStep);
+		}
+	}
+}
+#endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 #if defined(APRS_RX)

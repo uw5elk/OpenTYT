@@ -26,8 +26,8 @@
 
 /* ---- R15: перший екран «Повідом. APRS» (як «Повідомлення» DMR): Нове / Вхідні / Надіслані; великий шрифт, до 20 символів ---- */
 #define APRSMSG_H_NEW         "Нове повідомлення"
-#define APRSMSG_H_IN          "Вхідні (%u)"       /* число -- непрочитані */
-#define APRSMSG_H_OUT         "Надіслані (%u)"    /* число -- ще не завершені (чекають передачі/ACK) */
+#define APRSMSG_H_IN          "Вхідні %u/%u"      /* R18: прочитані / усього вхідних (іконка-конверт на головному екрані рахує НЕпрочитані -- це інше число) */
+#define APRSMSG_H_OUT         "Надіслані %u"      /* R18: усього записів «Надіслані» (було: черга передачі -- після відправки завжди 0) */
 #define APRSMSG_H_HINT        "GREEN:вибір RED:назад"
 
 /* ---- слова стану вихідного повідомлення (у рядку списку -- 9 символів) ---- */
@@ -68,5 +68,13 @@
 #define APRSMSG_E_FULL        "Черга повна"
 #define APRSMSG_E_NOTX        "Не передано"
 #define APRSMSG_E_OFF         "APRS вимкнено"   /* R13: надсилання поза «Режимом APRS» -- стоковий APRS вимкнено/призупинено */
+
+/* ---- R18 Д1: видалення повідомлень ---- */
+#define APRSMSG_H_DELALL      "[Видалити всі]"
+#define APRSMSG_Q_ONE         "Видалити?"
+#define APRSMSG_Q_ALL         "Видалити всі?"
+#define APRSMSG_Q_COUNT       "Записів: %u"
+#define APRSMSG_Q_HINT        "GREEN:так RED:ні"
+#define APRSMSG_L_HINT_D      "SK2+GREEN:видалити"          /* другий рядок підказки списку */
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSMSG_UA_H_ */

@@ -148,6 +148,9 @@ typedef enum
 #endif
 	NOTIFICATION_ID_BEARING,
 	NOTIFICATION_ID_TX_INHIBIT,
+#if defined(ENABLE_APRS_RX)
+	NOTIFICATION_ID_CARD,       /* форк (R18 Д6): коротке підтвердження/відмова -- повноекранна картка в стилі гучності (uiNotificationShowShort()) */
+#endif
 	NOTIFICATION_ID_USER /* Could use _USER, _USER + 1, + 2, etc... */
 } uiNotificationID_t;
 
@@ -307,6 +310,13 @@ void uiChannelModeHeartBeatActivityForGD77S(uiEvent_t *ev);
 
 
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t msTimeout, const char *message, bool immediateRender);
+/* Форк (R18 Д6): коротке підтвердження дії / відмова ("Маяк передано", "Немає запису"). У збірках з ENABLE_APRS_RX (крім діагностичної) -- повноекранна картка в стилі гучності
+ * (id NOTIFICATION_ID_CARD, тип MESSAGE); без нього -- стокове вузьке вікно, тож типова збірка не змінюється. */
+#if defined(APRS_R18_UI)
+#define uiNotificationShowShort(msTimeout, text, imm)  uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_CARD, (msTimeout), (text), (imm))
+#else
+#define uiNotificationShowShort(msTimeout, text, imm)  uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, (msTimeout), (text), (imm))
+#endif
 bool uiNotificationIsSms(void);   /* форк: показано банер вхідного SMS (закривається RED) */
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 bool uiNotificationIsCallAlert(void);   /* форк: показано банер Call Alert (закривається RED) */

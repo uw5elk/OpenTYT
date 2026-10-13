@@ -415,7 +415,7 @@ static bool saveCfg(aprsModeMem_t *m)
 	if ((ok == false) && (m->saveFailShown == false))
 	{
 		m->saveFailShown = true;
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_SAVE_FAIL, true);
+		uiNotificationShowShort(1500, APRSM_SAVE_FAIL, true);
 		soundSetMelody(MELODY_ERROR_BEEP);
 	}
 	return ok;
@@ -809,6 +809,7 @@ void aprsModeBeaconOncePoll(void)
 {
 	aprsModeMem_t *m;
 	uint8_t what;
+	bool sent;
 
 	if (aprsModeBeaconOnceBusy() == false)
 	{
@@ -821,13 +822,41 @@ void aprsModeBeaconOncePoll(void)
 	}
 	what = m->oneShot;
 	m->oneShot = 0U;
-	if (m->bcnState == APRS_MODE_BCN_SENT)
-	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_BCN_SENT, true);
-	}
+	sent = (m->bcnState == APRS_MODE_BCN_SENT);
 	if (what == 2U)
 	{
-		aprsModeExit();
+		aprsModeExit();   /* m недійсне; канал/VFO повернуто */
+		if (uiNotificationIsVisible() == false)
+		{
+			/* помилку передачі вже показала картка (тоді екран перемалює її закриття); інакше головний екран перемальовуємо самі */
+			uiEvent_t redrawEvent = { .buttons = 0, .keys = NO_KEYCODE, .rotary = 0, .function = FUNC_REDRAW, .events = FUNCTION_EVENT, .hasEvent = true,
+					.time = ticksGetMillis() };
+
+			menuSystemCallCurrentMenuTick(&redrawEvent);
+		}
+	}
+	if (sent)
+	{
+		uiNotificationShowShort(1500, APRSM_BCN_SENT, true);
+	}
+}
+
+/* R18 Д5: гаряча клавіша SK1+3 (канал і VFO) -- разовий маяк «Режиму APRS» (колишній пункт меню «Передати маяк»). Заборону TX і зайнятість показує
+ * повноекранна картка. Повторне натискання, поки маяк іде, нічого не робить. */
+void aprsModeBeaconHotkey(void)
+{
+	if (aprsModeBeaconOnceBusy())
+	{
+		return;
+	}
+	if (txInhibitCheckAndWarn())
+	{
+		return;
+	}
+	if (aprsModeBeaconOnce() == false)
+	{
+		uiNotificationShowShort(1500, APRSM_NOT_NOW, true);
+		soundSetMelody(MELODY_ERROR_BEEP);
 	}
 }
 
@@ -895,7 +924,7 @@ static void beaconFeedback(aprsModeBcnState_t st)
 	}
 	if (txt != NULL)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, txt, true);
+		uiNotificationShowShort(1500, txt, true);
 		soundSetMelody(MELODY_ERROR_BEEP);
 	}
 }
@@ -1151,12 +1180,26 @@ void aprsModeTick(void)
 	m = mem();
 	now = ticksGetMillis();
 
-	/* Режим живе лише всередині меню «APRS» і лише коли хотспот не вхопив рацію. */
-	if ((menuSystemGetCurrentMenuNumber() != MENU_APRS_HUB) || (settingsUsbMode == USB_MODE_HOTSPOT))
+	/* Режим живе лише в меню «APRS» і лише коли хотспот не вхопив рацію. R18: єдиний виняток -- разовий маяк (SK1+3) з головного екрана (канал/VFO),
+	 * поки він не завершився: меню «Слухати» нема, режим вмикається тільки заради цього маяка. */
 	{
-		AM_TRACE(61);   /* aprsModeTick: меню не «APRS» (або хотспот) -- виходимо з режиму */
-		aprsModeExit();
-		return;
+		int curMenu = menuSystemGetCurrentMenuNumber();
+		bool oneShotOnMain = (m->oneShot != 0U) && ((curMenu == UI_CHANNEL_MODE) || (curMenu == UI_VFO_MODE));
+
+		if (((curMenu != MENU_APRS_HUB) && (oneShotOnMain == false)) || (settingsUsbMode == USB_MODE_HOTSPOT))
+		{
+			AM_TRACE(61);   /* aprsModeTick: меню не «APRS» (або хотспот) -- виходимо з режиму */
+			aprsModeExit();
+			return;
+		}
+	}
+	if (m->oneShot != 0U)
+	{
+		aprsModeBeaconOncePoll();   /* R18: головний екран меню «APRS» не тікає -- опитуємо тут; може вийти з режиму */
+		if (aprsModeIsActive() == false)
+		{
+			return;
+		}
 	}
 
 	if (m->dirty && ((now - m->dirtyAtMs) >= APRS_MODE_SAVE_IDLE_MS))

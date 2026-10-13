@@ -83,14 +83,21 @@ static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
 	}
 }
 
-/* R15: перший екран «Повідом. APRS» -- Нове / Вхідні (непрочитані) / Надіслані (ще не завершені). Великий шрифт, смуга вибору. */
+/* R15: перший екран «Повідом. APRS» -- Нове / Вхідні / Надіслані. R18: «Вхідні n/m» (n -- прочитані, m -- усього вхідних), «Надіслані» -- усі записи
+ * напрямку (раніше рахувалась черга передачі і після відправки була 0), четвертий пункт -- «[Видалити всі]». Великий шрифт, смуга вибору. */
+/* R18: у діагностичній збірці (ENABLE_APRS_RX_PROBE) видалення вимкнено -- не вистачає місця до адреси кодека (aprs_rx_cfg.h, APRS_R18_UI). */
+#if defined(APRS_R18_UI)
+#define AM_HOME_ITEMS  4
+#else
+#define AM_HOME_ITEMS  3
+#endif
 static void drawMsgHome(void)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
 	aprsMsgUi_t *mu = &aprsModeUi()->msg;
 	char buf[24];
 
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < AM_HOME_ITEMS; i++)
 	{
 		int16_t y = (int16_t)(24 + (i * 22));
 		bool sel = (i == (int)mu->scroll);
@@ -98,8 +105,13 @@ static void drawMsgHome(void)
 		switch (i)
 		{
 			case 0:  snprintf(buf, sizeof(buf), "%s", APRSMSG_H_NEW); break;
-			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgUnreadCount(b)); break;
-			default: snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgPendingCount(b)); break;
+			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN)); break;
+			case 2:  snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgDirCount(b, AMSG_DIR_OUT)); break;
+#if defined(APRS_R18_UI)
+			default: snprintf(buf, sizeof(buf), "%s", APRSMSG_H_DELALL); break;
+#else
+			default: buf[0] = 0; break;
+#endif
 		}
 		if (sel)
 		{
@@ -151,8 +163,41 @@ static void drawMsgList(void)
 				out ? msgStatusWord(e->status) : e->text, age);
 		printRow(1 + (int)i, buf);
 	}
+#if defined(APRS_R18_UI)
+	printRow(9, APRSMSG_L_HINT_D);    /* R18: видалення -- SK2+GREEN, як у «Повідомленнях» DMR */
+#endif
 	printRow(10, APRSMSG_L_HINT_S);   /* R17: сторінок режиму нема */
 }
+
+#if defined(APRS_R18_UI)
+/* R18 Д1: підтвердження видалення (один запис або всі). mu->err: 1 -- всі; mu->reply -- вигляд, куди повернутись по RED. Видаляє лише GREEN. */
+static void drawMsgConfirm(void)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	char buf[28];
+
+	if (mu->err != 0U)
+	{
+		displayPrintCentered(34, APRSMSG_Q_ALL, FONT_SIZE_3);
+		snprintf(buf, sizeof(buf), APRSMSG_Q_COUNT, aprsMsgListCount(b));
+		displayPrintCentered(58, buf, FONT_SIZE_1);
+	}
+	else
+	{
+		int ri = aprsMsgNth(b, mu->dirFilter, mu->sel);
+
+		displayPrintCentered(34, APRSMSG_Q_ONE, FONT_SIZE_3);
+		if (ri >= 0)
+		{
+			/* що саме видаляємо: позивний і початок тексту (до 26 символів) */
+			snprintf(buf, sizeof(buf), "%.9s:%.16s", b->list[ri].call, b->list[ri].text);
+			displayPrintCentered(58, buf, FONT_SIZE_1);
+		}
+	}
+	displayPrintCentered(112, APRSMSG_Q_HINT, FONT_SIZE_1);
+}
+#endif
 
 /* Малює рядки [first, first + rows) тексту, розбитого aprsMsgWrapLine() з шириною cols. Повертає загальну кількість рядків. */
 static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0, ucFont_t font, int16_t lineH)
@@ -253,6 +298,12 @@ static void drawMsgPage(void)
 	{
 		drawMsgHome();
 	}
+#if defined(APRS_R18_UI)
+	else if (mu->view == APRS_MSG_VIEW_CONFIRM)
+	{
+		drawMsgConfirm();
+	}
+#endif
 	else if ((mu->view == APRS_MSG_VIEW_READ) && (aprsMsgNth(aprsModeMsgBox(), mu->dirFilter, mu->sel) >= 0))
 	{
 		drawMsgRead();
@@ -339,7 +390,7 @@ static void drawMsgCompose(void)
 
 static void msgNotify(const char *txt)
 {
-	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, txt, true);
+	uiNotificationShowShort(1500, txt, true);
 	soundSetMelody(MELODY_ERROR_BEEP);
 }
 
@@ -625,7 +676,7 @@ static int msgPageEvent(uiEvent_t *ev)
 			/* R17: ручка (LEFT/RIGHT) гортає так само, як ↑↓ -- сторінок режиму більше нема */
 			int n = (int)mu->scroll + ((KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_RIGHT)) ? 1 : -1);
 
-			mu->scroll = (uint8_t)((n < 0) ? 2 : ((n > 2) ? 0 : n));
+			mu->scroll = (uint8_t)((n < 0) ? (AM_HOME_ITEMS - 1) : ((n > (AM_HOME_ITEMS - 1)) ? 0 : n));
 			return 1;
 		}
 		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
@@ -634,6 +685,21 @@ static int msgPageEvent(uiEvent_t *ev)
 			{
 				msgComposeStart(NULL);
 			}
+#if defined(APRS_R18_UI)
+			else if (mu->scroll == 3U)
+			{
+				if (aprsMsgListCount(b) == 0U)
+				{
+					msgNotify(APRSMSG_L_EMPTY);   /* нічого видаляти */
+				}
+				else
+				{
+					mu->err = 1U;                       /* видалити ВСІ */
+					mu->reply = APRS_MSG_VIEW_HOME;
+					mu->view = APRS_MSG_VIEW_CONFIRM;
+				}
+			}
+#endif
 			else
 			{
 				mu->dirFilter = (mu->scroll == 1U) ? AMSG_DIR_IN : AMSG_DIR_OUT;
@@ -648,6 +714,48 @@ static int msgPageEvent(uiEvent_t *ev)
 		}
 		return 0;
 	}
+#if defined(APRS_R18_UI)
+	if (mu->view == APRS_MSG_VIEW_CONFIRM)
+	{
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+		{
+			if (mu->err != 0U)
+			{
+				(void)aprsMsgDeleteAll(b);
+				mu->view = APRS_MSG_VIEW_HOME;
+				mu->scroll = 0U;
+			}
+			else
+			{
+				int ri = aprsMsgNth(b, mu->dirFilter, mu->sel);
+
+				if (ri >= 0)
+				{
+					(void)aprsMsgDelete(b, (unsigned)ri);
+				}
+				mu->view = APRS_MSG_VIEW_LIST;   /* sel підправить drawMsgList() */
+			}
+			mu->err = 0U;
+			return 1;
+		}
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+		{
+			mu->view = (mu->reply == APRS_MSG_VIEW_HOME) ? APRS_MSG_VIEW_HOME : (mu->reply == APRS_MSG_VIEW_READ) ? APRS_MSG_VIEW_READ : APRS_MSG_VIEW_LIST;
+			mu->err = 0U;
+			return 1;
+		}
+		return 0;
+	}
+	if (((mu->view == APRS_MSG_VIEW_READ) || (mu->view == APRS_MSG_VIEW_LIST)) && KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && BUTTONCHECK_DOWN(ev, BUTTON_SK2)
+			&& (mu->sel < count) && (aprsMsgNth(b, mu->dirFilter, mu->sel) >= 0))
+	{
+		/* R18 Д1: SK2+GREEN -- видалити поточний запис (з підтвердженням), як у «Повідомленнях» DMR */
+		mu->err = 0U;
+		mu->reply = mu->view;
+		mu->view = APRS_MSG_VIEW_CONFIRM;
+		return 1;
+	}
+#endif
 	if (mu->view == APRS_MSG_VIEW_READ)
 	{
 		if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))

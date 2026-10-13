@@ -963,6 +963,94 @@ static void testDirFilter(void)
 	}
 }
 
+/* R18 Д1/Д3: видалення записів, лічильники «Вхідні n/m» і «Надіслані» */
+static void testDelete(void)
+{
+	aprsMsgBox_t *b = &g_box;
+	uint32_t t = 200000U;
+	const char *calls[8] = { "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8" };
+
+	printf("== R18: видалення повідомлень ==\n");
+	aprsMsgInit(b, 0U);
+	/* 8 записів, найстарший перший: C1 вхідне, C2 вихідне, C3 вхідне, ... (найновіше -- C8 вихідне) */
+	for (unsigned i = 0; i < 8U; i++)
+	{
+		if ((i & 1U) == 0U)
+		{
+			CHECK(aprsMsgOnIncoming(b, calls[i], "in", "1", t + i), "вхідне %u", i);
+		}
+		else
+		{
+			CHECK(aprsMsgSend(b, calls[i], "out", t + i, NULL) == AMSG_OK, "вихідне %u", i);
+		}
+	}
+	CHECK(aprsMsgListCount(b) == 8U && aprsMsgDirCount(b, AMSG_DIR_IN) == 4U && aprsMsgDirCount(b, AMSG_DIR_OUT) == 4U, "8 записів: 4 + 4");
+	CHECK(aprsMsgPendingCount(b) == 4U && aprsMsgQueueLen(b) == 4U, "4 вихідних чекають, 4 завдання в черзі");
+	/* видалити ПЕРШИЙ (найновіший, C8 -- вихідне в черзі) */
+	CHECK(aprsMsgDelete(b, 0U), "видалено [0]");
+	CHECK(aprsMsgListCount(b) == 7U && strcmp(b->list[0].call, "C7") == 0, "після видалення першого найновіший -- C7");
+	CHECK(aprsMsgQueueLen(b) == 3U && aprsMsgPendingCount(b) == 3U, "завдання C8 знято з черги");
+	/* видалити СЕРЕДНІЙ */
+	CHECK(strcmp(b->list[3].call, "C4") == 0, "[3] -- C4");
+	CHECK(aprsMsgDelete(b, 3U), "видалено [3]");
+	CHECK(aprsMsgListCount(b) == 6U && strcmp(b->list[3].call, "C3") == 0 && strcmp(b->list[2].call, "C5") == 0, "сусіди зсунулись без дірки");
+	CHECK(aprsMsgQueueLen(b) == 2U, "завдання C4 знято");
+	/* видалити ОСТАННІЙ (найстаріший) */
+	CHECK(aprsMsgDelete(b, 5U) && aprsMsgListCount(b) == 5U && strcmp(b->list[4].call, "C2") == 0, "останній видалено: найстарший тепер C2");
+	CHECK(aprsMsgDelete(b, 5U) == false && aprsMsgDelete(b, 99U) == false, "порожній слот і індекс поза межами -- false");
+	/* Nth і лічильники узгоджені */
+	{
+		unsigned nin = aprsMsgDirCount(b, AMSG_DIR_IN), nout = aprsMsgDirCount(b, AMSG_DIR_OUT);
+
+		CHECK(nin + nout == aprsMsgListCount(b), "сума напрямків = записи (%u + %u)", nin, nout);
+		for (unsigned n = 0; n < nin; n++)
+		{
+			int ri = aprsMsgNth(b, AMSG_DIR_IN, n);
+
+			CHECK(ri >= 0 && b->list[ri].dir == AMSG_DIR_IN, "Nth(IN,%u)", n);
+		}
+		for (unsigned n = 0; n < nout; n++)
+		{
+			int ri = aprsMsgNth(b, AMSG_DIR_OUT, n);
+
+			CHECK(ri >= 0 && b->list[ri].dir == AMSG_DIR_OUT, "Nth(OUT,%u)", n);
+		}
+		CHECK(aprsMsgNth(b, AMSG_DIR_IN, nin) == -1 && aprsMsgNth(b, AMSG_DIR_OUT, nout) == -1, "за межею -- -1");
+	}
+	/* вставка після видалення працює (дірок нема) */
+	CHECK(aprsMsgOnIncoming(b, "NEW", "x", "9", t + 50U) && strcmp(b->list[0].call, "NEW") == 0, "нове кладеться на початок");
+	/* видалити ВСІ */
+	{
+		unsigned before = aprsMsgListCount(b);
+
+		CHECK(aprsMsgDeleteAll(b) == before && before == 6U, "видалено всі %u", before);
+	}
+	CHECK(aprsMsgListCount(b) == 0U && aprsMsgDirCount(b, AMSG_DIR_IN) == 0U && aprsMsgDirCount(b, AMSG_DIR_OUT) == 0U, "після «видалити всі» -- 0/0");
+	CHECK(aprsMsgQueueLen(b) == 0U && aprsMsgPendingCount(b) == 0U && aprsMsgUnreadCount(b) == 0U, "черга, очікування, непрочитані -- 0");
+	CHECK(aprsMsgDeleteAll(b) == 0U, "повторно -- 0");
+
+	printf("== R18 Д3: «Надіслані» -- усі записи, не черга ==\n");
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgSend(b, "AAA", "o1", t + 100U, NULL) == AMSG_OK && aprsMsgSend(b, "BBB", "o2", t + 101U, NULL) == AMSG_OK, "2 вихідних");
+	{
+		const aprsMsgEntry_t *old = &b->list[aprsMsgNth(b, AMSG_DIR_OUT, 1U)];   /* старше (AAA) */
+
+		CHECK(aprsMsgOnAckRx(b, old->call, old->id, false), "ACK на старше");
+		CHECK(old->status == AMSG_ST_ACK, "старше -- у стані ACK");
+	}
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_OUT) == 2U, "«Надіслані 2»");
+	CHECK(aprsMsgPendingCount(b) == 1U, "а в черзі лише одне");
+	aprsMsgCancelAll(b);   /* друге -- без ACK (скасовано) */
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_OUT) == 2U && aprsMsgPendingCount(b) == 0U, "після завершення всіх: «Надіслані» лишається 2, черга 0");
+
+	printf("== R18 Д2: «Вхідні n/m» ==\n");
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgOnIncoming(b, "R1", "a", "1", t + 200U) && aprsMsgOnIncoming(b, "R2", "b", "2", t + 201U) && aprsMsgOnIncoming(b, "R3", "c", "3", t + 202U), "3 вхідних");
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b) == 0U && aprsMsgDirCount(b, AMSG_DIR_IN) == 3U, "прочитано 0 з 3");
+	aprsMsgMarkRead(b, (unsigned)aprsMsgNth(b, AMSG_DIR_IN, 0U));
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b) == 1U && aprsMsgDirCount(b, AMSG_DIR_IN) == 3U, "прочитано 1 з 3: n росте, m не змінюється");
+}
+
 int main(void)
 {
 	testCharBytes();
@@ -982,6 +1070,7 @@ int main(void)
 	testFrom();
 	testUnread();
 	testDirFilter();
+	testDelete();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_msg: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

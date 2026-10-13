@@ -389,7 +389,7 @@ static void cardBeaconOpen(const aprsRxUi_t *ui)
 {
 	if (aprsRxWindowShowStation(ui->cardCall) == false)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSRX_BCN_NONE_ST, true);
+		uiNotificationShowShort(1500, APRSRX_BCN_NONE_ST, true);
 	}
 }
 
@@ -623,7 +623,7 @@ void menuAprsBeaconShow(void)
 {
 	if (aprsRxBeaconAvail(NULL) == false)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSRX_BCN_NONE, true);
+		uiNotificationShowShort(1500, APRSRX_BCN_NONE, true);
 		return;
 	}
 	aprsRxWindowShowAgain();

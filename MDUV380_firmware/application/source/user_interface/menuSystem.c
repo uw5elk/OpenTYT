@@ -695,7 +695,9 @@ const menuItemNewData_t mainMenuItems[] =
 	{   8, MENU_FIRMWARE_INFO   },
 	{   9, MENU_OPTIONS         },
 	{   7, MENU_LAST_HEARD      },
-#if defined(ENABLE_CALL_REPLAY)
+#if defined(ENABLE_CALL_REPLAY) && !defined(APRS_RX)
+	// R18 Д10: з APRS-збірки пункт прибрано з меню -- «Переслухати» запускається коротким натисканням SK1 на головному екрані (callReplayToggleOnSK1()).
+	// Екран menuCallReplay() і MENU_CALL_REPLAY у menuFunctions[] лишились (порядок меню не змінюється, швидкі клавіші на нього працюють).
 	// Поруч з "Останні прийняті" -- та сама природа дії, дивись callReplay.h.
 	{ (int)(offsetof(stringsTable_t, call_replay) / LANGUAGE_TEXTS_LENGTH), MENU_CALL_REPLAY },
 #endif

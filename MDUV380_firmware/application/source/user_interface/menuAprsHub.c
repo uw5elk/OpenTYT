@@ -5,9 +5,9 @@
  * не окремі меню, а екрани, які цей список приймає всередину (поки aprsRxUi()->on / aprsModeMsgSessionActive() / aprsModeCfgSessionActive() /
  * aprsRxProbeIsOn(), усі тіки й події належать їм).
  *
- * R17 Г1: пункти (порядок = порядок на екрані):
- *   «Слухати:Вимк/Увімк» -- перемикач «Слухати APRS» (aprsModeEnter()/aprsModeExit(); частота -- у заголовку); «Передати маяк» -- разовий маяк, працює і з
- *   вимкненим «Слухати» (рація паркується, передає, повертається); «APRS станції»; «Повідом. APRS»; «Пакети»; «Налаштування»; [«APRS проба»].
+ * Пункти (порядок = порядок на екрані): «APRS станції»; «Повідом. APRS»; «Пакети»; «Налаштування»; [«APRS проба»].
+ * R18: пункти «Слухати APRS» (Д4) і «Передати маяк» (Д5) прибрано -- прийом працює на каналі APRS і без них, а разовий маяк тепер на гарячій клавіші SK1+3
+ * головного екрана (aprsModeBeaconHotkey(), uiChannelMode.c/uiVFOMode.c). Заголовок «APRS <частота>» з'являється лише поки режим активний (під час SK1+3 меню не відкрите).
  * Стокове меню «Налаштування APRS» («Опції рації» -> APRS) не чіпано.
  *
  * QuickKey: пункти цього меню швидкими клавішами НЕ прив'язуються (SK2+цифра ігнорується) -- це дії, а не налаштування. Існуючі QuickKey на
@@ -33,9 +33,7 @@
 /* Порядок пунктів = порядок на екрані. Нові пункти додавати СЮДИ, у відповідному місці. */
 enum
 {
-	APRS_HUB_LISTEN = 0,
-	APRS_HUB_BEACON,      /* R17: «Передати маяк» */
-	APRS_HUB_STATIONS,
+	APRS_HUB_STATIONS = 0,   /* R18: «Слухати» і «Передати маяк» прибрано з меню (маяк -- SK1+3 на головному екрані) */
 	APRS_HUB_MESSAGES,
 	APRS_HUB_PACKET,      /* R15/R16: «Пакети» -- журнал останніх прийнятих кадрів */
 	APRS_HUB_SETTINGS,
@@ -51,14 +49,6 @@ static const char *itemName(int n, char *buf, size_t cap)
 {
 	switch (n)
 	{
-		case APRS_HUB_LISTEN:
-			if (buf == NULL)
-			{
-				return APRSM_H_LISTEN;
-			}
-			snprintf(buf, cap, APRSM_H_LISTEN_FMT, aprsModeIsActive() ? APRSM_H_ON : APRSM_H_OFF);
-			return buf;
-		case APRS_HUB_BEACON:   return APRSM_H_BEACON;
 		case APRS_HUB_STATIONS: return APRSRX_TITLE;
 		case APRS_HUB_PACKET:   return APRSRX_HUB_PKT;
 		case APRS_HUB_MESSAGES:
@@ -131,42 +121,10 @@ static void updateScreen(bool isFirstRun)
 	displayRender();
 }
 
-static void notifyNotNow(void)
-{
-	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_NOT_NOW, true);
-	soundSetMelody(MELODY_ERROR_BEEP);
-}
-
 static void openItem(int n)
 {
 	switch (n)
 	{
-		case APRS_HUB_LISTEN:
-			if (aprsModeIsActive())
-			{
-				if (aprsModeIsTransmitting())
-				{
-					uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_TX_BUSY, true);
-					soundSetMelody(MELODY_ERROR_BEEP);
-				}
-				else
-				{
-					aprsModeExit();
-				}
-			}
-			else if (aprsModeEnter() == false)
-			{
-				notifyNotNow();
-			}
-			updateScreen(false);   /* значення пункту й заголовок змінилися */
-			break;
-		case APRS_HUB_BEACON:
-			if (aprsModeBeaconOnce() == false)
-			{
-				notifyNotNow();
-			}
-			updateScreen(false);
-			break;
 		case APRS_HUB_STATIONS:
 			menuAprsStationsEnter();
 			break;
@@ -270,16 +228,6 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 	}
 
 	hubExitCode = MENU_STATUS_SUCCESS;
-
-	/* «Передати маяк» без «Слухати»: результат і повернення каналу після передачі */
-	if (aprsModeBeaconOnceBusy())
-	{
-		aprsModeBeaconOncePoll();
-		if (aprsModeBeaconOnceBusy() == false)
-		{
-			updateScreen(false);   /* режим, увімкнений лише заради маяка, вимкнено -- перемалювати список */
-		}
-	}
 
 	/* Поки відкрито «Налаштування» / «Повідом. APRS» / «APRS станції» / «APRS проба», екран і всі події належать їм. */
 	if (aprsModeCfgSessionActive())

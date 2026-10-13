@@ -79,6 +79,12 @@ void vTaskDelay(uint32_t t) { (void)t; }
 void soundSetMelody(const int16_t *m) { (void)m; s_melody++; }
 void uiNotificationShow(uiNotificationType_t t, uiNotificationID_t i, uint32_t ms, const char *m, bool r) { (void)t; (void)i; (void)ms; (void)m; (void)r; s_notify++; }
 
+/* R18 Д5: SK1+3 з головного екрана -- заглушки перевірки заборони TX, видимості сповіщення і перемалювання екрана */
+static bool s_txInhibit = false;
+static int s_redraws = 0;
+bool txInhibitCheckAndWarn(void) { return s_txInhibit; }
+bool uiNotificationIsVisible(void) { return false; }
+void menuSystemCallCurrentMenuTick(uiEvent_t *ev) { (void)ev; s_redraws++; }
 int menuSystemGetRootMenuNumber(void) { return s_rootMenu; }
 int menuSystemGetCurrentMenuNumber(void) { return s_curMenu; }
 void uiChannelModeStopScanning(void) { s_stopScanCh++; uiDataGlobal.Scan.active = false; }
@@ -1194,6 +1200,67 @@ static void testBeaconOnce(void)
 	aprsTxProgress = APRS_TX_IDLE;
 }
 
+/* R18 Д5: гаряча клавіша SK1+3 на ГОЛОВНОМУ екрані (меню «Слухати»/«Передати маяк» прибрано) */
+static void testHotkeyOnMain(void)
+{
+	resetWorld();
+	s_curMenu = UI_CHANNEL_MODE;
+	s_notify = 0;
+	s_redraws = 0;
+	aprsModeBeaconHotkey();
+	CHECK(aprsModeIsActive() && aprsModeBeaconOnceBusy(), "SK1+3: рація запаркована, маяк замовлено");
+	tickMs(10);   /* тік на ГОЛОВНОМУ екрані: режим не вимикається (виняток для разового маяка) і маяк іде */
+	CHECK(s_txCalls == 1, "маяк передано з головного екрана (%d)", s_txCalls);
+	aprsModeBeaconHotkey();
+	CHECK(s_txCalls == 1, "повторне SK1+3 під час маяка нічого не робить");
+	tickMs(10);
+	CHECK(aprsModeIsActive() == false && aprsModeBeaconOnceBusy() == false && currentChannelData == &s_userChan, "після передачі режим вимкнено, канал повернуто");
+	CHECK(s_notify == 1, "картка «Маяк передано» (%d)", s_notify);
+	CHECK(s_redraws == 1, "головний екран перемальовано (%d)", s_redraws);
+
+	/* заборона TX: нічого не вмикаємо */
+	resetWorld();
+	s_curMenu = UI_CHANNEL_MODE;
+	s_txInhibit = true;
+	aprsModeBeaconHotkey();
+	CHECK(aprsModeIsActive() == false && s_txCalls == 0, "заборона TX -- режим не вмикається");
+	s_txInhibit = false;
+
+	/* VFO */
+	resetWorld();
+	s_rootMenu = UI_VFO_MODE;
+	s_curMenu = UI_VFO_MODE;
+	aprsModeBeaconHotkey();
+	tickMs(10);
+	tickMs(10);
+	CHECK(s_txCalls == 1 && aprsModeIsActive() == false && s_loadVfoCalls >= 1, "VFO: передано, VFO перезавантажено");
+	s_rootMenu = UI_CHANNEL_MODE;
+
+	/* передача йде -- не можна: картка про це, режим не вмикається */
+	resetWorld();
+	s_curMenu = UI_CHANNEL_MODE;
+	aprsTxProgress = APRS_TX_IN_PROGRESS;
+	s_notify = 0;
+	aprsModeBeaconHotkey();
+	CHECK(aprsModeIsActive() == false && s_notify == 1, "під час передачі -- відмова з карткою");
+	aprsTxProgress = APRS_TX_IDLE;
+
+	/* екран змінився посеред маяка (не канал/VFO) -- режим вимикається, як раніше */
+	resetWorld();
+	s_curMenu = UI_CHANNEL_MODE;
+	aprsModeBeaconHotkey();
+	s_curMenu = MENU_GENERAL;
+	tickMs(10);
+	CHECK(aprsModeIsActive() == false && s_txCalls == 0, "push меню посеред маяка -- вихід з режиму");
+
+	/* режим без разового маяка на головному екрані НЕ живе (виняток лише для маяка) */
+	resetWorld();
+	CHECK(aprsModeEnter(), "вхід");
+	s_curMenu = UI_CHANNEL_MODE;
+	tickMs(10);
+	CHECK(aprsModeIsActive() == false, "без разового маяка головний екран вимикає режим");
+}
+
 int main(void)
 {
 	testBootInit();
@@ -1213,6 +1280,7 @@ int main(void)
 	testSaveBlankRegion();
 	testSettingsSession();
 	testBeaconOnce();
+	testHotkeyOnMain();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_mode_state: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

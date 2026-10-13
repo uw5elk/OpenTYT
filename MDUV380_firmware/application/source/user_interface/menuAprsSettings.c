@@ -41,7 +41,7 @@ static void printRow(int row, const char *text)
  * УСІ налаштування «не змінювались» без жодного пояснення. Тепер це видно: сповіщення + звук. */
 static void notifyTxBusy(void)
 {
-	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_TX_BUSY, true);
+	uiNotificationShowShort(1500, APRSM_TX_BUSY, true);
 	soundSetMelody(MELODY_ERROR_BEEP);
 }
 
@@ -1267,7 +1267,7 @@ bool menuAprsSettingsEnter(void)
 
 	if (aprsModeSettingsSessionOpen() == false)
 	{
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_NOT_NOW, true);
+		uiNotificationShowShort(1500, APRSM_NOT_NOW, true);
 		soundSetMelody(MELODY_ERROR_BEEP);
 		return false;
 	}

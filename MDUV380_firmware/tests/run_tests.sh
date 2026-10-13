@@ -126,7 +126,7 @@ for src in "$TESTS_DIR"/test_*.c; do
 		if ! out="$("$CC" "${CFLAGS[@]}" $xflags $vflag "${INC[@]}" -o "$bin" "$src" $extra 2>&1)"; then
 			fail=$((fail + 1))
 			echo "ЗБІРКА ВПАЛА  $vname"
-			printf '%s\n' "$out" | head -12
+			printf "%s\n" "$out" | grep -E "error|undefined|rror" | head -12
 			continue
 		fi
 

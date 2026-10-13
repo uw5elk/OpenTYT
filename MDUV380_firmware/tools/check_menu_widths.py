@@ -467,6 +467,8 @@ if os.path.exists(msg_path):
             lim = LINE_CHARS
         elif name.startswith('APRSMSG_ST_'):
             lim = 9
+        elif name in ('APRSMSG_H_NEW', 'APRSMSG_H_IN', 'APRSMSG_H_OUT', 'APRSMSG_H_DELALL', 'APRSMSG_Q_ONE', 'APRSMSG_Q_ALL'):
+            lim = 20   # R18: великий шрифт 8x16 -- 20 символів у рядку
         else:
             lim = 26
         if len(t) > lim:

@@ -38,18 +38,18 @@
 enum { APRS_MODE_PAGE_MONITOR = 0, APRS_MODE_PAGE_STATIONS, APRS_MODE_PAGE_MESSAGES, APRS_MODE_PAGE_SETTINGS, APRS_MODE_PAGES };
 
 /* R11: вигляди сторінки «Повідомлення». R15: HOME -- перший екран (Нове / Вхідні / Надіслані); LIST показує лише один напрямок. */
-enum { APRS_MSG_VIEW_LIST = 0, APRS_MSG_VIEW_READ, APRS_MSG_VIEW_CALL, APRS_MSG_VIEW_TEXT, APRS_MSG_VIEW_HOME };
+enum { APRS_MSG_VIEW_LIST = 0, APRS_MSG_VIEW_READ, APRS_MSG_VIEW_CALL, APRS_MSG_VIEW_TEXT, APRS_MSG_VIEW_HOME, APRS_MSG_VIEW_CONFIRM };
 
 /* R11: стан екрана «Повідомлення» (лежить у aprsModeUi_t, тобто в позиченому буфері режиму). */
 typedef struct
 {
 	uint8_t  view;                            /* APRS_MSG_VIEW_* */
 	uint8_t  sel;                             /* вибраний запис списку: R15 -- номер у ВІДФІЛЬТРОВАНОМУ списку (див. dirFilter) */
-	uint8_t  scroll;                          /* R15: вибраний пункт першого екрана (HOME): 0 Нове, 1 Вхідні, 2 Надіслані */
+	uint8_t  scroll;                          /* R15: вибраний пункт першого екрана (HOME): 0 Нове, 1 Вхідні, 2 Надіслані, 3 (R18) Видалити всі */
 	uint8_t  readTop;                         /* перший видимий рядок тексту в читанні */
 	uint8_t  mtMode;                          /* режим набору (sms_multitap) */
-	uint8_t  err;                             /* набір: останнє GREEN не прийняло значення */
-	uint8_t  reply;                           /* набір: відповідь (адресат заданий, одразу текст) */
+	uint8_t  err;                             /* набір: останнє GREEN не прийняло значення. R18: у CONFIRM -- 1 видалити ВСІ, 0 -- один запис */
+	uint8_t  reply;                           /* набір: відповідь (адресат заданий, одразу текст). R18: у CONFIRM -- вигляд, куди повернутись по RED */
 	uint8_t  layout;                          /* набір: показано шпаргалку розкладки (D) */
 	uint8_t  swallowUp;                       /* клавіша, що закрила шпаргалку: її відпускання набір не обробляє */
 	uint8_t  dirFilter;                       /* R15: AMSG_DIR_IN / AMSG_DIR_OUT -- який список показано (стає у вільний байт вирівнювання перед pos) */
@@ -129,10 +129,11 @@ bool aprsModeMsgSessionOpen(void);
 bool aprsModeSettingsSessionOpen(void);
 bool aprsModeCfgSessionActive(void);
 void aprsModeCfgSessionTick(void);               /* запис у флеш після паузи в редагуванні */
-/* R17 Г1: «Передати маяк» (див. aprs_mode.c). Poll -- кожен тік меню. */
+/* R17 Г1: «Передати маяк» (див. aprs_mode.c). R18: пункт меню прибрано -- гаряча клавіша SK1+3 (aprsModeBeaconHotkey()), опитування -- в aprsModeTick(). */
 bool aprsModeBeaconOnce(void);
 bool aprsModeBeaconOnceBusy(void);
 void aprsModeBeaconOncePoll(void);
+void aprsModeBeaconHotkey(void);                 /* R18 Д5: SK1+3 на головному екрані (канал/VFO) */
 void aprsModeMsgSessionClose(void);
 bool aprsModeMsgSessionActive(void);
 aprsModeCfg_t       *aprsModeCfg(void);

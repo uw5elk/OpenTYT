@@ -1872,7 +1872,7 @@ void aprsBeaconingToggles(void)
 		aprsBeaconingSetSuspend(running);
 
 		snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "Beaconing: %s", (running ? currentLanguage->off : currentLanguage->on));
-		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1000, buf, false);
+		uiNotificationShowShort(1000, buf, false);
 	}
 }
 
@@ -2029,7 +2029,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 		}
 		else
 		{
-			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, buffer, true);
+			uiNotificationShowShort(1500, buffer, true);
 			soundSetMelody(MELODY_ERROR_BEEP);
 			return false;
 		}
