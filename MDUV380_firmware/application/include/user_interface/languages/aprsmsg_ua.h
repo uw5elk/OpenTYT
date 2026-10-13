@@ -69,4 +69,12 @@
 #define APRSMSG_E_NOTX        "Не передано"
 #define APRSMSG_E_OFF         "APRS вимкнено"   /* R13: надсилання поза «Режимом APRS» -- стоковий APRS вимкнено/призупинено */
 
+/* ---- R18 Д1: видалення повідомлень ---- */
+#define APRSMSG_H_DELALL      "[Видалити всі]"
+#define APRSMSG_Q_ONE         "Видалити?"
+#define APRSMSG_Q_ALL         "Видалити всі?"
+#define APRSMSG_Q_COUNT       "Записів: %u"
+#define APRSMSG_Q_HINT        "GREEN:так RED:ні"
+#define APRSMSG_L_HINT_D      "SK2+GREEN:видалити"          /* другий рядок підказки списку */
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMSG_UA_H_ */

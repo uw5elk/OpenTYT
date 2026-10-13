@@ -191,6 +191,8 @@ unsigned aprsMsgListCount(const aprsMsgBox_t *b);
 unsigned aprsMsgDirCount(const aprsMsgBox_t *b, uint8_t dir);        /* R15: записів одного напрямку (AMSG_DIR_IN/OUT) */
 int aprsMsgNth(const aprsMsgBox_t *b, uint8_t dir, unsigned n);      /* R15: індекс у b->list n-го (0 -- найновішого) запису напрямку dir; -1 -- нема */
 void aprsMsgMarkRead(aprsMsgBox_t *b, unsigned idx);
+bool aprsMsgDelete(aprsMsgBox_t *b, unsigned idx);   /* R18 Д1: видалити запис списку (і його завдання в черзі); решта зсувається вгору */
+unsigned aprsMsgDeleteAll(aprsMsgBox_t *b);          /* R18 Д1: видалити всі записи обох напрямків; скільки видалено */
 
 #endif /* ENABLE_APRS_RX */
 #endif /* _OPENGD77_APRS_MSG_H_ */
