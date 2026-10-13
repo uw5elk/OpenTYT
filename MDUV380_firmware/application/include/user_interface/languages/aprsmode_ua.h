@@ -249,6 +249,7 @@
 #define APRSM_V_MIN           "%u ı‚"
 #define APRSM_V_MIN_D         "%u.%u ı‚"
 #define APRSM_V_SEC           "%u Ò"
+#define APRSM_V_PLAIN         "%u"
 #define APRSM_V_KMH           "%u ÍÏ/„"
 #define APRSM_V_DEG           "%u%c"
 #define APRSM_V_ON            "”‚≥ÏÍ"

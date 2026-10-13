@@ -8,6 +8,24 @@
 
 #if defined(ENABLE_APRS_RX)
 
+#if defined(ENABLE_APRS_RX_PROBE)
+/* R17: діагностична збірка (проба + приймач, без «Переслухати») БЕЗ піктограм: до фіксованої адреси кодека (STM32F405VGTX_FLASH.ld, .codec_bin_section_1 = 0x807537C)
+ * їй не вистачало ~2,9 КБ flash, таблиця піктограм -- 1,7 КБ. Вікно маяка малює рамку з кодом символу (як для невідомого символу). У user-збірці піктограми є. */
+const uint8_t *aprsIconFind(char table, char code, bool *overlay)
+{
+	(void)table;
+	(void)code;
+	*overlay = false;
+	return NULL;
+}
+
+unsigned aprsIconCount(void)
+{
+	return 0U;
+}
+
+#else
+
 typedef struct
 {
 	char table;   /* '/' або '\\' */
@@ -102,5 +120,7 @@ unsigned aprsIconCount(void)
 {
 	return (unsigned)ICON_COUNT;
 }
+
+#endif /* ENABLE_APRS_RX_PROBE */
 
 #endif /* ENABLE_APRS_RX */

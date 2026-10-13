@@ -41,7 +41,13 @@ void aprsModeTraceMark(void);                            /* мітка часу 
 #define AM_TRACE_V(n, v)  aprsModeTraceV((n), (unsigned int)(v))
 #define AM_TRACE_H(n, v)  aprsModeTraceH((n), (unsigned long)(v))
 #define AM_TRACE_MARK()   aprsModeTraceMark()
+#if defined(APRS_FRAME_TRACE)
 #define AM_TRACE_T(n)  aprsModeTraceT(n)
+#else
+/* R17: тік-трасування (60..91) за замовчуванням ВИМКНЕНО: зависання APRS закрито (R10-fix5), а ці виклики разом із трасуванням кадру (aprs.c)
+ * не дають діагностичній збірці вміститися до фіксованої адреси кодека. -DAPRS_FRAME_TRACE повертає. */
+#define AM_TRACE_T(n)  ((void)0)
+#endif
 #else
 #define AM_TRACE(n)    ((void)0)
 #define AM_TRACE_V(n, v)  ((void)0)

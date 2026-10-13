@@ -22,6 +22,7 @@
 #include "user_interface/languages/aprsrx_ua.h"
 #include "user_interface/uiSmsKeys.h"   /* підказка літер і шпаргалка розкладки -- спільні з SMS */
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 
 extern const uint16_t initialIntervalsInSecs[];
@@ -872,107 +873,170 @@ static int asRowId(const aprsModeUi_t *u)
 	return (u->sel < g->n) ? (int)g->rows[u->sel] : -1;
 }
 
-static const char *asStockLabel(int r)
+/* Стокові рядки -- таблицями (менше коду: діагностична збірка впритул до фіксованої адреси кодека). Числові: поле aprsSettingsCopy.smart.* (зсув, межі
+ * стокового меню, крок із SK2); перелічувані: індекс 0..count-1 (режим бікона, джерело позиції, вікно маяка, стиснення, затухання). */
+typedef struct
 {
-	switch (r)
+	uint8_t     id;
+	uint8_t     off;     /* зсув поля в aprsBeaconingSettings_t */
+	uint8_t     lo;
+	uint8_t     hi;
+	uint8_t     step;    /* крок при утриманні SK2 */
+	uint8_t     mul;     /* множник показу (нахил: 10) */
+	const char *label;
+	const char *fmt;
+} asNum_t;
+
+#define AS_NUM(i, f, lo, hi, st, mul, lb, fm)  { (i), (uint8_t)offsetof(aprsBeaconingSettings_t, f), (lo), (hi), (st), (mul), (lb), (fm) }
+static const asNum_t asNums[] =
+{
+	AS_NUM(AS_S_SLOW,   smart.slowRate,  APRS_SMART_BEACON_SLOW_RATE_MIN,  APRS_SMART_BEACON_SLOW_RATE_MAX,  10U, 1U,  APRSM_L_SLOW,   APRSM_V_MIN),
+	AS_NUM(AS_S_FAST,   smart.fastRate,  APRS_SMART_BEACON_FAST_RATE_MIN,  APRS_SMART_BEACON_FAST_RATE_MAX,  10U, 1U,  APRSM_L_FAST,   APRSM_V_SEC),
+	AS_NUM(AS_S_LOWSPD, smart.lowSpeed,  APRS_SMART_BEACON_LOW_SPEED_MIN,  APRS_SMART_BEACON_LOW_SPEED_MAX,  4U,  1U,  APRSM_L_LOWSPD, APRSM_V_KMH),
+	AS_NUM(AS_S_HISPD,  smart.highSpeed, APRS_SMART_BEACON_HIGH_SPEED_MIN, APRS_SMART_BEACON_HIGH_SPEED_MAX, 10U, 1U,  APRSM_L_HISPD,  APRSM_V_KMH),
+	AS_NUM(AS_S_ANGLE,  smart.turnAngle, APRS_SMART_BEACON_TURN_ANGLE_MIN, APRS_SMART_BEACON_TURN_ANGLE_MAX, 10U, 1U,  APRSM_L_ANGLE,  APRSM_V_DEG),
+	AS_NUM(AS_S_SLOPE,  smart.turnSlope, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX, 10U, 10U, APRSM_L_SLOPE,  APRSM_V_PLAIN),
+	AS_NUM(AS_S_TIME,   smart.turnTime,  APRS_SMART_BEACON_TURN_TIME_MIN,  APRS_SMART_BEACON_TURN_TIME_MAX,  10U, 1U,  APRSM_L_TIME,   APRSM_V_SEC),
+	AS_NUM(AS_S_BINT,   initialInterval, APRS_BEACON_INITIAL_INTERVAL_MIN, APRS_BEACON_INITIAL_INTERVAL_MAX, 1U,  1U,  APRSM_L_BINT,   NULL),   /* показ -- asStockValue() */
+	AS_NUM(AS_S_POWER,  power,           0U,                               0U,                               1U,  1U,  APRSM_L_POWER,  NULL)    /* верхня межа -- у asStockStep() (залежить від кодплуга) */
+};
+
+typedef struct
+{
+	uint8_t     id;
+	uint8_t     count;
+	const char *label;
+	const char *names[5];
+} asEnum_t;
+
+static const asEnum_t asEnums[] =
+{
+	{ AS_S_MODE,   5U, APRSM_L_BMODE,  { APRSM_V_BM0, APRSM_V_BM1, APRSM_V_BM2, APRSM_V_BM3, APRSM_V_BM4 } },
+	{ AS_S_COMPR,  2U, APRSM_L_COMPR,  { APRSM_V_OFF, APRSM_V_ON } },
+	{ AS_S_DECAY,  2U, APRSM_L_DECAY,  { APRSM_V_OFF, APRSM_V_ON } },
+	{ AS_S_SOURCE, 2U, APRSM_L_SOURCE, { APRSM_V_SRC_CH, APRSM_V_SRC_GPS } },
+	{ AS_S_BCNWIN, 3U, APRSM_L_BCNWIN, { APRSRX_OPT_BCNWIN_ALL, APRSRX_OPT_BCNWIN_NEW, APRSRX_OPT_BCNWIN_OFF } }
+};
+
+static const asNum_t *asNumOf(int r)
+{
+	for (unsigned i = 0; i < (sizeof(asNums) / sizeof(asNums[0])); i++)
 	{
-		case AS_S_MODE:    return APRSM_L_BMODE;
-		case AS_S_POWER:   return APRSM_L_POWER;
-		case AS_S_BINT:    return APRSM_L_BINT;
-		case AS_S_COMPR:   return APRSM_L_COMPR;
-		case AS_S_SLOW:    return APRSM_L_SLOW;
-		case AS_S_FAST:    return APRSM_L_FAST;
-		case AS_S_LOWSPD:  return APRSM_L_LOWSPD;
-		case AS_S_HISPD:   return APRSM_L_HISPD;
-		case AS_S_ANGLE:   return APRSM_L_ANGLE;
-		case AS_S_SLOPE:   return APRSM_L_SLOPE;
-		case AS_S_TIME:    return APRSM_L_TIME;
-		case AS_S_DECAY:   return APRSM_L_DECAY;
-		case AS_S_SOURCE:  return APRSM_L_SOURCE;
-		default:           return APRSM_L_BCNWIN;
+		if (asNums[i].id == r)
+		{
+			return &asNums[i];
+		}
 	}
+	return NULL;
+}
+
+static const asEnum_t *asEnumOf(int r)
+{
+	for (unsigned i = 0; i < (sizeof(asEnums) / sizeof(asEnums[0])); i++)
+	{
+		if (asEnums[i].id == r)
+		{
+			return &asEnums[i];
+		}
+	}
+	return NULL;
 }
 
 static const char *asLabel(int r)
 {
-	return (r >= AS_S_MODE) ? asStockLabel(r) : fieldLabel(r);
+	const asNum_t *n;
+	const asEnum_t *e;
+
+	if (r < AS_S_MODE)
+	{
+		return fieldLabel(r);
+	}
+	n = asNumOf(r);
+	if (n != NULL)
+	{
+		return n->label;
+	}
+	e = asEnumOf(r);
+	return (e != NULL) ? e->label : "";
 }
 
-static void asStockValue(int r, char *b, size_t n)
+static uint8_t asEnumGet(int r)
 {
 	const aprsBeaconingSettings_t *s = &aprsSettingsCopy;
 
 	switch (r)
 	{
-		case AS_S_MODE:
-		{
-			static const char *const names[] = { APRSM_V_BM0, APRSM_V_BM1, APRSM_V_BM2, APRSM_V_BM3, APRSM_V_BM4 };
-
-			snprintf(b, n, "%s", names[((unsigned)s->mode < (sizeof(names) / sizeof(names[0]))) ? (unsigned)s->mode : 0U]);
-			break;
-		}
-		case AS_S_POWER:
-			if (s->power == 0U)
-			{
-				snprintf(b, n, "%s", APRSM_V_PWR_CH);
-			}
-			else
-			{
-				snprintf(b, n, "%s%s", getPowerLevel((uint8_t)(s->power - 1U)), getPowerLevelUnit((uint8_t)(s->power - 1U)));
-			}
-			break;
-		case AS_S_BINT:
-		{
-			unsigned tenths = (unsigned)(((uint32_t)initialIntervalsInSecs[(s->initialInterval <= APRS_BEACON_INITIAL_INTERVAL_MAX) ? s->initialInterval : 0U] * 10U) / 60U);
-
-			if ((tenths % 10U) != 0U)
-			{
-				snprintf(b, n, APRSM_V_MIN_D, tenths / 10U, tenths % 10U);
-			}
-			else
-			{
-				snprintf(b, n, APRSM_V_MIN, tenths / 10U);
-			}
-			break;
-		}
-		case AS_S_COMPR:
-			snprintf(b, n, "%s", (s->state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) ? APRSM_V_ON : APRSM_V_OFF);
-			break;
-		case AS_S_DECAY:
-			snprintf(b, n, "%s", (s->state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) ? APRSM_V_ON : APRSM_V_OFF);
-			break;
-		case AS_S_SLOW:
-			snprintf(b, n, APRSM_V_MIN, (unsigned)s->smart.slowRate);
-			break;
-		case AS_S_FAST:
-			snprintf(b, n, APRSM_V_SEC, (unsigned)s->smart.fastRate);
-			break;
-		case AS_S_LOWSPD:
-			snprintf(b, n, APRSM_V_KMH, (unsigned)s->smart.lowSpeed);
-			break;
-		case AS_S_HISPD:
-			snprintf(b, n, APRSM_V_KMH, (unsigned)s->smart.highSpeed);
-			break;
-		case AS_S_ANGLE:
-			snprintf(b, n, APRSM_V_DEG, (unsigned)s->smart.turnAngle, 176);
-			break;
-		case AS_S_SLOPE:
-			snprintf(b, n, "%u", (unsigned)s->smart.turnSlope * 10U);
-			break;
-		case AS_S_TIME:
-			snprintf(b, n, APRSM_V_SEC, (unsigned)s->smart.turnTime);
-			break;
-		case AS_S_SOURCE:
-			snprintf(b, n, "%s", ((s->state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U) ? APRSM_V_SRC_GPS : APRSM_V_SRC_CH);
-			break;
-		default:   /* AS_S_BCNWIN */
-		{
-			uint8_t w = aprsRxBcnWinMode();
-
-			snprintf(b, n, "%s", (w == 1U) ? APRSRX_OPT_BCNWIN_NEW : ((w == 2U) ? APRSRX_OPT_BCNWIN_OFF : APRSRX_OPT_BCNWIN_ALL));
-			break;
-		}
+		case AS_S_MODE:   return (uint8_t)s->mode;
+		case AS_S_COMPR:  return ((s->state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0U) ? 1U : 0U;
+		case AS_S_DECAY:  return ((s->state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) != 0U) ? 1U : 0U;
+		case AS_S_SOURCE: return ((s->state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U) ? 1U : 0U;
+		default:          return aprsRxBcnWinMode();
 	}
+}
+
+static void asEnumSet(int r, uint8_t v)
+{
+	aprsBeaconingSettings_t *s = &aprsSettingsCopy;
+	uint8_t bit = 0U;
+
+	switch (r)
+	{
+		case AS_S_MODE:
+			s->mode = (aprsBeaconingMode_t)v;
+			return;
+		case AS_S_BCNWIN:
+			aprsRxBcnWinSetMode(v);
+			return;
+		case AS_S_COMPR:  bit = (uint8_t)APRS_BEACONING_STATE_COMPRESSED_FORMAT; break;
+		case AS_S_DECAY:  bit = (uint8_t)APRS_BEACONING_STATE_DECAY_ALGO_ENABLED; break;
+		default:          /* AS_S_SOURCE: канал / GPS -- два біти стану (інший скидається) */
+			s->state = (aprsBeaconingStates_t)(((uint8_t)s->state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL | APRS_BEACONING_STATE_LOCATION_FROM_GPS)) |
+					(uint8_t)((v != 0U) ? APRS_BEACONING_STATE_LOCATION_FROM_GPS : APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL));
+			return;
+	}
+	s->state = (aprsBeaconingStates_t)((v != 0U) ? ((uint8_t)s->state | bit) : ((uint8_t)s->state & (uint8_t)~bit));
+}
+
+static void asStockValue(int r, char *b, size_t n)
+{
+	const aprsBeaconingSettings_t *s = &aprsSettingsCopy;
+	const asNum_t *nm = asNumOf(r);
+
+	if (nm == NULL)
+	{
+		const asEnum_t *e = asEnumOf(r);
+		uint8_t v = asEnumGet(r);
+
+		snprintf(b, n, "%s", ((e != NULL) && (v < e->count)) ? e->names[v] : APRSM_V_NONE);
+		return;
+	}
+	if (r == AS_S_POWER)
+	{
+		if (s->power == 0U)
+		{
+			snprintf(b, n, "%s", APRSM_V_PWR_CH);
+		}
+		else
+		{
+			snprintf(b, n, "%s%s", getPowerLevel((uint8_t)(s->power - 1U)), getPowerLevelUnit((uint8_t)(s->power - 1U)));
+		}
+		return;
+	}
+	if (r == AS_S_BINT)
+	{
+		unsigned tenths = (unsigned)(((uint32_t)initialIntervalsInSecs[(s->initialInterval <= APRS_BEACON_INITIAL_INTERVAL_MAX) ? s->initialInterval : 0U] * 10U) / 60U);
+
+		if ((tenths % 10U) != 0U)
+		{
+			snprintf(b, n, APRSM_V_MIN_D, tenths / 10U, tenths % 10U);
+		}
+		else
+		{
+			snprintf(b, n, APRSM_V_MIN, tenths / 10U);
+		}
+		return;
+	}
+	snprintf(b, n, nm->fmt, (unsigned)(((const uint8_t *)s)[nm->off]) * (unsigned)nm->mul, 176);   /* 176 -- знак градуса для APRSM_V_DEG */
 }
 
 static void asValue(int r, char *b, size_t n)
@@ -987,73 +1051,34 @@ static void asValue(int r, char *b, size_t n)
 	}
 }
 
-static uint8_t asClampStep(uint8_t v, int dir, uint8_t step, uint8_t lo, uint8_t hi)
-{
-	int n = (int)v + (dir * (int)step);
-
-	return (uint8_t)((n < (int)lo) ? lo : ((n > (int)hi) ? hi : n));
-}
-
 /* ←→ на стоковому рядку. big -- SK2 утримується: крок як у стоковому меню. */
 static void asStockStep(int r, int dir, bool big)
 {
-	aprsBeaconingSettings_t *s = &aprsSettingsCopy;
+	const asNum_t *nm = asNumOf(r);
 
-	switch (r)
+	if (nm == NULL)
 	{
-		case AS_S_MODE:
-			s->mode = (aprsBeaconingMode_t)asClampStep((uint8_t)s->mode, dir, 1U, (uint8_t)APRS_BEACONING_MODE_OFF, (uint8_t)APRS_BEACONING_MODE_SMART_BEACONING);
-			break;
-		case AS_S_POWER:
-			s->power = asClampStep(s->power, dir, 1U, 0U, (uint8_t)(MAX_POWER_SETTING_NUM + CODEPLUG_MIN_PER_CHANNEL_POWER));
-			break;
-		case AS_S_BINT:
-			s->initialInterval = asClampStep(s->initialInterval, dir, 1U, APRS_BEACON_INITIAL_INTERVAL_MIN, APRS_BEACON_INITIAL_INTERVAL_MAX);
-			break;
-		case AS_S_COMPR:
-		case AS_S_DECAY:
-		{
-			uint8_t bit = (r == AS_S_COMPR) ? (uint8_t)APRS_BEACONING_STATE_COMPRESSED_FORMAT : (uint8_t)APRS_BEACONING_STATE_DECAY_ALGO_ENABLED;
+		const asEnum_t *e = asEnumOf(r);
+		int v = (int)asEnumGet(r) + dir;
 
-			s->state = (aprsBeaconingStates_t)((dir > 0) ? ((uint8_t)s->state | bit) : ((uint8_t)s->state & (uint8_t)~bit));
-			break;
-		}
-		case AS_S_SLOW:
-			s->smart.slowRate = asClampStep(s->smart.slowRate, dir, big ? 10U : 1U, APRS_SMART_BEACON_SLOW_RATE_MIN, APRS_SMART_BEACON_SLOW_RATE_MAX);
-			break;
-		case AS_S_FAST:
-			s->smart.fastRate = asClampStep(s->smart.fastRate, dir, big ? 10U : 1U, APRS_SMART_BEACON_FAST_RATE_MIN, APRS_SMART_BEACON_FAST_RATE_MAX);
-			break;
-		case AS_S_LOWSPD:
-			s->smart.lowSpeed = asClampStep(s->smart.lowSpeed, dir, big ? 4U : 1U, APRS_SMART_BEACON_LOW_SPEED_MIN, APRS_SMART_BEACON_LOW_SPEED_MAX);
-			break;
-		case AS_S_HISPD:
-			s->smart.highSpeed = asClampStep(s->smart.highSpeed, dir, big ? 10U : 1U, APRS_SMART_BEACON_HIGH_SPEED_MIN, APRS_SMART_BEACON_HIGH_SPEED_MAX);
-			break;
-		case AS_S_ANGLE:
-			s->smart.turnAngle = asClampStep(s->smart.turnAngle, dir, big ? 10U : 1U, APRS_SMART_BEACON_TURN_ANGLE_MIN, APRS_SMART_BEACON_TURN_ANGLE_MAX);
-			break;
-		case AS_S_SLOPE:
-			s->smart.turnSlope = asClampStep(s->smart.turnSlope, dir, big ? 10U : 1U, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX);
-			break;
-		case AS_S_TIME:
-			s->smart.turnTime = asClampStep(s->smart.turnTime, dir, big ? 10U : 1U, APRS_SMART_BEACON_TURN_TIME_MIN, APRS_SMART_BEACON_TURN_TIME_MAX);
-			break;
-		case AS_S_SOURCE:
+		if ((e != NULL) && (v >= 0) && (v < (int)e->count))
 		{
-			uint8_t st = (uint8_t)s->state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL | APRS_BEACONING_STATE_LOCATION_FROM_GPS);
-
-#if defined(HAS_GPS)
-			st |= (uint8_t)((dir > 0) ? APRS_BEACONING_STATE_LOCATION_FROM_GPS : APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
-#else
-			st |= (uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL;   /* GPS нема -- єдине джерело: позиція каналу */
+#if !defined(HAS_GPS)
+			if (r == AS_S_SOURCE)
+			{
+				return;   /* GPS нема -- єдине джерело: позиція каналу */
+			}
 #endif
-			s->state = (aprsBeaconingStates_t)st;
-			break;
+			asEnumSet(r, (uint8_t)v);
 		}
-		default:   /* AS_S_BCNWIN */
-			aprsRxBcnWinSetMode(asClampStep(aprsRxBcnWinMode(), dir, 1U, 0U, 2U));
-			break;
+		return;
+	}
+	{
+		uint8_t *f = &((uint8_t *)&aprsSettingsCopy)[nm->off];
+		int hi = (r == AS_S_POWER) ? (MAX_POWER_SETTING_NUM + CODEPLUG_MIN_PER_CHANNEL_POWER) : (int)nm->hi;
+		int v = (int)*f + (dir * ((big && (r != AS_S_POWER)) ? (int)nm->step : 1));
+
+		*f = (uint8_t)((v < (int)nm->lo) ? nm->lo : ((v > hi) ? hi : v));
 	}
 }
 
@@ -1134,9 +1159,7 @@ static void asRowGreen(int r)
 	{
 		if ((r == AS_S_COMPR) || (r == AS_S_DECAY))
 		{
-			bool on = ((aprsSettingsCopy.state & ((r == AS_S_COMPR) ? APRS_BEACONING_STATE_COMPRESSED_FORMAT : APRS_BEACONING_STATE_DECAY_ALGO_ENABLED)) != 0U);
-
-			asStockStep(r, on ? -1 : +1, false);
+			asEnumSet(r, (uint8_t)(asEnumGet(r) ^ 1U));
 		}
 		return;
 	}
