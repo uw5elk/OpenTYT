@@ -375,6 +375,173 @@ static void testR14(void)
 	}
 }
 
+/* NMEA-речення з правильною контрольною сумою */
+static void nmea(char *out, size_t cap, const char *body)
+{
+	uint8_t x = 0;
+
+	for (size_t i = 0; body[i]; i++) { x ^= (uint8_t)body[i]; }
+	snprintf(out, cap, "$%s*%02X", body, x);
+}
+
+static void testStage3(void)
+{
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	uint8_t b[400];
+	char in[200];
+
+	printf("== R14 етап 3: '!DAO!' застосовується ==\n");
+	pf("N0CALL", 7, "!4903.50N/07201.75W>x !W29!", &ax, &pk, b);
+	CHECK((pk.latU == dm(49, 3, 50) + 33) && (pk.lonU == -dm(72, 1, 75) - 150) && !strcmp(pk.text, "x"), "!W29!: широта +33 мкград (2 тис. хв), довгота -150 (9 тис. хв) (%d %d)", pk.latU - dm(49, 3, 50), pk.lonU + dm(72, 1, 75));
+	pf("N0CALL", 7, "!4903.50S/07201.75E>!w+5!", &ax, &pk, b);
+	CHECK((pk.latU == -(dm(49, 3, 50) + (10 * 11 + 3) / 6)) && (pk.lonU == dm(72, 1, 75) + (20 * 11 + 3) / 6), "!w+5!: base91, знак від нуля (%d %d)", pk.latU, pk.lonU);
+	pf("N0CALL", 7, "!4903.50N/07201.75W>!W  !", &ax, &pk, b);
+	CHECK((pk.latU == dm(49, 3, 50)) && (pk.lonU == -dm(72, 1, 75)), "два пробіли -- без змін");
+
+	printf("== R14 етап 3: запити, метадані телеметрії, бюлетені ==\n");
+	pf("N0CALL", 7, ":N0CALL-7 :?APRS?", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_OTHER) && (strstr(pk.text, "?APRS?") != NULL), "?APRS? -- не повідомлення, текст видно");
+	pf("N0CALL", 7, ":N0CALL-7 :?APRSP", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "?APRSP -- не повідомлення");
+	pf("N0CALL", 7, ":N0CALL-7 :?IGATE?", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "?IGATE? -- не повідомлення");
+	pf("N0CALL", 7, ":N0CALL-7 :PARM.Vin,Temp", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "PARM. -- не повідомлення");
+	pf("N0CALL", 7, ":N0CALL-7 :UNIT.V,C", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "UNIT. -- не повідомлення");
+	pf("N0CALL", 7, ":N0CALL-7 :EQNS.0,5,0", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "EQNS. -- не повідомлення");
+	pf("N0CALL", 7, ":N0CALL-7 :BITS.11111111,Test", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "BITS. -- не повідомлення");
+	pf("N0CALL", 7, ":N0CALL-7 :?where are you{12", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_MESSAGE) && !strcmp(pk.msgId, "12"), "людське \"?where...\" -- звичайне повідомлення з номером");
+	pf("N0CALL", 7, ":N0CALL-7 :?? hi", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_MESSAGE, "\"?? hi\" -- повідомлення");
+	pf("N0CALL", 7, ":N0CALL-7 :PARMA test", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_MESSAGE, "\"PARMA test\" (без крапки) -- повідомлення");
+	pf("N0CALL", 7, ":BLN1     :Meeting tonight", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_MESSAGE) && !aprsMsgIsForUs(pk.msgTo, "N0CALL", 7), "BLN1 -- не нам (ACK не йде)");
+
+	printf("== R14 етап 3: NMEA ==\n");
+	nmea(in + 0, sizeof(in), "GPRMC,092751.000,A,5321.6802,N,00630.3372,W,10.6,31.66,280511,,,A");
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && pk.hasPos && (labs((long)pk.latU - 53361337L) <= 2) && (labs((long)pk.lonU + 6505620L) <= 2) && (pk.speedKn == 11) && (pk.course == 32) && !strcmp(pk.text, "NMEA GPRMC"),
+			"GPRMC: %d %d, %u вуз., курс %u, «%s»", pk.latU, pk.lonU, pk.speedKn, pk.course, pk.text);
+	nmea(in, sizeof(in), "GNGGA,092750.000,5321.6802,S,00630.3372,E,1,8,1.03,61.7,M,55.2,M,,");
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && (pk.latU < 0) && (pk.lonU > 0) && pk.hasAlt && (pk.altM == 62) && !strcmp(pk.text, "NMEA GNGGA"), "GNGGA: S/E, висота %d м, «%s»", pk.altM, pk.text);
+	nmea(in, sizeof(in), "GPRMC,092751.000,V,5321.6802,N,00630.3372,W,0.06,31.66,280511,,,A");
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "RMC зі статусом V -- «інше»");
+	nmea(in, sizeof(in), "GPGGA,092750.000,5321.6802,N,00630.3372,W,0,8,1.03,61.7,M,55.2,M,,");
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "GGA без фіксації (якість 0) -- «інше»");
+	nmea(in, sizeof(in), "GPRMC,092751.000,A,5321.6802,N,00630.3372,W,0.06,31.66,280511,,,A");
+	in[strlen(in) - 1] ^= 1;
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK((pk.type == APRS_T_OTHER) && !pk.hasPos, "хибна контрольна сума -- «інше»");
+	pf("N0CALL", 7, "$GPRMC,092751.000,A,5321.6802,N,00630.3372,W,0.06,31.66,280511,,,A", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "без контрольної суми -- «інше»");
+	nmea(in, sizeof(in), "GPRMC,092751.000,A,5321.68,N,00630.3372,W,0.06,31.66,280511,,,A");
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK(pk.type == APRS_T_POSITION, "коротка дробова частина -- ок");
+	nmea(in, sizeof(in), "GPRMC,092751.000,A,9121.6802,N,00630.3372,W,0.06,31.66,280511,,,A");
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "широта понад 90 -- «інше»");
+	nmea(in, sizeof(in), "GPXXX,1,2,3,4,5,6,7,8,9,10");
+	pf("N0CALL", 7, in, &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "інше речення -- «інше»");
+	pf("N0CALL", 7, "$GPRMC,0927*", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "обірване речення -- без падіння");
+
+	printf("== R14 етап 3: Maidenhead-грід ==\n");
+	pf("N0CALL", 7, "[IO91SX]", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && (labs((long)pk.latU - 51979167L) < 1500) && (labs((long)pk.lonU + 458333L) < 1500) && !strcmp(pk.text, "grid IO91SX"),
+			"[IO91SX]: %d %d «%s»", pk.latU, pk.lonU, pk.text);
+	pf("N0CALL", 7, "[io91]", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && (pk.latU == 51500000) && (pk.lonU == -1000000) && !strcmp(pk.text, "grid IO91"), "[io91]: %d %d", pk.latU, pk.lonU);
+	pf("N0CALL", 7, "[ZZ91]", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "[ZZ91] -- не грід");
+	pf("N0CALL", 7, "[IO9]", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "обірваний грід -- «інше»");
+}
+
+
+/* Як parseFrom(), але кадр лежить у купі РІВНО за розміром -- ASan ловить будь-яке читання за кінцем інфополя. */
+static int parseExact(const char *src, int ssid, const uint8_t *info, int infoLen, aprsAx25_t *ax, aprsPacket_t *pk)
+{
+	uint8_t tmp[400];
+	int n = buildFrame(tmp, "APDW18", src, ssid, 0, 0, info, infoLen);
+	uint8_t *h = (uint8_t *)malloc((size_t)n);
+	int ok;
+
+	memcpy(h, tmp, (size_t)n);
+	ok = aprsAx25Parse(h, (uint16_t)n, ax);
+	if (ok)
+	{
+		(void)aprsAx25Unwrap(ax);
+		aprsPacketParse(ax, pk);
+	}
+	else
+	{
+		memset(pk, 0, sizeof(*pk));
+	}
+	/* ax->info вказує в h: звільняти лише після розбору */
+	free(h);
+	return ok;
+}
+
+/* Усі префікси й випадкові спотворення типових кадрів: жодного падіння/виходу за межі (під ASan/UBSan -- справжня перевірка) */
+static void testFuzz(void)
+{
+	static const char *samples[] =
+	{
+		";" BEACON_IG,
+		")AID #2!4903.50N/07201.75WAhello |ss11| !W23!",
+		"!/65RzVx.&[  !144.800MHz Toff +000 TYT MD-UV390 /A=001234",
+		"!4903.50N/07201.75W_310/004g006t077r000p000h50b10265",
+		"@092345z4903.50N/07201.75W>088/010PHG5360 test",
+		"_10090556c220s004g005t077r000p000P000h50b09900wRSW",
+		"<IGATE,MSG_CNT=0,PKT_CNT=0",
+		"$GPRMC,092751.000,A,5321.6802,N,00630.3372,W,0.06,31.66,280511,,,A*45",
+		"[IO91SX]",
+		":N0CALL-7 :Hello{12",
+		"`CF\"l#![/`\"3z}_",
+		"}UW5ELK-1>APDW18,TCPIP*,qAC,T2UKRAINE:!4753.25NR03316.86E&438.950MHz T082 -760 DMR",
+	};
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	uint8_t info[160];
+	unsigned long seed = 12345UL;
+	int n = 0, bad = 0;
+
+	printf("== R14: префікси й спотворення кадрів (під ASan/UBSan) ==\n");
+	for (size_t s = 0; s < (sizeof(samples) / sizeof(samples[0])); s++)
+	{
+		size_t l = strlen(samples[s]);
+
+		for (size_t cut = 0; cut <= l; cut++)
+		{
+			memcpy(info, samples[s], cut);
+			if (parseExact("UW5ELK", 1, info, (int)cut, &ax, &pk)) { n++; }
+			if (strlen(pk.text) >= sizeof(pk.text)) { bad++; }
+		}
+		for (int k = 0; k < 2000; k++)
+		{
+			memcpy(info, samples[s], l);
+			for (int m = 0; m < 3; m++)
+			{
+				seed = seed * 1103515245UL + 12345UL;
+				info[(seed >> 8) % l] = (uint8_t)(seed >> 16);
+			}
+			if (parseExact("UW5ELK", 1, info, (int)l, &ax, &pk)) { n++; }
+			if (strlen(pk.text) >= sizeof(pk.text)) { bad++; }
+		}
+	}
+	CHECK(bad == 0, "розібрано %d спотворених кадрів, тексти в межах", n);
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -1124,6 +1291,8 @@ int main(void)
 	}
 
 	testR14();
+	testStage3();
+	testFuzz();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

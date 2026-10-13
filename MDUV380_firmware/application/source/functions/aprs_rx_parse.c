@@ -919,6 +919,26 @@ static bool csIsB91(uint8_t c)
 	return (c >= 33U) && (c <= 123U);
 }
 
+/* '!DAO!': додаткова точність до мінут позиції. Велика літера датуму -- цифра = тисячні частки хвилини (1/60000 градуса ~ 16.7 мкград);
+ * мала -- base91, (знак - 33) * 1.10 соту частку сотої хвилини (~ 1.83 мкград на одиницю). Пробіл -- точності нема. Знак -- від нуля (S/W -- у мінус). */
+static void csDao(aprsPacket_t *p, uint8_t datum, uint8_t a, uint8_t o)
+{
+	int32_t la = 0, lo = 0;
+
+	if ((datum >= 'A') && (datum <= 'Z'))
+	{
+		la = isDig(a) ? (((int32_t)(a - '0') * 1000 + 30) / 60) : 0;
+		lo = isDig(o) ? (((int32_t)(o - '0') * 1000 + 30) / 60) : 0;
+	}
+	else if ((a >= 33U) && (a <= 123U) && (o >= 33U) && (o <= 123U))
+	{
+		la = ((int32_t)(a - 33U) * 11 + 3) / 6;
+		lo = ((int32_t)(o - 33U) * 11 + 3) / 6;
+	}
+	p->latU += (p->latU < 0) ? -la : la;
+	p->lonU += (p->lonU < 0) ? -lo : lo;
+}
+
 /* Витягти з коментаря розширення (за порядком специфікації: розширення, частота, погода; далі "/A=", телеметрія "|..|", "!DAO!" де завгодно),
  * решту -- чистий текст у cp1251 (aprsDecodeText) у out. c -- сирі байти коментаря (n байт). Один прохід; на стеку лише список вирізок
  * (8 x 4 Б). ';' як розділювач ніде не використовується (коментар може його містити). */
@@ -998,6 +1018,7 @@ static void commentStrip(aprsPacket_t *p, const uint8_t *c, size_t n, char *out,
 					(lo && ((csIsB91(c[i + 2U]) && csIsB91(c[i + 3U])) || ((c[i + 2U] == ' ') && (c[i + 3U] == ' ')))))
 			{
 				csCut(&k, i, 5U);
+				csDao(p, d, c[i + 2U], c[i + 3U]);
 				i += 4U;
 				continue;
 			}
@@ -1190,6 +1211,27 @@ static size_t micEAlt(aprsPacket_t *p, const uint8_t *c, size_t n)
 	return 0U;
 }
 
+/* Текст повідомлення -- спрямований запит ("?APRS?", "?APRSP", "?PING?", "?IGATE?", "?WX?": '?' + ВЕЛИКІ літери/цифри) або метадані телеметрії
+ * ("PARM.", "UNIT.", "EQNS.", "BITS."). Людське "?де ти?" (малі літери) запитом не вважається. */
+static bool msgIsQueryOrMeta(const uint8_t *t, size_t n)
+{
+	if ((n >= 5U) && ((memcmp(t, "PARM.", 5) == 0) || (memcmp(t, "UNIT.", 5) == 0) || (memcmp(t, "EQNS.", 5) == 0) || (memcmp(t, "BITS.", 5) == 0)))
+	{
+		return true;
+	}
+	if ((n >= 2U) && (t[0] == '?'))
+	{
+		size_t i = 1;
+
+		while ((i < n) && (((t[i] >= 'A') && (t[i] <= 'Z')) || isDig(t[i])))
+		{
+			i++;
+		}
+		return (i >= 3U) && ((i == n) || (t[i] == '?') || (t[i] == ' ') || (t[i] == '{'));
+	}
+	return false;
+}
+
 /* Повідомлення: ":" + адресат(9, пробіли) + ":" + текст [+ "{номер"] */
 static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 {
@@ -1199,6 +1241,10 @@ static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 	if ((n < 11U) || (in[10] != ':'))
 	{
 		return;   /* лишається APRS_T_OTHER */
+	}
+	if (msgIsQueryOrMeta(in + 11, n - 11U))
+	{
+		return;   /* R14: запит ("?APRS?") або метадані телеметрії -- не повідомлення: без ACK, у чат не потрапляє, текст видно як «інше» */
 	}
 	size_t k = 0;
 	for (size_t i = 0; i < 9U; i++)
@@ -1254,6 +1300,282 @@ static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 		p->msgAck = true;
 	}
 	setText(p, t, tl);
+}
+
+/* ---- R14 етап 3: сирий NMEA ('$GPRMC', '$GPGGA') і Maidenhead-грід '[IO91SX]' ----------------------------------------------------- */
+
+/* NMEA: поле n (0 -- назва речення) без копіювання; false -- поля нема. */
+static bool nmeaField(const uint8_t *s, size_t len, unsigned n, const uint8_t **f, size_t *fl)
+{
+	size_t i = 0;
+
+	for (unsigned k = 0; k < n; k++)
+	{
+		while ((i < len) && (s[i] != ','))
+		{
+			i++;
+		}
+		if (i >= len)
+		{
+			return false;
+		}
+		i++;
+	}
+	*f = s + i;
+	*fl = 0;
+	while (((i + *fl) < len) && (s[i + *fl] != ','))
+	{
+		(*fl)++;
+	}
+	return true;
+}
+
+/* "ddmm.mmmm" (або dddmm.mmmm) + N/S/E/W -> мікроградуси; degDigits 2 або 3. */
+static bool nmeaCoord(const uint8_t *f, size_t fl, const uint8_t *h, size_t hl, unsigned degDigits, int32_t *out)
+{
+	long deg = 0, minx = 0;
+	unsigned dec = 0;
+	size_t i = degDigits;
+	bool dot = false;
+
+	if ((fl < (size_t)(degDigits + 3U)) || (hl != 1U))
+	{
+		return false;
+	}
+	for (size_t k = 0; k < degDigits; k++)
+	{
+		if (isDig(f[k]) == false) { return false; }
+		deg = deg * 10 + (f[k] - '0');
+	}
+	if ((isDig(f[i]) == false) || (isDig(f[i + 1U]) == false))
+	{
+		return false;
+	}
+	minx = (f[i] - '0') * 10 + (f[i + 1U] - '0');
+	for (i += 2U; i < fl; i++)
+	{
+		if ((f[i] == '.') && (dot == false))
+		{
+			dot = true;
+		}
+		else if (dot && isDig(f[i]))
+		{
+			if (dec < 4U)
+			{
+				minx = minx * 10 + (f[i] - '0');
+				dec++;
+			}
+		}
+		else
+		{
+			return false;
+		}
+	}
+	while (dec < 4U)
+	{
+		minx *= 10;
+		dec++;
+	}
+	/* хвилини * 10000 -> мікроградуси: (minx / 1e4) * 1e6 / 60 = minx * 5 / 3 */
+	long v = deg * 1000000L + (minx * 5L + 1L) / 3L;
+	if (((h[0] != 'N') && (h[0] != 'S') && (h[0] != 'E') && (h[0] != 'W')) || (v > ((degDigits == 2U) ? 90000000L : 180000000L)))
+	{
+		return false;
+	}
+	*out = (int32_t)(((h[0] == 'S') || (h[0] == 'W')) ? -v : v);
+	return true;
+}
+
+/* Число з десятковою крапкою (до 3 знаків) -> округлене ціле. */
+static bool nmeaNum(const uint8_t *f, size_t fl, long *out)
+{
+	long v = 0;
+	size_t i = 0;
+	bool neg = false;
+
+	if ((fl > 0U) && (f[0] == '-'))
+	{
+		neg = true;
+		i = 1U;
+	}
+	if (i >= fl)
+	{
+		return false;
+	}
+	for (; (i < fl) && isDig(f[i]); i++)
+	{
+		v = v * 10 + (f[i] - '0');
+	}
+	if ((i < fl) && (f[i] == '.'))
+	{
+		if (((i + 1U) < fl) && isDig(f[i + 1U]) && ((f[i + 1U] - '0') >= 5))
+		{
+			v++;
+		}
+		i = fl;
+	}
+	if (i != fl)
+	{
+		return false;
+	}
+	*out = neg ? -v : v;
+	return true;
+}
+
+/* '$GPRMC' / '$GPGGA' (талкер будь-який: другий символ -- літера) з перевіркою контрольної суми '*hh'. true -- позицію взято. */
+static bool parseNmea(const aprsAx25_t *ax, aprsPacket_t *p)
+{
+	const uint8_t *in = ax->info;
+	size_t n = ax->infoLen;
+	const uint8_t *f1, *f2, *f3, *f4;
+	size_t l1, l2, l3, l4;
+	size_t star = 0;
+	uint8_t x = 0;
+	bool rmc;
+	long v;
+
+	if ((n < 20U) || (in[1] != 'G') || (in[2] < 'A') || (in[2] > 'Z') || (in[6] != ','))
+	{
+		return false;
+	}
+	for (size_t i = 1; i < n; i++)
+	{
+		if (in[i] == '*')
+		{
+			star = i;
+			break;
+		}
+		x ^= in[i];
+	}
+	if ((star == 0U) || ((star + 3U) > n))
+	{
+		return false;
+	}
+	{
+		int h1 = (in[star + 1U] >= 'a') ? (in[star + 1U] - 'a' + 10) : ((in[star + 1U] >= 'A') ? (in[star + 1U] - 'A' + 10) : (in[star + 1U] - '0'));
+		int h2 = (in[star + 2U] >= 'a') ? (in[star + 2U] - 'a' + 10) : ((in[star + 2U] >= 'A') ? (in[star + 2U] - 'A' + 10) : (in[star + 2U] - '0'));
+
+		if ((h1 < 0) || (h1 > 15) || (h2 < 0) || (h2 > 15) || (((h1 << 4) | h2) != x))
+		{
+			return false;   /* контрольна сума не збіглась */
+		}
+	}
+	rmc = (memcmp(in + 3, "RMC", 3) == 0);
+	if ((rmc == false) && (memcmp(in + 3, "GGA", 3) != 0))
+	{
+		return false;
+	}
+	{
+		const uint8_t *s = in + 1;
+		size_t len = star - 1U;
+		const uint8_t *fv;
+		size_t lv;
+
+		if (rmc)
+		{
+			/* 0 name, 1 time, 2 status, 3 lat, 4 N/S, 5 lon, 6 E/W, 7 speed(kn), 8 course */
+			if ((nmeaField(s, len, 2, &fv, &lv) == false) || (lv != 1U) || (fv[0] != 'A'))
+			{
+				return false;
+			}
+			if ((nmeaField(s, len, 3, &f1, &l1) == false) || (nmeaField(s, len, 4, &f2, &l2) == false) ||
+					(nmeaField(s, len, 5, &f3, &l3) == false) || (nmeaField(s, len, 6, &f4, &l4) == false))
+			{
+				return false;
+			}
+		}
+		else
+		{
+			/* 0 name, 1 time, 2 lat, 3 N/S, 4 lon, 5 E/W, 6 quality, 7 sats, 8 hdop, 9 alt, 10 M */
+			if ((nmeaField(s, len, 6, &fv, &lv) == false) || (lv != 1U) || (fv[0] == '0'))
+			{
+				return false;
+			}
+			if ((nmeaField(s, len, 2, &f1, &l1) == false) || (nmeaField(s, len, 3, &f2, &l2) == false) ||
+					(nmeaField(s, len, 4, &f3, &l3) == false) || (nmeaField(s, len, 5, &f4, &l4) == false))
+			{
+				return false;
+			}
+		}
+		if ((nmeaCoord(f1, l1, f2, l2, 2U, &p->latU) == false) || (nmeaCoord(f3, l3, f4, l4, 3U, &p->lonU) == false))
+		{
+			return false;
+		}
+		if (rmc)
+		{
+			if (nmeaField(s, len, 7, &fv, &lv) && nmeaNum(fv, lv, &v) && (v >= 0))
+			{
+				p->speedKn = (uint16_t)((v > 999) ? 999 : v);
+			}
+			if (nmeaField(s, len, 8, &fv, &lv) && nmeaNum(fv, lv, &v) && (v > 0) && (v <= 360))
+			{
+				p->course = (uint16_t)v;
+			}
+		}
+		else if (nmeaField(s, len, 9, &fv, &lv) && nmeaNum(fv, lv, &v))
+		{
+			p->altM = (int32_t)v;
+			p->hasAlt = true;
+		}
+	}
+	snprintf(p->text, sizeof(p->text), "NMEA G%c%s", (char)in[2], rmc ? "RMC" : "GGA");
+	return true;
+}
+
+/* Maidenhead '[IO91SX]' / '[IO91]': центр квадрата (4 знаки -- 2 x 1 град., 6 знаків -- 5' x 2.5'). */
+static bool parseGrid(const aprsAx25_t *ax, aprsPacket_t *p)
+{
+	const uint8_t *in = ax->info;
+	size_t n = ax->infoLen;
+	uint8_t g[6];
+	size_t gl;
+	int32_t lon, lat;
+
+	if (n < 5U)
+	{
+		return false;
+	}
+	for (size_t i = 0; i < 4U; i++)
+	{
+		g[i] = in[1U + i];
+		if (i < 2U)
+		{
+			if ((g[i] >= 'a') && (g[i] <= 'z')) { g[i] = (uint8_t)(g[i] - 'a' + 'A'); }
+			if ((g[i] < 'A') || (g[i] > 'R')) { return false; }
+		}
+		else if (isDig(g[i]) == false)
+		{
+			return false;
+		}
+	}
+	gl = 4U;
+	if ((n >= 7U) && (in[5] != ']'))
+	{
+		g[4] = in[5];
+		g[5] = in[6];
+		for (size_t i = 4; i < 6U; i++)
+		{
+			if ((g[i] >= 'a') && (g[i] <= 'z')) { g[i] = (uint8_t)(g[i] - 'a' + 'A'); }
+			if ((g[i] < 'A') || (g[i] > 'X')) { return false; }
+		}
+		gl = 6U;
+	}
+	lon = -180000000 + (int32_t)(g[0] - 'A') * 20000000 + (int32_t)(g[2] - '0') * 2000000;
+	lat = -90000000 + (int32_t)(g[1] - 'A') * 10000000 + (int32_t)(g[3] - '0') * 1000000;
+	if (gl == 4U)
+	{
+		lon += 1000000;
+		lat += 500000;
+	}
+	else
+	{
+		lon += (int32_t)(g[4] - 'A') * 83333 + 41667;   /* підквадрат 5' = 1/12 градуса */
+		lat += (int32_t)(g[5] - 'A') * 41667 + 20833;   /* 2.5' = 1/24 градуса */
+	}
+	p->lonU = lon;
+	p->latU = lat;
+	snprintf(p->text, sizeof(p->text), "grid %.*s", (int)gl, (const char *)g);
+	return true;
 }
 
 /* R14: погода без позиції ("_" + MMDDHHMM + поля) -- розібрані поля текстом ("25C 50% 1026.5hPa w310/6km/h g10"), далі хвіст (код ПЗ). */
@@ -1381,6 +1703,22 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 				{
 					wxText(out, in + 9 + used, n - 9U - used);
 				}
+			}
+			break;
+
+		case '$':
+			if (parseNmea(ax, out))
+			{
+				out->type = APRS_T_POSITION;
+				out->hasPos = true;
+			}
+			break;
+
+		case '[':
+			if (parseGrid(ax, out))
+			{
+				out->type = APRS_T_POSITION;
+				out->hasPos = true;
 			}
 			break;
 
