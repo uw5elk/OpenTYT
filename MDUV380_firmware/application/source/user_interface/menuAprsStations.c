@@ -214,6 +214,14 @@ static void drawPacket(void)
 	printRow(10, APRSRX_PKT_HINT);
 }
 
+/* R15: збережений маяк саме цієї станції (вікно маяка тримає одну копію -- останнього позиційного пакета) */
+static bool cardBeaconAvail(const aprsRxUi_t *ui)
+{
+	const aprsRxWin_t *w = aprsRxWindow();
+
+	return (w != NULL) && (w->call[0] != 0) && (strcmp(w->call, ui->cardCall) == 0);
+}
+
 static void drawCard(void)
 {
 	aprsRxUi_t *ui = aprsRxUi();
@@ -288,7 +296,7 @@ static void drawCard(void)
 		printRow(7, l1);
 		printRow(8, l2);
 	}
-	printRow(9, APRSRX_HINT_CARD2);   /* R15 */
+	printRow(9, cardBeaconAvail(ui) ? APRSRX_HINT_CARD2B : APRSRX_HINT_CARD2);   /* R15 */
 	printRow(10, APRSRX_HINT_CARD);
 }
 
@@ -424,6 +432,17 @@ void menuAprsPacketEnter(void)
 	draw();
 }
 
+/* R15: пункт «Останній маяк»: вікно маяка ще раз за збереженими даними (дані й час прийому не змінюються); немає -- сповіщення. */
+void menuAprsBeaconShow(void)
+{
+	if (aprsRxWindow()->call[0] == 0)
+	{
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSRX_BCN_NONE, true);
+		return;
+	}
+	aprsRxWindowShowAgain();
+}
+
 void menuAprsStationsClose(void)
 {
 	aprsRxUi()->on = 0;
@@ -534,6 +553,11 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 			{
 				ui->view = APRS_RX_VIEW_PACKET;   /* R15: «Останній пакет» з картки */
 				ui->scroll = 0;
+				redraw = true;
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR) && (ui->view == APRS_RX_VIEW_CARD) && cardBeaconAvail(ui))
+			{
+				aprsRxWindowShowAgain();   /* R15: вікно маяка цієї станції ще раз */
 				redraw = true;
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_DIAG))
@@ -647,6 +671,11 @@ int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
 	{
 		ui->view = APRS_RX_VIEW_PACKET;   /* R15 */
 		ui->scroll = 0;
+		return 1;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR) && (ui->view == APRS_RX_VIEW_CARD) && cardBeaconAvail(ui))
+	{
+		aprsRxWindowShowAgain();   /* R15 */
 		return 1;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view == APRS_RX_VIEW_CARD))

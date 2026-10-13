@@ -771,6 +771,19 @@ static bool winAllowed(void)
 	return (hardBlock() == APRS_RX_WHY_NONE);
 }
 
+/* R15: «Останній маяк» -- показати вікно ще раз за збереженими даними. Дані НЕ переписуються (час прийому лишається старий). Нема що показувати
+ * (call[0] == 0) -- нічого не робить; викликач сам перевіряє це і пише користувачеві. Далі вікно живе за правилами winTick() (ручний режим). */
+void aprsRxWindowShowAgain(void)
+{
+	if ((stateValid() == false) || (s_rx.win.call[0] == 0))
+	{
+		return;
+	}
+	s_rx.win.flags |= AWIN_F_MANUAL;
+	s_rx.win.active = true;
+	uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_BEACON, 60000, NULL, true);
+}
+
 void aprsRxWindowDismiss(void)
 {
 	if (stateValid())
@@ -788,6 +801,38 @@ static void winTick(void)
 {
 	if (s_rx.win.active == false)
 	{
+		return;
+	}
+	if (s_rx.win.flags & AWIN_F_MANUAL)
+	{
+		/* R15: вікно відкрито з меню («Останній маяк»). Воно, як і звичайне, тримається до RED, але не прив'язане до головного екрана і
+		 * каналу APRS: знімаємо лише там, де звичайне (передача, підказка, «Переслухати», хотспот/CPS...), і віддаємо екран стійкій картці. */
+		if (hardBlock() != APRS_RX_WHY_NONE)
+		{
+			if (winIsShown())
+			{
+				uiNotificationHide(true);
+			}
+			s_rx.win.active = false;
+			return;
+		}
+		if (winIsShown())
+		{
+			return;
+		}
+		if (uiNotificationIsVisible())
+		{
+			if (uiNotificationIsSms()
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+					|| uiNotificationIsCallAlert()
+#endif
+					)
+			{
+				s_rx.win.active = false;
+			}
+			return;
+		}
+		uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_BEACON, 60000, NULL, true);
 		return;
 	}
 	if ((winAllowed() == false) || (s_rx.engaged == false))
@@ -945,14 +990,20 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 	/* R13: позиційний пакет -- вікно маяка замість банера (якщо дозволено налаштуванням і зараз можна). Дані копіюємо з пакета: у записі
 	 * станції немає ні символу, ні курсу. Повідомлення нам важливіше -- воно залишає за собою екран (pend.msg), вікно тоді не готуємо. */
 	bool bcnWin = false;
+	/* R15: дані вікна зберігаємо для КОЖНОГО позиційного пакета (щоб «Останній маяк» міг показати його й тоді, коли пакет прийшов у меню або
+	 * вікно вимкнено в налаштуваннях); показується воно за тими самими правилами, що й раніше (wantShow). Вікно, що зараз на екрані або чекає
+	 * показу, інший пакет не підміняє, якщо сам не стає вікном -- як і було. */
+	bool wantShow = (s_rx.pend.msg == false) && (msgCopy == false) &&
+			aprsBeaconWindowWanted((aprsBcnWinMode_t)aprsRxBcnWinMode(), &pkt, ((st != NULL) && (st->count <= 1U))) && winAllowed();
+	bool canFill = wantShow || ((pkt.type == APRS_T_POSITION) && (s_rx.pend.msg == false) && (msgCopy == false) &&
+			(s_rx.win.active == false) && (winIsShown() == false));
 
-	if ((s_rx.pend.msg == false) && (msgCopy == false) &&
-			aprsBeaconWindowWanted((aprsBcnWinMode_t)aprsRxBcnWinMode(), &pkt, ((st != NULL) && (st->count <= 1U))) && winAllowed())
+	if (canFill)
 	{
 		aprsRxWin_t *w = &s_rx.win;
 
 		memset(w, 0, sizeof(*w));
-		w->active = true;
+		w->active = wantShow;
 		w->hasGeo = aprsRxStationGeo(st, &w->distM, &w->bearing);
 		w->course = pkt.course;
 		w->speedKn = pkt.speedKn;
@@ -982,8 +1033,8 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		w->rxSecs = (uint32_t)uiDataGlobal.dateTimeSecs;
 		snprintf(w->call, sizeof(w->call), "%s", ax.src);
 		snprintf(w->text, sizeof(w->text), "%s", (st != NULL) ? st->text : "");
-		bcnWin = true;
-		if (winIsShown())
+		bcnWin = wantShow;
+		if (wantShow && winIsShown())
 		{
 			uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_APRS_BEACON, 60000, NULL, true);   /* уже на екрані -- лише оновлюємо вміст */
 		}

@@ -177,10 +177,13 @@ typedef struct
 #define AWIN_F_ALT       0x01
 #define AWIN_F_SHIFT     0x02
 #define AWIN_F_RANGE_KM  0x04
+#define AWIN_F_MANUAL    0x08   /* R15: вікно відкрито з меню («Останній маяк») -- живе до RED незалежно від екрана й каналу */
 } aprsRxWin_t;
 const aprsRxWin_t *aprsRxWindow(void);
 /* RED на вікні (applicationMain.c): вікно закрито оператором -- чекає наступного пакета. */
 void aprsRxWindowDismiss(void);
+/* R15: «Останній маяк» -- показати вікно ще раз за збереженими даними (call[0] == 0 -- нічого). Дані й час прийому не змінює. */
+void aprsRxWindowShowAgain(void);
 /* Налаштування «Вікно маяка»: aprsBcnWinMode_t (2 вільні біти bitfieldOptions). */
 uint8_t aprsRxBcnWinMode(void);
 void aprsRxBcnWinSetMode(uint8_t mode);
