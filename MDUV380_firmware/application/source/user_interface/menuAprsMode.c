@@ -682,9 +682,29 @@ static bool editEvent(uiEvent_t *ev)
 /* ---- R11: сторінка «Повідомлення» ---------------------------------------------------------------------------- */
 
 #define AM_MSG_REDRAW_MS    500U
-#define AM_MSG_COLS         20           /* великий шрифт 8x16 на екрані 160 px */
-#define AM_MSG_FONT         FONT_SIZE_3
-#define AM_MSG_LINE_H       FONT_SIZE_3_HEIGHT
+#define AM_MSG_COLS         20           /* і великий шрифт 8x16, і малий 8x8 -- по 8 px на символ, 20 у рядку на екрані 160 px (як UI_SMS_COLS у DMR) */
+
+/* R15: шрифт тексту повідомлень -- ТОЙ САМИЙ біт «Шрифт SMS» (BIT_SMS_FONT_SMALL), що й у SMS DMR (menuMessages.c): великий 8x16 (типово)
+ * або малий 8x8. Правило те саме, що в читанні/наборі DMR. lineH -- крок рядків читання, lineHc -- крок рядків набору. */
+typedef struct
+{
+	ucFont_t font;
+	int16_t  glyphH;
+	int16_t  lineH;    /* читання */
+	int16_t  lineHc;   /* набір */
+} amMsgFont_t;
+
+static amMsgFont_t amMsgFont(void)
+{
+	amMsgFont_t f;
+	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+
+	f.font   = big ? FONT_SIZE_3 : FONT_SIZE_2;
+	f.glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;
+	f.lineH  = big ? FONT_SIZE_3_HEIGHT : 11;
+	f.lineHc = big ? FONT_SIZE_3_HEIGHT : 14;
+	return f;
+}
 
 static void gotoPage(int dir);
 
@@ -784,7 +804,7 @@ static void drawMsgList(void)
 }
 
 /* Малює рядки [first, first + rows) тексту, розбитого aprsMsgWrapLine() з шириною cols. Повертає загальну кількість рядків. */
-static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0)
+static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0, ucFont_t font, int16_t lineH)
 {
 	int pos = 0, line = 0;
 
@@ -803,7 +823,7 @@ static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0)
 
 			memcpy(one, t + ls, (size_t)n);
 			one[n] = 0;
-			displayPrintCore(0, (int16_t)(y0 + ((line - first) * AM_MSG_LINE_H)), one, AM_MSG_FONT, TEXT_ALIGN_LEFT, false);
+			displayPrintCore(0, (int16_t)(y0 + ((line - first) * lineH)), one, font, TEXT_ALIGN_LEFT, false);
 		}
 		line++;
 		pos = nx;
@@ -819,7 +839,8 @@ static void drawMsgRead(void)
 	const aprsMsgEntry_t *e = &b->list[(ri >= 0) ? ri : 0];
 	char buf[48], age[8];
 	const int16_t y0 = 38;
-	const int rows = ((111 - y0 - AM_MSG_LINE_H) / AM_MSG_LINE_H) + 1;
+	const amMsgFont_t f = amMsgFont();
+	const int rows = ((111 - y0 - f.glyphH) / f.lineH) + 1;
 	int total, maxTop;
 
 	snprintf(buf, sizeof(buf), (e->dir == AMSG_DIR_OUT) ? APRSMSG_R_TO : APRSMSG_R_FROM, e->call);
@@ -839,13 +860,13 @@ static void drawMsgRead(void)
 	}
 	printRow(1, buf);
 
-	total = drawWrapped(e->text, (int)strlen(e->text), 0, 0, y0);   /* лише порахувати */
+	total = drawWrapped(e->text, (int)strlen(e->text), 0, 0, y0, f.font, f.lineH);   /* лише порахувати */
 	maxTop = (total > rows) ? (total - rows) : 0;
 	if (mu->readTop > maxTop)
 	{
 		mu->readTop = (uint8_t)maxTop;
 	}
-	(void)drawWrapped(e->text, (int)strlen(e->text), mu->readTop, rows, y0);
+	(void)drawWrapped(e->text, (int)strlen(e->text), mu->readTop, rows, y0, f.font, f.lineH);
 	displayPrintCentered(112, APRSMSG_R_HINT, FONT_SIZE_1);
 	if (mu->readTop > 0U)
 	{
@@ -910,8 +931,10 @@ static void drawMsgCompose(void)
 	char buf[40];
 	const char *lbl = smsMtModeLabel(mu->mtMode);
 	int16_t chipW = (int16_t)((strlen(lbl) * 6U) + 4U);
-	int16_t y0 = isCall ? 30 : 26;
-	int rows = isCall ? 2 : 4;
+	const amMsgFont_t f = amMsgFont();
+	const bool big = (f.font == FONT_SIZE_3);
+	int16_t y0 = isCall ? 30 : (big ? 26 : 22);                  /* малий шрифт -- як у наборі DMR: 5 рядків по 14 px від y = 22, усе над рядком режиму (y 95) */
+	int rows = isCall ? 2 : (big ? 4 : 5);
 	int len, total, first;
 
 	if (mu->layout)
@@ -935,9 +958,9 @@ static void drawMsgCompose(void)
 	/* текст із курсором: символ, що гортається, вже в буфері; без нього -- підкреслення */
 	snprintf(cur, sizeof(cur), "%s%s", src, (mu->mt.key == 0) ? "_" : "");
 	len = (int)strlen(cur);
-	total = drawWrapped(cur, len, 0, 0, y0);
+	total = drawWrapped(cur, len, 0, 0, y0, f.font, f.lineHc);
 	first = (total > rows) ? (total - rows) : 0;   /* вікно іде за курсором: показуємо останні рядки */
-	(void)drawWrapped(cur, len, first, rows, y0);
+	(void)drawWrapped(cur, len, first, rows, y0, f.font, f.lineHc);
 	if (mu->err)
 	{
 		printRow(isCall ? 6 : 7, isCall ? APRSMSG_E_CALL : APRSMSG_E_TEXT);
