@@ -32,6 +32,7 @@
 #define APRSMSG_L_HDR         "Нових: %u  В черзі: %u"
 #define APRSMSG_L_EMPTY       "Повідомлень нема"
 #define APRSMSG_L_HINT        "GREEN:чит. *:нове <>:стор"
+#define APRSMSG_L_HINT_S      "GREEN:читати *:нове"   /* R13: екран без «Режиму APRS» -- сторінок нема */
 #define APRSMSG_L_NOTIME      "--"
 
 /* ---- читання ---- */
@@ -57,5 +58,6 @@
 #define APRSMSG_E_TEXT        "Порожній текст"
 #define APRSMSG_E_FULL        "Черга повна"
 #define APRSMSG_E_NOTX        "Не передано"
+#define APRSMSG_E_OFF         "APRS вимкнено"   /* R13: надсилання поза «Режимом APRS» -- стоковий APRS вимкнено/призупинено */
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSMSG_UA_H_ */

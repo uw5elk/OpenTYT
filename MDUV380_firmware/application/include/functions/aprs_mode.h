@@ -128,6 +128,12 @@ void aprsModeOnPtt(void);                    /* PTT у режимі: замов�
 
 /* ---- для екрана ------------------------------------------------------------------------------------- */
 aprsModeUi_t        *aprsModeUi(void);
+/* R13 (П.5): екран «Повідом. APRS» без входу в «Режим APRS». Стан екрана (aprsModeUi_t) лежить у резерві постійного блока повідомлень
+ * (callReplay.h: CALL_REPLAY_APRS_UI_BYTES), кільце «Переслухати» не позичається. Поки сесія відкрита, aprsModeUi() повертає цей стан.
+ * Open -- обнуляє екран і ставить сторінку «Повідомлення»; Close -- ідемпотентно. Сесія й «Режим APRS» одночасно не живуть. */
+bool aprsModeMsgSessionOpen(void);
+void aprsModeMsgSessionClose(void);
+bool aprsModeMsgSessionActive(void);
 aprsModeCfg_t       *aprsModeCfg(void);
 const aprsModeEff_t *aprsModeEff(void);
 const aprsModeDefaults_t *aprsModeDefaults(void);
@@ -149,7 +155,8 @@ void aprsMsgBgInit(void);
 /* Фонова черга передачі: з головного циклу (applicationMain.c) ПЕРЕД aprsBeaconingTick(). Працює на будь-якому екрані. */
 void aprsMsgBgTick(void);
 /* Поставити наше повідомлення в чергу. Повертає AMSG_OK, AMSG_E_CALL / AMSG_E_TEXT / AMSG_E_FULL або -1, якщо режим не активний
- * чи нема власного позивного (складати повідомлення можна лише з «Режиму APRS»). Саму передачу робить aprsMsgBgTick() -- навіть
+ * чи нема власного допустимого позивного; -2 -- поза режимом і APRS вимкнено/призупинено (не передасться). R13 (П.6): позивний-SSID відправника
+ * береться ЗАРАЗ (режим: його; поза режимом: стоковий) і фіксується в завданні. Саму передачу робить aprsMsgBgTick() -- навіть
  * після виходу з режиму. */
 int aprsModeMsgSend(const char *to, const char *cp1251Text);
 bool aprsModeHasCall(void);                      /* власний позивний режиму дійсний (без нього передавати нічого) */

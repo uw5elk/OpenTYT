@@ -161,6 +161,11 @@ static uiNotificationData_t notificationData =
 #endif
 #endif
 
+#if defined(APRS_RX)
+#include "functions/aprs_rx.h"        /* R13: вікно маяка -- aprsRxWindow() */
+#include "functions/aprs_mode_cfg.h"  /* aprsModeSymbolName() */
+#include "user_interface/languages/aprsrx_ua.h"
+#endif
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h"     /* callReplayPlayedMs/PlayTotalMs/IsLastTransitionMode -- картка нижче */
 #endif
@@ -670,6 +675,135 @@ static void displayLevelCard(const char *title, const char *valueText, int16_t p
 }
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if defined(APRS_RX)
+/* ============================================================================================================
+ * R13: ВІКНО МАЯКА -- повноекранна картка за позиційним пакетом APRS, тримається до RED / нового пакета / повідомлення.
+ * Малюється існуючими примітивами (лінії, коло, текст), без спрайтів; дані -- aprsRxWindow() (копія з пакета).
+ *
+ * Розкладка 160x128:  угорі позивний (8x16) і час; зліва -- відстань+сектор, азимут цифрою, курс, швидкість;
+ * праворуч -- кільце R=31 зі стрілкою з центру на станцію (північ угорі, мітка «Пн» над кільцем: магнітометра в рації нема,
+ * тож напрям рахується ВІД ПІВНОЧІ, а не від того, куди повернута рація); унизу -- символ APRS і коментар.
+ * ============================================================================================================ */
+#define APRS_WIN_CX      121
+#define APRS_WIN_CY      64
+#define APRS_WIN_R       31
+#define APRS_WIN_ARROW   26
+
+static void aprsWinDrawArrow(uint16_t bearing)
+{
+	aprsArrow_t a;
+	bool steep;
+
+	aprsArrowGeom(&a, APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_ARROW, bearing);
+	steep = (abs(a.tx - APRS_WIN_CX) < abs(a.ty - APRS_WIN_CY));   /* стрижень майже вертикальний -- товщимо по x, інакше по y */
+	for (int16_t o = -1; o <= 1; o++)
+	{
+		displayDrawLine((int16_t)(APRS_WIN_CX + (steep ? o : 0)), (int16_t)(APRS_WIN_CY + (steep ? 0 : o)),
+				(int16_t)(a.tx + (steep ? o : 0)), (int16_t)(a.ty + (steep ? 0 : o)), true);
+	}
+	/* вістря -- залитий трикутник: лінії від кінчика до точок на відрізку між крилами */
+	for (int16_t k = 0; k <= 4; k++)
+	{
+		displayDrawLine(a.tx, a.ty, (int16_t)(a.lx + (((a.rx - a.lx) * k) / 4)), (int16_t)(a.ly + (((a.ry - a.ly) * k) / 4)), true);
+	}
+	displayFillCircle(APRS_WIN_CX, APRS_WIN_CY, 2, true);
+}
+
+static void displayAprsBeaconWindow(void)
+{
+	const aprsRxWin_t *w = aprsRxWindow();
+	char buf[40];
+	char tm[12];
+	int tl;
+	int16_t y;
+
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+	displayDrawRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+
+	/* Позивний-SSID великим шрифтом і час прийому праворуч. */
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	displayPrintCore(4, 3, w->call, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+	tl = uiSmsTimeStr(w->rxSecs, SMS_TIME_HM, tm, sizeof tm);
+	if (tl > 0)
+	{
+		displayPrintCore((int16_t)(DISPLAY_SIZE_X - 4 - tl * 6), 3, tm, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	}
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+	displayDrawFastHLine(3, 20, DISPLAY_SIZE_X - 6, true);
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+
+	y = 26;
+	if (w->hasGeo)
+	{
+		/* Ліва колонка: відстань і сектор, азимут цифрою, пояснення, що це відносно півночі. */
+		aprsRxFormatGeo(buf, sizeof buf, w->distM, w->bearing);
+		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+		y += 18;
+		snprintf(buf, sizeof buf, APRSRX_WIN_AZ_FMT, (unsigned)w->bearing);
+		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+		y += 17;
+		displayPrintCore(4, y, APRSRX_WIN_AZ, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		y += 10;
+
+		/* Кільце, чотири риски (Пн, Сх, Пд, Зх), мітка «Пн» угорі й стрілка. Дистанція 0 -- азимут не визначений, стрілки нема. */
+		displayDrawCircle(APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_R, true);
+		displayDrawLine(APRS_WIN_CX, (int16_t)(APRS_WIN_CY - APRS_WIN_R), APRS_WIN_CX, (int16_t)(APRS_WIN_CY - APRS_WIN_R + 4), true);
+		displayDrawLine(APRS_WIN_CX, (int16_t)(APRS_WIN_CY + APRS_WIN_R), APRS_WIN_CX, (int16_t)(APRS_WIN_CY + APRS_WIN_R - 4), true);
+		displayDrawLine((int16_t)(APRS_WIN_CX - APRS_WIN_R), APRS_WIN_CY, (int16_t)(APRS_WIN_CX - APRS_WIN_R + 4), APRS_WIN_CY, true);
+		displayDrawLine((int16_t)(APRS_WIN_CX + APRS_WIN_R), APRS_WIN_CY, (int16_t)(APRS_WIN_CX + APRS_WIN_R - 4), APRS_WIN_CY, true);
+		displayPrintCore((int16_t)(APRS_WIN_CX - 6), 22, APRSRX_WIN_N, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		if (aprsBeaconArrowVisible(true, w->distM))
+		{
+			aprsWinDrawArrow(w->bearing);
+		}
+	}
+	else
+	{
+		/* Нашої або станційної позиції нема: ні стрілки, ні відстані -- лише це й решта даних. */
+		displayPrintCore(4, y, APRSRX_WIN_NOPOS, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+		y += 20;
+	}
+
+	/* Курс і швидкість, якщо є в пакеті. */
+	if (w->course != 0U)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_COURSE, (unsigned)w->course);
+		displayPrintCore(4, y, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		y += 9;
+	}
+	if (w->speedKn != 0U)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_SPEED, (unsigned)aprsKnotsToKmh(w->speedKn));
+		displayPrintCore(4, y, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	}
+
+	/* Символ APRS (таблиця + код, назва -- якщо є в нашій таблиці) і коментар, обрізаний до ширини. */
+	if (w->symCode != 0)
+	{
+		const char *nm = (w->symTable != 0) ? aprsModeSymbolName((uint8_t)((w->symTable == '/') ? 0 : 1), (uint8_t)(w->symCode - '!')) : NULL;
+
+		if (nm != NULL)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_SYM_FMT, w->symTable, w->symCode, nm);
+		}
+		else
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_SYM2_FMT, w->symTable, w->symCode);
+		}
+		buf[(DISPLAY_SIZE_X - 8) / 6] = 0;
+		displayPrintCore(4, 100, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	}
+	if (w->text[0])
+	{
+		snprintf(buf, sizeof buf, "%s", w->text);
+		buf[(DISPLAY_SIZE_X - 8) / 6] = 0;
+		displayPrintCore(4, 112, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	}
+}
+#endif /* APRS_RX */
+
 /* Форк: вхідне SMS на ВЕСЬ екран, тримається до RED.
  * ui6 (2026-10-05): угорі -- відправник («Від ...», як на екрані читання; для перехопленого
  * монітором -- «ВІД -> КОМУ») і праворуч час прийому; нижче -- текст шрифтом 8x16 з перенесенням
@@ -688,6 +822,13 @@ static void displaySmsFullScreen(void)
 	const dmrSmsMessage_t *m = dmrSmsNewestInbox(&t);
 	int unread = dmrSmsUnreadCount();
 
+#if defined(APRS_RX)
+	if (notificationData.id == NOTIFICATION_ID_APRS_BEACON)
+	{
+		displayAprsBeaconWindow();   /* R13: вікно маяка -- власна розкладка, сховище SMS не чіпаємо */
+		return;
+	}
+#endif
 #if defined(ENABLE_APRS_RX)
 	if (notificationData.id == NOTIFICATION_ID_APRS_MSG)
 	{

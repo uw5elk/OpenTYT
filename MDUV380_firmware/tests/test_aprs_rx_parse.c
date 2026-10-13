@@ -242,6 +242,165 @@ int main(void)
 		CHECK(pk.type == APRS_T_OTHER, "Mic-E з обірваним info -- відмова");
 	}
 
+	printf("== R13: символ, курс, швидкість ==\n");
+	{
+		uint8_t b[300];
+		/* звичайна: таблиця '/', код '>' , "090/045" на початку коментаря -- курс 90, 45 вузлів; з тексту прибрано */
+		parseInfo("APRS", "!4903.50N/07201.75W>090/045Рух", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_POSITION) && (pk.symTable == '/') && (pk.symCode == '>') && (pk.course == 90) && (pk.speedKn == 45),
+				"звичайна: символ %c%c, курс %u, швидкість %u", pk.symTable, pk.symCode, pk.course, pk.speedKn);
+		CHECK(strncmp(pk.text, "090/045", 7) != 0 && pk.text[0] != 0, "«CCC/SSS» прибрано з коментаря: «%s»", pk.text);
+		parseInfo("APRS", "!4903.50N\\07201.75W#comment", &ax, &pk, b);
+		CHECK((pk.symTable == '\\') && (pk.symCode == '#') && (pk.course == 0) && (pk.speedKn == 0) && !strcmp(pk.text, "comment"), "альтернативна таблиця, руху нема");
+		parseInfo("APRS", "!4903.50N/07201.75W-000/000", &ax, &pk, b);
+		CHECK((pk.course == 0) && (pk.speedKn == 0) && (pk.text[0] == 0), "000/000 -- не рухається, поля нульові");
+		parseInfo("APRS", "!4903.50N/07201.75W-12/345", &ax, &pk, b);
+		CHECK((pk.course == 0) && (pk.speedKn == 0) && !strcmp(pk.text, "12/345"), "не схоже на CCC/SSS -- коментар не чіпаємо");
+		parseInfo("APRS", "!4903.50N/07201.75W>361/010x", &ax, &pk, b);
+		CHECK((pk.course == 0) && (pk.speedKn == 10), "курс 361 -- недійсний (0), швидкість лишається");
+		parseInfo("APRS", ">status text", &ax, &pk, b);
+		CHECK((pk.type == APRS_T_STATUS) && (pk.symCode == 0) && (pk.course == 0), "статус -- символу й руху нема");
+
+		/* стиснута: символ '>' , cs = (c, s): курс = c*4, швидкість = 1.08^s - 1 */
+		{
+			uint8_t info[40];
+			int n;
+
+			memset(info, 0, sizeof(info));
+			info[0] = '!'; info[1] = '/';
+			b91(&info[2], (int64_t)(380926.0 * (90.0 - 49.5)));
+			b91(&info[6], (int64_t)(190463.0 * (180.0 - 72.75)));
+			info[10] = '>';
+			info[11] = (uint8_t)(33 + 45);   /* c: 45*4 = 180° */
+			info[12] = (uint8_t)(33 + 20);   /* s: 1.08^20 - 1 = 3.66 -> 4 вузли */
+			info[13] = (uint8_t)(33 + 0x20);   /* T: тип NMEA GGA = 0 -- курс/швидкість діє (біти 3..4 == 0) */
+			n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14);
+			aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+			CHECK(pk.compressed && (pk.symTable == '/') && (pk.symCode == '>') && (pk.course == 180) && (pk.speedKn == 4),
+					"стиснута: символ %c%c, курс %u, швидкість %u", pk.symTable, pk.symCode, pk.course, pk.speedKn);
+			info[1] = 'A';   /* накладка 'A' */
+			n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14);
+			aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+			CHECK(pk.symTable == 'A', "накладка A збережена");
+			info[1] = 'a';   /* накладка a..j = цифри 0..9 */
+			n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14);
+			aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+			CHECK(pk.symTable == '0', "накладка 'a' -> '0'");
+			info[11] = ' ';   /* cs = "  " -- нема */
+			n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14);
+			aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+			CHECK((pk.course == 0) && (pk.speedKn == 0), "cs порожній -- руху нема");
+			info[11] = (uint8_t)(33 + 45); info[13] = (uint8_t)(33 + 0x10);   /* T: біти 3..4 == 2 -- висота GGA */
+			n = buildFrame(b, "APRS", "TEST", 3, 0, 0, info, 14);
+			aprsAx25Parse(b, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+			CHECK((pk.course == 0) && (pk.speedKn == 0), "T=висота GGA -- cs не курс/швидкість");
+		}
+
+		/* Mic-E: SP=12 DC=3 SE=40 (testMicE) -> швидкість 120 вузлів, курс 340; символ '>' таблиця '/' */
+		{
+			uint8_t info[32];
+			char dst[8];
+			int n;
+
+			encodeMicE(dst, info, 49, 3, 50, 1, 72, 1, 75, 1);
+			n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 9);
+			aprsAx25Parse(fr, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+			CHECK(pk.micE && (pk.symCode == '>') && (pk.symTable == '/') && (pk.speedKn == 120) && (pk.course == 340),
+					"Mic-E: символ %c%c, швидкість %u, курс %u", pk.symTable, pk.symCode, pk.speedKn, pk.course);
+			info[4] = 28 + 82; info[5] = 28 + 45; info[6] = 28 + 90;   /* SP=82 -> 820+4=824 -> -800 = 24; DC=45 -> 4, 5; курс 500+90=590?-> 5*100+90=590 -400=190 */
+			n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 9);
+			aprsAx25Parse(fr, (uint16_t)n, &ax); aprsPacketParse(&ax, &pk);
+			CHECK((pk.speedKn == 24) && (pk.course == 190), "Mic-E: швидкість >= 800 і курс >= 400 -- поправки: %u/%u", pk.speedKn, pk.course);
+		}
+	}
+
+	printf("== R13: вікно маяка: геометрія стрілки, режими, одиниці ==\n");
+	{
+		aprsArrow_t ar;
+		static const struct { uint16_t b; int16_t tx, ty; } want[] =
+		{
+			{ 0, 80, 34 }, { 90, 110, 64 }, { 180, 80, 94 }, { 270, 50, 64 }, { 359, 79, 34 }, { 360, 80, 34 }, { 450, 110, 64 }
+		};
+		for (unsigned i = 0; i < sizeof(want) / sizeof(want[0]); i++)
+		{
+			aprsArrowGeom(&ar, 80, 64, 30, want[i].b);
+			CHECK((ar.tx == want[i].tx) && (ar.ty == want[i].ty), "азимут %u: вістря (%d,%d), чекаємо (%d,%d)", want[i].b, ar.tx, ar.ty, want[i].tx, want[i].ty);
+		}
+		/* 45° -- діагональ: вістря в правому верхньому квадранті */
+		aprsArrowGeom(&ar, 80, 64, 30, 45);
+		CHECK((ar.tx == 101) && (ar.ty == 43), "азимут 45: (%d,%d)", ar.tx, ar.ty);
+
+		/* крила: для півночі -- симетричні, нижче вістря, ліве лівіше за вістря */
+		aprsArrowGeom(&ar, 80, 64, 30, 0);
+		CHECK((ar.lx < ar.tx) && (ar.rx > ar.tx) && (ar.lx + ar.rx == 2 * ar.tx) && (ar.ly == ar.ry) && (ar.ly > ar.ty),
+				"північ: крила (%d,%d) і (%d,%d) від вістря (%d,%d)", ar.lx, ar.ly, ar.rx, ar.ry, ar.tx, ar.ty);
+		/* схід: вістря справа, крила лівіше від нього, одне вище, інше нижче */
+		aprsArrowGeom(&ar, 80, 64, 30, 90);
+		CHECK((ar.lx < ar.tx) && (ar.rx < ar.tx) && (ar.ly != ar.ry) && (ar.ly + ar.ry == 2 * ar.ty), "схід: крила (%d,%d) і (%d,%d)", ar.lx, ar.ly, ar.rx, ar.ry);
+		/* південь і захід: вістря далі від центру, крила ближче до центру, ніж вістря */
+		aprsArrowGeom(&ar, 80, 64, 30, 180);
+		CHECK((ar.ly < ar.ty) && (ar.ry < ar.ty), "південь: крила вище вістря");
+		aprsArrowGeom(&ar, 80, 64, 30, 270);
+		CHECK((ar.lx > ar.tx) && (ar.rx > ar.tx), "захід: крила правіше вістря");
+		/* довжина крила не менше 4 px навіть для крихітної стрілки; усі точки в межах 3*len від центру (без виходу за екран при len<=30) */
+		aprsArrowGeom(&ar, 80, 64, 6, 135);
+		CHECK((abs(ar.lx - ar.tx) + abs(ar.ly - ar.ty)) >= 3, "мала стрілка: крило видно");
+		/* усі 360 азимутів: вістря на відстані len +-1 від центру */
+		{
+			int bad = 0;
+
+			for (int d = 0; d < 360; d++)
+			{
+				aprsArrowGeom(&ar, 80, 64, 30, (uint16_t)d);
+				int dx = ar.tx - 80, dy = ar.ty - 64;
+				int r2 = dx * dx + dy * dy;
+
+				if ((r2 < 29 * 29) || (r2 > 31 * 31)) { bad++; }
+			}
+			CHECK(bad == 0, "вістря на колі len=30 для всіх азимутів (поза допуском: %d)", bad);
+		}
+
+		/* нульова відстань / нема геопозиції */
+		CHECK(aprsBeaconArrowVisible(true, 5) && !aprsBeaconArrowVisible(true, 0) && !aprsBeaconArrowVisible(false, 1000), "стрілка: є геопозиція й відстань > 0");
+
+		/* режими вікна */
+		{
+			aprsPacket_t p;
+
+			memset(&p, 0, sizeof(p));
+			p.type = APRS_T_POSITION; p.hasPos = true;
+			CHECK(aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &p, false) && aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &p, true), "«Усі»: кожен позиційний");
+			CHECK(!aprsBeaconWindowWanted(APRS_BCNWIN_NEW, &p, false) && aprsBeaconWindowWanted(APRS_BCNWIN_NEW, &p, true), "«Лише нові»: тільки нова станція");
+			CHECK(!aprsBeaconWindowWanted(APRS_BCNWIN_OFF, &p, true), "«Вимк.»: ніколи");
+			p.micE = true;
+			CHECK(aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &p, false), "Mic-E теж");
+			p.compressed = true; p.micE = false;
+			CHECK(aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &p, false), "стиснута теж");
+			p.hasPos = false;
+			CHECK(aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &p, true) && !aprsBeaconWindowWanted(APRS_BCNWIN_OFF, &p, true), "R13: пакет без координат -- вікно є (без стрілки), режим «Вимк.» його вимикає");
+			p.hasPos = true; p.type = APRS_T_STATUS;
+			CHECK(!aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &p, true), "статус -- вікна нема");
+			p.type = APRS_T_MESSAGE;
+			CHECK(!aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &p, true), "повідомлення -- вікна маяка нема");
+			CHECK(!aprsBeaconWindowWanted(APRS_BCNWIN_ALL, NULL, true), "NULL -- без падіння");
+		}
+		/* R13: справжні кадри: з координатами, без них (сміття після '!'), і рішення вікна/стрілки в обох станах "нашої позиції" */
+		{
+			uint8_t bb[300];
+			aprsAx25_t ax2;
+			aprsPacket_t pk2;
+
+			parseInfo("APRS", "!4903.50N/07201.75W>/A=001234 mobile", &ax2, &pk2, bb);
+			CHECK((pk2.type == APRS_T_POSITION) && pk2.hasPos && (pk2.symCode == '>') && aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &pk2, false),
+					"пакет з позицією -- вікно, символ %c%c", pk2.symTable, pk2.symCode);
+			CHECK(aprsBeaconArrowVisible(true, 12345U) && !aprsBeaconArrowVisible(false, 12345U), "наша позиція невідома (hasGeo=false) -- стрілки й відстані нема");
+			parseInfo("APRS", "!xxxxxxxxxxxxxxxxxxx", &ax2, &pk2, bb);
+			CHECK(!pk2.hasPos && !aprsBeaconArrowVisible(pk2.hasPos, 1000U), "пакет без позиції: hasPos=0 -- стрілки нема (тип %d)", (int)pk2.type);
+			CHECK((pk2.type != APRS_T_POSITION) || aprsBeaconWindowWanted(APRS_BCNWIN_ALL, &pk2, true), "позиційний пакет без координат -- вікно без стрілки, не падіння");
+		}
+		CHECK((aprsKnotsToKmh(0) == 0) && (aprsKnotsToKmh(1) == 2) && (aprsKnotsToKmh(10) == 19) && (aprsKnotsToKmh(45) == 83) && (aprsKnotsToKmh(120) == 222), "вузли -> км/год");
+	}
+
 	printf("== повідомлення ==\n");
 	{
 		uint8_t b[300];

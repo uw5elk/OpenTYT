@@ -75,4 +75,21 @@
 #define APRSRX_HUB_SETTINGS   "Налаштування"
 #define APRSRX_HUB_PROBE      "APRS проба"
 
+
+/* ---- R13: ВІКНО МАЯКА (повноекранна картка за позиційним пакетом) ---- */
+#define APRSRX_WIN_N          "Пн"                 /* північ -- мітка угорі стрілки */
+#define APRSRX_WIN_NOPOS      "позиції нема"
+#define APRSRX_WIN_AZ         "Азимут від Пн"      /* пояснення до цифри: напрям відносно півночі (магнітометра в рації нема) */
+#define APRSRX_WIN_AZ_FMT     "%u\260"            /* 45° (cp1251: \260 -- знак градуса) */
+#define APRSRX_WIN_COURSE     "Курс %u\260"
+#define APRSRX_WIN_SPEED      "%u км/год"
+#define APRSRX_WIN_SYM_FMT    "%c%c %s"            /* таблиця, код, назва */
+#define APRSRX_WIN_SYM2_FMT   "%c%c"               /* таблиця, код, коли назви в нашій таблиці нема */
+
+/* Пункт «Вікно маяка» у меню APRS -> Налаштування (menuAPRSOptions.c; значення праворуч після «:») */
+#define APRSRX_OPT_BCNWIN     "Вікно маяка"
+#define APRSRX_OPT_BCNWIN_ALL "Усі"
+#define APRSRX_OPT_BCNWIN_NEW "Нові"        /* «Лише нові станції»: рядок меню -- 16 символів разом з «Вікно маяка:» */
+#define APRSRX_OPT_BCNWIN_OFF "Вимк"
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSRX_UA_H_ */

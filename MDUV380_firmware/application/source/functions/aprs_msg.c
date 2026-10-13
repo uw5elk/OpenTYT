@@ -401,9 +401,10 @@ void aprsMsgInit(aprsMsgBox_t *b, uint32_t seed)
 	b->lastNum = (uint8_t)(seed % 99U);   /* перший номер = lastNum % 99 + 1 */
 }
 
-int aprsMsgSend(aprsMsgBox_t *b, const char *to, const char *cp, uint32_t now)
+int aprsMsgSend(aprsMsgBox_t *b, const char *to, const char *cp, uint32_t now, const char *from)
 {
 	char norm[APRS_MSG_CALL_LEN];
+	char fromNorm[APRS_MSG_CALL_LEN];
 	int slot = -1;
 	aprsMsgEntry_t *e;
 	uint8_t num;
@@ -440,6 +441,11 @@ int aprsMsgSend(aprsMsgBox_t *b, const char *to, const char *cp, uint32_t now)
 	b->q[slot].type = AMSG_JOB_MSG;
 	b->q[slot].nextMs = now;
 	setStr(b->q[slot].to, sizeof(b->q[slot].to), norm);
+	/* R13 (П.6): відправник фіксується ТУТ і далі не змінюється (повтори через 30 с, вихід з режиму, інший екран) */
+	if ((from != NULL) && aprsMsgNormCall(fromNorm, from))
+	{
+		setStr(b->q[slot].from, sizeof(b->q[slot].from), fromNorm);
+	}
 	b->q[slot].id[0] = (char)('0' + (num / 10U));
 	b->q[slot].id[1] = (char)('0' + (num % 10U));
 	b->q[slot].id[2] = 0;
@@ -526,9 +532,10 @@ static void statInc(uint16_t *v)
 	}
 }
 
-bool aprsMsgQueueAck(aprsMsgBox_t *b, const char *to, const char *id, uint32_t now)
+bool aprsMsgQueueAck(aprsMsgBox_t *b, const char *to, const char *id, uint32_t now, const char *from)
 {
 	int slot = -1;
+	char fromNorm[APRS_MSG_CALL_LEN];
 
 	if ((to == NULL) || (to[0] == 0) || (id == NULL) || (id[0] == 0) || (strlen(id) >= APRS_MSG_ID_LEN))
 	{
@@ -585,6 +592,11 @@ bool aprsMsgQueueAck(aprsMsgBox_t *b, const char *to, const char *id, uint32_t n
 	b->q[slot].nextMs = now;   /* негайно, без повторів */
 	setStr(b->q[slot].to, sizeof(b->q[slot].to), to);
 	setStr(b->q[slot].id, sizeof(b->q[slot].id), id);
+	/* R13 (П.6): ACK іде від того позивного, на який ПРИЙШЛО повідомлення (адресат вхідного), а не від поточного налаштування */
+	if ((from != NULL) && aprsMsgNormCall(fromNorm, from))
+	{
+		setStr(b->q[slot].from, sizeof(b->q[slot].from), fromNorm);
+	}
 	return true;
 }
 
@@ -712,6 +724,15 @@ size_t aprsMsgPoll(aprsMsgBox_t *b, uint32_t now, bool busy, bool txOk, char *in
 	}
 	b->inflight = (int8_t)pick;
 	return n;
+}
+
+const char *aprsMsgInflightFrom(const aprsMsgBox_t *b)
+{
+	if ((b->inflight < 0) || ((unsigned)b->inflight >= APRS_MSG_QUEUE_MAX))
+	{
+		return "";
+	}
+	return b->q[b->inflight].from;
 }
 
 void aprsMsgTxDone(aprsMsgBox_t *b, uint32_t now, bool ok, bool fatal)

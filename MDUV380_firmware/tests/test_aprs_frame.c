@@ -541,7 +541,7 @@ int tx_chain_test(void)
 		memcpy(p6[0], "WIDE1\0", 6); ps[0] = 1;
 
 		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false; s_timStart = 0; s_rxStop = 0;
-		r = aprsModeTxMessage(&e, infoMsg);
+		r = aprsModeTxMessage(&e, infoMsg, NULL);
 		CHECK(r == APRS_MODE_TX_OK, "повідомлення: aprsModeTxMessage повернув %d", (int)r);
 		ref_frame_info(&ref2, "UW5ELK", 7, (const char (*)[6])p6, ps, 1, infoMsg);
 		CHECK(encoderData.packetBufferBitPosition == ref2.bits, "повідомлення: %u біт, еталон %u", (unsigned)encoderData.packetBufferBitPosition, ref2.bits);
@@ -552,7 +552,7 @@ int tx_chain_test(void)
 
 		/* ACK: ":UW5ELK-9 :ack01" */
 		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
-		r = aprsModeTxMessage(&e, ":UW5ELK-9 :ack01");
+		r = aprsModeTxMessage(&e, ":UW5ELK-9 :ack01", NULL);
 		CHECK(r == APRS_MODE_TX_OK, "ACK: %d", (int)r);
 		ref_frame_info(&ref2, "UW5ELK", 7, (const char (*)[6])p6, ps, 1, ":UW5ELK-9 :ack01");
 		CHECK(encoderData.packetBufferBitPosition == ref2.bits && memcmp(encoderData.packetBuffer, ref2.buf, (ref2.bits + 7U) / 8U) == 0, "ACK: кадр відрізняється від еталона");
@@ -570,7 +570,7 @@ int tx_chain_test(void)
 			longInfo[n] = 0;
 			CHECK(n == 84U, "довжина найдовшого інфо-поля %u, очікували 84", (unsigned)n);
 			aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
-			r = aprsModeTxMessage(&e, longInfo);
+			r = aprsModeTxMessage(&e, longInfo, NULL);
 			CHECK(r == APRS_MODE_TX_OK, "найдовше повідомлення: %d", (int)r);
 			CHECK(encoderData.packetBufferBitPosition != AX25_BITS_OVERFLOW, "найдовше повідомлення: переповнення буфера");
 			ref_frame_info(&ref2, "UW5ELK", 7, (const char (*)[6])p6, ps, 1, longInfo);
@@ -579,7 +579,7 @@ int tx_chain_test(void)
 
 		/* не повідомлення (інфо не з ':') і NULL -- відмова, передавач не вмикається */
 		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false; s_timStart = 0;
-		CHECK(aprsModeTxMessage(&e, "!4930.00N/03015.00E>") != APRS_MODE_TX_OK && aprsModeTxMessage(&e, NULL) != APRS_MODE_TX_OK, "не повідомлення мало бути відхилено");
+		CHECK(aprsModeTxMessage(&e, "!4930.00N/03015.00E>", NULL) != APRS_MODE_TX_OK && aprsModeTxMessage(&e, NULL, NULL) != APRS_MODE_TX_OK, "не повідомлення мало бути відхилено");
 		CHECK(s_timStart == 0 && trxIsTransmitting == false, "відхилене інфо увімкнуло передавач");
 
 		/* ПЕРЕД маяком після повідомлення -- звичайний маяк із позицією не зачеплений: s_modeInfo знову NULL */
@@ -628,11 +628,22 @@ int tx_chain_test(void)
 			memset(p6, 0, sizeof(p6));
 			memcpy(p6[0], "WIDE1\0", 6); ps[0] = want[k].ssid;
 			aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
-			CHECK(aprsModeTxMessage(&e, ":US5EX-7  :x{1") == APRS_MODE_TX_OK, "SSID %d: передано", want[k].ssid);
+			CHECK(aprsModeTxMessage(&e, ":US5EX-7  :x{1", NULL) == APRS_MODE_TX_OK, "SSID %d: передано", want[k].ssid);
 			ref_frame_info(&refS, "UW5E", want[k].ssid, (const char (*)[6])p6, ps, 1, ":US5EX-7  :x{1");
 			CHECK(encoderData.packetBufferBitPosition == refS.bits && memcmp(encoderData.packetBuffer, refS.buf, (refS.bits + 7U) / 8U) == 0,
 					"SSID %d: кадр збігається з еталоном (джерело й шлях)", want[k].ssid);
 		}
+		/* R13 (П.6): зафіксований відправник (повтор завдання з черги) перекриває e->call/e->ssid: кадр -- як для UW5E-3, хоч e каже UW5E-0 */
+		memset(&e, 0, sizeof(e));
+		strcpy(e.call, "UW5E"); e.ssid = 0;
+		strcpy(e.path[0], "WIDE1"); e.pathSsid[0] = 1;
+		memset(p6, 0, sizeof(p6));
+		memcpy(p6[0], "WIDE1\0", 6); ps[0] = 1;
+		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
+		CHECK(aprsModeTxMessage(&e, ":US5EX-7  :x{1", "UW5E-3") == APRS_MODE_TX_OK, "R13: from=UW5E-3 -- передано");
+		ref_frame_info(&refS, "UW5E", 3, (const char (*)[6])p6, ps, 1, ":US5EX-7  :x{1");
+		CHECK(encoderData.packetBufferBitPosition == refS.bits && memcmp(encoderData.packetBuffer, refS.buf, (refS.bits + 7U) / 8U) == 0,
+				"R13: джерело кадру береться з from (UW5E-3), а не з налаштувань режиму (UW5E-0)");
 	}
 	return s_fail - fail0;
 }
