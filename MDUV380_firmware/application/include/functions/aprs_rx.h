@@ -86,7 +86,7 @@ typedef struct
 
 /* Стан екрана «APRS станції» (user_interface/menuAprsStations.c) -- у тому самому CCM-блоці, що й приймач
  * (окремі статичні змінні екрана коштували б main RAM, а її вільно ~212 Б). */
-enum { APRS_RX_VIEW_LIST = 0, APRS_RX_VIEW_CARD, APRS_RX_VIEW_DIAG, APRS_RX_VIEW_DIAG2 };
+enum { APRS_RX_VIEW_LIST = 0, APRS_RX_VIEW_CARD, APRS_RX_VIEW_DIAG, APRS_RX_VIEW_DIAG2, APRS_RX_VIEW_PACKET };   /* R15: PACKET -- «Останній пакет» (scroll = перший видимий рядок тексту) */
 typedef struct
 {
 	uint8_t   on;               /* екран відкрито */

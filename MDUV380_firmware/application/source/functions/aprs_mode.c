@@ -90,6 +90,15 @@ static inline aprsModeUi_t *msgSessionUi(void)
 
 	return (aprsModeUi_t *)(void *)((uint8_t *)callReplayReserved(&n) + CALL_REPLAY_APRS_BOX_BYTES);
 }
+/* R15: сирий текст останнього кадру -- у тому ж резерві, за блоком і станом екрана. Обнуляє callReplayBorrowReset(). */
+_Static_assert(CALL_REPLAY_APRS_RAW_BYTES == APRS_RAW_TEXT_MAX, "raw packet buffer must match APRS_RAW_TEXT_MAX");
+_Static_assert(CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES + CALL_REPLAY_APRS_RAW_BYTES == CALL_REPLAY_APRS_RESERVE_BYTES, "APRS reserve layout");
+static inline char *rawPktBuf(void)
+{
+	size_t n = 0;
+
+	return (char *)((uint8_t *)callReplayReserved(&n) + CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES);
+}
 static inline aprsMsgBox_t *bgBox(void)
 {
 	size_t n = 0;
@@ -111,6 +120,11 @@ static inline aprsModeUi_t *msgSessionUi(void)
 static inline aprsMsgBox_t *bgBox(void)
 {
 	return &s_msgBox;
+}
+static char s_rawPkt[APRS_RAW_TEXT_MAX] __attribute__((section(".aes_ccmram"), aligned(8)));   /* CCM-INIT(aprsMsgBgInit): R15, збірка без «Переслухати» */
+static inline char *rawPktBuf(void)
+{
+	return s_rawPkt;
 }
 #endif
 
@@ -713,6 +727,14 @@ aprsMsgBox_t *aprsModeMsgBox(void)
 void aprsMsgBgInit(void)
 {
 	aprsMsgInit(bgBox(), ticksGetMillis() / 997U);
+#if !defined(ENABLE_CALL_REPLAY)
+	memset(s_rawPkt, 0, sizeof(s_rawPkt));   /* з «Переслухати» резерв обнуляє callReplayBorrowReset() */
+#endif
+}
+
+char *aprsModeRawPkt(void)
+{
+	return rawPktBuf();
 }
 
 bool aprsModeHasCall(void)

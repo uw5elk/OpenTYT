@@ -74,6 +74,14 @@
 
 /* ---- R8-fix: меню «APRS» (menuAprsHub.c); назва меню -- currentLanguage->APRS ---- */
 #define APRSRX_HUB_SETTINGS   "Налаштування"
+#define APRSRX_HUB_PKT        "Останній пакет"       /* R15: пункт меню «APRS» -- сирий текст останнього прийнятого кадру */
+/* R15: екран «Останній пакет» (FONT_SIZE_1, 26 символів у рядку, до 255 символів тексту = 10 рядків; видно 9, решта -- U/D) */
+#define APRSRX_PKT_TITLE      "Останній пакет"
+#define APRSRX_PKT_LEN        "Символів: %u"
+#define APRSRX_PKT_EMPTY      "Пакетів ще не було"
+#define APRSRX_PKT_HINT       "U/D:гортати RED:назад"
+/* R15: додатковий рядок підказки на картці станції (над APRSRX_HINT_CARD) */
+#define APRSRX_HINT_CARD2     "#:пакет"
 #define APRSRX_HUB_PROBE      "APRS проба"
 
 

@@ -132,6 +132,9 @@ aprsModeUi_t        *aprsModeUi(void);
 /* R13 (П.5): екран «Повідом. APRS» без входу в «Режим APRS». Стан екрана (aprsModeUi_t) лежить у резерві постійного блока повідомлень
  * (callReplay.h: CALL_REPLAY_APRS_UI_BYTES), кільце «Переслухати» не позичається. Поки сесія відкрита, aprsModeUi() повертає цей стан.
  * Open -- обнуляє екран і ставить сторінку «Повідомлення»; Close -- ідемпотентно. Сесія й «Режим APRS» одночасно не живуть. */
+/* R15: буфер (APRS_RAW_TEXT_MAX Б) з текстом ОСТАННЬОГО прийнятого кадру у вигляді TNC-2 ("SRC>DST,DIGI*:info"); порожній рядок -- пакетів ще не було.
+ * Живе в резерві постійного блока (callReplay.h) і не залежить від того, чи відкрито «Режим APRS»; пише aprs_rx.c, читає екран «Останній пакет». */
+char *aprsModeRawPkt(void);
 bool aprsModeMsgSessionOpen(void);
 void aprsModeMsgSessionClose(void);
 bool aprsModeMsgSessionActive(void);

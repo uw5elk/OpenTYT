@@ -542,6 +542,133 @@ static void testFuzz(void)
 	CHECK(bad == 0, "розібрано %d спотворених кадрів, тексти в межах", n);
 }
 
+/* ---- R15: кадр у вигляді TNC-2 для екрана «Останній пакет» ---------------------------------------------- */
+/* Кадр з довільним числом цифіпітерів (до 8): digi i -- «D<i>» з SSID i; hmask -- які мають біт H. Повертає довжину. */
+static int buildDigiFrame(uint8_t *f, int nDigi, unsigned hmask, const uint8_t *info, int infoLen)
+{
+	int n = 0;
+
+	n += putAddr(&f[n], "APRS", 0, 0, 0);
+	n += putAddr(&f[n], "N0CALL", 7, nDigi == 0, 0);
+	for (int i = 1; i <= nDigi; i++)
+	{
+		char nm[4] = { 'D', (char)('0' + i), 0, 0 };
+
+		n += putAddr(&f[n], nm, i, i == nDigi, (hmask >> i) & 1U);
+	}
+	f[n++] = 0x03;
+	f[n++] = 0xF0;
+	memcpy(&f[n], info, (size_t)infoLen);
+	return n + infoLen;
+}
+
+/* Копія РІВНО потрібного розміру в купі -- ASan/UBSan ловлять вихід за кадр. */
+static uint8_t *exactCopy(const uint8_t *f, int n)
+{
+	uint8_t *h = (uint8_t *)malloc((size_t)n);
+
+	memcpy(h, f, (size_t)n);
+	return h;
+}
+
+static void testRawText(void)
+{
+	uint8_t fr[700];
+	char out[APRS_RAW_TEXT_MAX + 8];
+
+	printf("== R15: сирий пакет (TNC-2) ==\n");
+	{
+		const char *inf = "!4903.50N/07201.75W-Test";
+		int n = buildFrame(fr, "APRS", "N0CALL", 7, 2, 1, (const uint8_t *)inf, (int)strlen(inf));
+		uint8_t *h = exactCopy(fr, n);
+		size_t l = aprsAx25ToText(h, (uint16_t)n, out, sizeof(out));
+
+		CHECK(l == strlen(out) && !strcmp(out, "N0CALL-7>APRS,WIDE1-1*,WIDE2-1:!4903.50N/07201.75W-Test"), "2 цифіпітери, H-біт: [%s]", out);
+		free(h);
+	}
+	{
+		/* 8 цифіпітерів (шлях у aprsAx25_t обрізано до 23 символів -- тут має бути ВЕСЬ) і недрукованi байти info */
+		const uint8_t inf[] = { 'A', 0x01, 'B', 0xFF, 'C', 0x0D, 0x80, 'D', 0x7F, 0x00, 'E' };
+		int n = buildDigiFrame(fr, 8, (1U << 3), inf, (int)sizeof(inf));
+		uint8_t *h = exactCopy(fr, n);
+		aprsAx25_t ax;
+		size_t l = aprsAx25ToText(h, (uint16_t)n, out, sizeof(out));
+
+		CHECK(l == strlen(out) && !strcmp(out, "N0CALL-7>APRS,D1-1,D2-2,D3-3*,D4-4,D5-5,D6-6,D7-7,D8-8:A.B.C..D..E"), "8 цифіпітерів, недруковані -> '.': [%s]", out);
+		CHECK(aprsAx25Parse(h, (uint16_t)n, &ax) && strlen(ax.path) < strlen("D1-1,D2-2,D3-3*,D4-4,D5-5,D6-6,D7-7,D8-8"), "шлях у aprsAx25_t справді обрізано (тому беремо з кадру)");
+		free(h);
+	}
+	{
+		/* довге info (300 Б): рівно 255 символів + NUL */
+		uint8_t inf[300];
+		int n;
+		uint8_t *h;
+		size_t l;
+
+		for (int i = 0; i < 300; i++) { inf[i] = (uint8_t)('a' + (i % 26)); }
+		n = buildDigiFrame(fr, 0, 0, inf, 300);
+		h = exactCopy(fr, n);
+		memset(out, 'Z', sizeof(out));
+		l = aprsAx25ToText(h, (uint16_t)n, out, APRS_RAW_TEXT_MAX);
+		CHECK(l == 255U && out[255] == 0 && strlen(out) == 255U, "довге info: 255 символів, NUL на місці (l=%zu)", l);
+		CHECK(!strncmp(out, "N0CALL-7>APRS:abcdefghij", 24), "початок збережено");
+		CHECK(out[APRS_RAW_TEXT_MAX] == 'Z', "за буфером (cap) нічого не записано");
+		free(h);
+	}
+	{
+		/* малий cap: завжди NUL, довжина cap-1; cap == 1 -> порожній рядок */
+		const uint8_t inf[] = "hello";
+		int n = buildDigiFrame(fr, 1, 0, inf, 5);
+		uint8_t *h = exactCopy(fr, n);
+
+		memset(out, 'Z', sizeof(out));
+		CHECK(aprsAx25ToText(h, (uint16_t)n, out, 10U) == 9U && out[9] == 0 && out[10] == 'Z' && !strncmp(out, "N0CALL-7>", 9), "cap=10 -> 9 символів + NUL");
+		CHECK(aprsAx25ToText(h, (uint16_t)n, out, 1U) == 0U && out[0] == 0, "cap=1 -> порожній рядок");
+		CHECK(aprsAx25ToText(h, (uint16_t)n, NULL, 10U) == 0U && aprsAx25ToText(h, (uint16_t)n, out, 0U) == 0U, "NULL і cap=0 -- без падіння");
+		free(h);
+	}
+	{
+		/* не AX.25 UI: коротке, без PID, 9 цифіпітерів -> порожньо */
+		uint8_t g[20] = { 0 };
+		int n;
+		uint8_t *h;
+
+		memset(out, 'Z', sizeof(out));
+		CHECK(aprsAx25ToText(g, 10U, out, sizeof(out)) == 0U && out[0] == 0, "кадр < 16 Б -> порожньо");
+		h = exactCopy(g, 20);
+		CHECK(aprsAx25ToText(h, 20U, out, sizeof(out)) == 0U && out[0] == 0, "сміття -> порожньо");
+		free(h);
+		n = buildDigiFrame(fr, 2, 0, (const uint8_t *)"x", 1);
+		fr[n - 3] = 0x04;   /* контрольне поле не 0x03 */
+		h = exactCopy(fr, n);
+		CHECK(aprsAx25ToText(h, (uint16_t)n, out, sizeof(out)) == 0U && out[0] == 0, "не UI-кадр -> порожньо");
+		free(h);
+	}
+	{
+		/* third-party: сирий текст = кадр шлюзу, слідом -- розгорнутий */
+		const char *inf = "}SRC1>APRS,TCPIP,GATE*:!4903.50N/07201.75W-Hi";
+		int n = buildDigiFrame(fr, 0, 0, (const uint8_t *)inf, (int)strlen(inf));
+		uint8_t *h = exactCopy(fr, n);
+		aprsAx25_t ax;
+		size_t l;
+
+		CHECK(aprsAx25Parse(h, (uint16_t)n, &ax), "кадр шлюзу розібрано");
+		l = aprsAx25ToText(h, (uint16_t)n, out, sizeof(out));
+		CHECK(!strcmp(out, "N0CALL-7>APRS:}SRC1>APRS,TCPIP,GATE*:!4903.50N/07201.75W-Hi"), "сирий текст містить '}' і вкладений заголовок: [%s]", out);
+		CHECK(aprsAx25AppendUnwrapped(out, sizeof(out), l, &ax) == l, "без розгортання (tp=false) -- нічого не дописано");
+		CHECK(aprsAx25Unwrap(&ax), "розгорнуто");
+		{
+			size_t l2 = aprsAx25AppendUnwrapped(out, sizeof(out), l, &ax);
+
+			CHECK(l2 > l && l2 == strlen(out) && !strcmp(out + l, " => SRC1>APRS,TCPIP,GATE*:!4903.50N/07201.75W-Hi"), "розгорнутий варіант слідом: [%s]", out + l);
+		}
+		/* не влазить цілком -- не дописується зовсім */
+		l = aprsAx25ToText(h, (uint16_t)n, out, sizeof(out));
+		CHECK(aprsAx25AppendUnwrapped(out, l + 20U, l, &ax) == l && out[l] == 0, "не влазить -- без змін");
+		free(h);
+	}
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -1292,6 +1419,7 @@ int main(void)
 
 	testR14();
 	testStage3();
+	testRawText();
 	testFuzz();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);

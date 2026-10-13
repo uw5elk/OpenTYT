@@ -163,6 +163,57 @@ static void drawList(uint32_t now)
 	}
 }
 
+/* R15: «Останній пакет» -- текст кадру TNC-2 (aprsModeRawPkt(), до 255 символів), перенос по СИМВОЛАХ (без пошуку пробілів: це сирі дані),
+ * 26 символів у рядку FONT_SIZE_1. Рядок 0 -- довжина; 1..9 -- текст (9 рядків = 234 символи, решта -- U/D); 10 -- підказка. */
+#define ST_PKT_COLS   26
+#define ST_PKT_ROWS   9
+
+static void drawPacket(void)
+{
+	aprsRxUi_t *ui = aprsRxUi();
+	const char *raw = aprsModeRawPkt();
+	size_t len = (raw != NULL) ? strlen(raw) : 0U;
+	unsigned lines = (unsigned)((len + (ST_PKT_COLS - 1U)) / ST_PKT_COLS);
+	unsigned maxTop = (lines > ST_PKT_ROWS) ? (lines - ST_PKT_ROWS) : 0U;
+	char buf[ST_PKT_COLS + 14];
+
+	if (len == 0U)
+	{
+		displayPrintCentered(ST_ROW(4), APRSRX_PKT_EMPTY, FONT_SIZE_1);
+		printRow(10, APRSRX_PKT_HINT);
+		return;
+	}
+	if (ui->scroll > maxTop)
+	{
+		ui->scroll = (uint8_t)maxTop;
+	}
+	snprintf(buf, sizeof(buf), APRSRX_PKT_LEN, (unsigned)len);
+	printRow(0, buf);
+	for (unsigned r = 0; r < ST_PKT_ROWS; r++)
+	{
+		size_t off = (size_t)(ui->scroll + r) * ST_PKT_COLS;
+		size_t n;
+
+		if (off >= len)
+		{
+			break;
+		}
+		n = ((len - off) > ST_PKT_COLS) ? ST_PKT_COLS : (len - off);
+		memcpy(buf, raw + off, n);
+		buf[n] = 0;
+		printRow(1 + (int)r, buf);
+	}
+	if (ui->scroll > 0U)
+	{
+		displayFillTriangle(DISPLAY_SIZE_X - 21, 17, DISPLAY_SIZE_X - 25, 24, DISPLAY_SIZE_X - 17, 24, true);        /* є вище */
+	}
+	if (ui->scroll < maxTop)
+	{
+		displayFillTriangle(DISPLAY_SIZE_X - 13, 17, DISPLAY_SIZE_X - 5, 17, DISPLAY_SIZE_X - 9, 24, true);          /* є нижче */
+	}
+	printRow(10, APRSRX_PKT_HINT);
+}
+
 static void drawCard(void)
 {
 	aprsRxUi_t *ui = aprsRxUi();
@@ -237,6 +288,7 @@ static void drawCard(void)
 		printRow(7, l1);
 		printRow(8, l2);
 	}
+	printRow(9, APRSRX_HINT_CARD2);   /* R15 */
 	printRow(10, APRSRX_HINT_CARD);
 }
 
@@ -323,9 +375,13 @@ static void draw(void)
 
 	ui->lastDrawMs = now;
 	displayClearBuf();
-	menuDisplayTitle((ui->view == APRS_RX_VIEW_DIAG) ? APRSRX_DIAG_TITLE : ((ui->view == APRS_RX_VIEW_DIAG2) ? APRSRX_DIAG2_TITLE : APRSRX_TITLE));
+	menuDisplayTitle((ui->view == APRS_RX_VIEW_DIAG) ? APRSRX_DIAG_TITLE : ((ui->view == APRS_RX_VIEW_DIAG2) ? APRSRX_DIAG2_TITLE :
+			((ui->view == APRS_RX_VIEW_PACKET) ? APRSRX_PKT_TITLE : APRSRX_TITLE)));
 	switch (ui->view)
 	{
+		case APRS_RX_VIEW_PACKET:
+			drawPacket();
+			break;
 		case APRS_RX_VIEW_CARD:
 			drawCard();
 			break;
@@ -349,6 +405,19 @@ void menuAprsStationsEnter(void)
 
 	ui->on = 1;
 	ui->view = APRS_RX_VIEW_LIST;
+	ui->sel = 0;
+	ui->scroll = 0;
+	ui->cardCall[0] = 0;
+	draw();
+}
+
+/* R15: пункт «Останній пакет» меню «APRS»: одразу екран пакета; cardCall порожній -- RED виходить з екрана (з картки RED повертає на картку). */
+void menuAprsPacketEnter(void)
+{
+	aprsRxUi_t *ui = aprsRxUi();
+
+	ui->on = 1;
+	ui->view = APRS_RX_VIEW_PACKET;
 	ui->sel = 0;
 	ui->scroll = 0;
 	ui->cardCall[0] = 0;
@@ -395,13 +464,34 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 					ui->on = 0;
 					return false;
 				}
-				ui->view = APRS_RX_VIEW_LIST;
-				redraw = true;
+				if (ui->view == APRS_RX_VIEW_PACKET)
+				{
+					ui->scroll = 0;
+					if (ui->cardCall[0] == 0)
+					{
+						ui->on = 0;   /* відкрито з меню «APRS» (пункт «Останній пакет») -- RED виходить з екрана */
+						return false;
+					}
+					ui->view = APRS_RX_VIEW_CARD;   /* відкрито з картки -- назад на картку */
+					redraw = true;
+				}
+				else
+				{
+					ui->view = APRS_RX_VIEW_LIST;
+					redraw = true;
+				}
 			}
 			else if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 			{
 				int dir = KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1;
-				if (ui->view == APRS_RX_VIEW_CARD)
+				if (ui->view == APRS_RX_VIEW_PACKET)
+				{
+					if ((dir > 0) || (ui->scroll > 0U))
+					{
+						ui->scroll = (uint8_t)((int)ui->scroll + dir);   /* верхню межу виправить drawPacket() */
+					}
+				}
+				else if (ui->view == APRS_RX_VIEW_CARD)
 				{
 					cardGo(dir);
 				}
@@ -438,6 +528,12 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_LIST))
 			{
 				ui->view = APRS_RX_VIEW_DIAG;
+				redraw = true;
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_CARD))
+			{
+				ui->view = APRS_RX_VIEW_PACKET;   /* R15: «Останній пакет» з картки */
+				ui->scroll = 0;
 				redraw = true;
 			}
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_DIAG))
@@ -482,7 +578,11 @@ void menuAprsStationsDrawEmbedded(void)
 	{
 		ui->view = APRS_RX_VIEW_LIST;   /* діагностика (обидві сторінки) лишається в екрані «APRS станції» */
 	}
-	if (ui->view == APRS_RX_VIEW_CARD)
+	if (ui->view == APRS_RX_VIEW_PACKET)
+	{
+		drawPacket();
+	}
+	else if (ui->view == APRS_RX_VIEW_CARD)
 	{
 		drawCard();
 	}
@@ -503,6 +603,12 @@ int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
+		if (ui->view == APRS_RX_VIEW_PACKET)
+		{
+			ui->scroll = 0;
+			ui->view = APRS_RX_VIEW_CARD;   /* R15: пакет відкривають лише з картки -- RED назад на картку */
+			return 1;
+		}
 		if (ui->view != APRS_RX_VIEW_CARD)
 		{
 			return -1;   // зі списку -- назад на «Монітор»
@@ -514,7 +620,14 @@ int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
 	{
 		int dir = KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1;
 
-		if (ui->view == APRS_RX_VIEW_CARD)
+		if (ui->view == APRS_RX_VIEW_PACKET)
+		{
+			if ((dir > 0) || (ui->scroll > 0U))
+			{
+				ui->scroll = (uint8_t)((int)ui->scroll + dir);
+			}
+		}
+		else if (ui->view == APRS_RX_VIEW_CARD)
 		{
 			cardGo(dir);
 		}
@@ -530,12 +643,18 @@ int menuAprsStationsKeyEmbedded(uiEvent_t *ev)
 		}
 		return 1;
 	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (ui->view == APRS_RX_VIEW_CARD))
+	{
+		ui->view = APRS_RX_VIEW_PACKET;   /* R15 */
+		ui->scroll = 0;
+		return 1;
+	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view == APRS_RX_VIEW_CARD))
 	{
 		(void)menuAprsModeReplyTo(ui->cardCall);   /* R11: «Відповісти» -- режим уже активний: відкриває сторінку «Повідомлення» з набором */
 		return 1;
 	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view != APRS_RX_VIEW_CARD))
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (ui->view != APRS_RX_VIEW_CARD) && (ui->view != APRS_RX_VIEW_PACKET))
 	{
 		const aprsStation_t *s = aprsDbNth(aprsRxDb(), ui->sel, ticksGetMillis());
 

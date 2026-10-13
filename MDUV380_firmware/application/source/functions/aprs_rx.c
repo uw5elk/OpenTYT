@@ -871,17 +871,25 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 	aprsAx25_t ax;
 	aprsPacket_t pkt;
 	uint32_t now = ticksGetMillis();
+	size_t rawLen;
 
 	if (aprsAx25Parse(frame, len, &ax) == false)
 	{
 		return;   /* не AX.25 UI (або адреси не схожі) */
 	}
 	s_rx.db.total++;
+	/* R15: сирий текст кадру (TNC-2) для екрана «Останній пакет» -- ДО розгортання third-party й ДО відсіву дублікатів: показуємо те, що справді
+	 * прийшло в ефір. Буфер -- у резерві «Переслухати» (aprsModeRawPkt()), вільний CCM не чіпаємо. */
+	rawLen = aprsAx25ToText(frame, len, aprsModeRawPkt(), APRS_RAW_TEXT_MAX);
 	/* R11-fix: i-gate загортає пакет з APRS-IS у third-party ("}SRC>DST,path:info"). Розгортаємо ДО розбору: далі (банер, список станцій,
 	 * дедуплікація, ACK відправнику) скрізь ax.src -- СПРАВЖНІЙ відправник, а не шлюз. Один рівень (див. aprsAx25Unwrap()). */
-	if (aprsAx25Unwrap(&ax) && (s_rx.db.tpUnwrapped < 0xFFFFU))
+	if (aprsAx25Unwrap(&ax))
 	{
-		s_rx.db.tpUnwrapped++;
+		if (s_rx.db.tpUnwrapped < 0xFFFFU)
+		{
+			s_rx.db.tpUnwrapped++;
+		}
+		(void)aprsAx25AppendUnwrapped(aprsModeRawPkt(), APRS_RAW_TEXT_MAX, rawLen, &ax);   /* R15: розгорнутий варіант -- слідом, якщо влізе */
 	}
 	aprsPacketParse(&ax, &pkt);   /* R11: розбір ДО відсіву дублікатів -- ACK на повторене відправником повідомлення потрібен і для дубліката */
 	if ((pkt.type == APRS_T_MESSAGE) && s_rx.ownCall[0] && aprsMsgIsForUs(pkt.msgTo, s_rx.ownCall, s_rx.ownSsid))
