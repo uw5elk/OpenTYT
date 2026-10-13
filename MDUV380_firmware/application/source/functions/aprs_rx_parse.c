@@ -2382,6 +2382,60 @@ const aprsBcnRec_t *aprsHistBeaconLast(const aprsHist_t *h, int *dbIdx)
 	return &h->bcn[i];
 }
 
+int aprsHistBeaconOrder(const aprsHist_t *h, const aprsRxDb_t *db, uint32_t nowMs, uint8_t *out, int max)
+{
+	int n = 0;
+
+	for (int rank = 0; (rank < APRS_STATIONS_MAX) && (n < max); rank++)
+	{
+		const aprsStation_t *s = aprsDbNth(db, rank, nowMs);
+
+		if (s == NULL)
+		{
+			break;
+		}
+		if (((s->flags & APRS_ST_HASPOS) != 0U) && (aprsHistBeaconOf(h, db, s) != NULL))
+		{
+			out[n++] = (uint8_t)(s - &db->st[0]);
+		}
+	}
+	return n;
+}
+
+int aprsBeaconOrderFind(const uint8_t *order, int count, int dbIdx)
+{
+	for (int i = 0; i < count; i++)
+	{
+		if ((int)order[i] == dbIdx)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+int aprsBeaconOrderStep(int pos, int count, int step)
+{
+	if (count <= 0)
+	{
+		return -1;
+	}
+	if ((pos < 0) || (pos >= count))
+	{
+		return (step < 0) ? (count - 1) : 0;
+	}
+	pos += (step < 0) ? -1 : 1;
+	if (pos < 0)
+	{
+		pos = count - 1;
+	}
+	if (pos >= count)
+	{
+		pos = 0;
+	}
+	return pos;
+}
+
 bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len)
 {
 	aprsJrnEntry_t *e = &h->jrn[h->jrnHead % APRS_JRN_SLOTS];

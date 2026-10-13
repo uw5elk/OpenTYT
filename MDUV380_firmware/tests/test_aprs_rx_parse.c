@@ -949,6 +949,83 @@ static void testHist(void)
 	}
 }
 
+/* ---- R17 Г4: порядок станцій у вікні маяка -------------------------------------------------------------------- */
+static void testBeaconOrder(void)
+{
+	uint8_t ord[APRS_STATIONS_MAX];
+	int n;
+
+	printf("== R17 Г4: порядок станцій вікна маяка ==\n");
+	aprsHistClear(&s_h);
+	aprsDbInit(&s_db);
+	CHECK(aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX) == 0, "порожньо: 0 станцій");
+	CHECK(aprsBeaconOrderStep(-1, 0, 1) == -1 && aprsBeaconOrderStep(0, 0, -1) == -1, "порожній список: крок -1");
+
+	feedPkt("AAA", 0, "!4903.50N/07201.75W>a", 10000U);      /* старша, з позицією */
+	feedPkt("BBB", 0, ">status only", 20000U);               /* без позиції -- пропускається */
+	feedPkt("CCC", 0, "!4903.50N/07201.75W>c", 30000U);
+	feedPkt("DDD", 0, "!4903.50N/07201.75W>d", 40000U);      /* найновіша */
+	n = aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX);
+	CHECK(n == 3, "4 станції, одна без позиції -> %d у списку (3)", n);
+	CHECK(n == 3 && !strcmp(s_db.st[ord[0]].call, "DDD") && !strcmp(s_db.st[ord[1]].call, "CCC") && !strcmp(s_db.st[ord[2]].call, "AAA"),
+			"порядок новіша->старіша: DDD, CCC, AAA");
+	{
+		/* той самий порядок, що в «APRS станції» (aprsDbNth), лише без пропущених */
+		bool same = true;
+		int k = 0;
+
+		for (int r = 0; r < APRS_STATIONS_MAX; r++)
+		{
+			const aprsStation_t *st = aprsDbNth(&s_db, r, 100000U);
+
+			if (st == NULL) { break; }
+			if (st->flags & APRS_ST_HASPOS)
+			{
+				same = same && (k < n) && (&s_db.st[ord[k]] == st);
+				k++;
+			}
+		}
+		CHECK(same && (k == n), "порядок збігається з aprsDbNth() (список станцій)");
+	}
+	CHECK(aprsBeaconOrderFind(ord, n, (int)ord[1]) == 1 && aprsBeaconOrderFind(ord, n, 15) == -1, "Find: позиція є / нема");
+	/* крок кільцем */
+	CHECK(aprsBeaconOrderStep(0, 3, 1) == 1 && aprsBeaconOrderStep(2, 3, 1) == 0, "вниз: 1, з останньої -- на першу");
+	CHECK(aprsBeaconOrderStep(0, 3, -1) == 2 && aprsBeaconOrderStep(2, 3, -1) == 1, "вгору: з першої -- на останню");
+	CHECK(aprsBeaconOrderStep(-1, 3, 1) == 0 && aprsBeaconOrderStep(-1, 3, -1) == 2, "станції нема у списку: вниз -- перша, вгору -- остання");
+	CHECK(aprsBeaconOrderStep(0, 1, 1) == 0, "одна станція: лишається");
+	/* обмеження max */
+	CHECK(aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, 2) == 2, "max = 2 обмежує список");
+	/* станція без запису маяка (є позиція, запис обнулено) -- пропускається */
+	memset(&s_h.bcn[ord[0]], 0, sizeof(s_h.bcn[0]));
+	CHECK(aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX) == 2, "без запису маяка -- пропуск");
+	/* заповнений список: 16 станцій з позицією */
+	aprsHistClear(&s_h);
+	aprsDbInit(&s_db);
+	for (int i = 0; i < APRS_STATIONS_MAX; i++)
+	{
+		char src[8];
+
+		snprintf(src, sizeof(src), "Z%02d", i);
+		feedPkt(src, 0, "!4903.50N/07201.75W>x", 1000U + (uint32_t)i * 1000U);
+	}
+	n = aprsHistBeaconOrder(&s_h, &s_db, 100000U, ord, APRS_STATIONS_MAX);
+	CHECK(n == APRS_STATIONS_MAX && !strcmp(s_db.st[ord[0]].call, "Z15") && !strcmp(s_db.st[ord[n - 1]].call, "Z00"), "16 станцій: Z15 .. Z00");
+	{
+		/* обхід кільцем повертається на початок за n кроків і відвідує кожну рівно раз */
+		bool seen[APRS_STATIONS_MAX] = { false };
+		int pos = 0;
+		bool once = true;
+
+		for (int i = 0; i < n; i++)
+		{
+			once = once && !seen[pos];
+			seen[pos] = true;
+			pos = aprsBeaconOrderStep(pos, n, 1);
+		}
+		CHECK(once && pos == 0, "кільце з 16 станцій: кожна по разу, далі знову перша");
+	}
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -1700,6 +1777,7 @@ int main(void)
 	testR14();
 	testR16Mice();
 	testHist();
+	testBeaconOrder();
 	testStage3();
 	testRawText();
 	testFuzz();

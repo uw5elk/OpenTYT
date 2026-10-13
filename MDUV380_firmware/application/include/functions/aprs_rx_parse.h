@@ -294,6 +294,14 @@ const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, cons
 const aprsBcnRec_t *aprsHistBeaconOf(const aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s);
 /* Найсвіжіший запис маяка і індекс його станції в db.st[]; NULL -- нема. */
 const aprsBcnRec_t *aprsHistBeaconLast(const aprsHist_t *h, int *dbIdx);
+/* R17 Г4: станції, між якими гортається вікно маяка: ті самі, що в «APRS станції», у ТОМУ Ж порядку (найновіша першою, aprsDbNth()), але лише ті,
+ * що мають збережений маяк (AWIN_F_VALID) і позицію (APRS_ST_HASPOS). out[] -- індекси в db.st[], не більше max; повертає скільки записано. */
+int aprsHistBeaconOrder(const aprsHist_t *h, const aprsRxDb_t *db, uint32_t nowMs, uint8_t *out, int max);
+/* Позиція індексу dbIdx у списку order[0..count) (0-based); -1 -- його там нема. */
+int aprsBeaconOrderFind(const uint8_t *order, int count, int dbIdx);
+/* Сусід у списку: від позиції pos на step (+1 -- старіша, -1 -- новіша), кільцем. pos < 0 (станції нема у списку): step > 0 дає першу, step < 0 -- останню. -1 -- список порожній. */
+int aprsBeaconOrderStep(int pos, int count, int step);
+
 /* Журнал: кадр -> TNC-2 (aprsAx25ToText(), непечатні -> '.'), обрізано до APRS_JRN_TEXT-1. false -- кадр не розібрати як AX.25 UI (не записано).
  * Викликати ДО aprsAx25Unwrap(). */
 bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len);

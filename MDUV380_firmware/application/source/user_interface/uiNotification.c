@@ -901,6 +901,21 @@ static void displayAprsBeaconWindow(void)
 	{
 		displayPrintCore((int16_t)(DISPLAY_SIZE_X - 4 - tl * 6), 3, tm, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	}
+	{
+		/* R17 Г4: «n/m» -- номер станції в списку, між якою гортають стрілки; праворуч угорі, над часом (час -- y = 3, «n/m» -- y = 12). Одна станція -- нічого. */
+		int pn, pm;
+
+		if (aprsRxWindowPos(&pn, &pm) && (pm > 1))
+		{
+			char nm[8];
+			int nl = snprintf(nm, sizeof nm, "%d/%d", pn, pm);
+
+			if (nl > 0)
+			{
+				displayPrintCore((int16_t)(DISPLAY_SIZE_X - 4 - nl * 6), 12, nm, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			}
+		}
+	}
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
 	displayDrawFastHLine(3, 20, DISPLAY_SIZE_X - 6, true);
 	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);

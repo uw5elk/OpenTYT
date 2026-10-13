@@ -861,6 +861,75 @@ bool aprsRxWindowShowStation(const char *call)
 	return true;
 }
 
+/* R17 Г4: список станцій вікна й позиція поточної (за позивним вікна). Повертає кількість; *pos = -1, якщо станції вікна в списку нема. */
+static int winOrder(uint8_t *order, int max, int *pos)
+{
+	int n = aprsHistBeaconOrder(aprsModeHist(), &s_rx.db, ticksGetMillis(), order, max);
+	const aprsStation_t *cur = stationByCall(s_rx.win.call);
+
+	*pos = (cur != NULL) ? aprsBeaconOrderFind(order, n, (int)(cur - &s_rx.db.st[0])) : -1;
+	return n;
+}
+
+bool aprsRxWindowStep(int step)
+{
+	uint8_t order[APRS_STATIONS_MAX];
+	int pos;
+	int n;
+	int to;
+	bool wasManual;
+	const aprsStation_t *st;
+	const aprsBcnRec_t *rec;
+
+	if ((stateValid() == false) || (s_rx.win.active == false))
+	{
+		return false;
+	}
+	n = winOrder(order, APRS_STATIONS_MAX, &pos);
+	if ((n == 0) || ((n == 1) && (pos == 0)))
+	{
+		return false;
+	}
+	to = aprsBeaconOrderStep(pos, n, step);
+	if (to < 0)
+	{
+		return false;
+	}
+	st = &s_rx.db.st[order[to]];
+	rec = aprsHistBeaconOf(aprsModeHist(), &s_rx.db, st);
+	if (rec == NULL)
+	{
+		return false;
+	}
+	wasManual = ((s_rx.win.flags & AWIN_F_MANUAL) != 0U);
+	winOpenFromRec(rec, st);
+	if (wasManual == false)
+	{
+		s_rx.win.flags &= (uint8_t)~AWIN_F_MANUAL;   /* вікно, відкрите пакетом, лишається «живим»: гасне за правилами winTick() */
+	}
+	return true;
+}
+
+bool aprsRxWindowPos(int *n, int *m)
+{
+	uint8_t order[APRS_STATIONS_MAX];
+	int pos;
+	int cnt;
+
+	if ((stateValid() == false) || (s_rx.win.active == false))
+	{
+		return false;
+	}
+	cnt = winOrder(order, APRS_STATIONS_MAX, &pos);
+	if (pos < 0)
+	{
+		return false;
+	}
+	*n = pos + 1;
+	*m = cnt;
+	return true;
+}
+
 void aprsRxWindowDismiss(void)
 {
 	if (stateValid())
