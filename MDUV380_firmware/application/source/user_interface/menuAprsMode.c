@@ -83,7 +83,7 @@ static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
 	}
 }
 
-/* R15: перший екран «Повідом. APRS» -- Нове / Вхідні / Надіслані. R18: «Вхідні n/m» (n -- прочитані, m -- усього вхідних), «Надіслані» -- усі записи
+/* R15: перший екран «Повідом. APRS» -- Нове / Вхідні / Надіслані. R18: «Вхідні n/m» (n -- НЕпрочитані, як біля конверта; m -- усього вхідних), «Надіслані» -- усі записи
  * напрямку (раніше рахувалась черга передачі і після відправки була 0), четвертий пункт -- «[Видалити всі]». Великий шрифт, смуга вибору. */
 /* R18: у діагностичній збірці (ENABLE_APRS_RX_PROBE) видалення вимкнено -- не вистачає місця до адреси кодека (aprs_rx_cfg.h, APRS_R18_UI). */
 #if defined(APRS_R18_UI)
@@ -105,7 +105,7 @@ static void drawMsgHome(void)
 		switch (i)
 		{
 			case 0:  snprintf(buf, sizeof(buf), "%s", APRSMSG_H_NEW); break;
-			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN)); break;
+			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN))   /* R19 Е2: непрочитані / усього -- n збігається з числом біля конверта */; break;
 			case 2:  snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgDirCount(b, AMSG_DIR_OUT)); break;
 #if defined(APRS_R18_UI)
 			default: snprintf(buf, sizeof(buf), "%s", APRSMSG_H_DELALL); break;

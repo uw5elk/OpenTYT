@@ -1043,12 +1043,17 @@ static void testDelete(void)
 	aprsMsgCancelAll(b);   /* друге -- без ACK (скасовано) */
 	CHECK(aprsMsgDirCount(b, AMSG_DIR_OUT) == 2U && aprsMsgPendingCount(b) == 0U, "після завершення всіх: «Надіслані» лишається 2, черга 0");
 
-	printf("== R18 Д2: «Вхідні n/m» ==\n");
+	printf("== R19 Е2: «Вхідні n/m» -- n непрочитані, m усього ==\n");
 	aprsMsgInit(b, 0U);
 	CHECK(aprsMsgOnIncoming(b, "R1", "a", "1", t + 200U) && aprsMsgOnIncoming(b, "R2", "b", "2", t + 201U) && aprsMsgOnIncoming(b, "R3", "c", "3", t + 202U), "3 вхідних");
-	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b) == 0U && aprsMsgDirCount(b, AMSG_DIR_IN) == 3U, "прочитано 0 з 3");
-	aprsMsgMarkRead(b, (unsigned)aprsMsgNth(b, AMSG_DIR_IN, 0U));
-	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b) == 1U && aprsMsgDirCount(b, AMSG_DIR_IN) == 3U, "прочитано 1 з 3: n росте, m не змінюється");
+	CHECK(aprsMsgOnIncoming(b, "R4", "d", "4", t + 203U) && aprsMsgOnIncoming(b, "R5", "e", "5", t + 204U), "5 вхідних");
+	CHECK(aprsMsgUnreadCount(b) == 5U && aprsMsgDirCount(b, AMSG_DIR_IN) == 5U, "«Вхідні 5/5»");
+	for (unsigned k = 0U; k < 3U; k++)
+	{
+		aprsMsgMarkRead(b, (unsigned)aprsMsgNth(b, AMSG_DIR_IN, k));
+	}
+	CHECK(aprsMsgUnreadCount(b) == 2U && aprsMsgDirCount(b, AMSG_DIR_IN) == 5U, "5 вхідних, 3 прочитані -> «Вхідні 2/5»");
+	CHECK(aprsMsgUnreadCount(b) == 2U, "n збігається з лічильником конверта (aprsMsgUnreadCount)");
 }
 
 int main(void)
