@@ -200,6 +200,23 @@ void aprsRxFormatGeo(char *buf, size_t size, uint32_t distM, uint16_t bearing)
 	}
 }
 
+void aprsRxFormatDist(char *buf, size_t size, uint32_t distM)
+{
+	if (distM < 1000U)
+	{
+		snprintf(buf, size, "%lu" APRSRX_M, (unsigned long)distM);
+	}
+	else if (distM < 10000U)
+	{
+		uint32_t t = (distM + 50U) / 100U;   /* десяті частки км */
+		snprintf(buf, size, "%lu.%lu" APRSRX_KM, (unsigned long)(t / 10U), (unsigned long)(t % 10U));
+	}
+	else
+	{
+		snprintf(buf, size, "%lu" APRSRX_KM, (unsigned long)((distM + 500U) / 1000U));
+	}
+}
+
 void aprsRxClear(void)
 {
 	if (stateValid() == false)
@@ -931,6 +948,27 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		w->hasGeo = aprsRxStationGeo(st, &w->distM, &w->bearing);
 		w->course = pkt.course;
 		w->speedKn = pkt.speedKn;
+		w->altM = pkt.altM;
+		w->flags = (uint8_t)((pkt.hasAlt ? AWIN_F_ALT : 0U) | (pkt.hasShift ? AWIN_F_SHIFT : 0U) | (pkt.rangeKm ? AWIN_F_RANGE_KM : 0U));
+		w->extKind = pkt.extKind;
+		w->wxMask = pkt.wxMask;
+		if (pkt.wxMask != 0U)
+		{
+			w->u.wx.tempC = pkt.tempC;
+			w->u.wx.pressDhPa = pkt.pressDhPa;
+			w->u.wx.windDeg = pkt.windDeg;
+			w->u.wx.humPct = pkt.humPct;
+			w->u.wx.windMph = pkt.windMph;
+			w->u.wx.gustMph = pkt.gustMph;
+		}
+		else
+		{
+			w->u.r.freqKHz = pkt.freqKHz;
+			w->u.r.shiftKHz = pkt.shiftKHz;
+			w->u.r.extVal = pkt.extVal;
+			w->u.r.rangeVal = pkt.rangeVal;
+			memcpy(w->u.r.tone, pkt.tone, sizeof(w->u.r.tone));
+		}
 		w->symTable = pkt.symTable;
 		w->symCode = pkt.symCode;
 		w->rxSecs = (uint32_t)uiDataGlobal.dateTimeSecs;

@@ -21,7 +21,7 @@
 #define APRSRX_T_POS          "позиц≥€"
 #define APRSRX_T_MSG          "пов≥домл."
 #define APRSRX_T_STATUS       "статус"
-#define APRSRX_T_OTHER        "пакет"
+#define APRSRX_T_OTHER        "≥нше"
 
 /* ---- банер: перший р€док ЂAPRS ѕќ«»¬Ќ»…ї формуЇтьс€ в код≥ (латиниц€) ---- */
 #define APRSRX_BANNER_FMT     "APRS %s\n%s"
@@ -60,6 +60,7 @@
 #define APRSRX_DIAG_NOBITS    "?"
 #define APRSRX_CARD_PATH      "Ўл€х: %s"
 #define APRSRX_CARD_MICE      "Mic-E"
+#define APRSRX_CARD_TP        "i-gate"            /* R14: останн≥й кадр прийшов через i-gate (third-party) */
 #define APRSRX_DIAG_TITLE     "APRS приймач"
 
 /* ---- R8-fix: друга д≥агностична стор≥нка (л≥чильники I2S) ---- */
@@ -79,10 +80,14 @@
 /* ---- R13: ¬≤ Ќќ ћјя ј (повноекранна картка за позиц≥йним пакетом) ---- */
 #define APRSRX_WIN_N          "ѕн"                 /* п≥вн≥ч -- м≥тка угор≥ стр≥лки */
 #define APRSRX_WIN_NOPOS      "позиц≥њ нема"
-#define APRSRX_WIN_AZ         "јзимут в≥д ѕн"      /* по€сненн€ до цифри: напр€м в≥дносно п≥вноч≥ (магн≥тометра в рац≥њ нема) */
 #define APRSRX_WIN_AZ_FMT     "%u\260"            /* 45∞ (cp1251: \260 -- знак градуса) */
 #define APRSRX_WIN_COURSE     " урс %u\260"
 #define APRSRX_WIN_SPEED      "%u км/год"
+#define APRSRX_WIN_DIST_AZ    "%s %u\260"         /* в≥дстань ≥ азимут одним р€дком: Ђ850м 216∞ї (FONT_SIZE_3, до 10 символ≥в) */
+#define APRSRX_WIN_ALT        "¬ис. %ld м"
+#define APRSRX_WIN_FREQ       "%lu.%03lu ћ√ц"
+#define APRSRX_WIN_RANGE      "–ад≥ус %u км"      /* рад≥ус д≥њ; мил≥ перераховуЇмо в км */
+#define APRSRX_WIN_MHZ        "ћ√ц"              /* одиниц€ б≥л€ зсуву, коли поруч тон: ЂT082 -7.6ћ√цї */
 #define APRSRX_WIN_SYM_FMT    "%c%c %s"            /* таблиц€, код, назва */
 #define APRSRX_WIN_SYM2_FMT   "%c%c"               /* таблиц€, код, коли назви в наш≥й таблиц≥ нема */
 

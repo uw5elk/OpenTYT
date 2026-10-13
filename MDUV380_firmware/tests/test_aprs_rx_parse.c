@@ -127,6 +127,243 @@ static int tpParse(const char *info, aprsAx25_t *ax, aprsPacket_t *pk, uint8_t *
 	return tpParseBytes((const uint8_t *)info, (int)strlen(info), ax, pk, buf);
 }
 
+/* ---- R14: кадри з реального логу Direwolf (шлюз UW5ELK-1 і наш маяк US5EX-7), розбір від довільного src ---------------------- */
+static int parseFrom(const char *src, int ssid, const uint8_t *info, int infoLen, aprsAx25_t *ax, aprsPacket_t *pk, uint8_t *buf)
+{
+	int n = buildFrame(buf, "APDW18", src, ssid, 0, 0, info, infoLen);
+
+	if (!aprsAx25Parse(buf, (uint16_t)n, ax)) { memset(pk, 0, sizeof(*pk)); return 0; }
+	aprsPacketParse(ax, pk);
+	return 1;
+}
+
+static int pf(const char *src, int ssid, const char *info, aprsAx25_t *ax, aprsPacket_t *pk, uint8_t *buf)
+{
+	return parseFrom(src, ssid, (const uint8_t *)info, (int)strlen(info), ax, pk, buf);
+}
+
+/* стиснута позиція, 13 байт */
+static void encC(uint8_t *o, double lat, double lon, char table, char code, uint8_t c, uint8_t s, uint8_t t)
+{
+	o[0] = (uint8_t)table;
+	b91(o + 1, (int64_t)(380926.0 * (90.0 - lat) + 0.5));
+	b91(o + 5, (int64_t)(190463.0 * (180.0 + lon) + 0.5));
+	o[9] = (uint8_t)code; o[10] = c; o[11] = s; o[12] = t;
+}
+
+#define BEACON_IG "UW5ELK-1 *010000z4753.25N/03316.86Er438.950MHz T082 -760 DMR/D-Star/YSF/FM Repeater; 144.800MHz APRS Tx-Rx-iGate"
+
+static void testR14(void)
+{
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	uint8_t b[400];
+	char in[260];
+
+	printf("== R14 T1: об'єкт ';' (реальний кадр [0L]) ==\n");
+	pf("UW5ELK", 1, ";" BEACON_IG, &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && pk.hasPos && !pk.killed, "тип -- позиція, об'єкт живий");
+	CHECK((pk.latU == dm(47, 53, 25)) && (pk.lonU == dm(33, 16, 86)), "позиція 47.887500 / 33.281000 (%d %d)", pk.latU, pk.lonU);
+	CHECK((pk.symTable == '/') && (pk.symCode == 'r'), "символ /r (репітер): %c%c", pk.symTable, pk.symCode);
+	CHECK(pk.freqKHz == 438950U, "частота 438.950 МГц (%u кГц)", pk.freqKHz);
+	CHECK(!strcmp(pk.tone, "T082"), "тон T082 («%s»)", pk.tone);
+	CHECK(pk.hasShift && (pk.shiftKHz == -7600), "зсув -7.60 МГц (%d кГц)", pk.shiftKHz);
+	CHECK(!strcmp(pk.text, "DMR/D-Star/YSF/FM Repeater; 144.800MHz APRS Tx-Rx-iGate"), "текст без полів, ';' у коментарі цілий: «%s»", pk.text);
+	CHECK((pk.course == 0) && (pk.speedKn == 0), "курсу/швидкості нема");
+
+	printf("== R14 T2: знятий об'єкт '_' ==\n");
+	pf("UW5ELK", 1, ";UW5ELK-1 _010000z4753.25N/03316.86Er438.950MHz T082 -760 text", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && pk.hasPos && pk.killed && (pk.freqKHz == 438950U) && !strcmp(pk.text, "[\xE7\xED\xFF\xF2\xEE]: text"), "позиція є, ознака «знято» у тексті (cp1251): «%s»", pk.text);
+
+	printf("== R14 T3: стиснутий об'єкт; ім'я != src ==\n");
+	{
+		uint8_t c13[13];
+
+		encC(c13, 47.8875, 33.281, '/', 'r', ' ', ' ', 0x21);
+		snprintf(in, sizeof(in), ";REPEAT-2 *010000h");
+		memcpy(in + strlen(in), c13, 13);
+		strcpy(in + 18 + 13, "438.950MHz T082 -760 rpt");
+		pf("UW5ELK", 1, in, &ax, &pk, b);
+		CHECK((pk.type == APRS_T_POSITION) && pk.compressed && (labs((long)pk.latU - dm(47, 53, 25)) < 20) && (labs((long)pk.lonU - dm(33, 16, 86)) < 20),
+				"стиснута позиція після часу 'h' (%d %d)", pk.latU, pk.lonU);
+		CHECK((pk.freqKHz == 438950U) && !strcmp(pk.text, "REPEAT-2: rpt"), "ім'я != src -> префікс: «%s»", pk.text);
+		pf("REPEAT", 2, in, &ax, &pk, b);
+		CHECK(!strcmp(pk.text, "rpt"), "ім'я == src -> без префікса: «%s»", pk.text);
+	}
+
+	printf("== R14 T4: обрізаний об'єкт ==\n");
+	for (int cut = 1; cut <= 30; cut += 3)
+	{
+		snprintf(in, sizeof(in), "%.*s", cut, ";UW5ELK-1 *010000z4753.25N/03316.86Er");
+		pf("UW5ELK", 1, in, &ax, &pk, b);
+		if (cut < 31)
+		{
+			if (pk.type != APRS_T_OTHER) { printf("  FAIL обрізано до %d байт: тип %d\n", cut, pk.type); fails++; }
+		}
+	}
+	pf("UW5ELK", 1, ";UW5ELK-1 *010000z4753.25N/0", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_OTHER) && (pk.text[0] != 0), "обрізаний -- «інше» із сирим текстом: «%s»", pk.text);
+	pf("UW5ELK", 1, ";UW5ELK-1 X010000z4753.25N/03316.86Er", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "поганий прапорець об'єкта -- «інше»");
+
+	printf("== R14 T5: предмет ')' ==\n");
+	pf("N0CALL", 7, ")AID #2!4903.50N/07201.75WAhello", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && pk.hasPos && !pk.killed && (pk.symCode == 'A') && !strcmp(pk.text, "AID #2: hello"), "предмет живий: «%s»", pk.text);
+	pf("N0CALL", 7, ")AID #2_4903.50N/07201.75WAhello", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && pk.killed && (pk.latU == dm(49, 3, 50)) && !strncmp(pk.text, "AID #2 [\xE7\xED\xFF\xF2\xEE]: hello", 14), "предмет знятий");
+	pf("N0CALL", 7, ")AID #2!4903.50N/0", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "обрізаний предмет -- «інше»");
+	pf("N0CALL", 7, ")AB!4903.50N/07201.75WA", &ax, &pk, b);
+	CHECK(pk.type == APRS_T_OTHER, "ім'я предмета коротше за 3 -- «інше»");
+
+	printf("== R14 T6: '<' можливості станції ==\n");
+	pf("UW5ELK", 1, "<IGATE,MSG_CNT=0,PKT_CNT=0,DIR_CNT=0,LOC_CNT=0,RF_CNT=0", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_STATUS) && !strcmp(pk.text, "IGATE,MSG_CNT=0,PKT_CNT=0,DIR_CNT=0,LOC_CNT=0,RF_CNT=0"), "статус, текст видно: «%s»", pk.text);
+
+	printf("== R14 T7: наш кадр US5EX-7 (еталон регресії) ==\n");
+	pf("US5EX", 7, "!/65RzVx.&[  !144.800MHz Toff +000 TYT MD-UV390", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && pk.compressed && (pk.symTable == '/') && (pk.symCode == '['), "позиція, символ /[ (%c%c)", pk.symTable, pk.symCode);
+	CHECK((pk.course == 0) && (pk.speedKn == 0) && !pk.hasAlt && (pk.rangeVal == 0), "курсу/швидкості/висоти/радіуса нема");
+	CHECK((pk.freqKHz == 144800U) && !strcmp(pk.tone, "Toff") && pk.hasShift && (pk.shiftKHz == 0), "144.800, Toff, зсув 0");
+	CHECK(!strcmp(pk.text, "TYT MD-UV390"), "текст «%s»", pk.text);
+
+	printf("== R14 T8 (Б1): '_' -- вітер, а не курс ==\n");
+	pf("N0CALL", 7, "!4903.50N/07201.75W_310/004g006t077r000p000h50b10265", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && (pk.symCode == '_') && (pk.course == 0) && (pk.speedKn == 0), "курсу і швидкості станції нема");
+	CHECK((pk.wxMask & APRS_WX_WIND) && (pk.windDeg == 310) && (pk.windMph == 4) && (pk.wxMask & APRS_WX_GUST) && (pk.gustMph == 6), "вітер 310 / 4 mph, порив 6");
+	CHECK((pk.wxMask & APRS_WX_TEMP) && (pk.tempC == 25) && (pk.wxMask & APRS_WX_HUM) && (pk.humPct == 50) && (pk.wxMask & APRS_WX_PRESS) && (pk.pressDhPa == 10265),
+			"t 25 °C, 50 %%, 1026.5 гПа (%d %u %u)", pk.tempC, pk.humPct, pk.pressDhPa);
+	CHECK(pk.text[0] == 0, "текст порожній: «%s»", pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W_220/004g005t-05h00b09720 Davis", &ax, &pk, b);
+	CHECK((pk.tempC == -21) && (pk.humPct == 100) && (pk.pressDhPa == 9720) && !strcmp(pk.text, "Davis"), "t-05 -> -21 °C, h00 -> 100 %%, текст «%s»", pk.text);
+
+	printf("== R14 T9 (Б2): стиснута, c == '{' -- радіус ==\n");
+	{
+		uint8_t c13[13];
+
+		encC(c13, 49.0, 20.0, '/', '#', '{', 33 + 10, 0x21);
+		in[0] = '!'; memcpy(in + 1, c13, 13); in[14] = 0;
+		pf("N0CALL", 7, in, &ax, &pk, b);
+		CHECK((pk.course == 0) && (pk.speedKn == 0) && (pk.rangeVal == 4) && !pk.rangeKm, "радіус 2*1.08^10 = 4.3 милі -> %u", pk.rangeVal);
+	}
+
+	printf("== R14 T10 (Б2): стиснута з висотою GGA ==\n");
+	{
+		uint8_t c13[13];
+		double ft = pow(1.002, 37.0 * 91.0 + 86.0);
+
+		encC(c13, 49.0, 20.0, '/', '>', 33 + 37, 33 + 86, 33 + 0x10);
+		in[0] = '!'; memcpy(in + 1, c13, 13); in[14] = 0;
+		pf("N0CALL", 7, in, &ax, &pk, b);
+		CHECK(pk.hasAlt && (pk.altM == (int32_t)(ft * 0.3048 + 0.5)) && (pk.course == 0) && (pk.speedKn == 0), "висота %d м (чекаємо %d), курсу нема", pk.altM, (int)(ft * 0.3048 + 0.5));
+		encC(c13, 49.0, 20.0, '/', '>', 33 + 22, 33 + 10, 0x21 + 0x2);
+		in[0] = '!'; memcpy(in + 1, c13, 13);
+		pf("N0CALL", 7, in, &ax, &pk, b);
+		CHECK(!pk.hasAlt && (pk.course == 88) && (pk.speedKn == 1), "звичайний cs: курс %u, швидкість %u", pk.course, pk.speedKn);
+	}
+
+	printf("== R14 T11 (Б3): Mic-E, висота 'xxx}' ==\n");
+	{
+		uint8_t info[48], fr[140];
+		char dst[8];
+		int n;
+
+		encodeMicE(dst, info, 33, 25, 64, 1, 112, 7, 58, 1);
+		memcpy(&info[9], "`\"3z}_", 6);
+		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 15);
+		aprsAx25Parse(fr, (uint16_t)n, &ax);
+		aprsPacketParse(&ax, &pk);
+		CHECK(pk.micE && pk.hasAlt && (pk.altM == 8) && !strcmp(pk.text, "_"), "висота %d м, текст «%s» (без \"3z})", pk.altM, pk.text);
+		memcpy(&info[9], "\"3z}hello", 9);
+		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 18);
+		aprsAx25Parse(fr, (uint16_t)n, &ax);
+		aprsPacketParse(&ax, &pk);
+		CHECK(pk.hasAlt && (pk.altM == 8) && !strcmp(pk.text, "hello"), "висота без байта типу: текст «%s»", pk.text);
+		memcpy(&info[9], "`plain", 6);
+		n = buildFrame(fr, dst, "TEST", 9, 0, 0, info, 15);
+		aprsAx25Parse(fr, (uint16_t)n, &ax);
+		aprsPacketParse(&ax, &pk);
+		CHECK(!pk.hasAlt && !strcmp(pk.text, "`plain"), "без висоти текст не чіпаємо: «%s»", pk.text);
+	}
+
+	printf("== R14 T12: '/A=' у середині ==\n");
+	pf("N0CALL", 7, "!4903.50N/07201.75W>Hello /A=001234 world", &ax, &pk, b);
+	CHECK(pk.hasAlt && (pk.altM == 376) && !strcmp(pk.text, "Hello world"), "висота %d м, текст «%s»", pk.altM, pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W>/A=-00123", &ax, &pk, b);
+	CHECK(pk.hasAlt && (pk.altM == -37) && (pk.text[0] == 0), "від'ємна висота %d м", pk.altM);
+
+	printf("== R14 T13: телеметрія в коментарі ==\n");
+	pf("N0CALL", 7, "!4903.50N/07201.75W>hello |ss11|", &ax, &pk, b);
+	CHECK(!strcmp(pk.text, "hello"), "|ss11| вирізано: «%s»", pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W>hello |ss1122334455!\"|", &ax, &pk, b);
+	CHECK(!strcmp(pk.text, "hello"), "|ss1122334455!\"| вирізано: «%s»", pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W>a |b| c", &ax, &pk, b);
+	CHECK(!strcmp(pk.text, "a |b| c"), "не телеметрія (замало знаків) -- лишається: «%s»", pk.text);
+
+	printf("== R14 T14: !DAO! ==\n");
+	pf("N0CALL", 7, "!4903.50N/07201.75W>hello !W23!", &ax, &pk, b);
+	CHECK(!strcmp(pk.text, "hello"), "!W23! вирізано: «%s»", pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W>hello !w..! x", &ax, &pk, b);
+	CHECK(!strcmp(pk.text, "hello x"), "!w..! вирізано: «%s»", pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W>Hi!!", &ax, &pk, b);
+	CHECK(!strcmp(pk.text, "Hi!!"), "не DAO -- лишається: «%s»", pk.text);
+
+	printf("== R14 T15: PHG / RNG / DFS ==\n");
+	pf("N0CALL", 7, "!4903.50N/07201.75W#PHG5360digi", &ax, &pk, b);
+	CHECK((pk.extKind == APRS_EXT_PHG) && (pk.extVal == 0x5360) && !strcmp(pk.text, "digi"), "PHG5360: %u %04x «%s»", pk.extKind, pk.extVal, pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W#RNG0025 rng", &ax, &pk, b);
+	CHECK((pk.extKind == APRS_EXT_RNG) && (pk.extVal == 25) && !strcmp(pk.text, "rng"), "RNG0025: %u %u «%s»", pk.extKind, pk.extVal, pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W\\DFS2360", &ax, &pk, b);
+	CHECK((pk.extKind == APRS_EXT_DFS) && (pk.extVal == 0x2360) && (pk.text[0] == 0), "DFS2360");
+
+	printf("== R14 AA5: курс/швидкість 088/010 ==\n");
+	pf("N0CALL", 7, "!4903.50N/07201.75W>088/010 mobile", &ax, &pk, b);
+	CHECK((pk.course == 88) && (pk.speedKn == 10) && !strcmp(pk.text, "mobile"), "курс %u, швидкість %u, текст «%s»", pk.course, pk.speedKn, pk.text);
+	pf("N0CALL", 7, "!4903.50N/07201.75W>088/010144.800MHz", &ax, &pk, b);
+	CHECK((pk.course == 88) && (pk.freqKHz == 144800U), "курс і частота підряд");
+
+	printf("== R14 T16: third-party із вкладеним шляхом ==\n");
+	{
+		int u = tpParse("}UW5ELK-1>APDW18,TCPIP*,qAC,T2UKRAINE:!4753.25NR03316.86E&438.950MHz T082 -760 DMR", &ax, &pk, b);
+
+		CHECK((u == 1) && ax.tp && !strcmp(ax.src, "UW5ELK-1") && (pk.type == APRS_T_POSITION) && (pk.freqKHz == 438950U) && (pk.symTable == 'R') && (pk.symCode == '&'),
+				"розгорнуто: src %s, таблиця-накладка %c, код %c", ax.src, pk.symTable, pk.symCode);
+		u = tpParse("}UW5ELK-1>APDW18,TCPIP*,qAC,T2.POLC_1:>status", &ax, &pk, b);
+		CHECK((u == 1) && (pk.type == APRS_T_STATUS), "'.' і '_' у шляху дозволені");
+	}
+
+	printf("== R14 T17: DTI, які ми не розбираємо -> «інше» із текстом ==\n");
+	{
+		const char *dti = "\"#$%&(*+,-.0123456789?ATU\\]^_a{|~";
+		int bad = 0;
+
+		for (size_t i = 0; dti[i]; i++)
+		{
+			snprintf(in, sizeof(in), "%cxyz unparsed 12345", dti[i]);
+			pf("N0CALL", 7, in, &ax, &pk, b);
+			if ((pk.type != APRS_T_OTHER) || (strstr(pk.text, "unparsed") == NULL)) { printf("  FAIL DTI '%c': тип %d, текст «%s»\n", dti[i], pk.type, pk.text); bad++; }
+		}
+		pf("N0CALL", 7, "!!xyz unparsed", &ax, &pk, b);
+		if ((pk.type != APRS_T_OTHER) || (strstr(pk.text, "unparsed") == NULL)) { bad++; }
+		pf("N0CALL", 7, "[xyz unparsed", &ax, &pk, b);
+		if ((pk.type != APRS_T_OTHER) || (strstr(pk.text, "unparsed") == NULL)) { bad++; }
+		CHECK(bad == 0, "усі непідтримувані DTI -- «інше» з непорожнім текстом");
+	}
+
+	printf("== R14: станція в списку -- src, не ім'я об'єкта; прапорець i-gate ==\n");
+	{
+		static aprsRxDb_t db;
+
+		memset(&db, 0, sizeof(db));
+		pf("UW5ELK", 1, ";" BEACON_IG, &ax, &pk, b);
+		aprsStation_t *st = aprsDbUpdate(&db, &ax, &pk, 1000);
+		CHECK((st != NULL) && !strcmp(st->call, "UW5ELK-1") && (st->flags & APRS_ST_HASPOS) && !(st->flags & APRS_ST_TP), "запис за src, без прапорця TP");
+		tpParse("}UW5ELK-1>APDW18:!4753.25NR03316.86E&x", &ax, &pk, b);
+		st = aprsDbUpdate(&db, &ax, &pk, 2000);
+		CHECK((st != NULL) && (st->flags & APRS_ST_TP) && (aprsDbCount(&db) == 1), "через i-gate: прапорець TP, той самий запис");
+	}
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -439,7 +676,7 @@ int main(void)
 		parseInfo("APRS", ">092345zOn the air", &ax, &pk, b);
 		CHECK((pk.type == APRS_T_STATUS) && !strcmp(pk.text, "On the air"), "статус з відміткою часу");
 		parseInfo("APRS", ";LEADER   *092345z4903.50N/07201.75W-", &ax, &pk, b);
-		CHECK(pk.type == APRS_T_OTHER, "об'єкт -- «інше»");
+		CHECK((pk.type == APRS_T_POSITION) && pk.hasPos && !pk.killed && (pk.symCode == '-') && !strncmp(pk.text, "LEADER", 6), "R14: об'єкт -- позиція (було «інше»)");
 		parseInfo("APRS", "_10090556c220s004g005t077", &ax, &pk, b);
 		CHECK(pk.type == APRS_T_OTHER, "погода -- «інше»");
 		parseInfo("APRS", "T#005,199,000,255,073,123,01101001", &ax, &pk, b);
@@ -874,6 +1111,8 @@ int main(void)
 				!strcmp(aprsBearingName(337), "NW") && !strcmp(aprsBearingName(338), "N") && !strcmp(aprsBearingName(359), "N"),
 				"сектори азимуту (8 по 45°)");
 	}
+
+	testR14();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

@@ -87,7 +87,32 @@ typedef struct
 	char     symCode;                       /* код символу ('!'..'~'); 0 -- невідомо */
 	uint16_t course;                       /* градуси 1..360 (0 -- курсу в пакеті нема або "не рухається") */
 	uint16_t speedKn;                      /* швидкість, вузли (0 -- нема/стоїть) */
+	/* R14: розширення коментаря (commentStrip(), розд. 3 брифу R14). Лише позиційні пакети; на стеку викликача. */
+	int32_t  altM;                         /* висота, метри (hasAlt) */
+	uint32_t freqKHz;                      /* частота з коментаря "nnn.nnnMHz", кГц; 0 -- нема */
+	uint16_t extVal;                       /* PHG/DFS: p,h,g,d по 4 біти (p -- старший); RNG: милі */
+	uint16_t rangeVal;                     /* радіус із "Rnnm"/"Rnnk" після частоти (rangeKm -- у км, інакше милі); 0 -- нема */
+	int16_t  shiftKHz;                     /* зсув, кГц (hasShift): "-760" у десятках кГц = -7600 */
+	uint16_t pressDhPa;                    /* погода: тиск, 0.1 гПа (APRS_WX_PRESS) */
+	uint16_t windDeg;                      /* погода: напрям вітру, градуси (APRS_WX_WIND) */
+	int16_t  tempC;                        /* погода: температура, °C (APRS_WX_TEMP) */
+	char     tone[5];                      /* "T082", "Toff", "C023"; порожній -- нема */
+	uint8_t  extKind;                      /* APRS_EXT_* */
+	uint8_t  humPct;                       /* погода: вологість, % */
+	uint8_t  windMph, gustMph;             /* погода: вітер і порив, милі/год (як у пакеті) */
+	uint8_t  wxMask;                       /* APRS_WX_* -- які погодні поля є */
+	bool     hasAlt, hasShift, rangeKm;
+	bool     killed;                       /* об'єкт/предмет знято з обліку ('_') */
 } aprsPacket_t;
+#define APRS_EXT_NONE 0
+#define APRS_EXT_PHG  1
+#define APRS_EXT_RNG  2
+#define APRS_EXT_DFS  3
+#define APRS_WX_TEMP  0x01
+#define APRS_WX_HUM   0x02
+#define APRS_WX_PRESS 0x04
+#define APRS_WX_WIND  0x08
+#define APRS_WX_GUST  0x10
 
 /* Ніколи не відмовляє: невпізнане -> APRS_T_OTHER. */
 void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out);
@@ -113,6 +138,7 @@ const char *aprsBearingName(uint16_t deg);
 /* ---- список станцій і дедуплікація ----------------------------------------------------- */
 #define APRS_ST_HASPOS   0x01
 #define APRS_ST_MICE     0x02
+#define APRS_ST_TP       0x04   /* R14: останній кадр прийшов через i-gate (third-party) */
 
 typedef struct
 {

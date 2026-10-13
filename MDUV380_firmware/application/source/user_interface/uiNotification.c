@@ -709,6 +709,113 @@ static void aprsWinDrawArrow(uint16_t bearing)
 	displayFillCircle(APRS_WIN_CX, APRS_WIN_CY, 2, true);
 }
 
+#define APRS_WIN_ROW_H    9
+#define APRS_WIN_ROW_MAX  89   /* верх останнього рядка: рядок займає 8 px, далі -- рядок символу (y = 100) */
+#define APRS_WIN_COLS     13   /* (APRS_WIN_CX - APRS_WIN_R - 4 - 4) / 6 */
+
+static void aprsWinRow(int16_t *y, const char *txt)
+{
+	char b[APRS_WIN_COLS + 1];
+
+	if (*y > APRS_WIN_ROW_MAX)
+	{
+		return;
+	}
+	snprintf(b, sizeof b, "%s", txt);
+	displayPrintCore(4, *y, b, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	*y = (int16_t)(*y + APRS_WIN_ROW_H);
+}
+
+/* Зсув у кГц -> «-7.6» / «+0.6» / «-12.5» (без зайвих нулів); 0 -- порожньо. */
+static void aprsWinShiftStr(char *o, size_t size, int shiftKHz)
+{
+	unsigned a = (unsigned)((shiftKHz < 0) ? -shiftKHz : shiftKHz);
+	unsigned frac = (a % 1000U) / 10U;   /* соті частки МГц */
+
+	if (shiftKHz == 0)
+	{
+		o[0] = 0;
+		return;
+	}
+	if ((frac % 10U) == 0U)
+	{
+		snprintf(o, size, "%c%u.%u", (shiftKHz < 0) ? '-' : '+', a / 1000U, frac / 10U);
+	}
+	else
+	{
+		snprintf(o, size, "%c%u.%02u", (shiftKHz < 0) ? '-' : '+', a / 1000U, frac);
+	}
+}
+
+static void aprsWinInfoRows(const aprsRxWin_t *w, int16_t y)
+{
+	char buf[24];
+
+	if (w->course != 0U)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_COURSE, (unsigned)w->course);
+		aprsWinRow(&y, buf);
+	}
+	if (w->speedKn != 0U)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_SPEED, (unsigned)aprsKnotsToKmh(w->speedKn));
+		aprsWinRow(&y, buf);
+	}
+	if (w->flags & AWIN_F_ALT)
+	{
+		snprintf(buf, sizeof buf, APRSRX_WIN_ALT, (long)w->altM);
+		aprsWinRow(&y, buf);
+	}
+	if (w->wxMask == 0U)
+	{
+		char sh[10];
+
+		if (w->u.r.freqKHz != 0U)
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_FREQ, (unsigned long)(w->u.r.freqKHz / 1000U), (unsigned long)(w->u.r.freqKHz % 1000U));
+			aprsWinRow(&y, buf);
+		}
+		sh[0] = 0;
+		if (w->flags & AWIN_F_SHIFT)
+		{
+			aprsWinShiftStr(sh, sizeof sh, w->u.r.shiftKHz);
+		}
+		if (w->u.r.tone[0] != 0)
+		{
+			snprintf(buf, sizeof buf, "%s%s%s%s", w->u.r.tone, (sh[0] != 0) ? " " : "", sh, (sh[0] != 0) ? APRSRX_WIN_MHZ : "");
+			aprsWinRow(&y, buf);
+		}
+		else if (sh[0] != 0)
+		{
+			snprintf(buf, sizeof buf, "%s %s", sh, APRSRX_WIN_MHZ);
+			aprsWinRow(&y, buf);
+		}
+		if ((w->extKind == APRS_EXT_PHG) || (w->extKind == APRS_EXT_DFS))
+		{
+			snprintf(buf, sizeof buf, "%s%04X", (w->extKind == APRS_EXT_PHG) ? "PHG" : "DFS", (unsigned)w->u.r.extVal);
+			aprsWinRow(&y, buf);
+		}
+		{
+			/* радіус: з коментаря/стисненої позиції (милі або км) або поле RNGnnnn (милі) */
+			unsigned km = 0;
+
+			if (w->u.r.rangeVal != 0U)
+			{
+				km = (w->flags & AWIN_F_RANGE_KM) ? (unsigned)w->u.r.rangeVal : (unsigned)(((unsigned long)w->u.r.rangeVal * 1609UL + 500UL) / 1000UL);
+			}
+			else if ((w->extKind == APRS_EXT_RNG) && (w->u.r.extVal != 0U))
+			{
+				km = (unsigned)(((unsigned long)w->u.r.extVal * 1609UL + 500UL) / 1000UL);
+			}
+			if (km != 0U)
+			{
+				snprintf(buf, sizeof buf, APRSRX_WIN_RANGE, km);
+				aprsWinRow(&y, buf);
+			}
+		}
+	}
+}
+
 static void displayAprsBeaconWindow(void)
 {
 	const aprsRxWin_t *w = aprsRxWindow();
@@ -737,15 +844,13 @@ static void displayAprsBeaconWindow(void)
 	y = 26;
 	if (w->hasGeo)
 	{
-		/* Ліва колонка: відстань і сектор, азимут цифрою, пояснення, що це відносно півночі. */
-		aprsRxFormatGeo(buf, sizeof buf, w->distM, w->bearing);
+		/* Ліва колонка: «відстань азимут°» одним рядком (R14: без буквеного сектора й пояснення «від Пн» -- є стрілка). */
+		char d[12];
+
+		aprsRxFormatDist(d, sizeof d, w->distM);
+		snprintf(buf, sizeof buf, APRSRX_WIN_DIST_AZ, d, (unsigned)w->bearing);
 		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
-		y += 18;
-		snprintf(buf, sizeof buf, APRSRX_WIN_AZ_FMT, (unsigned)w->bearing);
-		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
-		y += 17;
-		displayPrintCore(4, y, APRSRX_WIN_AZ, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
-		y += 10;
+		y += 20;
 
 		/* Кільце, чотири риски (Пн, Сх, Пд, Зх), мітка «Пн» угорі й стрілка. Дистанція 0 -- азимут не визначений, стрілки нема. */
 		displayDrawCircle(APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_R, true);
@@ -766,18 +871,8 @@ static void displayAprsBeaconWindow(void)
 		y += 20;
 	}
 
-	/* Курс і швидкість, якщо є в пакеті. */
-	if (w->course != 0U)
-	{
-		snprintf(buf, sizeof buf, APRSRX_WIN_COURSE, (unsigned)w->course);
-		displayPrintCore(4, y, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
-		y += 9;
-	}
-	if (w->speedKn != 0U)
-	{
-		snprintf(buf, sizeof buf, APRSRX_WIN_SPEED, (unsigned)aprsKnotsToKmh(w->speedKn));
-		displayPrintCore(4, y, buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
-	}
+	/* R14: решта даних пакета -- по рядку, лише наявні, x = 4..86 (13 символів: правіше кільце), крок 9 px, до y = 97. */
+	aprsWinInfoRows(w, y);
 
 	/* Символ APRS (таблиця + код, назва -- якщо є в нашій таблиці) і коментар, обрізаний до ширини. */
 	if (w->symCode != 0)

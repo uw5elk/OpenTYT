@@ -188,7 +188,7 @@ static void drawCard(void)
 		return;
 	}
 
-	snprintf(buf, sizeof(buf), "%s%s", s->call, (s->flags & APRS_ST_MICE) ? " " APRSRX_CARD_MICE : "");
+	snprintf(buf, sizeof(buf), "%s%s%s", s->call, (s->flags & APRS_ST_MICE) ? " " APRSRX_CARD_MICE : "", (s->flags & APRS_ST_TP) ? " " APRSRX_CARD_TP : "");
 	printRow(0, buf);
 	snprintf(buf, sizeof(buf), APRSRX_CARD_TYPE, typeStr(s->type));
 	printRow(1, buf);

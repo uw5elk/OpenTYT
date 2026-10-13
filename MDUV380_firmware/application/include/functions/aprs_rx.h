@@ -132,6 +132,8 @@ void aprsRxClear(void);
 uint32_t aprsRxAgeSec(const aprsStation_t *st);
 /* «850м NE» / «3.2км NE» / «120км NW» -- відстань і сектор азимуту (латиниця + «м»/«км» із aprsrx_ua.h, cp1251). */
 void aprsRxFormatGeo(char *buf, size_t size, uint32_t distM, uint16_t bearing);
+/* R14: лише відстань без сектора («850м» / «6.3км» / «120км») -- для вікна маяка (там азимут цифрою і стрілка). */
+void aprsRxFormatDist(char *buf, size_t size, uint32_t distM);
 
 /* ---- R13: вікно маяка (повноекранна картка за позиційним пакетом) ------------------------------------------------ */
 /* Дані картки: копія з пакета на момент прийому (запис станції координат у градусах/курсу не тримає, тож дубль у CCM ~64 Б).
@@ -145,9 +147,36 @@ typedef struct
 	uint16_t  speedKn;          /* швидкість, вузли; 0 -- нема/стоїть */
 	uint32_t  distM;
 	uint32_t  rxSecs;           /* uiDataGlobal.dateTimeSecs у момент прийому */
+	/* R14: розібрані розширення коментаря. Радіо (частота/тон/зсув/PHG/радіус) і погода ділять одне місце (union, 16 Б): вони не зустрічаються
+	 * разом -- погода розбирається лише для символу '_', і тоді має перевагу. Усе разом +24 Б у CCM (одна копія). */
+	int32_t   altM;             /* висота, м (AWIN_F_ALT) */
+	union
+	{
+		struct
+		{
+			uint32_t freqKHz;   /* 0 -- нема */
+			int16_t  shiftKHz;  /* AWIN_F_SHIFT */
+			uint16_t extVal;    /* PHG/DFS: 4 hex-цифри phgd; RNG: милі */
+			uint16_t rangeVal;  /* радіус, милі або км (AWIN_F_RANGE_KM); 0 -- нема */
+			char     tone[5];   /* "T082" / "Toff" / "" */
+		} r;
+		struct
+		{
+			int16_t  tempC;
+			uint16_t pressDhPa; /* 0.1 гПа */
+			uint16_t windDeg;
+			uint8_t  humPct, windMph, gustMph;
+		} wx;
+	} u;
+	uint8_t   flags;            /* AWIN_F_* */
+	uint8_t   extKind;          /* APRS_EXT_* */
+	uint8_t   wxMask;           /* APRS_WX_*; ненульовий -- у u діє wx */
 	char      symTable, symCode;
 	char      call[APRS_CALL_LEN];
 	char      text[APRS_STATION_TEXT];
+#define AWIN_F_ALT       0x01
+#define AWIN_F_SHIFT     0x02
+#define AWIN_F_RANGE_KM  0x04
 } aprsRxWin_t;
 const aprsRxWin_t *aprsRxWindow(void);
 /* RED на вікні (applicationMain.c): вікно закрито оператором -- чекає наступного пакета. */
