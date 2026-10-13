@@ -1111,15 +1111,6 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		(void)aprsHistBeaconFill(aprsModeHist(), &s_rx.db, st, &pkt, bg, bd, bb, (uint32_t)uiDataGlobal.dateTimeSecs, rssi);
 	}
 
-	if (aprsModeIsActive())
-	{
-		uint32_t md = 0;
-		uint16_t mb = 0;
-		bool mg = aprsRxStationGeo(st, &md, &mb);
-
-		aprsModeOnFrame(&ax, &pkt, mg, md, mb);   /* R10: «останній пакет» на «Моніторі» */
-	}
-
 	/* Повідомлення нам: тільки справжнє (не ack/rej), раніше не віддане. ACK уже поставлено вище (aprsMsgBgOnMessage(), на кожну копію);
 	 * тут лише рішення «показувати чи ні». Повторна копія (відправник чекає ACK) користувачу вдруге не показується і банера станції
 	 * не дає. Сховище SMS не чіпаємо. */

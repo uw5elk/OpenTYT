@@ -24,11 +24,6 @@ void menuAprsStationsClose(void);
  * закрито, треба перемалювати список опцій. */
 bool menuAprsStationsTick(uiEvent_t *ev);
 
-/* R10: вбудована сторінка «Станції» «Режиму APRS» (menuAprsMode.c). Стан -- той самий aprsRxUi() (view LIST/CARD,
- * sel, scroll, cardCall). Draw малює тіло (рядки 0..10) БЕЗ заголовка й без displayClearBuf()/displayRender().
- * Key повертає: 0 -- нічого, 1 -- перемалювати, -1 -- вихід зі списку (RED) на попередню сторінку. */
-void menuAprsStationsDrawEmbedded(void);
-int  menuAprsStationsKeyEmbedded(uiEvent_t *ev);
 /* Короткий тип пакета і вік («45с», «12хв») -- для рядків «Монітора» (cp1251 з aprsrx_ua.h). */
 const char *menuAprsStationsTypeStr(uint8_t type);
 void menuAprsStationsAgeStr(char *b, size_t n, uint32_t sec);

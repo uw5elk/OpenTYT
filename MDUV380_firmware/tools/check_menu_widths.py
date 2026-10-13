@@ -392,6 +392,8 @@ if os.path.exists(mode_path):
         'APRSM_V_FREQ': '430.0750',
         'APRSM_V_PATH_FMT': 'WIDE22',
         'APRSM_V_CALL_FMT': 'UW5ELK',
+        'APRSM_H_LISTEN_FMT': 'Увімк',
+        'APRSM_H_TITLE_ON': '144.8000',
     }
     def worst(name, val):
         t = val.replace('%%', '\x01')
@@ -406,17 +408,21 @@ if os.path.exists(mode_path):
         return t.replace('\x01', '%')
     for name, val in am.items():
         t = worst(name, val).replace('\\\\', '\\')
-        if name == 'APRSM_TITLE_FMT' or name == 'APRSM_MENU':
+        if name == 'APRSM_TITLE_FMT' or name == 'APRSM_MENU' or name.startswith('APRSM_H_') or name == 'APRSM_SET_TITLE':
             lim = LINE_CHARS
         elif name.startswith('APRSM_L_'):
             lim = 9
+        elif name.startswith('APRSM_G_'):
+            lim = 25   # маркер + назва групи в рядку екрана (26)
         elif name.startswith('APRSM_V_'):
             if name == 'APRSM_V_INT_FMT':
                 t = val.replace('%u', '60')
+            if name in ('APRSM_V_MIN_D',):
+                t = val.replace('%u', '99999')
             if name == 'APRSM_V_SQL_FMT':
                 t = val.replace('%u', '100').replace('%%', '%')
             lim = 15
-        elif name.startswith('APRSM_ERR_') or name in ('APRSM_NOT_NOW', 'APRSM_TX_BUSY', 'APRSM_SAVE_FAIL'):
+        elif name.startswith('APRSM_ERR_') or name in ('APRSM_NOT_NOW', 'APRSM_TX_BUSY', 'APRSM_SAVE_FAIL', 'APRSM_BCN_SENT'):
             lim = LINE_CHARS
         elif name.startswith('APRSM_PK_T_'):
             lim = LINE_CHARS   # R17: заголовок вибору символу

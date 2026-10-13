@@ -155,8 +155,8 @@
 #define APRSM_L_LAT           "Широта"
 #define APRSM_L_LON           "Довгота"
 #define APRSM_L_AMB           "Неточн."
-#define APRSM_L_INTERVAL      "Маяк"
-#define APRSM_L_SQL           "Шумодав"
+#define APRSM_L_INTERVAL      "Період"
+#define APRSM_L_SQL           "Поріг SQL"
 #define APRSM_L_RESET         "Скинути"
 #define APRSM_V_FREQ          "%s МГц"
 #define APRSM_V_NONE          "нема"
@@ -206,5 +206,55 @@
 #define APRSM_TX_BUSY         "Йде передача"                 /* сповіщення: зміну відхилено, бо маяк іде зараз */
 
 #define APRSM_SAVE_FAIL       "Не збережено"                 /* сповіщення: запис налаштувань режиму у флеш не вдався */
+
+/* ---- R17 Г1: єдине меню «APRS»: пункти, групи «Налаштувань», стокові параметри бікона ---- */
+#define APRSM_BCN_SENT        "Маяк передано"                /* сповіщення: разовий маяк з меню передано */
+#define APRSM_H_LISTEN        "Слухати APRS"
+#define APRSM_H_LISTEN_FMT    "Слухати:%s"                   /* пункт-перемикач меню: «Слухати:Увімк» (16 символів) */
+#define APRSM_H_ON            "Увімк"
+#define APRSM_H_OFF           "Вимк"
+#define APRSM_H_BEACON        "Передати маяк"
+#define APRSM_H_SETTINGS      "Налаштування"
+#define APRSM_H_TITLE_ON      "APRS %s"                      /* заголовок меню, поки слухаємо: частота */
+#define APRSM_SET_TITLE       "Налаштув. APRS"
+#define APRSM_G_STATION       "Моя станція"
+#define APRSM_G_BEACON        "Маяк"
+#define APRSM_G_SMART         "Розумний маяк"
+#define APRSM_G_POS           "Позиція"
+#define APRSM_G_RX            "Приймач"
+#define APRSM_G_RESET         "Скинути налаштування"
+#define APRSM_G_RESET_ASK     "Скинути? GREEN ще раз"
+#define APRSM_S_HINT_G        "GREEN:відкрити RED:вихід"
+#define APRSM_S_HINT_R        "<>:змін GREEN:ред RED:вих"
+#define APRSM_L_BMODE         "Режим"
+#define APRSM_L_POWER         "Потужн."
+#define APRSM_L_BINT          "Інтервал"
+#define APRSM_L_COMPR         "Стиснення"
+#define APRSM_L_SLOW          "Повільний"
+#define APRSM_L_FAST          "Швидкий"
+#define APRSM_L_LOWSPD        "Low Speed"
+#define APRSM_L_HISPD         "Hi Speed"
+#define APRSM_L_ANGLE         "Кут"
+#define APRSM_L_SLOPE         "Нахил"
+#define APRSM_L_TIME          "Час"
+#define APRSM_L_DECAY         "Затухання"
+#define APRSM_L_SOURCE        "Джерело"
+#define APRSM_L_BCNWIN        "Вікно"
+#define APRSM_V_BM0           "Вимк"
+#define APRSM_V_BM1           "Вручну"
+#define APRSM_V_BM2           "PTT"
+#define APRSM_V_BM3           "Авто"
+#define APRSM_V_BM4           "Розумний"
+#define APRSM_V_PWR_CH        "Як канал"
+#define APRSM_V_MIN           "%u хв"
+#define APRSM_V_MIN_D         "%u.%u хв"
+#define APRSM_V_SEC           "%u с"
+#define APRSM_V_KMH           "%u км/г"
+#define APRSM_V_DEG           "%u%c"
+#define APRSM_V_ON            "Увімк"
+#define APRSM_V_OFF           "Вимк"
+#define APRSM_V_SRC_GPS       "GPS"
+#define APRSM_V_SRC_CH        "Канал"
+
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

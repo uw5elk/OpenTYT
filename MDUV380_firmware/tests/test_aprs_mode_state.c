@@ -93,6 +93,14 @@ void trxSetRxCSS(RadioDevice_t d, uint16_t t) { (void)d; (void)t; }
 void trxSetTxCSS(uint16_t t) { (void)t; }
 void trxPostponeReadRSSIAndNoise(uint32_t ms) { (void)ms; }
 
+/* R17 Г1: стокові параметри бікона (копія для меню «Налаштування») -- справжні в aprs.c / uiGlobals.c / settings.c */
+aprsBeaconingSettings_t aprsSettingsCopy;
+static aprsBeaconingSettings_t s_stockSettings;
+static int s_stockSetCalls, s_settingsSaves, s_origReset;
+void aprsBeaconingGetSettings(aprsBeaconingSettings_t *dest) { *dest = s_stockSettings; }
+void aprsBeaconingSetSettings(aprsBeaconingSettings_t *src) { if (memcmp(src, &s_stockSettings, sizeof(s_stockSettings)) != 0) { s_stockSettings = *src; s_stockSetCalls++; } }
+void settingsSaveIfNeeded(bool immediately) { (void)immediately; s_settingsSaves++; }
+void resetOriginalSettingsData(void) { s_origReset++; }
 aprsBeaconingMode_t aprsBeaconingGetMode(void) { return s_bcnMode; }
 bool aprsBeaconingIsSuspended(void) { return s_bcnSuspended; }
 void aprsBeaconingSetSuspend(bool s) { s_bcnSuspended = s; if (s) { s_setSuspendTrue++; } else { s_setSuspendFalse++; } }
@@ -284,7 +292,7 @@ static void testEnterExit(void)
 	CHECK(modeChan->rxFreq == 14480000UL && modeChan->txFreq == 14480000UL, "частота каналу режиму = 144.800 (з конфігу кодплуга)");
 	CHECK(s_tuneCalls == 1 && s_tuneFreq == 14480000UL, "радіо перелаштовано на 144.800");
 	CHECK(s_tuneMode == RADIO_MODE_ANALOG && s_tuneBw == 12, "аналог, 12,5 кГц");
-	CHECK(aprsModeUi()->page == APRS_MODE_PAGE_MONITOR, "початкова сторінка -- Монітор");
+	CHECK(aprsModeCfgSessionActive() == false, "режим сам не відкриває сесію налаштувань");
 	CHECK(aprsModeEff()->ssid == 7 && strcmp(aprsModeEff()->call, "UW5ELK") == 0, "позивний з імені рації, ssid з конфігу");
 
 	/* повторний вхід -- ідемпотентний */
@@ -631,36 +639,6 @@ static void testBeacons(void)
 	CHECK(s_txCalls == 0 && aprsModeIsTransmitting(), "під час передачі маяк не запускається вдруге");
 	aprsTxProgress = APRS_TX_IDLE;
 	aprsModeExit();
-}
-
-static void testLastFrame(void)
-{
-	aprsAx25_t ax;
-	aprsPacket_t pkt;
-
-	resetWorld();
-	CHECK(aprsModeEnter(), "вхід");
-	CHECK(aprsModeLast()->valid == false, "пакетів ще нема");
-	memset(&ax, 0, sizeof(ax)); memset(&pkt, 0, sizeof(pkt));
-	snprintf(ax.src, sizeof(ax.src), "UW5ELK-7");
-	snprintf(ax.dst, sizeof(ax.dst), "APDR16");
-	pkt.type = APRS_T_POSITION;
-	aprsModeOnFrame(&ax, &pkt, true, 3200, 45);
-	CHECK(aprsModeLast()->valid && strcmp(aprsModeLast()->src, "UW5ELK-7") == 0 && strcmp(aprsModeLast()->dst, "APDR16") == 0, "останній пакет записано");
-	CHECK(aprsModeLast()->hasGeo && aprsModeLast()->distM == 3200 && aprsModeLast()->bearing == 45 && aprsModeLast()->type == APRS_T_POSITION, "відстань і азимут");
-	CHECK(aprsModeLast()->tp == false && aprsModeLast()->gate[0] == 0, "прямий кадр: не third-party, шлюзу нема");
-	/* R11-fix: кадр, розгорнутий з third-party: справжній відправник у src, шлюз -- окремо (рядок «Шлюз: ...» на Моніторі) */
-	ax.tp = true;
-	snprintf(ax.gate, sizeof(ax.gate), "SP5WWP-10");
-	aprsModeOnFrame(&ax, &pkt, false, 0, 0);
-	CHECK(aprsModeLast()->tp && strcmp(aprsModeLast()->gate, "SP5WWP-10") == 0 && strcmp(aprsModeLast()->src, "UW5ELK-7") == 0, "third-party: шлюз записано, src -- справжній відправник");
-	ax.tp = false; ax.gate[0] = 0;
-	aprsModeOnFrame(&ax, &pkt, false, 0, 0);
-	CHECK(aprsModeLast()->tp == false && aprsModeLast()->gate[0] == 0, "наступний прямий кадр стирає позначку third-party");
-	aprsModeExit();
-	/* поза режимом виклик нічого не робить і не чіпає позичений буфер */
-	aprsModeOnFrame(&ax, &pkt, true, 1, 1);
-	CHECK(callReplayIsBorrowed() == false, "поза режимом aprsModeOnFrame не позичає кільце");
 }
 
 /* R12: прапорець позиченого кільця живе в CCM (на залізі при старті сміття). applicationMain.c на старті кличе callReplayInit() і
@@ -1059,10 +1037,12 @@ static void testMsgSession(void)
 	CHECK(aprsModeMsgSessionActive() == false, "сесію закрито");
 	aprsModeMsgSessionClose();
 	CHECK(aprsModeMsgSessionActive() == false, "закриття ідемпотентне");
-	/* у режимі сесію відкрити не можна; вхід у режим скидає сесію */
+	/* вхід у режим скидає сесію; а ось екран повідомлень (R17) відкривається й у режимі */
 	CHECK(aprsModeMsgSessionOpen(), "знову відкрито");
 	CHECK(aprsModeEnter() && (aprsRxUi()->msgOn == 0U) && (aprsModeMsgSessionActive() == false), "вхід у режим закриває сесію");
-	CHECK(aprsModeMsgSessionOpen() == false, "у режимі сесію не відкриваємо");
+	CHECK(aprsModeMsgSessionOpen() && aprsModeMsgSessionActive() && aprsModeIsActive() && (aprsModeUi()->page == APRS_MODE_PAGE_MESSAGES), "R17: у режимі екран повідомлень відкривається");
+	aprsModeMsgSessionClose();
+	CHECK(aprsModeIsActive() && callReplayIsBorrowed(), "закриття екрана повідомлень режим не зачіпає");
 	aprsModeExit();
 }
 
@@ -1101,6 +1081,119 @@ static void testSaveBlankRegion(void)
 	aprsModeExit();
 }
 
+/* R17 Г1: сесія «Налаштування» -- без «Слухати APRS»: радіо не чіпає, стан у кільці, запис у флеш, стокові параметри застосовуються при закритті. */
+static void testSettingsSession(void)
+{
+	aprsModeCfg_t *c;
+
+	resetWorld();
+	memset(&s_stockSettings, 0, sizeof(s_stockSettings)); s_stockSetCalls = s_settingsSaves = s_origReset = 0;
+	fillRing(40);
+	CHECK(aprsModeCfgSessionActive() == false, "сесії нема до відкриття");
+	CHECK(aprsModeSettingsSessionOpen(), "сесія налаштувань відкрилась");
+	CHECK(aprsModeCfgSessionActive() && (aprsModeIsActive() == false) && aprsModeMsgSessionActive(), "активна сесія, режим -- ні");
+	CHECK(currentChannelData == &s_userChan && s_tuneCalls == 0 && s_rxSuspend == 0, "канал і радіо не чіпали");
+	CHECK(callReplayIsBorrowed(), "кільце позичене під стан");
+	CHECK(aprsModeUi()->page == APRS_MODE_PAGE_SETTINGS, "сторінка «Налаштування»");
+	CHECK(strcmp(aprsModeEff()->call, "UW5ELK") == 0 && aprsModeEff()->ssid == 7, "ефективні налаштування з кодплуга");
+	/* поле режиму: змінили -> не торкаючись радіо перераховано й відкладено запис */
+	c = aprsModeCfg();
+	c->iconTable = 0; c->iconIndex = (uint8_t)('>' - '!'); c->ov |= APRSM_OV_ICON;
+	aprsModeCfgChanged(APRSM_OV_ICON);
+	CHECK(aprsModeEff()->iconIndex == (uint8_t)('>' - '!'), "символ «авто» діє в ефективних");
+	CHECK(s_tuneCalls == 0 && s_flashWrites == 0, "радіо не перебудовували, у флеш ще не писали");
+	aprsModeCfgSessionTick();
+	CHECK(s_flashWrites == 0, "пауза ще не минула");
+	s_now += 3000;
+	aprsModeCfgSessionTick();
+	CHECK(s_flashWrites == 1 && s_flashValid, "після паузи в редагуванні записано у флеш");
+	/* стокові параметри: правка копії, застосування при закритті */
+	aprsSettingsCopy.smart.slowRate = 33;
+	CHECK(s_stockSetCalls == 0, "до закриття стокові параметри не застосовано");
+	aprsModeMsgSessionClose();
+	CHECK(s_stockSetCalls == 1 && s_stockSettings.smart.slowRate == 33 && s_settingsSaves == 1 && s_origReset == 1, "закриття: застосовано й збережено стокові параметри (%d/%d/%d)", s_stockSetCalls, s_settingsSaves, s_origReset);
+	CHECK(aprsModeCfgSessionActive() == false && callReplayIsBorrowed() == false, "сесію закрито, кільце віддано");
+	CHECK(callReplayGroupCount() == 0, "кільце «Переслухати» стерто (дані позичені)");
+	/* змін нема -- нічого зайвого (бікон не перезапускається) */
+	s_stockSetCalls = 0;
+	CHECK(aprsModeSettingsSessionOpen(), "знову відкрито");
+	aprsModeMsgSessionClose();
+	CHECK(s_stockSetCalls == 0, "без змін стокові параметри не застосовуються");
+	/* після закриття: вхід у «Слухати APRS» бачить збережений символ */
+	CHECK(aprsModeEnter(), "вхід у режим");
+	CHECK(aprsModeEff()->iconIndex == (uint8_t)('>' - '!'), "збережений символ видно в режимі");
+	aprsModeExit();
+	/* сесію налаштувань відкриття вимикає «Слухати» */
+	resetWorld();
+	CHECK(aprsModeEnter() && aprsModeIsActive(), "вхід у режим");
+	CHECK(aprsModeSettingsSessionOpen() && (aprsModeIsActive() == false) && (currentChannelData == &s_userChan), "відкриття налаштувань вимикає «Слухати» і повертає канал");
+	aprsModeMsgSessionClose();
+	/* під час передачі -- відмова */
+	resetWorld();
+	aprsTxProgress = APRS_TX_IN_PROGRESS;
+	CHECK(aprsModeSettingsSessionOpen() == false && aprsModeCfgSessionActive() == false, "під час передачі налаштування не відкриваються");
+	aprsTxProgress = APRS_TX_IDLE;
+	/* екран повідомлень замінює сесію налаштувань (і навпаки), не залишаючи позиченого кільця */
+	resetWorld();
+	CHECK(aprsModeSettingsSessionOpen(), "налаштування");
+	CHECK(aprsModeMsgSessionOpen() && (aprsModeCfgSessionActive() == false) && (callReplayIsBorrowed() == false), "повідомлення замінили налаштування, кільце віддано");
+	aprsModeMsgSessionClose();
+}
+
+/* R17 Г1: «Передати маяк» -- і з вимкненим, і з увімкненим «Слухати». */
+static void testBeaconOnce(void)
+{
+	resetWorld();
+	s_notify = 0;
+	CHECK(aprsModeBeaconOnce(), "разовий маяк при вимкненому «Слухати»");
+	CHECK(aprsModeIsActive() && aprsModeBeaconOnceBusy(), "рація запаркована, маяк замовлено");
+	tickMs(10);
+	CHECK(s_txCalls == 1, "маяк передано тим самим кодом (%d)", s_txCalls);
+	aprsModeBeaconOncePoll();
+	CHECK(aprsModeIsActive() == false && aprsModeBeaconOnceBusy() == false && currentChannelData == &s_userChan, "після передачі режим вимкнено, канал повернуто");
+	CHECK(s_notify == 1, "сповіщення «Маяк передано» (%d)", s_notify);
+	CHECK(s_loadChanCalls == 1, "канал перезавантажено рівно раз");
+
+	/* з увімкненим «Слухати»: режим лишається */
+	resetWorld();
+	CHECK(aprsModeEnter(), "вхід");
+	s_notify = 0;
+	CHECK(aprsModeBeaconOnce(), "разовий маяк при увімкненому «Слухати»");
+	tickMs(10);
+	aprsModeBeaconOncePoll();
+	CHECK(s_txCalls == 1 && aprsModeIsActive() && aprsModeBeaconOnceBusy() == false && s_notify == 1, "передано, режим лишився");
+	aprsModeExit();
+
+	/* частота зайнята: чекаємо вільної, поки не передано -- Busy */
+	resetWorld();
+	s_rxBusy = true;
+	CHECK(aprsModeBeaconOnce(), "замовлено");
+	tickMs(10);
+	aprsModeBeaconOncePoll();
+	CHECK(s_txCalls == 0 && aprsModeBeaconOnceBusy() && aprsModeIsActive(), "канал зайнятий -- чекаємо, режим ще не вимикаємо");
+	s_rxBusy = false;
+	tickMs(500);
+	aprsModeBeaconOncePoll();
+	CHECK(s_txCalls == 1 && aprsModeIsActive() == false, "канал звільнився -- передано й вихід");
+	aprsModeExit();
+
+	/* помилка (немає позивного/позиції...) -- без «Маяк передано», режим усе одно вимкнено */
+	resetWorld();
+	s_txResult = APRS_MODE_TX_NOPOS;
+	s_notify = 0;
+	CHECK(aprsModeBeaconOnce(), "замовлено");
+	tickMs(10);
+	aprsModeBeaconOncePoll();
+	CHECK(aprsModeIsActive() == false && aprsModeBeaconOnceBusy() == false, "помилка маяка -- режим вимкнено");
+	CHECK(s_notify >= 1, "помилку показано (сповіщення)");
+
+	/* під час передачі -- відмова */
+	resetWorld();
+	aprsTxProgress = APRS_TX_IN_PROGRESS;
+	CHECK(aprsModeBeaconOnce() == false && aprsModeIsActive() == false, "під час передачі разовий маяк відхилено");
+	aprsTxProgress = APRS_TX_IDLE;
+}
+
 int main(void)
 {
 	testBootInit();
@@ -1113,12 +1206,13 @@ int main(void)
 	testSettings();
 	testDefaultsFallback();
 	testBeacons();
-	testLastFrame();
 	testMessages();
 	testBackground();
 	testIdentity();
 	testMsgSession();
 	testSaveBlankRegion();
+	testSettingsSession();
+	testBeaconOnce();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_mode_state: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

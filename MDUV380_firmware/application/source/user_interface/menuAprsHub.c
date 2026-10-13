@@ -1,15 +1,17 @@
 /*
- * menuAprsHub.c -- меню «APRS» (R8-fix, п.5). Див. menuAprsHub.h.
+ * menuAprsHub.c -- меню «APRS» (R8-fix, п.5; R17 Г1: єдине меню). Див. menuAprsHub.h.
  *
- * Це власний простий список (а не menuDisplayMenuList): «Режим APRS» (R10), «APRS станції» (R8) і «APRS проба» (R2) --
- * не окремі меню, а режими з власним екраном, які цей список приймає всередину (так само, як це робили
- * «Опції рації» в R8/R10: поки aprsModeIsActive() / aprsRxUi()->on / aprsRxProbeIsOn(), усі тіки й події належать їм).
- * R8-fix2: єдине меню «APRS» -- «Режим APRS» переїхав сюди з «Опцій рації» (R10 тримав його там, бо новий ID меню
- * коштує RAM; ID MENU_APRS_HUB уже оплачено, другого меню не плодимо).
+ * Це власний простий список (а не menuDisplayMenuList): «APRS станції» (R8), «Повідом. APRS» (R11), «Налаштування» (R17) і «APRS проба» (R2) --
+ * не окремі меню, а екрани, які цей список приймає всередину (поки aprsRxUi()->on / aprsModeMsgSessionActive() / aprsModeCfgSessionActive() /
+ * aprsRxProbeIsOn(), усі тіки й події належать їм).
  *
- * QuickKey: пункти цього меню швидкими клавішами НЕ прив'язуються (SK2+цифра ігнорується) -- це дії, а не
- * налаштування. Існуючі QuickKey на стокові пункти «Опцій рації» не зачеплено: пункти R8 прибрано з КІНЦЯ
- * списку «Опцій рації», індекси стокових пунктів не змінилися (докладно -- docs, розділ 12.2).
+ * R17 Г1: пункти (порядок = порядок на екрані):
+ *   «Слухати:Вимк/Увімк» -- перемикач «Слухати APRS» (aprsModeEnter()/aprsModeExit(); частота -- у заголовку); «Передати маяк» -- разовий маяк, працює і з
+ *   вимкненим «Слухати» (рація паркується, передає, повертається); «APRS станції»; «Повідом. APRS»; «Пакети»; «Налаштування»; [«APRS проба»].
+ * Стокове меню «Налаштування APRS» («Опції рації» -> APRS) не чіпано.
+ *
+ * QuickKey: пункти цього меню швидкими клавішами НЕ прив'язуються (SK2+цифра ігнорується) -- це дії, а не налаштування. Існуючі QuickKey на
+ * стокові пункти «Опцій рації» не зачеплено (докладно -- docs, розділ 12.2).
  */
 #include "user_interface/menuAprsHub.h"
 
@@ -21,20 +23,21 @@
 #include "user_interface/menuAprsStations.h"
 #include "user_interface/menuAprsRxProbe.h"
 #include "user_interface/menuAprsMode.h"
+#include "user_interface/menuAprsSettings.h"
 #include "functions/aprs_mode.h"
+#include "functions/sound.h"
 #include "user_interface/languages/aprsmode_ua.h"
 #include "user_interface/languages/aprsrx_ua.h"
 #include "user_interface/languages/aprsmsg_ua.h"
 
-/* Порядок пунктів = порядок на екрані. Нові пункти додавати СЮДИ, у відповідному місці:
- *   APRS_HUB_MODE, APRS_HUB_STATIONS, APRS_HUB_BEACON (R15), APRS_HUB_PACKET (R15), APRS_HUB_MESSAGES (R11), APRS_HUB_SETTINGS, [APRS_HUB_PROBE] */
+/* Порядок пунктів = порядок на екрані. Нові пункти додавати СЮДИ, у відповідному місці. */
 enum
 {
-	APRS_HUB_MODE = 0,
+	APRS_HUB_LISTEN = 0,
+	APRS_HUB_BEACON,      /* R17: «Передати маяк» */
 	APRS_HUB_STATIONS,
-	APRS_HUB_BEACON,      /* R15: «Останній маяк» -- вікно маяка за збереженими даними */
-	APRS_HUB_PACKET,      /* R15/R16: «Пакети» -- журнал останніх прийнятих кадрів */
 	APRS_HUB_MESSAGES,
+	APRS_HUB_PACKET,      /* R15/R16: «Пакети» -- журнал останніх прийнятих кадрів */
 	APRS_HUB_SETTINGS,
 #if defined(APRS_RX_PROBE)
 	APRS_HUB_PROBE,
@@ -48,9 +51,15 @@ static const char *itemName(int n, char *buf, size_t cap)
 {
 	switch (n)
 	{
-		case APRS_HUB_MODE:     return APRSM_MENU;
+		case APRS_HUB_LISTEN:
+			if (buf == NULL)
+			{
+				return APRSM_H_LISTEN;
+			}
+			snprintf(buf, cap, APRSM_H_LISTEN_FMT, aprsModeIsActive() ? APRSM_H_ON : APRSM_H_OFF);
+			return buf;
+		case APRS_HUB_BEACON:   return APRSM_H_BEACON;
 		case APRS_HUB_STATIONS: return APRSRX_TITLE;
-		case APRS_HUB_BEACON:   return APRSRX_HUB_BCN;
 		case APRS_HUB_PACKET:   return APRSRX_HUB_PKT;
 		case APRS_HUB_MESSAGES:
 		{
@@ -65,7 +74,7 @@ static const char *itemName(int n, char *buf, size_t cap)
 			snprintf(buf, cap, APRSMSG_MENU_NEW, (unread > 99U) ? 99U : unread);
 			return buf;
 		}
-		case APRS_HUB_SETTINGS: return APRSRX_HUB_SETTINGS;
+		case APRS_HUB_SETTINGS: return APRSM_H_SETTINGS;
 #if defined(APRS_RX_PROBE)
 		case APRS_HUB_PROBE:    return APRSRX_HUB_PROBE;
 #endif
@@ -76,9 +85,21 @@ static const char *itemName(int n, char *buf, size_t cap)
 static void updateScreen(bool isFirstRun)
 {
 	char nameBuf[24];
+	char title[24];
 
 	displayClearBuf();
-	menuDisplayTitle(currentLanguage->APRS);
+	if (aprsModeIsActive())
+	{
+		char f[16];
+
+		aprsModeFormatFreq(f, sizeof(f), aprsModeEff()->freq);
+		snprintf(title, sizeof(title), APRSM_H_TITLE_ON, f);   /* слухаємо: частота -- у заголовку */
+		menuDisplayTitle(title);
+	}
+	else
+	{
+		menuDisplayTitle(currentLanguage->APRS);
+	}
 
 	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
 	{
@@ -110,30 +131,54 @@ static void updateScreen(bool isFirstRun)
 	displayRender();
 }
 
+static void notifyNotNow(void)
+{
+	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_NOT_NOW, true);
+	soundSetMelody(MELODY_ERROR_BEEP);
+}
+
 static void openItem(int n)
 {
 	switch (n)
 	{
-		case APRS_HUB_MODE:
-			AM_TRACE(50);   /* R10-fix: хаб, GREEN на «Режим APRS»: перед menuAprsModeEnter() (далі 51, 1..19, 30..37, 52, 84..86) */
-			(void)menuAprsModeEnter();   /* R10: дія, а не налаштування. Не вдалося -- сповіщення, список лишається */
+		case APRS_HUB_LISTEN:
+			if (aprsModeIsActive())
+			{
+				if (aprsModeIsTransmitting())
+				{
+					uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_TX_BUSY, true);
+					soundSetMelody(MELODY_ERROR_BEEP);
+				}
+				else
+				{
+					aprsModeExit();
+				}
+			}
+			else if (aprsModeEnter() == false)
+			{
+				notifyNotNow();
+			}
+			updateScreen(false);   /* значення пункту й заголовок змінилися */
+			break;
+		case APRS_HUB_BEACON:
+			if (aprsModeBeaconOnce() == false)
+			{
+				notifyNotNow();
+			}
+			updateScreen(false);
 			break;
 		case APRS_HUB_STATIONS:
 			menuAprsStationsEnter();
-			break;
-		case APRS_HUB_BEACON:
-			menuAprsBeaconShow();   /* R15: вікно маяка ще раз; RED закриває (applicationMain.c); порожньо -- сповіщення */
 			break;
 		case APRS_HUB_PACKET:
 			menuAprsPacketEnter();
 			break;
 		case APRS_HUB_MESSAGES:
-			/* R13 (П.5): без входу в «Режим APRS» -- читання, «Відповісти», «Нове» працюють поза режимом (чергу й ACK веде aprsMsgBgTick()
-			 * на будь-якому екрані). Сторінка «Повідомлення» всередині «Режиму APRS» лишилась. */
+			/* Читання, «Відповісти», «Нове» -- з увімкненим «Слухати APRS» і без нього (чергу й ACK веде aprsMsgBgTick() на будь-якому екрані). */
 			(void)menuAprsMsgEnter();
 			break;
 		case APRS_HUB_SETTINGS:
-			menuSystemPushNewMenu(MENU_APRS);   /* стокове меню налаштувань APRS: посилання, QuickKey на нього не змінилися */
+			(void)menuAprsSettingsEnter();   /* вимикає «Слухати»; не вдалося (передача) -- сповіщення, список лишається */
 			break;
 #if defined(APRS_RX_PROBE)
 		case APRS_HUB_PROBE:
@@ -189,8 +234,9 @@ static void handleEvent(uiEvent_t *ev)
 static void exitCallback(void *data)
 {
 	(void)data;
-	aprsModeExit();            /* R10: вихід із меню будь-яким шляхом -- вийти з «Режиму APRS» (ідемпотентно) */
-	aprsModeMsgSessionClose(); /* R13: те саме для екрана «Повідом. APRS» без режиму */
+	aprsModeExit();            /* вихід із меню будь-яким шляхом -- вийти з «Слухати APRS» (ідемпотентно) */
+	aprsModeMsgSessionClose(); /* ... і закрити екрани «Повідом. APRS» / «Налаштування» (налаштування -- записати й застосувати) */
+	resetOriginalSettingsData();   /* копія стокових налаштувань APRS (aprsSettingsCopy) більше не потрібна */
 	menuAprsStationsClose();   /* вихід із меню будь-яким шляхом (PopAll, PTT...) -- закрити екрани, які воно приймало */
 #if defined(APRS_RX_PROBE)
 	aprsRxProbeClose();
@@ -212,8 +258,8 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 		voicePromptsAppendPrompt(PROMPT_SILENCE);
 
 		menuSystemRegisterExitCallback(exitCallback, NULL);
-		aprsModeExit();            /* R10: повернення сюди з активним режимом -- несумісно, виходимо з режиму */
-		aprsModeMsgSessionClose(); /* R13 */
+		aprsModeExit();            /* повернення сюди з активним режимом -- несумісно, виходимо з режиму */
+		aprsModeMsgSessionClose(); /* ... і з екранів повідомлень/налаштувань */
 		menuAprsStationsClose();   /* повернення сюди -- екрани вже закриті (push нового меню); про всяк випадок */
 #if defined(APRS_RX_PROBE)
 		aprsRxProbeClose();
@@ -225,13 +271,30 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 
 	hubExitCode = MENU_STATUS_SUCCESS;
 
-	/* Поки активний «Режим APRS» / відкрито «APRS станції» / «APRS проба», екран і всі події належать їм
-	 * (режим -- раніше за станції: він має власні сторінки). */
-	if (aprsModeIsActive() || aprsModeMsgSessionActive())
+	/* «Передати маяк» без «Слухати»: результат і повернення каналу після передачі */
+	if (aprsModeBeaconOnceBusy())
+	{
+		aprsModeBeaconOncePoll();
+		if (aprsModeBeaconOnceBusy() == false)
+		{
+			updateScreen(false);   /* режим, увімкнений лише заради маяка, вимкнено -- перемалювати список */
+		}
+	}
+
+	/* Поки відкрито «Налаштування» / «Повідом. APRS» / «APRS станції» / «APRS проба», екран і всі події належать їм. */
+	if (aprsModeCfgSessionActive())
+	{
+		if (menuAprsSettingsTick(ev) == false)
+		{
+			updateScreen(false);   /* RED зі списку груп: сесію закрито -- перемалювати меню */
+		}
+		return hubExitCode;
+	}
+	if (aprsModeMsgSessionActive())
 	{
 		if (menuAprsModeTick(ev) == false)
 		{
-			updateScreen(false);   /* RED на «Моніторі» (або зі списку «Повідом. APRS» без режиму): уже закрито -- перемалювати список */
+			updateScreen(false);   /* RED з першого екрана «Повідом. APRS»: уже закрито -- перемалювати список */
 		}
 		return hubExitCode;
 	}

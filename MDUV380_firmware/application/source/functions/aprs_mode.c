@@ -64,9 +64,9 @@ typedef struct
 	uint32_t               nextBeaconMs;   /* 0 -- періодичного нема */
 	uint32_t               lastPttMs;
 	aprsModeBcnState_t     bcnState;
-	/* монітор */
-	aprsModeLast_t         last;
-	aprsModeUi_t           ui;
+	/* R17 Г1: «Передати маяк» з меню: 0 -- нема; 1 -- повідомити про результат; 2 -- повідомити й вийти з режиму (режим був увімкнений лише заради маяка) */
+	uint8_t                oneShot;
+	aprsModeUi_t           ui;   /* лишається для aprsModeEnter() (m->ui.page); екрани живуть у блоці сесії (msgSessionUi()) */
 	/* R11-fix2: список і черга повідомлень APRS більше НЕ тут -- це ПОСТІЙНИЙ блок (bgBox()), що живе й поза режимом. */
 #if defined(APRS_MODE_TRACE)
 	uint32_t               trSeen;         /* R10-fix: які номери тік-трасування (60..91) уже показано після входу/маяка */
@@ -249,47 +249,69 @@ static void traceTickReset(void)
 
 /* ---- допоміжне ---------------------------------------------------------------------------------------- */
 
+static bool saveCfg(aprsModeMem_t *m);   /* R17: потрібна сесії налаштувань раніше за визначення */
+
 bool aprsModeIsActive(void)
 {
 	return (aprsRxUi()->modeOn != 0U);
 }
 
+/* R17 Г1: стан екранів («Повідом. APRS», «Налаштування») ЗАВЖДИ в блоці сесії (резерв постійного блока), а не в позиченому буфері режиму: екрани
+ * живуть і з увімкненим «Слухати APRS», і без нього. mem()->ui тепер лише для aprsModeEnter(). */
 aprsModeUi_t *aprsModeUi(void)
 {
-	if ((aprsRxUi()->modeOn == 0U) && (aprsRxUi()->msgOn != 0U))
-	{
-		return msgSessionUi();   /* R13: екран повідомлень без режиму */
-	}
-	return &mem()->ui;
+#if defined(ENABLE_CALL_REPLAY)
+	return msgSessionUi();
+#else
+	return &s_msgUi;
+#endif
 }
 
+/* Сесія екрана: msgOn == 1 -- «Повідом. APRS»; 2 -- «Налаштування» (разом із сесією налаштувань: кільце позичене, стан у mem()). */
 bool aprsModeMsgSessionOpen(void)
 {
 	aprsModeUi_t *u;
 
-	if (aprsModeIsActive())
+	if (aprsRxUi()->msgOn != 0U)
 	{
-		return false;   /* у режимі повідомлення відкриваються його власною сторінкою */
+		aprsModeMsgSessionClose();   /* інша сесія (налаштування) -- спершу її (зберегти, віддати кільце) */
 	}
-#if defined(ENABLE_CALL_REPLAY)
-	u = msgSessionUi();
-#else
-	u = &s_msgUi;
-#endif
+	u = aprsModeUi();
 	memset(u, 0, sizeof(*u));
 	u->page = APRS_MODE_PAGE_MESSAGES;
 	aprsRxUi()->msgOn = 1U;
 	return true;
 }
 
+bool aprsModeCfgSessionActive(void)
+{
+	return (aprsRxUi()->msgOn == 2U) && (aprsRxUi()->modeOn == 0U);
+}
+
 void aprsModeMsgSessionClose(void)
 {
+	if (aprsModeCfgSessionActive())
+	{
+		aprsModeMem_t *m = mem();   /* кільце позичене сесією -- mem() його не обнуляє */
+
+		if (m->dirty)
+		{
+			(void)saveCfg(m);
+		}
+		/* стокові параметри бікона: застосувати, лише якщо вони змінилися (aprsBeaconingSetSettings() сама порівнює і тоді перезапускає бікон) */
+		aprsBeaconingSetSettings(&aprsSettingsCopy);
+		settingsSaveIfNeeded(true);
+		resetOriginalSettingsData();
+#if defined(ENABLE_CALL_REPLAY)
+		callReplayRelease();
+#endif
+	}
 	aprsRxUi()->msgOn = 0U;
 }
 
 bool aprsModeMsgSessionActive(void)
 {
-	return (aprsRxUi()->msgOn != 0U) && (aprsRxUi()->modeOn == 0U);
+	return (aprsRxUi()->msgOn != 0U);
 }
 
 aprsModeCfg_t *aprsModeCfg(void)
@@ -305,11 +327,6 @@ const aprsModeEff_t *aprsModeEff(void)
 const aprsModeDefaults_t *aprsModeDefaults(void)
 {
 	return &mem()->def;
-}
-
-const aprsModeLast_t *aprsModeLast(void)
-{
-	return &mem()->last;
 }
 
 uint32_t aprsModeBeaconCount(void)
@@ -498,17 +515,21 @@ void aprsModeCfgChanged(uint16_t what)
 
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
 	m->chan.sql = m->eff.sql;
-	if (m->eff.freq != oldFreq)
+	/* R17 Г1: у сесії налаштувань (режим не активний, рація стоїть на звичайному каналі) радіо не чіпаємо -- лише перераховуємо й відкладаємо запис */
+	if (aprsModeIsActive())
 	{
-		m->chan.rxFreq = m->chan.txFreq = m->eff.freq;
-		if (aprsTxProgress == APRS_TX_IDLE)
+		if (m->eff.freq != oldFreq)
 		{
-			tune(m);
+			m->chan.rxFreq = m->chan.txFreq = m->eff.freq;
+			if (aprsTxProgress == APRS_TX_IDLE)
+			{
+				tune(m);
+			}
 		}
-	}
-	if (m->eff.interval != oldInterval)
-	{
-		scheduleBeacons(m, now);
+		if (m->eff.interval != oldInterval)
+		{
+			scheduleBeacons(m, now);
+		}
 	}
 	(void)what;
 	m->dirty = true;
@@ -683,6 +704,132 @@ void aprsModeExit(void)
 }
 
 /* ---- маяк ----------------------------------------------------------------------------------------------------- */
+
+/* ---- R17 Г1: сесія налаштувань і «Передати маяк» з меню ------------------------------------------------------------ */
+
+/* Відкрити сесію налаштувань: режим «Слухати APRS» вимикається (налаштування стокового бікона й режиму змінюються, коли рація НЕ паркована на частоті
+ * APRS), кільце «Переслухати» позичається під стан (cfg/def/eff), налаштування читаються з флешу. Радіо не чіпається. false -- зараз не можна (йде передача). */
+bool aprsModeSettingsSessionOpen(void)
+{
+	aprsModeMem_t *m;
+	aprsModeUi_t *u;
+	size_t sz = 0;
+	void *base;
+
+	if (aprsModeCfgSessionActive())
+	{
+		return true;
+	}
+	aprsModeExit();   /* ідемпотентно */
+	if ((aprsTxProgress != APRS_TX_IDLE) || trxTransmissionEnabled || trxIsTransmitting)
+	{
+		return false;
+	}
+	if (aprsRxUi()->msgOn != 0U)
+	{
+		aprsModeMsgSessionClose();
+	}
+	callReplayStop();
+#if defined(ENABLE_CALL_REPLAY)
+	base = callReplayBorrow(&sz);
+	if ((sz < sizeof(aprsModeMem_t)) || ((((uintptr_t)base) & 7U) != 0U))
+	{
+		callReplayRelease();
+		return false;
+	}
+#else
+	(void)sz;
+	base = &s_modeMem;
+#endif
+	m = (aprsModeMem_t *)base;
+	memset(m, 0, sizeof(*m));
+	m->magic = APRS_MODE_MAGIC;
+	m->savedChan = currentChannelData;
+	loadCfg(m);
+	buildDefaults(m);
+	aprsModeEffective(&m->cfg, &m->def, &m->eff);
+	aprsBeaconingGetSettings(&aprsSettingsCopy);   /* стокові параметри бікона редагуються в копії (як у стоковому меню) і застосовуються при закритті сесії */
+	u = aprsModeUi();
+	memset(u, 0, sizeof(*u));
+	u->page = APRS_MODE_PAGE_SETTINGS;
+	aprsRxUi()->msgOn = 2U;
+	return true;
+}
+
+/* З тіка меню: запис у флеш після паузи в редагуванні (як aprsModeTick() у режимі). */
+void aprsModeCfgSessionTick(void)
+{
+	aprsModeMem_t *m;
+
+	if (aprsModeCfgSessionActive() == false)
+	{
+		return;
+	}
+	m = mem();
+	if (m->dirty && ((ticksGetMillis() - m->dirtyAtMs) >= APRS_MODE_SAVE_IDLE_MS))
+	{
+		(void)saveCfg(m);
+	}
+}
+
+/* «Передати маяк». Режим уже слухає -- звичайний запит маяка; ні -- рація «паркується», передає ТИМ САМИМ кодом (aprsModeTick()/aprsModeTxBeacon()) і
+ * повертається (aprsModeBeaconOncePoll() виходить з режиму після передачі). false -- зараз не можна. */
+bool aprsModeBeaconOnce(void)
+{
+	aprsModeMem_t *m;
+
+	if (aprsModeIsActive())
+	{
+		if (aprsModeIsTransmitting())
+		{
+			return false;
+		}
+		aprsModeRequestBeacon();
+		mem()->oneShot = 1U;
+		return true;
+	}
+	if (aprsModeEnter() == false)
+	{
+		return false;
+	}
+	aprsModeRequestBeacon();
+	m = mem();
+	m->oneShot = 2U;
+	return true;
+}
+
+bool aprsModeBeaconOnceBusy(void)
+{
+	return aprsModeIsActive() && (mem()->oneShot != 0U);
+}
+
+/* Кожен тік меню «APRS». Результат: передано -- сповіщення; помилки (зайнято, нема позивного...) уже показала beaconFeedback(). Режим, увімкнений лише заради
+ * маяка, вимикається, коли передачу завершено. */
+void aprsModeBeaconOncePoll(void)
+{
+	aprsModeMem_t *m;
+	uint8_t what;
+
+	if (aprsModeBeaconOnceBusy() == false)
+	{
+		return;
+	}
+	m = mem();
+	if (m->reqManual || m->reqPtt || (aprsTxProgress != APRS_TX_IDLE))
+	{
+		return;   /* ще чекає вільної частоти або передається */
+	}
+	what = m->oneShot;
+	m->oneShot = 0U;
+	if (m->bcnState == APRS_MODE_BCN_SENT)
+	{
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_BCN_SENT, true);
+	}
+	if (what == 2U)
+	{
+		aprsModeExit();
+	}
+}
 
 void aprsModeRequestBeacon(void)
 {
@@ -974,16 +1121,16 @@ bool aprsMsgBgNewMessage(const aprsAx25_t *ax, const aprsPacket_t *pkt)
 	{
 		return false;
 	}
-	if (aprsModeIsActive())
+	if (aprsRxUi()->msgOn == 1U)
 	{
-		aprsModeMem_t *m = mem();
+		aprsModeUi_t *u = aprsModeUi();   /* R17: екран «Повідом. APRS» відкрито (з режимом чи без) */
 
-		if (m->ui.msg.sel > 0U)
+		if (u->msg.sel > 0U)
 		{
-			m->ui.msg.sel++;   /* нове зверху: вибраний запис зсунувся на один вниз */
-			if (m->ui.msg.sel >= APRS_MSG_LIST_MAX)
+			u->msg.sel++;   /* нове зверху: вибраний запис зсунувся на один вниз */
+			if (u->msg.sel >= APRS_MSG_LIST_MAX)
 			{
-				m->ui.msg.sel = (uint8_t)(APRS_MSG_LIST_MAX - 1U);
+				u->msg.sel = (uint8_t)(APRS_MSG_LIST_MAX - 1U);
 			}
 		}
 	}
@@ -1126,27 +1273,6 @@ bool aprsModeOwnInfo(char call[8], uint8_t *ssid, bool *hasPos, int32_t *latU, i
 	*latU = e->latU;
 	*lonU = e->lonU;
 	return true;
-}
-
-void aprsModeOnFrame(const aprsAx25_t *ax, const aprsPacket_t *pkt, bool hasGeo, uint32_t distM, uint16_t bearing)
-{
-	aprsModeMem_t *m;
-
-	if (aprsModeIsActive() == false)
-	{
-		return;
-	}
-	m = mem();
-	m->last.valid = true;
-	m->last.type = pkt->type;
-	m->last.hasGeo = hasGeo;
-	m->last.distM = distM;
-	m->last.bearing = bearing;
-	m->last.ms = ticksGetMillis();
-	snprintf(m->last.src, sizeof(m->last.src), "%s", ax->src);
-	snprintf(m->last.dst, sizeof(m->last.dst), "%s", ax->dst);
-	m->last.tp = ax->tp;
-	snprintf(m->last.gate, sizeof(m->last.gate), "%s", ax->tp ? ax->gate : "");
 }
 
 #endif /* APRS_RX */
