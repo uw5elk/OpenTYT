@@ -129,10 +129,11 @@ bool aprsModeMsgSessionOpen(void);
 bool aprsModeSettingsSessionOpen(void);
 bool aprsModeCfgSessionActive(void);
 void aprsModeCfgSessionTick(void);               /* запис у флеш після паузи в редагуванні */
-/* R17 Г1: «Передати маяк» (див. aprs_mode.c). Poll -- кожен тік меню. */
+/* R17 Г1: «Передати маяк» (див. aprs_mode.c). R18: пункт меню прибрано -- гаряча клавіша SK1+3 (aprsModeBeaconHotkey()), опитування -- в aprsModeTick(). */
 bool aprsModeBeaconOnce(void);
 bool aprsModeBeaconOnceBusy(void);
 void aprsModeBeaconOncePoll(void);
+void aprsModeBeaconHotkey(void);                 /* R18 Д5: SK1+3 на головному екрані (канал/VFO) */
 void aprsModeMsgSessionClose(void);
 bool aprsModeMsgSessionActive(void);
 aprsModeCfg_t       *aprsModeCfg(void);
