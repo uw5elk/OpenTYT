@@ -90,14 +90,15 @@ static inline aprsModeUi_t *msgSessionUi(void)
 
 	return (aprsModeUi_t *)(void *)((uint8_t *)callReplayReserved(&n) + CALL_REPLAY_APRS_BOX_BYTES);
 }
-/* R15: сирий текст останнього кадру -- у тому ж резерві, за блоком і станом екрана. Обнуляє callReplayBorrowReset(). */
-_Static_assert(CALL_REPLAY_APRS_RAW_BYTES == APRS_RAW_TEXT_MAX, "raw packet buffer must match APRS_RAW_TEXT_MAX");
-_Static_assert(CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES + CALL_REPLAY_APRS_RAW_BYTES == CALL_REPLAY_APRS_RESERVE_BYTES, "APRS reserve layout");
-static inline char *rawPktBuf(void)
+/* R16: історія прийому (журнал кадрів + маяк кожної станції) -- у тому ж резерві, за блоком і станом екрана. Обнуляє callReplayBorrowReset(). */
+_Static_assert(sizeof(aprsHist_t) <= CALL_REPLAY_APRS_HIST_BYTES, "aprsHist_t does not fit the call replay APRS reserve");
+_Static_assert(CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES + CALL_REPLAY_APRS_HIST_BYTES == CALL_REPLAY_APRS_RESERVE_BYTES, "APRS reserve layout");
+_Static_assert(((CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES) % 8U) == 0U, "history block must stay 8-aligned");
+static inline aprsHist_t *histBlk(void)
 {
 	size_t n = 0;
 
-	return (char *)((uint8_t *)callReplayReserved(&n) + CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES);
+	return (aprsHist_t *)(void *)((uint8_t *)callReplayReserved(&n) + CALL_REPLAY_APRS_BOX_BYTES + CALL_REPLAY_APRS_UI_BYTES);
 }
 static inline aprsMsgBox_t *bgBox(void)
 {
@@ -121,10 +122,10 @@ static inline aprsMsgBox_t *bgBox(void)
 {
 	return &s_msgBox;
 }
-static char s_rawPkt[APRS_RAW_TEXT_MAX] __attribute__((section(".aes_ccmram"), aligned(8)));   /* CCM-INIT(aprsMsgBgInit): R15, збірка без «Переслухати» */
-static inline char *rawPktBuf(void)
+static aprsHist_t s_hist __attribute__((section(".aes_ccmram"), aligned(8)));   /* CCM-INIT(aprsMsgBgInit): R16, збірка без «Переслухати» */
+static inline aprsHist_t *histBlk(void)
 {
-	return s_rawPkt;
+	return &s_hist;
 }
 #endif
 
@@ -728,13 +729,13 @@ void aprsMsgBgInit(void)
 {
 	aprsMsgInit(bgBox(), ticksGetMillis() / 997U);
 #if !defined(ENABLE_CALL_REPLAY)
-	memset(s_rawPkt, 0, sizeof(s_rawPkt));   /* з «Переслухати» резерв обнуляє callReplayBorrowReset() */
+	memset(&s_hist, 0, sizeof(s_hist));   /* з «Переслухати» резерв обнуляє callReplayBorrowReset() */
 #endif
 }
 
-char *aprsModeRawPkt(void)
+aprsHist_t *aprsModeHist(void)
 {
-	return rawPktBuf();
+	return histBlk();
 }
 
 bool aprsModeHasCall(void)

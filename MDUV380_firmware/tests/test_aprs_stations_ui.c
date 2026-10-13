@@ -49,15 +49,28 @@ aprsMsgBox_t *aprsModeMsgBox(void) { return &s_box; }
 unsigned aprsMsgQueueLen(const aprsMsgBox_t *b) { (void)b; return 4U; }
 bool menuAprsModeReplyTo(const char *call) { s_replyCalls++; snprintf(s_replyCall, sizeof(s_replyCall), "%s", call); return true; }
 void aprsRxClear(void) { memset(&s_st, 0, sizeof(s_st)); aprsDbInit(&s_db); }
-/* R15: сирий пакет (буфер резерву «Переслухати»), вікно маяка і сповіщення -- заглушки */
-static char s_raw[APRS_RAW_TEXT_MAX];
-char *aprsModeRawPkt(void) { return s_raw; }
-static aprsRxWin_t s_win;
-const aprsRxWin_t *aprsRxWindow(void) { return &s_win; }
-static int s_showAgain = 0, s_notes = 0;
-static char s_lastNote[80];
+/* R16: історія прийому (блок резерву «Переслухати»), вікно маяка станції і сповіщення -- заглушки; логіка історії -- справжня (aprs_rx_parse.c) */
+static aprsHist_t s_hist;
+aprsHist_t *aprsModeHist(void) { return &s_hist; }
+static int s_showAgain = 0, s_showStation = 0, s_notes = 0;
+static char s_lastNote[80], s_lastShown[APRS_CALL_LEN];
+static const aprsStation_t *byCall(const char *c) { for (int i = 0; i < APRS_STATIONS_MAX; i++) { if (s_db.st[i].call[0] && !strcmp(s_db.st[i].call, c)) { return &s_db.st[i]; } } return NULL; }
+bool aprsRxBeaconAvail(const char *call)
+{
+	int i;
+	if (call == NULL) { return aprsHistBeaconLast(&s_hist, &i) != NULL; }
+	return (byCall(call) != NULL) && (aprsHistBeaconOf(&s_hist, &s_db, byCall(call)) != NULL);
+}
 void aprsRxWindowShowAgain(void) { s_showAgain++; }
+bool aprsRxWindowShowStation(const char *call)
+{
+	if (!aprsRxBeaconAvail(call)) { return false; }
+	s_showStation++; snprintf(s_lastShown, sizeof(s_lastShown), "%s", call);
+	return true;
+}
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t ms, const char *msg, bool imm) { (void)type; (void)id; (void)ms; (void)imm; s_notes++; snprintf(s_lastNote, sizeof(s_lastNote), "%s", msg ? msg : ""); }
+/* R16: час прийому в журналі (у прошивці -- uiSmsTimeStr() з місцевим часом) */
+int uiSmsTimeStr(uint32_t t, int mode, char *out, int outsz) { (void)mode; if (t == 0U) { return 0; } return snprintf(out, (size_t)outsz, "%02u:%02u", (unsigned)((t / 3600U) % 24U), (unsigned)((t / 60U) % 60U)); }
 static int s_tri = 0;
 void displayFillTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2, bool c) { (void)x0; (void)y0; (void)x1; (void)y1; (void)x2; (void)y2; (void)c; s_tri++; }
 
@@ -130,86 +143,136 @@ static void walkAll(const char *tag)
 	CHECK(menuAprsStationsTick(&e) == false && s_ui.on == 0, "RED зі списку закриває екран");
 }
 
-/* R15: «Останній пакет» (з картки і з меню) і «Останній маяк» */
+/* R16: додати запис у журнал так, як це робить aprsJrnAdd() (кадр уже у вигляді TNC-2) */
+static void jrnPush(const char *text, uint32_t secs)
+{
+	aprsJrnEntry_t *e = &s_hist.jrn[s_hist.jrnHead];
+
+	snprintf(e->text, sizeof(e->text), "%s", text);
+	e->rxSecs = secs;
+	s_hist.jrnHead = (uint8_t)((s_hist.jrnHead + 1U) % APRS_JRN_SLOTS);
+	if (s_hist.jrnCount < APRS_JRN_SLOTS) { s_hist.jrnCount++; }
+}
+
+static void keyUp(char k)
+{
+	uiEvent_t e; memset(&e, 0, sizeof(e)); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = k; e.keys.event = KEY_MOD_UP;
+	menuAprsStationsTick(&e);
+}
+
+/* R16: «Пакети» (з меню і з картки), '*' на картці -- маяк цієї станції, «Останній маяк» */
 static void testPacketScreens(void)
 {
 	char w[64];
 	int tri0;
 
 	fill(3);
-	memset(&s_win, 0, sizeof(s_win));
-	/* з меню «APRS»: порожньо -> «Пакетів ще не було», RED виходить */
-	s_raw[0] = 0;
+	aprsHistClear(&s_hist);
+	/* з меню «APRS»: журнал порожній -> «Пакетів ще не було», RED виходить */
 	menuAprsPacketEnter();
-	CHECK(s_ui.on == 1 && s_ui.view == APRS_RX_VIEW_PACKET && s_ui.cardCall[0] == 0, "пункт «Останній пакет» відкриває екран пакета");
-	checkScreen("пакет: порожньо");
-	CHECK(strcmp(s_rows[0], APRSRX_PKT_EMPTY) == 0 || s_nrows >= 1, "порожній буфер -- повідомлення");
-	{ uiEvent_t e; memset(&e, 0, sizeof(e)); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = KEY_RED; e.keys.event = KEY_MOD_UP;
-	  CHECK(menuAprsStationsTick(&e) == false && s_ui.on == 0, "RED з екрана, відкритого з меню, закриває його"); }
-
-	/* повний буфер: 255 символів = 10 рядків по 26; видно 9, решта -- U/D */
-	for (int i = 0; i < 255; i++) { s_raw[i] = (char)('a' + (i % 26)); }
-	s_raw[255] = 0;
-	menuAprsPacketEnter();
-	checkScreen("пакет: 255 символів");
-	CHECK(s_nrows == 11, "рядок довжини + 9 рядків тексту + підказка (є %d)", s_nrows);
-	CHECK(!strncmp(s_rows[1], "abcdefghijklmnopqrstuvwxyz", 26), "перший рядок тексту -- перші 26 символів");
-	tri0 = s_tri;
-	click(KEY_DOWN);
-	CHECK(s_ui.scroll == 1, "DOWN гортає на рядок (scroll=%d)", s_ui.scroll);
-	CHECK(s_tri > tri0, "трикутник «є вище/нижче» намальовано");
-	for (int i = 0; i < 20; i++) { click(KEY_DOWN); }
-	CHECK(s_ui.scroll <= 1, "нижче за останній рядок не гортається (scroll=%d)", s_ui.scroll);
-	for (int i = 0; i < 20; i++) { click(KEY_UP); }
-	CHECK(s_ui.scroll == 0, "UP не йде нижче нуля");
-	checkScreen("пакет: прокручений");
+	CHECK(s_ui.on == 1 && s_ui.view == APRS_RX_VIEW_PKTLIST && s_ui.cardCall[0] == 0, "пункт «Пакети» відкриває список журналу");
+	checkScreen("журнал: порожньо");
+	{ int found = 0; for (int i = 0; i < s_nrows; i++) { if (!strcmp(s_rows[i], APRSRX_PKT_EMPTY)) { found = 1; } } CHECK(found, "порожній журнал -- «Пакетів ще не було»"); }
+	click(KEY_GREEN); CHECK(s_ui.view == APRS_RX_VIEW_PKTLIST, "GREEN на порожньому журналі нічого не відкриває");
+	click(KEY_DOWN); click(KEY_UP);
+	checkScreen("журнал: порожній, U/D");
 	click(KEY_RED);
-	CHECK(s_ui.on == 0, "RED -> вихід");
+	CHECK(s_ui.on == 0, "RED з екрана, відкритого з меню, закриває його");
 
-	/* з картки: # -> пакет, RED -> назад на картку */
-	s_raw[60] = 0;
+	/* 10 кадрів -> у списку 8 найновіших */
+	for (int i = 1; i <= 10; i++)
+	{
+		char t[160];
+		snprintf(t, sizeof(t), "UW5EL%c-%d>APRS,WIDE1-1*:!4903.50N/07201.75W>pkt %d", 'A' + i, i, i);
+		jrnPush(t, 1800000000U + (uint32_t)i * 60U);
+	}
+	/* найдовший: 127 символів */
+	{ char t[160]; memset(t, 0, sizeof(t)); snprintf(t, sizeof(t), "N0CALL-9>APRS:`"); for (size_t i = strlen(t); i < 127; i++) { t[i] = (char)('a' + (i % 26)); } t[127] = 0; jrnPush(t, 1800001000U); }
+	menuAprsPacketEnter();
+	checkScreen("журнал: 8 записів");
+	CHECK(s_nrows == 10, "статус + 8 рядків + підказка (є %d)", s_nrows);
+	CHECK(strstr(s_rows[1], "N0CALL-9") != NULL && s_rows[1][0] == '>', "найновіший зверху й виділений: «%s»", s_rows[1]);
+	CHECK(strstr(s_rows[8], "UW5ELE-4") != NULL, "восьмий -- 4-й кадр з десяти (1..3 витіснено): «%s»", s_rows[8]);
+	CHECK(s_rows[1][strlen(s_rows[1]) - 1] == '`', "DTI Mic-E в кінці рядка: «%s»", s_rows[1]);
+	CHECK(strstr(s_rows[2], "UW5ELK-10") != NULL && strlen(s_rows[2]) <= 26, "довгий позивний вміщується: «%s»", s_rows[2]);
+	for (int i = 0; i < 8; i++) { click(KEY_DOWN); }
+	CHECK(s_ui.scroll == 0, "8 разів DOWN -- по колу (scroll=%d)", s_ui.scroll);
+	click(KEY_UP);
+	CHECK(s_ui.scroll == 7, "UP з нуля -> останній запис (scroll=%d)", s_ui.scroll);
+	checkScreen("журнал: виділено останній");
+	click(KEY_DOWN);
+
+	/* GREEN -> повний кадр (127 символів = 5 рядків по 26), RED -> назад із тим самим виділенням */
+	click(KEY_GREEN);
+	CHECK(s_ui.view == APRS_RX_VIEW_PACKET, "GREEN відкриває повний кадр");
+	checkScreen("повний кадр 127");
+	CHECK(s_nrows == 1 + 5 + 1, "рядок довжини + 5 рядків тексту + підказка (є %d)", s_nrows);
+	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "перший рядок -- початок кадру: «%s»", s_rows[1]);
+	tri0 = s_tri;
+	click(KEY_DOWN); click(KEY_DOWN);
+	CHECK(s_tri == tri0 && (s_ui.scroll & 0x0F) == 0, "кадр вміщується без прокрутки (scroll=%02x)", s_ui.scroll);
+	for (int i = 0; i < 20; i++) { click(KEY_UP); }
+	jrnPush("A1B>APRS:>new", 1800002000U);
+	checkScreen("повний кадр після нового"); CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "новий кадр не підміняє кадр на екрані");
+	click(KEY_RED);
+	CHECK(s_ui.view == APRS_RX_VIEW_PKTLIST && s_ui.on == 1 && s_ui.scroll == 1, "RED з кадру -> список, виділено той самий запис (scroll=%d)", s_ui.scroll);
+	click(KEY_RED);
+	CHECK(s_ui.on == 0, "RED зі списку (відкрито з меню) -> вихід");
+
+	/* з картки: # -> список журналу, RED -> назад на картку */
 	menuAprsStationsEnter();
 	click(KEY_GREEN);
 	CHECK(s_ui.view == APRS_RX_VIEW_CARD && s_ui.cardCall[0] != 0, "картка відкрита");
 	click(KEY_HASH);
-	CHECK(s_ui.view == APRS_RX_VIEW_PACKET, "# на картці -> пакет");
-	snprintf(w, sizeof(w), "пакет з картки"); checkScreen(w);
+	CHECK(s_ui.view == APRS_RX_VIEW_PKTLIST, "# на картці -> «Пакети»");
+	snprintf(w, sizeof(w), "журнал з картки"); checkScreen(w);
 	click(KEY_RED);
-	CHECK(s_ui.on == 1 && s_ui.view == APRS_RX_VIEW_CARD, "RED з пакета, відкритого з картки -> картка");
+	CHECK(s_ui.on == 1 && s_ui.view == APRS_RX_VIEW_CARD, "RED зі списку, відкритого з картки -> картка");
 
 	/* вбудована сторінка «Станцій» «Режиму APRS» */
 	click(KEY_HASH);
 	menuAprsStationsDrawEmbedded();
-	CHECK(s_ui.view == APRS_RX_VIEW_PACKET, "вбудований екран лишає пакет");
-	{ uiEvent_t e; memset(&e, 0, sizeof(e)); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = KEY_RED; e.keys.event = KEY_MOD_UP;
-	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_CARD, "вбудований: RED з пакета -> картка"); }
+	CHECK(s_ui.view == APRS_RX_VIEW_PKTLIST, "вбудований екран лишає список журналу");
+	{ uiEvent_t e; memset(&e, 0, sizeof(e)); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = KEY_GREEN; e.keys.event = KEY_MOD_UP;
+	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_PACKET, "вбудований: GREEN -> повний кадр");
+	  menuAprsStationsDrawEmbedded(); checkScreen("вбудований: кадр");
+	  e.keys.key = KEY_RED;
+	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_PKTLIST, "вбудований: RED з кадру -> список");
+	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_CARD, "вбудований: RED зі списку -> картка"); }
 	{ uiEvent_t e; memset(&e, 0, sizeof(e)); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = KEY_HASH; e.keys.event = KEY_MOD_UP;
-	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_PACKET, "вбудований: # з картки -> пакет"); }
+	  CHECK(menuAprsStationsKeyEmbedded(&e) == 1 && s_ui.view == APRS_RX_VIEW_PKTLIST, "вбудований: # з картки -> «Пакети»"); }
 
 	/* «Останній маяк»: нема даних -> сповіщення, ShowAgain не викликається */
+	aprsHistClearBeacons(&s_hist);
 	s_notes = 0; s_showAgain = 0;
 	menuAprsBeaconShow();
 	CHECK(s_notes == 1 && s_showAgain == 0 && !strcmp(s_lastNote, APRSRX_BCN_NONE), "порожньо: «Маяків ще не було», вікно не відкрито");
-	/* є дані -> вікно */
-	snprintf(s_win.call, sizeof(s_win.call), "%s", "UW5ELK-1");
+	/* маяк однієї станції (ІНДЕКС 2) -> вікно */
+	{
+		aprsPacket_t pk; memset(&pk, 0, sizeof(pk)); pk.type = APRS_T_POSITION; pk.hasPos = true; pk.symTable = '/'; pk.symCode = '[';
+		aprsHistBeaconFill(&s_hist, &s_db, &s_db.st[2], &pk, true, 3200, 45, 1800000000U);
+	}
 	menuAprsBeaconShow();
 	CHECK(s_notes == 1 && s_showAgain == 1, "є дані: вікно відкрито, сповіщення нема");
 
-	/* на картці: '*' лише для станції, чий маяк збережено */
+	/* на картці: '*' відкриває маяк САМЕ цієї станції; без позиційних пакетів -- сповіщення */
 	menuAprsStationsEnter();
-	click(KEY_GREEN);
-	s_showAgain = 0;
+	click(KEY_GREEN);   /* станція №0 за новизною */
+	CHECK(s_ui.cardCall[0] != 0 && strcmp(s_ui.cardCall, s_db.st[2].call) != 0, "картка станції без маяка");
+	s_notes = 0; s_showStation = 0;
 	click(KEY_STAR);
-	CHECK(s_showAgain == 0, "'*' на картці ІНШОЇ станції -- без вікна");
-	snprintf(s_win.call, sizeof(s_win.call), "%s", s_ui.cardCall);
-	menuAprsStationsEnter(); click(KEY_GREEN);
-	s_showAgain = 0;
+	CHECK(s_showStation == 0 && s_notes == 1 && !strcmp(s_lastNote, APRSRX_BCN_NONE_ST), "'*' на картці станції без маяка -- «Маяків від цієї станції не було», вікна нема");
+	menuAprsStationsDrawEmbedded();
+	{ int found = 0; for (int i = 0; i < s_nrows; i++) { if (!strcmp(s_rows[i], APRSRX_HINT_CARD2)) { found = 1; } } CHECK(found, "підказка без «*:маяк» для станції без маяка"); }
+	snprintf(s_ui.cardCall, sizeof(s_ui.cardCall), "%s", s_db.st[2].call);
+	s_notes = 0; s_showStation = 0;
 	click(KEY_STAR);
-	CHECK(s_showAgain == 1, "'*' на картці станції із збереженим маяком -- вікно");
+	CHECK(s_showStation == 1 && s_notes == 0 && !strcmp(s_lastShown, s_db.st[2].call), "'*' на картці станції з маяком -- вікно саме цієї станції");
 	menuAprsStationsDrawEmbedded();
 	CHECK(s_nrows > 0, "вбудована картка з підказкою маяка");
 	{ int found = 0; for (int i = 0; i < s_nrows; i++) { if (!strcmp(s_rows[i], APRSRX_HINT_CARD2B)) { found = 1; } } CHECK(found, "підказка «#:пакет  *:маяк» на картці"); }
 	s_maxWidth = 0;
+	(void)keyUp;
 }
 
 int main(void)

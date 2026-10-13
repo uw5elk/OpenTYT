@@ -331,6 +331,15 @@ if os.path.exists(aprs_path):
     for name, val in aprs.items():
         if name in SKIP:
             continue
+        if name == 'APRSRX_BCN_NONE_ST':
+            # R16: сповіщення (шрифт 8x16, рядки через \n, не більше 3 рядків по 14 символів -- displayMessage())
+            parts = val.split('\\n')
+            for t in parts:
+                if len(t) > 14:
+                    aprs_over.append((name, t, len(t), 14))
+            if len(parts) > 3:
+                aprs_over.append((name, val, len(parts), 3))
+            continue
         if name == 'APRSRX_BANNER_FMT':
             # два рядки банера, роздільник \n
             l1, l2 = val.split('\\n')

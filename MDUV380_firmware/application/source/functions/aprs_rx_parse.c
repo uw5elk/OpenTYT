@@ -2270,4 +2270,203 @@ uint16_t aprsKnotsToKmh(uint16_t kn)
 	return (uint16_t)((((uint32_t)kn * 1852U) + 500U) / 1000U);
 }
 
+/* ===================================================================================== */
+/* R16: історія прийому -- журнал кадрів і дані маяка кожної станції                      */
+/* ===================================================================================== */
+
+void aprsHistClear(aprsHist_t *h)
+{
+	memset(h, 0, sizeof(*h));
+}
+
+void aprsHistClearBeacons(aprsHist_t *h)
+{
+	memset(h->bcn, 0, sizeof(h->bcn));
+	h->lastBcn1 = 0U;
+}
+
+static int histIdx(const aprsRxDb_t *db, const aprsStation_t *s)
+{
+	if ((db == NULL) || (s == NULL) || (s < &db->st[0]) || (s >= &db->st[APRS_STATIONS_MAX]))
+	{
+		return -1;
+	}
+	return (int)(s - &db->st[0]);
+}
+
+void aprsHistStationTouch(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s)
+{
+	int i = histIdx(db, s);
+
+	/* count == 1 -- запис станції щойно створено (aprsDbUpdate() робить memset): вільний слот АБО витіснена найстаріша станція, чиї дані
+	 * маяка ще лежать у цьому слоті. Станція, що вже була, має count >= 2 (count насичується на 65535 і не скидається). */
+	if ((i >= 0) && (s->count <= 1U))
+	{
+		memset(&h->bcn[i], 0, sizeof(h->bcn[i]));
+		if (h->lastBcn1 == (uint8_t)(i + 1))
+		{
+			h->lastBcn1 = 0U;
+		}
+	}
+}
+
+const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s, const aprsPacket_t *pkt,
+		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs)
+{
+	int i = histIdx(db, s);
+	aprsBcnRec_t *r;
+
+	if (i < 0)
+	{
+		return NULL;
+	}
+	r = &h->bcn[i];
+	memset(r, 0, sizeof(*r));
+	r->hasGeo = hasGeo;
+	r->bearing = bearing;
+	r->distM = distM;
+	r->course = pkt->course;
+	r->speedKn = pkt->speedKn;
+	r->altM = pkt->altM;
+	r->flags = (uint8_t)(AWIN_F_VALID | (pkt->hasAlt ? AWIN_F_ALT : 0U) | (pkt->hasShift ? AWIN_F_SHIFT : 0U) | (pkt->rangeKm ? AWIN_F_RANGE_KM : 0U));
+	r->extKind = pkt->extKind;
+	r->wxMask = pkt->wxMask;
+	if (pkt->wxMask != 0U)
+	{
+		r->u.wx.tempC = pkt->tempC;
+		r->u.wx.pressDhPa = pkt->pressDhPa;
+		r->u.wx.windDeg = pkt->windDeg;
+		r->u.wx.humPct = pkt->humPct;
+		r->u.wx.windMph = pkt->windMph;
+		r->u.wx.gustMph = pkt->gustMph;
+	}
+	else
+	{
+		r->u.r.freqKHz = pkt->freqKHz;
+		r->u.r.shiftKHz = pkt->shiftKHz;
+		r->u.r.extVal = pkt->extVal;
+		r->u.r.rangeVal = pkt->rangeVal;
+		memcpy(r->u.r.tone, pkt->tone, sizeof(r->u.r.tone));
+	}
+	r->symTable = pkt->symTable;
+	r->symCode = pkt->symCode;
+	r->rxSecs = rxSecs;
+	copyTrunc(r->text, sizeof(r->text), s->text);
+	h->lastBcn1 = (uint8_t)(i + 1);
+	return r;
+}
+
+const aprsBcnRec_t *aprsHistBeaconOf(const aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s)
+{
+	int i = histIdx(db, s);
+
+	if ((i < 0) || (s->call[0] == 0) || ((h->bcn[i].flags & AWIN_F_VALID) == 0U))
+	{
+		return NULL;
+	}
+	return &h->bcn[i];
+}
+
+const aprsBcnRec_t *aprsHistBeaconLast(const aprsHist_t *h, int *dbIdx)
+{
+	int i = (int)h->lastBcn1 - 1;
+
+	if ((i < 0) || (i >= APRS_STATIONS_MAX) || ((h->bcn[i].flags & AWIN_F_VALID) == 0U))
+	{
+		return NULL;
+	}
+	if (dbIdx != NULL)
+	{
+		*dbIdx = i;
+	}
+	return &h->bcn[i];
+}
+
+bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len)
+{
+	aprsJrnEntry_t *e = &h->jrn[h->jrnHead % APRS_JRN_SLOTS];
+
+	/* Пишемо просто в слот (стек не чіпаємо). Слот при повному кільці -- НАЙСТАРІШИЙ запис: невдалий розбір його вже зіпсував, тож
+	 * прибираємо його з журналу (count--), а head не рухаємо. */
+	if (aprsAx25ToText(frame, len, e->text, sizeof(e->text)) == 0U)
+	{
+		e->text[0] = 0;
+		if (h->jrnCount >= APRS_JRN_SLOTS)
+		{
+			h->jrnCount = (uint8_t)(APRS_JRN_SLOTS - 1U);
+		}
+		return false;
+	}
+	e->rxSecs = rxSecs;
+	h->jrnHead = (uint8_t)((h->jrnHead + 1U) % APRS_JRN_SLOTS);
+	if (h->jrnCount < APRS_JRN_SLOTS)
+	{
+		h->jrnCount++;
+	}
+	return true;
+}
+
+const aprsJrnEntry_t *aprsJrnNth(const aprsHist_t *h, int n)
+{
+	if ((n < 0) || (n >= (int)h->jrnCount) || (n >= APRS_JRN_SLOTS))
+	{
+		return NULL;
+	}
+	return &h->jrn[((int)h->jrnHead + APRS_JRN_SLOTS - 1 - n) % APRS_JRN_SLOTS];
+}
+
+int aprsJrnSlotOf(const aprsHist_t *h, int n)
+{
+	if ((n < 0) || (n >= (int)h->jrnCount) || (n >= APRS_JRN_SLOTS))
+	{
+		return -1;
+	}
+	return ((int)h->jrnHead + APRS_JRN_SLOTS - 1 - n) % APRS_JRN_SLOTS;
+}
+
+const aprsJrnEntry_t *aprsJrnAtSlot(const aprsHist_t *h, int slot)
+{
+	if ((slot < 0) || (slot >= APRS_JRN_SLOTS) || (h->jrn[slot].text[0] == 0))
+	{
+		return NULL;
+	}
+	return &h->jrn[slot];
+}
+
+int aprsJrnNOfSlot(const aprsHist_t *h, int slot)
+{
+	int n;
+
+	if ((slot < 0) || (slot >= APRS_JRN_SLOTS))
+	{
+		return 0;
+	}
+	n = ((int)h->jrnHead + APRS_JRN_SLOTS - 1 - slot) % APRS_JRN_SLOTS;
+	return (n < (int)h->jrnCount) ? n : 0;
+}
+
+void aprsJrnSummary(const aprsJrnEntry_t *e, char *call, char *dti)
+{
+	size_t i = 0;
+	const char *c;
+
+	call[0] = 0;
+	*dti = '-';
+	if (e == NULL)
+	{
+		return;
+	}
+	while ((e->text[i] != 0) && (e->text[i] != '>') && (i < (APRS_CALL_LEN - 1U)))
+	{
+		call[i] = e->text[i];
+		i++;
+	}
+	call[i] = 0;
+	c = strchr(e->text, ':');
+	if ((c != NULL) && (c[1] != 0))
+	{
+		*dti = c[1];
+	}
+}
+
 #endif /* ENABLE_APRS_RX */

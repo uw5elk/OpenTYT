@@ -762,6 +762,193 @@ static void testR16Mice(void)
 	}
 }
 
+/* ---- R16 (ВБ): журнал кадрів і дані маяка кожної станції ------------------------------------------------------- */
+static aprsHist_t s_h;
+static aprsRxDb_t s_db;
+
+/* кадр "SRCn>APDW18:info" у журнал (як frameDispatch: кадр на купі точного розміру -- ASan ловить вихід за межі) */
+static bool jrnFrame(const char *src, const char *info, int infoLen, uint32_t secs)
+{
+	uint8_t fr[700];
+	int n = buildFrame(fr, "APDW18", src, 0, 0, 0, (const uint8_t *)info, infoLen);
+	uint8_t *h = exactCopy(fr, n);
+	bool ok = aprsJrnAdd(&s_h, secs, h, (uint16_t)n);
+
+	free(h);
+	return ok;
+}
+
+/* те саме, що робить frameDispatch() після розбору: оновити станцію, торкнутися історії, записати маяк (для позиційного пакета) */
+static const aprsStation_t *feedPkt(const char *src, int ssid, const char *info, uint32_t now)
+{
+	uint8_t b[400];
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	aprsStation_t *st;
+
+	if (!pf(src, ssid, info, &ax, &pk, b)) { return NULL; }
+	st = aprsDbUpdate(&s_db, &ax, &pk, now);
+	aprsHistStationTouch(&s_h, &s_db, st);
+	if (pk.type == APRS_T_POSITION)
+	{
+		aprsHistBeaconFill(&s_h, &s_db, st, &pk, true, 1000U + now, (uint16_t)(now % 360U), 1800000000U + now);
+	}
+	return st;
+}
+
+static void testHist(void)
+{
+	char info[200];
+
+	printf("== R16 ВБ: журнал кадрів ==\n");
+	CHECK(sizeof(aprsHist_t) <= 2240U, "sizeof(aprsHist_t) = %zu <= 2240 (aprsBcnRec_t %zu, aprsJrnEntry_t %zu)", sizeof(aprsHist_t), sizeof(aprsBcnRec_t), sizeof(aprsJrnEntry_t));
+	aprsHistClear(&s_h);
+	CHECK(aprsJrnNth(&s_h, 0) == NULL && s_h.jrnCount == 0, "порожній журнал: нічого нема");
+	for (int i = 1; i <= 10; i++)
+	{
+		char src[8];
+
+		snprintf(src, sizeof(src), "J%d", i);
+		snprintf(info, sizeof(info), "!4903.50N/07201.75W-n%d", i);
+		CHECK(jrnFrame(src, info, (int)strlen(info), 1000U + (uint32_t)i), "кадр %d записано", i);
+	}
+	CHECK(s_h.jrnCount == 8, "10 кадрів -> у журналі %u (8)", s_h.jrnCount);
+	{
+		bool ok = true;
+
+		for (int n = 0; n < 8; n++)
+		{
+			const aprsJrnEntry_t *e = aprsJrnNth(&s_h, n);
+			char want[40];
+
+			snprintf(want, sizeof(want), "J%d>APDW18:!4903.50N/07201.75W-n%d", 10 - n, 10 - n);
+			ok = ok && (e != NULL) && (memchr(e->text, 0, sizeof(e->text)) != NULL) && !strcmp(e->text, want) && (e->rxSecs == 1000U + (uint32_t)(10 - n));
+		}
+		CHECK(ok, "найновіший зверху: 10..3, час збережено, усі рядки з NUL");
+		CHECK(aprsJrnNth(&s_h, 8) == NULL && aprsJrnNth(&s_h, -1) == NULL, "поза межами -- NULL");
+	}
+	{
+		char call[APRS_CALL_LEN], dti;
+		const aprsJrnEntry_t *e = aprsJrnNth(&s_h, 0);
+
+		aprsJrnSummary(e, call, &dti);
+		CHECK(!strcmp(call, "J10") && (dti == '!'), "список: позивник «%s», DTI «%c»", call, dti);
+		CHECK(aprsJrnSlotOf(&s_h, 0) == (int)((s_h.jrnHead + APRS_JRN_SLOTS - 1) % APRS_JRN_SLOTS) && aprsJrnNOfSlot(&s_h, aprsJrnSlotOf(&s_h, 3)) == 3 &&
+				(aprsJrnAtSlot(&s_h, aprsJrnSlotOf(&s_h, 5)) == aprsJrnNth(&s_h, 5)), "слот <-> n за новизною");
+	}
+	/* кадр через i-gate: DTI '}' */
+	{
+		const char *tp = "}UW5ELK-5>APDR16,TCPIP,SP5WWP-10*::US5EX-7  :test{28";
+		char call[APRS_CALL_LEN], dti;
+
+		jrnFrame("SP5WWP", tp, (int)strlen(tp), 2000U);
+		aprsJrnSummary(aprsJrnNth(&s_h, 0), call, &dti);
+		CHECK(dti == '}' && !strcmp(call, "SP5WWP"), "кадр через i-gate -- DTI '}' (позивник шлюзу %s)", call);
+	}
+	/* довгий кадр: 127 символів + NUL, без виходу за межі; керівні байти -> '.' */
+	{
+		char big[300];
+		const aprsJrnEntry_t *e;
+
+		for (int i = 0; i < 299; i++) { big[i] = (char)('a' + (i % 26)); }
+		big[10] = 0x01; big[11] = (char)0xFF; big[12] = 0x0D;
+		big[299] = 0;
+		CHECK(jrnFrame("LONG", big, 299, 3000U), "довгий кадр записано");
+		e = aprsJrnNth(&s_h, 0);
+		CHECK((strlen(e->text) == 127U) && (e->text[127] == 0), "обрізано до 127 символів + NUL (len %zu)", strlen(e->text));
+		CHECK(!strncmp(e->text, "LONG>APDW18:", 12) && (e->text[12 + 10] == '.') && (e->text[12 + 11] == '.') && (e->text[12 + 12] == '.'), "початок цілий, непечатні -> '.'");
+	}
+	/* сміття (не AX.25): нічого не додається, журнал цілий */
+	{
+		uint8_t junk[6] = { 1, 2, 3, 4, 5, 6 };
+		uint8_t *h = exactCopy(junk, 6);
+		unsigned before = s_h.jrnCount;
+		const aprsJrnEntry_t *e0 = aprsJrnNth(&s_h, 0);
+		char keep[APRS_JRN_TEXT];
+
+		snprintf(keep, sizeof(keep), "%s", e0->text);
+		CHECK(!aprsJrnAdd(&s_h, 5U, h, 6) && (s_h.jrnCount <= before) && !strcmp(aprsJrnNth(&s_h, 0)->text, keep), "не AX.25: не додано, найновіший цілий");
+		free(h);
+	}
+
+	printf("== R16 ВБ: дані маяка кожної станції ==\n");
+	aprsHistClear(&s_h);
+	aprsDbInit(&s_db);
+	{
+		const aprsStation_t *st;
+		const aprsBcnRec_t *r;
+		char src[8];
+		int firstIdx;
+
+		for (int i = 0; i < APRS_STATIONS_MAX; i++)
+		{
+			snprintf(src, sizeof(src), "ST%02d", i);
+			snprintf(info, sizeof(info), "!4903.50N/07201.75W>145.800MHz T082 c%d /A=%06d", i, 100 + i);
+			st = feedPkt(src, 1, info, 100000U + (uint32_t)i * 1000U);
+			CHECK(st != NULL, "станція %s додана", src);
+		}
+		CHECK(aprsDbCount(&s_db) == APRS_STATIONS_MAX, "база повна (%d)", aprsDbCount(&s_db));
+		st = &s_db.st[0];
+		r = aprsHistBeaconOf(&s_h, &s_db, st);
+		CHECK((r != NULL) && (r->flags & AWIN_F_ALT) && (r->altM == 30) && (r->u.r.freqKHz == 145800U) && !strcmp(r->u.r.tone, "T082") &&
+				!strcmp(r->text, "c0") && (r->symCode == '>') && (r->rxSecs == 1800100000U), "запис станції 0: висота %d, частота %lu, тон %s, текст «%s»",
+				r ? (int)r->altM : 0, r ? (unsigned long)r->u.r.freqKHz : 0UL, r ? r->u.r.tone : "", r ? r->text : "");
+		CHECK(aprsHistBeaconLast(&s_h, &firstIdx) != NULL && firstIdx == 15, "найсвіжіший -- станція 15 (індекс %d)", firstIdx);
+
+		/* 17-та станція: БЕЗ позиційних пакетів ("status") витісняє найстарішу (ST00, слот 0) -- запис слота мусить бути нульовий */
+		st = feedPkt("NEWCOM", 3, ">hello status", 200000U);
+		CHECK(st == &s_db.st[0] && !strcmp(st->call, "NEWCOM-3") && (st->count == 1), "17-та займає слот найстаршої (слот %d)", (int)(st - s_db.st));
+		CHECK(aprsHistBeaconOf(&s_h, &s_db, st) == NULL && s_h.bcn[0].flags == 0 && s_h.bcn[0].altM == 0 && s_h.bcn[0].text[0] == 0 && s_h.bcn[0].u.r.freqKHz == 0U,
+				"запис маяка витісненої обнулено, нова станція чужих даних не показує");
+		{
+			unsigned char z[sizeof(aprsBcnRec_t)];
+			memset(z, 0, sizeof(z));
+			CHECK(memcmp(&s_h.bcn[0], z, sizeof(z)) == 0, "запис слота 0 -- усі байти нульові");
+		}
+		CHECK(aprsHistBeaconOf(&s_h, &s_db, &s_db.st[1]) != NULL && aprsHistBeaconOf(&s_h, &s_db, &s_db.st[15]) != NULL, "інші станції не зачеплено");
+		CHECK(aprsHistBeaconLast(&s_h, &firstIdx) != NULL && firstIdx == 15, "найсвіжіший маяк лишився станції 15");
+
+		/* ... а коли нова станція має позицію -- у записі лише ЇЇ дані */
+		st = feedPkt("NEWPOS", 4, "!4903.50N/07201.75W>fresh", 300000U);
+		r = aprsHistBeaconOf(&s_h, &s_db, st);
+		CHECK((st == &s_db.st[1]) && (r != NULL) && !strcmp(r->text, "fresh") && !(r->flags & AWIN_F_ALT) && (r->u.r.freqKHz == 0U) && (r->u.r.tone[0] == 0) && (r->altM == 0),
+				"витіснена ST01: у слоті 1 лише дані нової (текст «%s», висоти нема)", r ? r->text : "");
+		CHECK(aprsHistBeaconLast(&s_h, &firstIdx) != NULL && firstIdx == 1, "найсвіжіший -- слот нової станції");
+
+		/* станція, що вже була, і пакет без позиції: запис маяка НЕ зникає */
+		st = feedPkt("ST05", 1, ">status again", 310000U);
+		CHECK(st == &s_db.st[5] && aprsHistBeaconOf(&s_h, &s_db, st) != NULL, "статус існуючої станції не стирає її маяк");
+		/* станція без позиційних пакетів: вікно не відкривається */
+		CHECK(aprsHistBeaconOf(&s_h, &s_db, &s_db.st[0]) == NULL, "станція без позиційних пакетів -- запису нема (вікно не відкривається)");
+		/* вказівник не з db */
+		{ aprsStation_t fake; memset(&fake, 0, sizeof(fake)); CHECK(aprsHistBeaconOf(&s_h, &s_db, &fake) == NULL && aprsHistBeaconOf(&s_h, &s_db, NULL) == NULL, "чужий вказівник/NULL -- NULL"); }
+
+		/* найсвіжіший маяк витіснили -- «Останній маяк» порожній, без падіння */
+		aprsHistClearBeacons(&s_h);
+		CHECK(aprsHistBeaconLast(&s_h, NULL) == NULL, "після скидання маяків «Останній маяк» порожній");
+	}
+	{
+		/* найсвіжіший маяк належав станції, яку витіснили: lastBcn скинуто, а не вказує на чужий запис */
+		aprsHistClear(&s_h);
+		aprsDbInit(&s_db);
+		for (int i = 0; i < APRS_STATIONS_MAX; i++)
+		{
+			char src[8];
+
+			snprintf(src, sizeof(src), "OL%02d", i);
+			feedPkt(src, 0, "!4903.50N/07201.75W>x", 1000U + (uint32_t)(15 - i) * 1000U);   /* OL15 -- найстаріша (найменший час), але її маяк найсвіжіший */
+		}
+		CHECK(aprsHistBeaconLast(&s_h, NULL) != NULL, "є найсвіжіший маяк");
+		feedPkt("EVICTR", 0, ">x", 90000U);   /* витісняє OL00?: найстаріша за lastMs */
+		{
+			int idx = -1;
+			const aprsBcnRec_t *r = aprsHistBeaconLast(&s_h, &idx);
+
+			CHECK((r == NULL) || (s_db.st[idx].call[0] != 0 && strcmp(s_db.st[idx].call, "EVICTR-0") != 0), "найсвіжіший маяк не вказує на нову станцію без маяка");
+		}
+	}
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -1512,6 +1699,7 @@ int main(void)
 
 	testR14();
 	testR16Mice();
+	testHist();
 	testStage3();
 	testRawText();
 	testFuzz();

@@ -74,11 +74,11 @@
 
 /* ---- R8-fix: меню «APRS» (menuAprsHub.c); назва меню -- currentLanguage->APRS ---- */
 #define APRSRX_HUB_SETTINGS   "Налаштування"
-#define APRSRX_HUB_PKT        "Останній пакет"       /* R15: пункт меню «APRS» -- сирий текст останнього прийнятого кадру */
+#define APRSRX_HUB_PKT        "Пакети"               /* R15/R16: пункт меню «APRS» -- журнал останніх прийнятих кадрів */
 #define APRSRX_HUB_BCN        "Останній маяк"        /* R15: пункт меню «APRS» -- вікно маяка за збереженими даними */
 #define APRSRX_BCN_NONE       "Маяків ще не було"    /* R15: сповіщення (до 26 символів) */
 /* R15: екран «Останній пакет» (FONT_SIZE_1, 26 символів у рядку, до 255 символів тексту = 10 рядків; видно 9, решта -- U/D) */
-#define APRSRX_PKT_TITLE      "Останній пакет"
+#define APRSRX_PKT_TITLE      "Пакети"
 #define APRSRX_PKT_LEN        "Символів: %u"
 #define APRSRX_PKT_EMPTY      "Пакетів ще не було"
 #define APRSRX_PKT_HINT       "U/D:гортати RED:назад"
@@ -112,5 +112,11 @@
 #define APRSRX_OPT_BCNWIN_ALL "Усі"
 #define APRSRX_OPT_BCNWIN_NEW "Нові"        /* «Лише нові станції»: рядок меню -- 16 символів разом з «Вікно маяка:» */
 #define APRSRX_OPT_BCNWIN_OFF "Вимк"
+
+/* R16: журнал пакетів (екран «Пакети») і маяк конкретної станції. Нові рядки -- останні в файлі. */
+#define APRSRX_PKTL_HINT      "GREEN:кадр RED:назад"        /* підказка списку журналу */
+#define APRSRX_PKTL_NOTIME    "--:--"                       /* час прийому невідомий (годинник не виставлено) */
+#define APRSRX_PKTL_ROW       "%c%-5s %-9s %c"              /* маркер, час, позивний, DTI = 1+5+1+9+1+1 = 18 символів <= 26 */
+#define APRSRX_BCN_NONE_ST    "Маяків від\nцієї станції\nне було"   /* сповіщення на '*' з картки: станція без позиційних пакетів (3 рядки по <= 14 символів) */
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSRX_UA_H_ */

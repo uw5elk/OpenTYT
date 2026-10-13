@@ -33,7 +33,7 @@ enum
 	APRS_HUB_MODE = 0,
 	APRS_HUB_STATIONS,
 	APRS_HUB_BEACON,      /* R15: «Останній маяк» -- вікно маяка за збереженими даними */
-	APRS_HUB_PACKET,      /* R15: «Останній пакет» -- сирий текст останнього кадру */
+	APRS_HUB_PACKET,      /* R15/R16: «Пакети» -- журнал останніх прийнятих кадрів */
 	APRS_HUB_MESSAGES,
 	APRS_HUB_SETTINGS,
 #if defined(APRS_RX_PROBE)
