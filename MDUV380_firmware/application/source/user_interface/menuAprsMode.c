@@ -100,8 +100,8 @@ static void drawMsgHome(void)
 		switch (i)
 		{
 			case 0:  snprintf(buf, sizeof(buf), "%s", APRSMSG_H_NEW); break;
-			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgUnreadCount(b)); break;
-			case 2:  snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgPendingCount(b)); break;
+			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN)); break;
+			case 2:  snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgDirCount(b, AMSG_DIR_OUT)); break;
 			default: snprintf(buf, sizeof(buf), "%s", APRSMSG_H_DELALL); break;
 		}
 		if (sel)

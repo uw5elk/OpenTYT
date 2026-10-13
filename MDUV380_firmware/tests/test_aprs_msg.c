@@ -1028,6 +1028,27 @@ static void testDelete(void)
 	CHECK(aprsMsgListCount(b) == 0U && aprsMsgDirCount(b, AMSG_DIR_IN) == 0U && aprsMsgDirCount(b, AMSG_DIR_OUT) == 0U, "після «видалити всі» -- 0/0");
 	CHECK(aprsMsgQueueLen(b) == 0U && aprsMsgPendingCount(b) == 0U && aprsMsgUnreadCount(b) == 0U, "черга, очікування, непрочитані -- 0");
 	CHECK(aprsMsgDeleteAll(b) == 0U, "повторно -- 0");
+
+	printf("== R18 Д3: «Надіслані» -- усі записи, не черга ==\n");
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgSend(b, "AAA", "o1", t + 100U, NULL) == AMSG_OK && aprsMsgSend(b, "BBB", "o2", t + 101U, NULL) == AMSG_OK, "2 вихідних");
+	{
+		const aprsMsgEntry_t *old = &b->list[aprsMsgNth(b, AMSG_DIR_OUT, 1U)];   /* старше (AAA) */
+
+		CHECK(aprsMsgOnAckRx(b, old->call, old->id, false), "ACK на старше");
+		CHECK(old->status == AMSG_ST_ACK, "старше -- у стані ACK");
+	}
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_OUT) == 2U, "«Надіслані 2»");
+	CHECK(aprsMsgPendingCount(b) == 1U, "а в черзі лише одне");
+	aprsMsgCancelAll(b);   /* друге -- без ACK (скасовано) */
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_OUT) == 2U && aprsMsgPendingCount(b) == 0U, "після завершення всіх: «Надіслані» лишається 2, черга 0");
+
+	printf("== R18 Д2: «Вхідні n/m» ==\n");
+	aprsMsgInit(b, 0U);
+	CHECK(aprsMsgOnIncoming(b, "R1", "a", "1", t + 200U) && aprsMsgOnIncoming(b, "R2", "b", "2", t + 201U) && aprsMsgOnIncoming(b, "R3", "c", "3", t + 202U), "3 вхідних");
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b) == 0U && aprsMsgDirCount(b, AMSG_DIR_IN) == 3U, "прочитано 0 з 3");
+	aprsMsgMarkRead(b, (unsigned)aprsMsgNth(b, AMSG_DIR_IN, 0U));
+	CHECK(aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b) == 1U && aprsMsgDirCount(b, AMSG_DIR_IN) == 3U, "прочитано 1 з 3: n росте, m не змінюється");
 }
 
 int main(void)
