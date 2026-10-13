@@ -323,6 +323,7 @@ if os.path.exists(aprs_path):
         'APRSRX_CARD_POS': ['-179.1234 -179.1234'],
         'APRSRX_CARD_DIST': ['20000' + aprs.get('APRSRX_KM', '') + ' NW'],
         'APRSRX_CARD_LAST': ['59' + 'хв'],
+        'APRSRX_CARD_LAST_RS': ['59' + 'хв'],
         'APRSRX_CARD_PATH': ['W' * 20],
         'APRSRX_CARD_TYPE': [aprs.get('APRSRX_T_MSG', '')],
         'APRSRX_BANNER_FMT': ['UW5ELK-15', '20000' + aprs.get('APRSRX_KM', '') + ' NW'],
@@ -353,7 +354,7 @@ if os.path.exists(aprs_path):
         limit = LINE_CHARS if name in ('APRSRX_TITLE', 'APRSRX_DIAG_TITLE', 'APRSRX_DIAG2_TITLE', 'APRSRX_HUB_SETTINGS', 'APRSRX_HUB_PROBE') else 26
         t = val
         subs = WORST_S.get(name)
-        for rx, rep in (('%lu', '99999'), ('%u', '65535')):
+        for rx, rep in (('%lu', '99999'), ('%u', '65535'), ('%d', '-127')):
             t = t.replace(rx, rep)
         if '%s' in t:
             t = t.replace('%s', subs[0] if subs else 'XXXXXXXXXXXXXXX')

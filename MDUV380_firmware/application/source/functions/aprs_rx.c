@@ -1070,7 +1070,9 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 	s_rx.db.total++;
 	/* R16: журнал кадрів (TNC-2, 127 символів + час) для екрана «Пакети» -- ДО розгортання third-party й ДО відсіву дублікатів: показуємо те, що справді
 	 * прийшло в ефір (кадр через i-gate видно з '}'). Блок -- у резерві «Переслухати» (aprsModeHist()), вільний CCM не чіпаємо. */
-	(void)aprsJrnAdd(aprsModeHist(), (uint32_t)uiDataGlobal.dateTimeSecs, frame, len);
+	int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);   /* R17 Г6: останній відлік RSSI (оновлюється головним циклом, поки приймач слухає); на момент розбору кадру несучої могло вже й не бути -- гіпотеза, перевіряється на залізі (BC13) */
+
+	(void)aprsJrnAdd(aprsModeHist(), (uint32_t)uiDataGlobal.dateTimeSecs, frame, len, rssi);
 	/* R11-fix: i-gate загортає пакет з APRS-IS у third-party ("}SRC>DST,path:info"). Розгортаємо ДО розбору: далі (банер, список станцій,
 	 * дедуплікація, ACK відправнику) скрізь ax.src -- СПРАВЖНІЙ відправник, а не шлюз. Один рівень (див. aprsAx25Unwrap()). */
 	if (aprsAx25Unwrap(&ax))
@@ -1106,7 +1108,7 @@ static void frameDispatch(const uint8_t *frame, uint16_t len)
 		uint16_t bb = 0;
 		bool bg = aprsRxStationGeo(st, &bd, &bb);
 
-		(void)aprsHistBeaconFill(aprsModeHist(), &s_rx.db, st, &pkt, bg, bd, bb, (uint32_t)uiDataGlobal.dateTimeSecs);
+		(void)aprsHistBeaconFill(aprsModeHist(), &s_rx.db, st, &pkt, bg, bd, bb, (uint32_t)uiDataGlobal.dateTimeSecs, rssi);
 	}
 
 	if (aprsModeIsActive())

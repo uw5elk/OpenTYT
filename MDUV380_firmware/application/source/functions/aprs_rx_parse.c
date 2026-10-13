@@ -2311,7 +2311,7 @@ void aprsHistStationTouch(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation
 }
 
 const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s, const aprsPacket_t *pkt,
-		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs)
+		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs, int rssiDbm)
 {
 	int i = histIdx(db, s);
 	aprsBcnRec_t *r;
@@ -2322,6 +2322,7 @@ const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, cons
 	}
 	r = &h->bcn[i];
 	memset(r, 0, sizeof(*r));
+	r->rssiDbm = aprsRssiClamp(rssiDbm);
 	r->hasGeo = hasGeo;
 	r->bearing = bearing;
 	r->distM = distM;
@@ -2436,7 +2437,20 @@ int aprsBeaconOrderStep(int pos, int count, int step)
 	return pos;
 }
 
-bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len)
+int8_t aprsRssiClamp(int dBm)
+{
+	if (dBm == 0)
+	{
+		return (int8_t)APRS_RSSI_NONE;
+	}
+	if (dBm < -127)
+	{
+		return (int8_t)-127;
+	}
+	return (int8_t)((dBm > -1) ? -1 : dBm);
+}
+
+bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len, int rssiDbm)
 {
 	aprsJrnEntry_t *e = &h->jrn[h->jrnHead % APRS_JRN_SLOTS];
 
@@ -2452,6 +2466,7 @@ bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t l
 		return false;
 	}
 	e->rxSecs = rxSecs;
+	h->jrnRssi[h->jrnHead % APRS_JRN_SLOTS] = aprsRssiClamp(rssiDbm);
 	h->jrnHead = (uint8_t)((h->jrnHead + 1U) % APRS_JRN_SLOTS);
 	if (h->jrnCount < APRS_JRN_SLOTS)
 	{
@@ -2497,6 +2512,15 @@ int aprsJrnNOfSlot(const aprsHist_t *h, int slot)
 	}
 	n = ((int)h->jrnHead + APRS_JRN_SLOTS - 1 - slot) % APRS_JRN_SLOTS;
 	return (n < (int)h->jrnCount) ? n : 0;
+}
+
+int8_t aprsJrnRssiAtSlot(const aprsHist_t *h, int slot)
+{
+	if ((slot < 0) || (slot >= APRS_JRN_SLOTS) || (h->jrn[slot].text[0] == 0))
+	{
+		return (int8_t)APRS_RSSI_NONE;
+	}
+	return h->jrnRssi[slot];
 }
 
 void aprsJrnSummary(const aprsJrnEntry_t *e, char *call, char *dti)

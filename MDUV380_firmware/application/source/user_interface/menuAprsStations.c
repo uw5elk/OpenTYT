@@ -215,6 +215,16 @@ static void drawPktList(void)
 			snprintf(tm, sizeof(tm), "%s", APRSRX_PKTL_NOTIME);
 		}
 		snprintf(buf, sizeof(buf), APRSRX_PKTL_ROW, (r == (int)ui->scroll) ? '>' : ' ', tm, call, dti);
+		{
+			/* R17 Г6: RSSI кадру праворуч (дБм, без одиниці: 4 символи); невідомий -- порожньо */
+			int8_t rs = aprsJrnRssiAtSlot(h, aprsJrnSlotOf(h, r));
+			size_t l = strlen(buf);
+
+			if (rs != (int8_t)APRS_RSSI_NONE)
+			{
+				snprintf(buf + l, sizeof(buf) - l, " %4d", (int)rs);
+			}
+		}
 		printRow(1 + r, buf);
 	}
 	printRow(10, APRSRX_PKTL_HINT);
@@ -245,7 +255,16 @@ static void drawPacket(void)
 	{
 		char ln[24];
 
-		snprintf(ln, sizeof(ln), APRSRX_PKT_LEN, (unsigned)len);
+		int8_t rs = aprsJrnRssiAtSlot(aprsModeHist(), PKT_SLOT(ui));
+
+		if (rs != (int8_t)APRS_RSSI_NONE)
+		{
+			snprintf(ln, sizeof(ln), APRSRX_PKT_LEN_RS, (unsigned)len, (int)rs);
+		}
+		else
+		{
+			snprintf(ln, sizeof(ln), APRSRX_PKT_LEN, (unsigned)len);
+		}
 		snprintf(buf, sizeof(buf), "%-22.22s%u/%u", ln, (unsigned)aprsJrnNOfSlot(aprsModeHist(), PKT_SLOT(ui)) + 1U, (unsigned)aprsModeHist()->jrnCount);   /* R17: який запис журналу */
 		printRow(0, buf);
 	}
@@ -429,7 +448,19 @@ static void drawCard(void)
 	snprintf(buf, sizeof(buf), APRSRX_CARD_PKTS, (unsigned)s->count);
 	printRow(4, buf);
 	ageStr(b, sizeof(b), (uint32_t)(now - s->lastMs) / 1000U);
-	snprintf(buf, sizeof(buf), APRSRX_CARD_LAST, b);
+	{
+		/* R17 Г6: RSSI останнього позиційного пакета станції (запис маяка), якщо відомий */
+		const aprsBcnRec_t *br = aprsHistBeaconOf(aprsModeHist(), db, s);
+
+		if ((br != NULL) && (br->rssiDbm != (int8_t)APRS_RSSI_NONE))
+		{
+			snprintf(buf, sizeof(buf), APRSRX_CARD_LAST_RS, b, (int)br->rssiDbm);
+		}
+		else
+		{
+			snprintf(buf, sizeof(buf), APRSRX_CARD_LAST, b);
+		}
+	}
 	printRow(5, buf);
 	snprintf(buf, sizeof(buf), APRSRX_CARD_PATH, s->path);
 	printRow(6, buf);

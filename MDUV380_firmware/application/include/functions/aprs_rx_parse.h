@@ -260,7 +260,13 @@ uint16_t aprsKnotsToKmh(uint16_t kn);
 typedef struct
 {
 	APRS_BCN_REC_FIELDS
+	/* R17 Г6: рівень сигналу під час прийому цього пакета, дБм (-127..-1); 0 -- невідомий. ПІСЛЯ макроса навмисно: у вікні (aprsRxWin_t) цей байт
+	 * накриває active (див. R16, active/call виставляються після memcpy) -- вікно RSSI не несе, воно береться із запису; розмір запису лишається 72 Б. */
+	int8_t    rssiDbm;
 } aprsBcnRec_t;
+#define APRS_RSSI_NONE   0
+/* дБм -> int8 для запису: обмежує -127..-1 (нуль -- «невідомо»). */
+int8_t aprsRssiClamp(int dBm);
 
 #define APRS_JRN_SLOTS   8      /* скільки останніх кадрів тримає журнал */
 #define APRS_JRN_TEXT    128    /* кадр у вигляді TNC-2: 127 символів + NUL */
@@ -279,6 +285,7 @@ typedef struct
 	uint8_t        jrnHead;     /* куди писати наступний кадр */
 	uint8_t        jrnCount;    /* 0..APRS_JRN_SLOTS */
 	uint8_t        lastBcn1;    /* 1 + індекс найсвіжішого запису маяка; 0 -- маяків ще не було */
+	int8_t         jrnRssi[APRS_JRN_SLOTS];   /* R17 Г6: RSSI (дБм) кадру в слоті журналу, 0 -- невідомо; ПІСЛЯ лічильників -- вони разом із ним влазять у наявне вирівнювання блоку */
 } aprsHist_t;
 
 void aprsHistClear(aprsHist_t *h);            /* усе в нуль */
@@ -289,7 +296,7 @@ void aprsHistStationTouch(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation
 /* Записати маяк станції s (за позиційним пакетом): geo -- відстань/азимут, якщо відомі. stText -- коментар станції (обрізаний). Робить запис
  * "найсвіжішим". Повертає запис. */
 const aprsBcnRec_t *aprsHistBeaconFill(aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s, const aprsPacket_t *pkt,
-		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs);
+		bool hasGeo, uint32_t distM, uint16_t bearing, uint32_t rxSecs, int rssiDbm);
 /* Запис маяка станції; NULL -- маяків від неї не було (або s не з db). */
 const aprsBcnRec_t *aprsHistBeaconOf(const aprsHist_t *h, const aprsRxDb_t *db, const aprsStation_t *s);
 /* Найсвіжіший запис маяка і індекс його станції в db.st[]; NULL -- нема. */
@@ -304,13 +311,15 @@ int aprsBeaconOrderStep(int pos, int count, int step);
 
 /* Журнал: кадр -> TNC-2 (aprsAx25ToText(), непечатні -> '.'), обрізано до APRS_JRN_TEXT-1. false -- кадр не розібрати як AX.25 UI (не записано).
  * Викликати ДО aprsAx25Unwrap(). */
-bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len);
+bool aprsJrnAdd(aprsHist_t *h, uint32_t rxSecs, const uint8_t *frame, uint16_t len, int rssiDbm);
 /* n-й за новизною (0 -- найновіший); NULL -- n поза межами. */
 const aprsJrnEntry_t *aprsJrnNth(const aprsHist_t *h, int n);
 /* Номер слота журналу (0..APRS_JRN_SLOTS-1), у якому лежить n-й за новизною кадр; -1 -- n поза межами. І навпаки: запис слота (NULL -- слот порожній), n за новизною. */
 int aprsJrnSlotOf(const aprsHist_t *h, int n);
 const aprsJrnEntry_t *aprsJrnAtSlot(const aprsHist_t *h, int slot);
 int aprsJrnNOfSlot(const aprsHist_t *h, int slot);
+/* R17 Г6: RSSI кадру в слоті журналу, дБм; APRS_RSSI_NONE -- невідомо / слот поза межами. */
+int8_t aprsJrnRssiAtSlot(const aprsHist_t *h, int slot);
 /* Для рядка списку: позивний джерела (до '>', не довше APRS_CALL_LEN-1) і DTI (перший байт info після першого ':'; '-' -- info порожнє). */
 void aprsJrnSummary(const aprsJrnEntry_t *e, char *call, char *dti);
 

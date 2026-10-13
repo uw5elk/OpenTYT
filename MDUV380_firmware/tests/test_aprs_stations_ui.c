@@ -150,6 +150,7 @@ static void jrnPush(const char *text, uint32_t secs)
 
 	snprintf(e->text, sizeof(e->text), "%s", text);
 	e->rxSecs = secs;
+	s_hist.jrnRssi[s_hist.jrnHead] = (int8_t)(-60 - (int)(secs % 30U));
 	s_hist.jrnHead = (uint8_t)((s_hist.jrnHead + 1U) % APRS_JRN_SLOTS);
 	if (s_hist.jrnCount < APRS_JRN_SLOTS) { s_hist.jrnCount++; }
 }
@@ -193,8 +194,9 @@ static void testPacketScreens(void)
 	CHECK(s_nrows == 10, "статус + 8 рядків + підказка (є %d)", s_nrows);
 	CHECK(strstr(s_rows[1], "N0CALL-9") != NULL && s_rows[1][0] == '>', "найновіший зверху й виділений: «%s»", s_rows[1]);
 	CHECK(strstr(s_rows[8], "UW5ELE-4") != NULL, "восьмий -- 4-й кадр з десяти (1..3 витіснено): «%s»", s_rows[8]);
-	CHECK(s_rows[1][strlen(s_rows[1]) - 1] == '`', "DTI Mic-E в кінці рядка: «%s»", s_rows[1]);
+	CHECK(s_rows[1][strlen(s_rows[1]) - 6] == '`', "DTI Mic-E перед RSSI: «%s»", s_rows[1]);
 	CHECK(strstr(s_rows[2], "UW5ELK-10") != NULL && strlen(s_rows[2]) <= 26, "довгий позивний вміщується: «%s»", s_rows[2]);
+	CHECK(strlen(s_rows[1]) >= 5 && s_rows[1][strlen(s_rows[1]) - 3] == '-' && strlen(s_rows[1]) <= 26, "рядок списку закінчується RSSI (-NN): «%s»", s_rows[1]);
 	for (int i = 0; i < 8; i++) { click(KEY_DOWN); }
 	CHECK(s_ui.scroll == 0, "8 разів DOWN -- по колу (scroll=%d)", s_ui.scroll);
 	click(KEY_UP);
@@ -221,6 +223,7 @@ static void testPacketScreens(void)
 	click(KEY_DOWN);
 	CHECK(s_ui.view == APRS_RX_VIEW_PACKET && !strncmp(s_rows[1], "UW5ELK-10>", 10), "DOWN у кадрі -> старіший запис: «%s»", s_rows[1]);
 	CHECK(!strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "2/8"), "у шапці кадру номер запису «n/8»: «%s»", s_rows[0]);
+	CHECK(strchr(s_rows[0], '-') != NULL && strlen(s_rows[0]) <= 26, "у шапці кадру видно RSSI: «%s»", s_rows[0]);
 	click(KEY_UP);
 	CHECK(!strncmp(s_rows[1], "N0CALL-9>APRS:`", 15), "UP у кадрі -> назад на найновіший: «%s»", s_rows[1]);
 	click(KEY_UP);
@@ -266,7 +269,7 @@ static void testPacketScreens(void)
 	/* маяк однієї станції (ІНДЕКС 2) -> вікно */
 	{
 		aprsPacket_t pk; memset(&pk, 0, sizeof(pk)); pk.type = APRS_T_POSITION; pk.hasPos = true; pk.symTable = '/'; pk.symCode = '[';
-		aprsHistBeaconFill(&s_hist, &s_db, &s_db.st[2], &pk, true, 3200, 45, 1800000000U);
+		aprsHistBeaconFill(&s_hist, &s_db, &s_db.st[2], &pk, true, 3200, 45, 1800000000U, -87);
 	}
 	menuAprsBeaconShow();
 	CHECK(s_notes == 1 && s_showAgain == 1, "є дані: вікно відкрито, сповіщення нема");
@@ -285,6 +288,11 @@ static void testPacketScreens(void)
 	click(KEY_STAR);
 	CHECK(s_showStation == 1 && s_notes == 0 && !strcmp(s_lastShown, s_db.st[2].call), "'*' на картці станції з маяком -- вікно саме цієї станції");
 	menuAprsStationsDrawEmbedded();
+	{
+		/* R17 Г6: у картці станції з маяком видно RSSI (-87 дБм), у картці без маяка -- нема */
+		int found = 0; for (int i = 0; i < s_nrows; i++) { if (strstr(s_rows[i], "-87") != NULL) { found = 1; } }
+		CHECK(found, "картка станції з маяком показує RSSI -87");
+	}
 	CHECK(s_nrows > 0, "вбудована картка з підказкою маяка");
 	{ int found = 0; for (int i = 0; i < s_nrows; i++) { if (!strcmp(s_rows[i], APRSRX_HINT_CARD2B)) { found = 1; } } CHECK(found, "підказка «#:пакет  *:маяк» на картці"); }
 	s_maxWidth = 0;

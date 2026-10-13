@@ -772,7 +772,7 @@ static bool jrnFrame(const char *src, const char *info, int infoLen, uint32_t se
 	uint8_t fr[700];
 	int n = buildFrame(fr, "APDW18", src, 0, 0, 0, (const uint8_t *)info, infoLen);
 	uint8_t *h = exactCopy(fr, n);
-	bool ok = aprsJrnAdd(&s_h, secs, h, (uint16_t)n);
+	bool ok = aprsJrnAdd(&s_h, secs, h, (uint16_t)n, -90);
 
 	free(h);
 	return ok;
@@ -791,7 +791,7 @@ static const aprsStation_t *feedPkt(const char *src, int ssid, const char *info,
 	aprsHistStationTouch(&s_h, &s_db, st);
 	if (pk.type == APRS_T_POSITION)
 	{
-		aprsHistBeaconFill(&s_h, &s_db, st, &pk, true, 1000U + now, (uint16_t)(now % 360U), 1800000000U + now);
+		aprsHistBeaconFill(&s_h, &s_db, st, &pk, true, 1000U + now, (uint16_t)(now % 360U), 1800000000U + now, -100 + (int)(now % 50U));
 	}
 	return st;
 }
@@ -867,7 +867,7 @@ static void testHist(void)
 		char keep[APRS_JRN_TEXT];
 
 		snprintf(keep, sizeof(keep), "%s", e0->text);
-		CHECK(!aprsJrnAdd(&s_h, 5U, h, 6) && (s_h.jrnCount <= before) && !strcmp(aprsJrnNth(&s_h, 0)->text, keep), "не AX.25: не додано, найновіший цілий");
+		CHECK(!aprsJrnAdd(&s_h, 5U, h, 6, -50) && (s_h.jrnCount <= before) && !strcmp(aprsJrnNth(&s_h, 0)->text, keep), "не AX.25: не додано, найновіший цілий");
 		free(h);
 	}
 
@@ -946,6 +946,102 @@ static void testHist(void)
 
 			CHECK((r == NULL) || (s_db.st[idx].call[0] != 0 && strcmp(s_db.st[idx].call, "EVICTR-0") != 0), "найсвіжіший маяк не вказує на нову станцію без маяка");
 		}
+	}
+}
+
+/* ---- R17 Г6: RSSI у журналі та в записі маяка ------------------------------------------------------------------ */
+static void testRssi(void)
+{
+	char info[64];
+
+	printf("== R17 Г6: RSSI ==\n");
+	CHECK(sizeof(aprsBcnRec_t) == 72U, "sizeof(aprsBcnRec_t) = %zu (72: запис не виріс)", sizeof(aprsBcnRec_t));
+	CHECK(sizeof(aprsHist_t) <= 2224U, "sizeof(aprsHist_t) = %zu <= 2224 (наявний резерв, CALL_REPLAY_APRS_HIST_BYTES не росте)", sizeof(aprsHist_t));
+	CHECK(aprsRssiClamp(0) == 0 && aprsRssiClamp(-87) == -87 && aprsRssiClamp(-200) == -127 && aprsRssiClamp(-127) == -127 && aprsRssiClamp(5) == -1 && aprsRssiClamp(-1) == -1,
+			"межі: 0 -- невідомо, -87 як є, -200 -> -127, +5 -> -1");
+
+	aprsHistClear(&s_h);
+	for (int i = 0; i < 11; i++)
+	{
+		char src[8];
+		uint8_t fr[700];
+		int n;
+		uint8_t *h;
+
+		snprintf(src, sizeof(src), "R%d", i);
+		snprintf(info, sizeof(info), "!4903.50N/07201.75W-r%d", i);
+		n = buildFrame(fr, "APDW18", src, 0, 0, 0, (const uint8_t *)info, (int)strlen(info));
+		h = exactCopy(fr, n);
+		CHECK(aprsJrnAdd(&s_h, 100U + (uint32_t)i, h, (uint16_t)n, -50 - i), "кадр %d записано", i);
+		free(h);
+	}
+	{
+		bool ok = true;
+
+		for (int n = 0; n < 8; n++)
+		{
+			int slot = aprsJrnSlotOf(&s_h, n);
+			const aprsJrnEntry_t *e = aprsJrnNth(&s_h, n);
+			int want = -50 - (10 - n);
+
+			ok = ok && (slot >= 0) && (e != NULL) && (aprsJrnRssiAtSlot(&s_h, slot) == want) && (e->rxSecs == 100U + (uint32_t)(10 - n));
+		}
+		CHECK(ok, "після обертання кільця (11 кадрів у 8 слотах) RSSI кожного запису -- його власний");
+	}
+	CHECK(aprsJrnRssiAtSlot(&s_h, -1) == 0 && aprsJrnRssiAtSlot(&s_h, 8) == 0, "слот поза межами -- невідомо");
+	{
+		/* невдалий розбір не лишає «чужого» RSSI в слоті */
+		uint8_t junk[6] = { 1, 2, 3, 4, 5, 6 };
+		uint8_t *h = exactCopy(junk, 6);
+		int slotBefore = (int)(s_h.jrnHead % APRS_JRN_SLOTS);
+
+		CHECK(!aprsJrnAdd(&s_h, 5U, h, 6, -33), "сміття не записано");
+		CHECK(aprsJrnRssiAtSlot(&s_h, slotBefore) == 0, "зіпсований слот -- порожній, RSSI не показується");
+		free(h);
+	}
+	/* запис маяка */
+	aprsHistClear(&s_h);
+	aprsDbInit(&s_db);
+	{
+		const aprsStation_t *a = feedPkt("RSA", 0, "!4903.50N/07201.75W>a", 5000U);
+		const aprsBcnRec_t *r = aprsHistBeaconOf(&s_h, &s_db, a);
+		int first;
+
+		CHECK(r != NULL && r->rssiDbm >= -127 && r->rssiDbm <= -1, "маяк: RSSI збережено (%d)", r ? (int)r->rssiDbm : 0);
+		first = r ? r->rssiDbm : 0;
+		a = feedPkt("RSA", 0, "!4903.51N/07201.75W>b", 5017U);
+		r = aprsHistBeaconOf(&s_h, &s_db, a);
+		CHECK(r != NULL && r->rssiDbm != first && r->rssiDbm == aprsRssiClamp(-100 + (int)(5017U % 50U)), "новий маяк тієї ж станції перезаписує RSSI (%d -> %d)", first, r ? (int)r->rssiDbm : 0);
+		{
+			/* поля поряд не зіпсовані */
+			CHECK(r != NULL && r->text[0] == 'b' && r->symCode == '>' && r->hasGeo, "сусідні поля запису (коментар, символ) цілі");
+		}
+	}
+	{
+		/* станція без позиційного пакета -- запису нема, RSSI не вигадується */
+		const aprsStation_t *b = feedPkt("RSB", 0, ">status", 6000U);
+
+		CHECK(aprsHistBeaconOf(&s_h, &s_db, b) == NULL, "станція без позиції: запису маяка (і RSSI) нема");
+	}
+	{
+		/* витіснена станція не лишає RSSI наступній */
+		aprsHistClear(&s_h);
+		aprsDbInit(&s_db);
+		for (int i = 0; i < APRS_STATIONS_MAX; i++)
+		{
+			char src[8];
+
+			snprintf(src, sizeof(src), "EV%02d", i);
+			feedPkt(src, 0, "!4903.50N/07201.75W>x", 1000U + (uint32_t)i * 1000U);
+		}
+		{
+			const aprsStation_t *n = feedPkt("NEWCOM", 0, ">no position", 90000U);
+			const aprsBcnRec_t *r = aprsHistBeaconOf(&s_h, &s_db, n);
+
+			CHECK(r == NULL, "нова станція на місці витісненої: без запису й без чужого RSSI");
+		}
+		aprsHistClearBeacons(&s_h);
+		CHECK(aprsHistBeaconLast(&s_h, NULL) == NULL, "скидання маяків обнуляє записи");
 	}
 }
 
@@ -1778,6 +1874,7 @@ int main(void)
 	testR16Mice();
 	testHist();
 	testBeaconOrder();
+	testRssi();
 	testStage3();
 	testRawText();
 	testFuzz();
