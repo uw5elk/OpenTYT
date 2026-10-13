@@ -59,10 +59,10 @@ typedef struct
 	char     text[APRS_MSG_JOB_TEXT_LEN + 2]; /* текст (набір), cp1251 */
 } aprsMsgUi_t;
 
-/* Поля сторінки «Налаштування» (порядок рядків). */
+/* Поля сторінки «Налаштування» (порядок рядків). R17: «Табл.сим.» і «Код сим.» -> один пункт «Символ» (APRSM_F_SYMBOL). */
 enum
 {
-	APRSM_F_FREQ = 0, APRSM_F_CALL, APRSM_F_SSID, APRSM_F_PATH1, APRSM_F_PATH2, APRSM_F_ICON_TABLE, APRSM_F_ICON_CODE,
+	APRSM_F_FREQ = 0, APRSM_F_CALL, APRSM_F_SSID, APRSM_F_PATH1, APRSM_F_PATH2, APRSM_F_SYMBOL,
 	APRSM_F_COMMENT, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB, APRSM_F_INTERVAL, APRSM_F_SQL, APRSM_F_RESET, APRSM_F_COUNT
 };
 

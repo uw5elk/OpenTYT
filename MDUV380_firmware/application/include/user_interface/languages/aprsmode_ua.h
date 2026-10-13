@@ -192,4 +192,19 @@
 /* R11-fix: останній кадр розгорнуто з third-party (i-gate): шлюз, що ретранслював. 26 символів: 6 + 9 + 10 = 25. */
 #define APRSM_M_3P            "Шлюз: %.9s (розгорн)"
 
+/* ---- R17: вибір символу ---- */
+#define APRSM_L_SYMBOL        "Символ"
+#define APRSM_PK_T_LIST      "Символ %u/%u"                 /* заголовок переліку */
+#define APRSM_PK_T_MAN       "Символ вручну"
+#define APRSM_PK_H_LIST      "GREEN:ОК  #:вручну"
+#define APRSM_PK_H_MAN       "<>:код U/D:табл. #:назви"
+#define APRSM_PK_TBL     "Таблиця: %s"
+#define APRSM_PK_CODE    "Код: %c (%u)"
+#define APRSM_PK_NONAME      "без назви"
+#define APRSM_PK_VAL         "%c%c %s"                      /* таблиця, код, назва: «/[ людина» (до 15 символів) */
+#define APRSM_PK_VAL_RAW     "%c%c (%u)"                    /* символ без назви: «\\Z (57)» */
+#define APRSM_TX_BUSY         "Йде передача"                 /* сповіщення: зміну відхилено, бо маяк іде зараз */
+
+#define APRSM_SAVE_FAIL       "Не збережено"                 /* сповіщення: запис налаштувань режиму у флеш не вдався */
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

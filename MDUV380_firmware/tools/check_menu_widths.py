@@ -415,8 +415,20 @@ if os.path.exists(mode_path):
             if name == 'APRSM_V_SQL_FMT':
                 t = val.replace('%u', '100').replace('%%', '%')
             lim = 15
-        elif name.startswith('APRSM_ERR_') or name == 'APRSM_NOT_NOW':
+        elif name.startswith('APRSM_ERR_') or name in ('APRSM_NOT_NOW', 'APRSM_TX_BUSY', 'APRSM_SAVE_FAIL'):
             lim = LINE_CHARS
+        elif name.startswith('APRSM_PK_T_'):
+            lim = LINE_CHARS   # R17: заголовок вибору символу
+            t = val.replace('%u', '99')   # номер і кількість записів переліку -- до 99
+        elif name in ('APRSM_PK_VAL', 'APRSM_PK_VAL_RAW'):
+            lim = 15           # R17: значення пункту «Символ» у рядку налаштувань: таблиця+код+пробіл+назва (назва до 12)
+            if name == 'APRSM_PK_VAL_RAW':
+                t = val.replace('%c', '*').replace('%u', '93')
+            else:
+                t = val.replace('%c', '*').replace('%s', 'позашляховик')
+        elif name == 'APRSM_PK_CODE':
+            lim = 26
+            t = val.replace('%c', '*').replace('%u', '93')
         elif name.startswith('APRSM_SYM_'):
             lim = 13   # значення поля «Код сим.»: знак + пробіл + назва = 15 символів
         else:

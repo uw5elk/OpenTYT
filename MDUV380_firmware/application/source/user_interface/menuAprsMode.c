@@ -20,6 +20,7 @@
 #include "functions/trx.h"
 #include "functions/ticks.h"
 #include "functions/sound.h"
+#include "functions/aprs_icons.h"   /* R17: піктограми в переліку символів */
 #include "user_interface/languages/aprsmode_ua.h"
 #include "user_interface/languages/aprsmsg_ua.h"
 #include "user_interface/uiSmsKeys.h"   /* R11-fix2: підказка літер і шпаргалка розкладки -- спільні з SMS */
@@ -40,6 +41,14 @@ static void printRow(int row, const char *text)
 	displayPrintAt(0, AM_ROW(row), text, FONT_SIZE_1);
 }
 
+/* R17: зміну відхилено, бо маяк іде зараз. Раніше settingsStep()/settingsGreen() мовчки виходили -- якщо aprsTxProgress ніколи не вертався в IDLE,
+ * УСІ налаштування «не змінювались» без жодного пояснення. Тепер це видно: сповіщення + звук. */
+static void notifyTxBusy(void)
+{
+	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_TX_BUSY, true);
+	soundSetMelody(MELODY_ERROR_BEEP);
+}
+
 static const char *fieldLabel(int f)
 {
 	switch (f)
@@ -49,8 +58,7 @@ static const char *fieldLabel(int f)
 		case APRSM_F_SSID:       return APRSM_L_SSID;
 		case APRSM_F_PATH1:      return APRSM_L_PATH1;
 		case APRSM_F_PATH2:      return APRSM_L_PATH2;
-		case APRSM_F_ICON_TABLE: return APRSM_L_ICON_TABLE;
-		case APRSM_F_ICON_CODE:  return APRSM_L_ICON_CODE;
+		case APRSM_F_SYMBOL:     return APRSM_L_SYMBOL;
 		case APRSM_F_COMMENT:    return APRSM_L_COMMENT;
 		case APRSM_F_LAT:        return APRSM_L_LAT;
 		case APRSM_F_LON:        return APRSM_L_LON;
@@ -68,7 +76,7 @@ static bool fieldIsNumeric(int f)
 
 static bool fieldHasEditor(int f)
 {
-	return ((f == APRSM_F_FREQ) || (f == APRSM_F_CALL) || (f == APRSM_F_PATH1) || (f == APRSM_F_PATH2) ||
+	return ((f == APRSM_F_FREQ) || (f == APRSM_F_CALL) || (f == APRSM_F_PATH1) || (f == APRSM_F_PATH2) || (f == APRSM_F_SYMBOL) ||
 			(f == APRSM_F_COMMENT) || (f == APRSM_F_LAT) || (f == APRSM_F_LON));
 }
 
@@ -94,15 +102,20 @@ static void pathStr(char *b, size_t n, const char *name, uint8_t ssid)
 static void symbolStr(char *b, size_t n, const aprsModeEff_t *e)
 {
 	const char *name = aprsModeSymbolName(e->iconTable, e->iconIndex);
+	char t = (e->iconTable == 0U) ? '/' : '\\';
 	char c = (char)('!' + e->iconIndex);
 
+	if (name == NULL)
+	{
+		name = aprsSymbolNameEx(t, c);   /* R17: і назви додаткової таблиці */
+	}
 	if (name != NULL)
 	{
-		snprintf(b, n, "%c %s", c, name);
+		snprintf(b, n, APRSM_PK_VAL, t, c, name);
 	}
 	else
 	{
-		snprintf(b, n, "%c (%u)", c, (unsigned)e->iconIndex);
+		snprintf(b, n, APRSM_PK_VAL_RAW, t, c, (unsigned)e->iconIndex);
 	}
 }
 
@@ -131,10 +144,7 @@ static void fieldValue(int f, char *b, size_t n)
 		case APRSM_F_PATH2:
 			pathStr(b, n, e->path[1], e->pathSsid[1]);
 			break;
-		case APRSM_F_ICON_TABLE:
-			snprintf(b, n, "%s", (e->iconTable == 0U) ? APRSM_V_TBL_PRI : APRSM_V_TBL_SEC);
-			break;
-		case APRSM_F_ICON_CODE:
+		case APRSM_F_SYMBOL:
 			symbolStr(b, n, e);
 			break;
 		case APRSM_F_COMMENT:
@@ -324,6 +334,175 @@ static void drawSettings(void)
 
 /* ---- редактор поля ------------------------------------------------------------------------------------------- */
 
+/* ---- R17: вибір символу (один пункт «Символ»: перелік назв із піктограмою; для символів без назви -- «вручну»: таблиця + код) ----------------- */
+
+#define AM_SYM_VISIBLE   5
+#define AM_SYM_ROW_H     19    /* піктограма 16x16 + проміжок */
+
+/* Стан вибору лежить у полях редактора (розмір aprsModeUi_t не росте): mtMode -- вручну, cap -- таблиця, err -- код, pos -- номер у переліку. */
+static void symPickLoad(const aprsModeEdit_t *ed, aprsSymPick_t *p)
+{
+	p->manual = ed->mtMode;
+	p->table = ed->cap;
+	p->index = ed->err;
+	p->pos = (uint8_t)ed->pos;
+}
+
+static void symPickStore(aprsModeEdit_t *ed, const aprsSymPick_t *p)
+{
+	ed->mtMode = p->manual;
+	ed->cap = p->table;
+	ed->err = p->index;
+	ed->pos = (int16_t)p->pos;
+}
+
+/* Піктограма 16x16; символу без піктограми -- рамка зі знаком. onBar -- малюємо на смузі вибору (кольори навпаки). */
+static void symDrawIcon(int16_t x, int16_t y, uint8_t table, uint8_t index, bool onBar)
+{
+	char t = (table == 0U) ? '/' : '\\';
+	char c = (char)('!' + index);
+	bool ov = false;
+	const uint8_t *ic = aprsIconFind(t, c, &ov);
+	char one[2];
+
+	if (ic != NULL)
+	{
+		displayDrawXBitmap(x, y, ic, APRS_ICON_W, APRS_ICON_H, (onBar == false));
+	}
+	else
+	{
+		one[0] = c;
+		one[1] = 0;
+		displayDrawRect(x, y, APRS_ICON_W, APRS_ICON_H, (onBar == false));
+		displayPrintCore((int16_t)(x + 5), (int16_t)(y + 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, onBar);
+	}
+}
+
+static void symEditDraw(void)
+{
+	const aprsModeEdit_t *ed = &aprsModeUi()->edit;
+	aprsSymPick_t p;
+	char buf[40];
+
+	symPickLoad(ed, &p);
+	displayClearBuf();
+	if (p.manual)
+	{
+		const char *nm;
+		uint8_t tt, ii;
+
+		menuDisplayTitle(APRSM_PK_T_MAN);
+		snprintf(buf, sizeof(buf), APRSM_PK_TBL, (p.table == 0U) ? APRSM_V_TBL_PRI : APRSM_V_TBL_SEC);
+		printRow(0, buf);
+		snprintf(buf, sizeof(buf), APRSM_PK_CODE, (char)('!' + p.index), (unsigned)p.index);
+		printRow(1, buf);
+		aprsSymPickResult(&p, &tt, &ii);
+		symDrawIcon(4, AM_ROW(3), tt, ii, false);
+		nm = aprsSymbolNameEx((tt == 0U) ? '/' : '\\', (char)('!' + ii));
+		displayPrintCore(26, (int16_t)(AM_ROW(3) + 4), (nm != NULL) ? nm : APRSM_PK_NONAME, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		printRow(10, APRSM_PK_H_MAN);
+	}
+	else
+	{
+		int n = (int)aprsSymbolListCount();
+		int top = (int)p.pos - (AM_SYM_VISIBLE / 2);
+
+		if (top > (n - AM_SYM_VISIBLE))
+		{
+			top = n - AM_SYM_VISIBLE;
+		}
+		if (top < 0)
+		{
+			top = 0;
+		}
+		snprintf(buf, sizeof(buf), APRSM_PK_T_LIST, (unsigned)p.pos + 1U, (unsigned)n);
+		menuDisplayTitle(buf);
+		for (int r = 0; (r < AM_SYM_VISIBLE) && ((top + r) < n); r++)
+		{
+			uint8_t tt, ii;
+			const char *nm = NULL;
+			bool sel = ((top + r) == (int)p.pos);
+			int16_t y = (int16_t)(16 + (r * AM_SYM_ROW_H));
+
+			if (aprsSymbolListGet((unsigned)(top + r), &tt, &ii, &nm) == false)
+			{
+				break;
+			}
+			if (sel)
+			{
+				displayFillRect(0, (int16_t)(y - 1), DISPLAY_SIZE_X, 18, false);   /* смуга вибору */
+			}
+			symDrawIcon(3, y, tt, ii, sel);
+			snprintf(buf, sizeof(buf), APRSM_PK_VAL, (tt == 0U) ? '/' : '\\', (char)('!' + ii), nm);
+			displayPrintCore(24, (int16_t)(y + 4), buf, FONT_SIZE_1, TEXT_ALIGN_LEFT, sel);
+		}
+		printRow(10, APRSM_PK_H_LIST);
+	}
+	displayRender();
+}
+
+/* Події вибору символу. Перелік: ручка/стрілки гортають, GREEN -- вибрати, # -- вручну, RED -- скасувати.
+ * Вручну: ручка/←→ -- код, ↑↓ -- таблиця, # -- назад до переліку. */
+static bool symEditEvent(uiEvent_t *ev)
+{
+	aprsModeEdit_t *ed = &aprsModeUi()->edit;
+	aprsSymPick_t p;
+
+	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
+	{
+		return false;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		ed->active = 0U;
+		return true;
+	}
+	symPickLoad(ed, &p);
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		aprsModeCfg_t *c = aprsModeCfg();
+		uint8_t t, i;
+
+		aprsSymPickResult(&p, &t, &i);
+		c->iconTable = t;
+		c->iconIndex = i;
+		c->ov |= APRSM_OV_ICON;
+		aprsModeCfgChanged(APRSM_OV_ICON);
+		ed->active = 0U;
+		return true;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH))
+	{
+		aprsSymPickToggle(&p);
+	}
+	else if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	{
+		aprsSymPickStep(&p, 1);
+	}
+	else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	{
+		aprsSymPickStep(&p, -1);
+	}
+	else if (KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_UP))
+	{
+		if (p.manual)
+		{
+			aprsSymPickTable(&p);
+		}
+		else
+		{
+			aprsSymPickStep(&p, KEYCHECK_PRESS(ev->keys, KEY_DOWN) ? 1 : -1);
+		}
+	}
+	else
+	{
+		return false;
+	}
+	symPickStore(ed, &p);
+	return true;
+}
+
+
 static void editOpen(int field)
 {
 	aprsModeUi_t *u = aprsModeUi();
@@ -333,6 +512,14 @@ static void editOpen(int field)
 	memset(ed, 0, sizeof(*ed));
 	ed->active = 1U;
 	ed->field = (uint8_t)field;
+	if (field == APRSM_F_SYMBOL)
+	{
+		aprsSymPick_t p;
+
+		aprsSymPickInit(&p, e->iconTable, e->iconIndex);
+		symPickStore(ed, &p);
+		return;
+	}
 	switch (field)
 	{
 		case APRSM_F_FREQ:
@@ -383,6 +570,11 @@ static void editDraw(void)
 	bool numeric = fieldIsNumeric(ed->field);
 	int row = 1;
 
+	if (ed->field == APRSM_F_SYMBOL)
+	{
+		symEditDraw();
+		return;
+	}
 	displayClearBuf();
 	menuDisplayTitle(fieldLabel(ed->field));
 	if (numeric)
@@ -503,9 +695,14 @@ static int editApply(aprsModeEdit_t *ed)
 			{
 				return 2;
 			}
-			if ((aprsModeParseFreq(txt, &f) == false) || (aprsModeFreqValid(f) == false) || aprsModeIsTransmitting())
+			if ((aprsModeParseFreq(txt, &f) == false) || (aprsModeFreqValid(f) == false))
 			{
 				return 1;
+			}
+			if (aprsModeIsTransmitting())
+			{
+				notifyTxBusy();   /* R17: частоту посеред маяка не міняємо (радіо не перебудувати) -- і кажемо про це */
+				return 2;
 			}
 			c->freq = f;
 			bit = APRSM_OV_FREQ;
@@ -583,6 +780,10 @@ static bool editEvent(uiEvent_t *ev)
 	uint32_t now = ticksGetMillis();
 	bool numeric = fieldIsNumeric(ed->field);
 
+	if (ed->field == APRSM_F_SYMBOL)
+	{
+		return symEditEvent(ev);
+	}
 	if ((ev->hasEvent == false) || ((ev->events & KEY_EVENT) == 0))
 	{
 		return false;
@@ -1458,16 +1659,17 @@ static void settingsStep(int dir)
 	const aprsModeEff_t *e = aprsModeEff();
 	uint16_t bit = 0;
 
-	if (aprsModeIsTransmitting())
-	{
-		return;   /* посеред маяка нічого не міняємо */
-	}
 	switch (u->sel)
 	{
 		case APRSM_F_FREQ:
 		{
 			uint32_t f = (dir > 0) ? (e->freq + AM_FREQ_STEP) : (e->freq - AM_FREQ_STEP);
 
+			if (aprsModeIsTransmitting())
+			{
+				notifyTxBusy();   /* R17: перебудова радіо посеред маяка неможлива; решту налаштувань можна міняти й під час маяка (кадр уже складено) */
+				return;
+			}
 			if (aprsModeFreqValid(f))
 			{
 				c->freq = f;
@@ -1479,16 +1681,20 @@ static void settingsStep(int dir)
 			c->ssid = (uint8_t)wrapStep(e->ssid, dir, 15);
 			bit = APRSM_OV_SSID;
 			break;
-		case APRSM_F_ICON_TABLE:
-			c->iconTable = (e->iconTable == 0U) ? 1U : 0U;
-			c->iconIndex = e->iconIndex;
+		case APRSM_F_SYMBOL:
+		{
+			/* ручка на пункті «Символ»: крок по переліку названих (а для символу без назви -- по коду) без відкриття вибору */
+			aprsSymPick_t p;
+			uint8_t t, i;
+
+			aprsSymPickInit(&p, e->iconTable, e->iconIndex);
+			aprsSymPickStep(&p, dir);
+			aprsSymPickResult(&p, &t, &i);
+			c->iconTable = t;
+			c->iconIndex = i;
 			bit = APRSM_OV_ICON;
 			break;
-		case APRSM_F_ICON_CODE:
-			c->iconTable = e->iconTable;
-			c->iconIndex = (uint8_t)wrapStep(e->iconIndex, dir, APRSM_ICON_MAX);
-			bit = APRSM_OV_ICON;
-			break;
+		}
 		case APRSM_F_AMB:
 			c->ambiguity = (uint8_t)wrapStep(e->ambiguity, dir, 7);
 			bit = APRSM_OV_AMB;
@@ -1525,29 +1731,15 @@ static void settingsGreen(void)
 			{
 				aprsModeCfgReset();
 			}
+			else
+			{
+				notifyTxBusy();
+			}
 		}
 		else
 		{
 			u->resetArmed = 1U;
 		}
-		return;
-	}
-	if (aprsModeIsTransmitting())
-	{
-		return;
-	}
-	if (u->sel == APRSM_F_ICON_CODE)
-	{
-		/* швидкий перебір: наступний з названих символів (авто, людина, дім...) */
-		aprsModeCfg_t *c = aprsModeCfg();
-		const aprsModeEff_t *e = aprsModeEff();
-		uint8_t t = e->iconTable, i = e->iconIndex;
-
-		aprsModeSymbolNextNamed(&t, &i);
-		c->iconTable = t;
-		c->iconIndex = i;
-		c->ov |= APRSM_OV_ICON;
-		aprsModeCfgChanged(APRSM_OV_ICON);
 		return;
 	}
 	if (fieldHasEditor(u->sel))

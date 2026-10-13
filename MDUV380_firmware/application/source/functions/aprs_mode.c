@@ -28,6 +28,7 @@
 #include "user_interface/uiGlobals.h"
 #include "user_interface/uiUtilities.h"
 #include "usb/usb_com.h"
+#include "hardware/SPI_Flash.h"   /* R17: ensureCustomRegion() */
 #include "io/buttons.h"
 #include "user_interface/languages/aprsmode_ua.h"
 #include <string.h>
@@ -52,6 +53,7 @@ typedef struct
 	CodeplugChannel_t     *savedChan;
 	bool                   beaconWasRunning;   /* стоковий авто-бікон працював до входу (відновити при виході) */
 	bool                   dirty;
+	bool                   saveFailShown;   /* R17: «Не збережено» уже показано в цьому сеансі */
 	uint32_t               dirtyAtMs;
 	/* маяк */
 	bool                   reqManual;
@@ -358,13 +360,48 @@ static void loadCfg(aprsModeMem_t *m)
 	}
 }
 
-static void saveCfg(aprsModeMem_t *m)
+/* R17 (Г2): регіон custom-data у флеші рації, де його ще ніхто не ініціалізував (усе 0xFF), НЕ має "OpenGD77"-магії -- і codeplugSetOpenGD77CustomData()
+ * тоді мовчки повертає false: блок ніколи не записується. Раніше saveCfg() ні готував регіон, ні дивився на результат -- налаштування режиму жили
+ * лише в RAM, а після виходу з меню «APRS» і повторного входу знову були типовими (символ -- «людина» з конфігу кодплуга). Решта форку (ключі AES, теми,
+ * RCTL, SMS) викликає dmrAesEnsureCustomDataRegion() ПЕРЕД записом -- тут те саме, але без залежності від ENABLE_AES. Ту саму магію (12 байт, далі 0xFF --
+ * порожній блок) пише й вона; SPI_Flash_write робить read-modify-write сектора, решту регіону не чіпає. */
+static bool ensureCustomRegion(void)
 {
-	uint8_t blk[APRSM_BLOCK_LEN];
+	uint8_t hdr[12];
+
+	if (SPI_Flash_read(FLASH_ADDRESS_OFFSET + 0, hdr, 12) == false)
+	{
+		return false;
+	}
+	if (memcmp(hdr, "OpenGD77", 8) == 0)
+	{
+		return true;
+	}
+	memcpy(hdr, "OpenGD77", 8);
+	hdr[8] = hdr[9] = hdr[10] = hdr[11] = 0xFF;
+	return SPI_Flash_write(FLASH_ADDRESS_OFFSET + 0, hdr, 12);
+}
+
+/* true -- блок записано І прочитано назад однаковим. Невдача -- одне сповіщення «Не збережено» за сеанс (далі тихо: не дратуємо на кожному кроці). */
+static bool saveCfg(aprsModeMem_t *m)
+{
+	uint8_t blk[APRSM_BLOCK_LEN], back[APRSM_BLOCK_LEN];
+	bool ok;
 
 	aprsModeCfgToBytes(&m->cfg, blk);
-	(void)codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG, blk, (int)sizeof(blk));
+	memset(back, 0, sizeof(back));
+	ok = ensureCustomRegion() &&
+			codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG, blk, (int)sizeof(blk)) &&
+			codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG, back, (int)sizeof(back)) &&
+			(memcmp(blk, back, sizeof(blk)) == 0);
 	m->dirty = false;
+	if ((ok == false) && (m->saveFailShown == false))
+	{
+		m->saveFailShown = true;
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_SAVE_FAIL, true);
+		soundSetMelody(MELODY_ERROR_BEEP);
+	}
+	return ok;
 }
 
 static void buildDefaults(aprsModeMem_t *m)

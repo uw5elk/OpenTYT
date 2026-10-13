@@ -437,6 +437,103 @@ int main(void)
 #endif
 }
 
+
+/* R17 (Г2.3): АУДИТ «видно в ефірі». Кожне поле налаштувань режиму змінюємо ПО ОДНОМУ (оверрайд у aprsModeCfg_t -> aprsModeEffective -> справжній
+ * aprsModeTxBeacon -> кадр AX.25) і порівнюємо весь кадр з незалежним еталоном (ref_frame). Що в кадрі не змінилось -- провал. */
+static void air_one(const char *tag, const aprsModeCfg_t *c, const aprsModeDefaults_t *d, const char *call, int ssid, const char (*pname)[6],
+		const int *pssid, int npaths, char table, char sym, const char *lat, const char *lon, const char *comment)
+{
+	aprsModeEff_t e;
+	ref_t ref;
+	CodeplugChannel_t ch;
+	size_t bytes;
+
+	aprsModeEffective(c, d, &e);
+	memset(&ch, 0, sizeof(ch));
+	ch.chMode = RADIO_MODE_ANALOG; ch.rxFreq = 14480000U; ch.txFreq = 14480000U;
+	currentChannelData = &ch;
+	nonVolatileSettings.txFreqLimited = BAND_LIMITS_NONE;
+	aprsTxProgress = APRS_TX_IDLE;
+	trxIsTransmitting = false;
+	CHECK(aprsModeTxBeacon(&e) == APRS_MODE_TX_OK, "%s: маяк не пішов", tag);
+	ref_frame(&ref, call, ssid, pname, pssid, npaths, table, sym, lat, lon, comment, APRSM_COMMENT_AIR_MAX);
+	bytes = (ref.bits + 7U) / 8U;
+	CHECK(encoderData.packetBufferBitPosition == ref.bits, "%s: довжина кадру %u біт, еталон %u", tag, (unsigned)encoderData.packetBufferBitPosition, ref.bits);
+	CHECK(memcmp(encoderData.packetBuffer, ref.buf, bytes) == 0, "%s: кадр не збігається з еталоном", tag);
+}
+
+static void air_audit(void)
+{
+	aprsModeDefaults_t d;
+	aprsModeCfg_t c;
+	char p6[2][6];
+	int ps[2];
+
+	memset(&d, 0, sizeof(d));
+	strcpy(d.call, "DEFCAL"); d.ssid = 7;
+	strcpy(d.path[0], "WIDE1"); d.pathSsid[0] = 1;
+	strcpy(d.path[1], "WIDE2"); d.pathSsid[1] = 2;
+	d.iconTable = 0; d.iconIndex = (uint8_t)('[' - '!');   /* «людина» з кодплуга */
+	strcpy(d.comment, "TYT");
+	d.hasPos = true; d.latU = 50500000; d.lonU = 30250000;
+	memcpy(p6[0], "WIDE1\0", 6); memcpy(p6[1], "WIDE2\0", 6); ps[0] = 1; ps[1] = 2;
+
+	aprsModeCfgInit(&c);
+	air_one("типові", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
+
+	aprsModeCfgInit(&c); strcpy(c.call, "R2ABC"); c.ov |= APRSM_OV_CALL;
+	air_one("позивний", &c, &d, "R2ABC", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
+
+	aprsModeCfgInit(&c); c.ssid = 9; c.ov |= APRSM_OV_SSID;
+	air_one("SSID", &c, &d, "DEFCAL", 9, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
+
+	{
+		char q6[2][6]; int qs[2];
+
+		aprsModeCfgInit(&c); strcpy(c.path[0], "RELAY"); c.pathSsid[0] = 3; c.ov |= APRSM_OV_PATH1;
+		memcpy(q6[0], "RELAY\0", 6); memcpy(q6[1], "WIDE2\0", 6); qs[0] = 3; qs[1] = 2;
+		air_one("шлях 1", &c, &d, "DEFCAL", 7, (const char (*)[6])q6, qs, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
+
+		aprsModeCfgInit(&c); strcpy(c.path[1], "TRACE"); c.pathSsid[1] = 4; c.ov |= APRSM_OV_PATH2;
+		memcpy(q6[0], "WIDE1\0", 6); memcpy(q6[1], "TRACE\0", 6); qs[0] = 1; qs[1] = 4;
+		air_one("шлях 2", &c, &d, "DEFCAL", 7, (const char (*)[6])q6, qs, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
+
+		aprsModeCfgInit(&c); c.path[1][0] = 0; c.pathSsid[1] = 0; c.ov |= APRSM_OV_PATH2;   /* другий шлях порожній -- лишається один */
+		air_one("шлях 2 порожній", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 1, '/', '[', "5030.00N", "03015.00E", "TYT");
+	}
+
+	/* символ: КОЖЕН з 2 x 94 доходить до ефіру як (таблиця, код) */
+	for (int t = 0; t < 2; t++)
+	{
+		for (int i = 0; i <= APRSM_ICON_MAX; i++)
+		{
+			char tag[32];
+
+			aprsModeCfgInit(&c); c.iconTable = (uint8_t)t; c.iconIndex = (uint8_t)i; c.ov |= APRSM_OV_ICON;
+			snprintf(tag, sizeof(tag), "символ %d/%d", t, i);
+			air_one(tag, &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, t ? '\\' : '/', (char)('!' + i), "5030.00N", "03015.00E", "TYT");
+		}
+	}
+
+	aprsModeCfgInit(&c); strcpy(c.comment, "Hello 73"); c.ov |= APRSM_OV_COMMENT;
+	air_one("коментар", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "Hello 73");
+
+	aprsModeCfgInit(&c); memcpy(c.comment, "\xCF\xF0\xE8\xE2\xB3\xF2", 6); c.ov |= APRSM_OV_COMMENT;   /* «Привіт» у cp1251 -> UTF-8 в ефірі */
+	air_one("коментар кирилицею", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD1\x96\xD1\x82");
+
+	aprsModeCfgInit(&c); c.latU = 49058300; c.lonU = -72029200; c.ov |= APRSM_OV_LAT | APRSM_OV_LON;
+	air_one("широта і довгота", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "4903.49N", "07201.75W", "TYT");   /* стокове округлення: частка хвилин ОБРІЗАЄТЬСЯ (49.0583 -> 03.498 -> .49), не округлюється */
+
+	aprsModeCfgInit(&c); c.latU = -33868800; c.ov |= APRSM_OV_LAT;   /* лише широта: довгота -- типова */
+	air_one("лише широта", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "3352.12S", "03015.00E", "TYT");
+
+	aprsModeCfgInit(&c); c.latU = 50456700; c.lonU = 30256700; c.ov |= APRSM_OV_LAT | APRSM_OV_LON | APRSM_OV_AMB; c.ambiguity = 2;
+	air_one("неточність 2 (0.001°)", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5027.36N", "03015.36E", "TYT");
+
+	aprsModeCfgInit(&c); c.latU = 50456700; c.lonU = 30256700; c.ov |= APRSM_OV_LAT | APRSM_OV_LON | APRSM_OV_AMB; c.ambiguity = 6;
+	air_one("неточність 6 (0.1°)", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5024.00N", "03012.00E", "TYT");
+}
+
 /* ---- ланцюжок aprsModeTxBeacon() ----------------------------------------------------------------------- */
 static uint8_t s_cfgFlagsSeen;
 int tx_chain_test(void)
@@ -509,6 +606,8 @@ int tx_chain_test(void)
 		CHECK(s_ampEnable > 0 && s_ampDisable == 0, "стоковий маяк без прапора: amp не вмикався (%d/%d)", s_ampEnable, s_ampDisable);
 		(void)s_cfgFlagsSeen;
 	}
+
+	air_audit();   /* R17 (Г2.3): кожне поле налаштувань режиму -> кадр в ефірі */
 
 	/* 8в. R11: повідомлення і ACK APRS через aprsModeTxMessage() -- кадр ТОЙ САМИЙ, що й у маяка, лише інфо-поле інше.
 	 * Еталон, порахований вручну (Python, незалежно від C): логічні байти після 16 прапорів (7E) для

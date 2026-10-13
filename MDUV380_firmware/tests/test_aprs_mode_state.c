@@ -164,9 +164,16 @@ bool codeplugGetOpenGD77CustomDataBounded(CodeplugCustomDataType_t t, uint8_t *b
 	memcpy(buf, s_flash, APRSM_BLOCK_LEN);
 	return true;
 }
+/* R17: як у справжньому codeplug.c -- без "OpenGD77"-магії на початку регіону запис блока МОВЧКИ не проходить (false). s_regionMagic -- чи магія є;
+ * s_regionBlank -- регіон чистий (0xFF), SPI_Flash_write дописує магію; s_flashBroken -- флеш не пише взагалі. */
+static bool s_regionMagic = true, s_flashBroken = false;
+static int s_spiWrites;
+bool SPI_Flash_read(uint32_t a, uint8_t *b, int n) { (void)a; if (n >= 12) { memset(b, 0xFF, (size_t)n); if (s_regionMagic) { memcpy(b, "OpenGD77", 8); } } return true; }
+bool SPI_Flash_write(uint32_t a, uint8_t *b, int n) { (void)a; s_spiWrites++; if (s_flashBroken) { return false; } if ((n >= 8) && (memcmp(b, "OpenGD77", 8) == 0)) { s_regionMagic = true; } return true; }
 bool codeplugSetOpenGD77CustomData(CodeplugCustomDataType_t t, uint8_t *buf, int len)
 {
 	if ((t != CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG) || (len != APRSM_BLOCK_LEN)) { return false; }
+	if ((s_regionMagic == false) || s_flashBroken) { return false; }   /* регіон без магії або флеш не пише */
 	memcpy(s_flash, buf, APRSM_BLOCK_LEN);
 	s_flashValid = true;
 	s_flashWrites++;
@@ -195,6 +202,7 @@ static void resetWorld(void)
 	s_tuneCalls = s_loadChanCalls = s_loadVfoCalls = s_resetTimers = s_setSuspendTrue = s_setSuspendFalse = 0;
 	s_rxSuspend = s_abortTx = s_stopScanCh = s_stopScanVfo = s_replayStop = s_txCalls = s_melody = s_notify = 0;
 	s_flashWrites = 0;
+	s_regionMagic = true; s_flashBroken = false; s_spiWrites = 0;
 	s_tuneFreq = 0; s_tuneMode = -1; s_tuneBw = -1;
 	s_bcnMode = APRS_BEACONING_MODE_OFF; s_bcnSuspended = false;
 	s_rxBusy = false; s_led = false; s_txResult = APRS_MODE_TX_OK;
@@ -1058,6 +1066,41 @@ static void testMsgSession(void)
 	aprsModeExit();
 }
 
+/* R17 (Г2): запис налаштувань у РЕГІОН БЕЗ "OpenGD77"-магії (рація, де custom-data ніхто не ініціалізував). Раніше saveCfg() не готував регіон і не дивився на
+ * результат: блок не записувався, налаштування (в т.ч. символ) після виходу з меню «APRS» зникали. */
+static void testSaveBlankRegion(void)
+{
+	aprsModeCfg_t *c;
+
+	resetWorld();
+	s_regionMagic = false;   /* чиста рація */
+	CHECK(aprsModeEnter(), "вхід");
+	c = aprsModeCfg();
+	c->iconTable = 0; c->iconIndex = (uint8_t)('b' - '!'); c->ov |= APRSM_OV_ICON;
+	aprsModeCfgChanged(APRSM_OV_ICON);
+	aprsModeExit();
+	CHECK(s_regionMagic && s_spiWrites == 1, "регіон без магії: saveCfg() ініціалізував його (магія записана %d раз)", s_spiWrites);
+	CHECK(s_flashWrites == 1 && s_flashValid, "...і блок записано");
+	CHECK(s_notify == 0, "успішний запис -- без сповіщення «Не збережено»");
+	CHECK(aprsModeEnter(), "повторний вхід");
+	CHECK(aprsModeEff()->iconTable == 0 && aprsModeEff()->iconIndex == (uint8_t)('b' - '!'), "символ «велосипед» пережив вихід з меню та вхід");
+	aprsModeExit();
+
+	/* флеш не пише зовсім: одне сповіщення за сеанс, налаштування в RAM діють */
+	resetWorld();
+	s_flashBroken = true;
+	CHECK(aprsModeEnter(), "вхід");
+	c = aprsModeCfg();
+	c->ssid = 5; c->ov |= APRSM_OV_SSID; aprsModeCfgChanged(APRSM_OV_SSID);
+	tickMs(2500);
+	CHECK(s_notify == 1 && s_melody == 1, "запис не вдався: одне сповіщення «Не збережено» (%d, звук %d)", s_notify, s_melody);
+	c->ssid = 6; aprsModeCfgChanged(APRSM_OV_SSID);
+	tickMs(2500);
+	CHECK(s_notify == 1, "повторна невдача того самого сеансу -- без нового сповіщення (%d)", s_notify);
+	CHECK(aprsModeEff()->ssid == 6, "налаштування в RAM діють попри невдалий запис");
+	aprsModeExit();
+}
+
 int main(void)
 {
 	testBootInit();
@@ -1075,6 +1118,7 @@ int main(void)
 	testBackground();
 	testIdentity();
 	testMsgSession();
+	testSaveBlankRegion();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_mode_state: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);
