@@ -33,8 +33,7 @@
 /* Порядок пунктів = порядок на екрані. Нові пункти додавати СЮДИ, у відповідному місці. */
 enum
 {
-	APRS_HUB_LISTEN = 0,
-	APRS_HUB_BEACON,      /* R17: «Передати маяк» */
+	APRS_HUB_BEACON = 0,  /* R17: «Передати маяк» (R18 Д5: прибирається -- SK1+3). R18 Д4: пункт «Слухати» прибрано */
 	APRS_HUB_STATIONS,
 	APRS_HUB_MESSAGES,
 	APRS_HUB_PACKET,      /* R15/R16: «Пакети» -- журнал останніх прийнятих кадрів */
@@ -51,13 +50,6 @@ static const char *itemName(int n, char *buf, size_t cap)
 {
 	switch (n)
 	{
-		case APRS_HUB_LISTEN:
-			if (buf == NULL)
-			{
-				return APRSM_H_LISTEN;
-			}
-			snprintf(buf, cap, APRSM_H_LISTEN_FMT, aprsModeIsActive() ? APRSM_H_ON : APRSM_H_OFF);
-			return buf;
 		case APRS_HUB_BEACON:   return APRSM_H_BEACON;
 		case APRS_HUB_STATIONS: return APRSRX_TITLE;
 		case APRS_HUB_PACKET:   return APRSRX_HUB_PKT;
@@ -141,25 +133,6 @@ static void openItem(int n)
 {
 	switch (n)
 	{
-		case APRS_HUB_LISTEN:
-			if (aprsModeIsActive())
-			{
-				if (aprsModeIsTransmitting())
-				{
-					uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 1500, APRSM_TX_BUSY, true);
-					soundSetMelody(MELODY_ERROR_BEEP);
-				}
-				else
-				{
-					aprsModeExit();
-				}
-			}
-			else if (aprsModeEnter() == false)
-			{
-				notifyNotNow();
-			}
-			updateScreen(false);   /* значення пункту й заголовок змінилися */
-			break;
 		case APRS_HUB_BEACON:
 			if (aprsModeBeaconOnce() == false)
 			{
