@@ -49,7 +49,7 @@ typedef struct
 static amMsgFont_t amMsgFont(void)
 {
 	amMsgFont_t f;
-	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+	bool big = (UI_SMS_FONT_SMALL() == false);
 
 	f.font   = big ? FONT_SIZE_3 : FONT_SIZE_2;
 	f.glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;

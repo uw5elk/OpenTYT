@@ -1038,7 +1038,7 @@ static void readUpdate(void)
 	 * та сама функція, що й на банері), шрифт -- за налаштуванням «Шрифт SMS»: великий (font_8x16,
 	 * типово) або малий (font_8x8). Те, що не влазить, гортається U/D; є продовження -- трикутники
 	 * в рядку підказки (вгорі ліворуч -- є вище, праворуч -- є нижче). Текст -- до y = 111. */
-	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+	bool big = (UI_SMS_FONT_SMALL() == false);
 	ucFont_t font = big ? FONT_SIZE_3 : FONT_SIZE_2;
 	int16_t glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;
 	int16_t lineH  = big ? FONT_SIZE_3_HEIGHT : 11;
@@ -1192,7 +1192,7 @@ static void composeUpdate(void)
 	 * x = 0, перенесення за словами тією ж smsWrapLine(), що й на екрані читання. Рядок із
 	 * курсором (або символом, що гортається) завжди видимий: вікно рядків іде за ним
 	 * (smsWrapPos). Великий -- 4 рядки по 16 px, малий -- 5 по 14 px; усе над рядком режиму (y 95). */
-	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+	bool big = (UI_SMS_FONT_SMALL() == false);
 	ucFont_t font = big ? FONT_SIZE_3 : FONT_SIZE_2;
 	const int16_t glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;
 	const int16_t lineH  = big ? FONT_SIZE_3_HEIGHT : 14;

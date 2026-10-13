@@ -36,7 +36,12 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+/* R19 Е5 (форк): пункт «Шрифт SMS» прибрано з української збірки -- шрифт SMS DMR і повідомлень APRS завжди великий (UI_SMS_FONT_SMALL() = false, біт лишається в розкладці).
+ * Це ОСТАННІЙ пункт enum, тож його видалення не зсуває жодної швидкої клавіші. В інших збірках з DMR_DATA пункт лишається. */
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA) && !defined(LANGUAGE_BUILD_UKRAINIAN)
+#define DISPLAY_HAS_SMS_FONT 1
+#endif
+#if defined(DISPLAY_HAS_SMS_FONT)
 /* ui7 (форк): «Шрифт SMS» переїхав сюди з меню «Повідомлення»; той самий біт BIT_SMS_FONT_SMALL. */
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "user_interface/languages/messages_ua.h"
@@ -119,7 +124,7 @@ enum
 	// у uiUtilities.c). Біт BIT_SHOW_SMETER_IN_HEADER і розкладка налаштувань -- без змін.
 	DISPLAY_SMETER_HEADER,
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if defined(DISPLAY_HAS_SMS_FONT)
 	DISPLAY_SMS_FONT,   /* ui7: останнім -- індекси QuickKey стокових пунктів ті самі */
 #endif
 	NUM_DISPLAY_MENU_ITEMS
@@ -164,9 +169,6 @@ static const uint8_t displayVisibleItems[] =
 	DISPLAY_TIME_UTC_OR_LOCAL,
 	DISPLAY_SHOW_DISTANCE,
 	DISPLAY_DMR_LAST_TALKER_ON_SCREEN
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-	,DISPLAY_SMS_FONT
-#endif
 };
 #define DISPLAY_NUM_VISIBLE   ((int)(sizeof(displayVisibleItems) / sizeof(displayVisibleItems[0])))
 
@@ -259,7 +261,7 @@ static void updateScreen(bool isFirstRun)
 			}
 
 			buf[0] = 0;
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if defined(DISPLAY_HAS_SMS_FONT)
 			bool leftSideIsFork = false;   /* підпис -- не рядок currentLanguage: без голосової підказки */
 #endif
 			leftSide = NULL;
@@ -433,13 +435,13 @@ static void updateScreen(bool isFirstRun)
 					rightSideConst = settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) ? currentLanguage->on : currentLanguage->off;
 					break;
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if defined(DISPLAY_HAS_SMS_FONT)
 				/* ui7: шрифт тексту SMS (читання й набір): великий 8x16 (типово) / малий 8x8. */
 				case DISPLAY_SMS_FONT:
 					leftSide = MSGS_SET_FONT;
 					leftSideIsFork = true;
 					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s",
-							settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) ? MSGS_SET_FONT_SMALL : MSGS_SET_FONT_BIG);
+							UI_SMS_FONT_SMALL() ? MSGS_SET_FONT_SMALL : MSGS_SET_FONT_BIG);
 					break;
 #endif
 			}
@@ -458,7 +460,7 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if defined(DISPLAY_HAS_SMS_FONT)
 					if (leftSideIsFork == false)   /* індекс підказки рахується від currentLanguage */
 #endif
 					voicePromptsAppendLanguageString(leftSide);
@@ -848,9 +850,9 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if defined(DISPLAY_HAS_SMS_FONT)
 				case DISPLAY_SMS_FONT:   /* праворуч -- більший */
-					if (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL))
+					if (UI_SMS_FONT_SMALL())
 					{
 						settingsSetOptionBit(BIT_SMS_FONT_SMALL, false);
 					}
@@ -1067,9 +1069,9 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#if defined(DISPLAY_HAS_SMS_FONT)
 				case DISPLAY_SMS_FONT:   /* ліворуч -- менший */
-					if (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false)
+					if (UI_SMS_FONT_SMALL() == false)
 					{
 						settingsSetOptionBit(BIT_SMS_FONT_SMALL, true);
 					}
