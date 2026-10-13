@@ -348,35 +348,124 @@ static const namedSym_t named[] =
 	{ '#', APRSM_SYM_DIGI },
 	{ 'r', APRSM_SYM_REPEATER },
 	{ 'Y', APRSM_SYM_YACHT },
+	/* R14: решта первинної таблиці (лише для показу на вікні маяка; перебір власного символу -- перші NAMED_CYCLE) */
+	{ '!', APRSM_SYM_P_21 },
+	{ '$', APRSM_SYM_P_24 },
+	{ '%', APRSM_SYM_P_25 },
+	{ '&', APRSM_SYM_P_26 },
+	{ '\'', APRSM_SYM_P_27 },
+	{ '(', APRSM_SYM_P_28 },
+	{ ')', APRSM_SYM_P_29 },
+	{ '*', APRSM_SYM_P_2A },
+	{ '+', APRSM_SYM_P_2B },
+	{ '/', APRSM_SYM_P_2F },
+	{ ':', APRSM_SYM_P_3A },
+	{ ';', APRSM_SYM_P_3B },
+	{ '=', APRSM_SYM_P_3D },
+	{ '?', APRSM_SYM_P_3F },
+	{ '@', APRSM_SYM_P_40 },
+	{ 'A', APRSM_SYM_P_41 },
+	{ 'B', APRSM_SYM_P_42 },
+	{ 'C', APRSM_SYM_P_43 },
+	{ 'F', APRSM_SYM_P_46 },
+	{ 'G', APRSM_SYM_P_47 },
+	{ 'H', APRSM_SYM_P_48 },
+	{ 'I', APRSM_SYM_P_49 },
+	{ 'K', APRSM_SYM_P_4B },
+	{ 'L', APRSM_SYM_P_4C },
+	{ 'N', APRSM_SYM_P_4E },
+	{ 'O', APRSM_SYM_P_4F },
+	{ 'P', APRSM_SYM_P_50 },
+	{ 'R', APRSM_SYM_P_52 },
+	{ 'S', APRSM_SYM_P_53 },
+	{ 'T', APRSM_SYM_P_54 },
+	{ 'U', APRSM_SYM_P_55 },
+	{ 'V', APRSM_SYM_P_56 },
+	{ 'W', APRSM_SYM_P_57 },
+	{ 'X', APRSM_SYM_P_58 },
+	{ '\\', APRSM_SYM_P_5C },
+	{ ']', APRSM_SYM_P_5D },
+	{ '^', APRSM_SYM_P_5E },
+	{ '_', APRSM_SYM_P_5F },
+	{ '`', APRSM_SYM_P_60 },
+	{ 'a', APRSM_SYM_P_61 },
+	{ 'c', APRSM_SYM_P_63 },
+	{ 'd', APRSM_SYM_P_64 },
+	{ 'e', APRSM_SYM_P_65 },
+	{ 'f', APRSM_SYM_P_66 },
+	{ 'g', APRSM_SYM_P_67 },
+	{ 'h', APRSM_SYM_P_68 },
+	{ 'j', APRSM_SYM_P_6A },
+	{ 'l', APRSM_SYM_P_6C },
+	{ 'm', APRSM_SYM_P_6D },
+	{ 'n', APRSM_SYM_P_6E },
+	{ 'o', APRSM_SYM_P_6F },
+	{ 'p', APRSM_SYM_P_70 },
+	{ 's', APRSM_SYM_P_73 },
+	{ 'u', APRSM_SYM_P_75 },
+	{ 'y', APRSM_SYM_P_79 },
+	{ 'z', APRSM_SYM_P_7A },
 };
 #define NAMED_COUNT  (sizeof(named) / sizeof(named[0]))
+#define NAMED_CYCLE  10U   /* власний символ крутиться по перших десяти -- як до R14 */
 
-const char *aprsModeSymbolName(uint8_t table, uint8_t index)
+/* R14: додаткова таблиця '\\' (накладка -- знак таблиці -- на назву не впливає) */
+static const namedSym_t namedAlt[] =
 {
-	char c = (char)('!' + index);
+	{ '!', APRSM_SYM_A_21 },
+	{ '#', APRSM_SYM_A_23 },
+	{ '$', APRSM_SYM_A_24 },
+	{ '&', APRSM_SYM_A_26 },
+	{ '+', APRSM_SYM_A_2B },
+	{ '-', APRSM_SYM_A_2D },
+	{ '>', APRSM_SYM_A_3E },
+	{ 'K', APRSM_SYM_A_4B },
+	{ 'L', APRSM_SYM_A_4C },
+	{ 'O', APRSM_SYM_A_4F },
+	{ 'P', APRSM_SYM_A_50 },
+	{ 'R', APRSM_SYM_A_52 },
+	{ 'S', APRSM_SYM_A_53 },
+	{ 'U', APRSM_SYM_A_55 },
+	{ 'W', APRSM_SYM_A_57 },
+	{ 'Y', APRSM_SYM_A_59 },
+	{ '^', APRSM_SYM_A_5E },
+	{ '_', APRSM_SYM_A_5F },
+	{ 'k', APRSM_SYM_A_6B },
+	{ 'n', APRSM_SYM_A_6E },
+	{ 's', APRSM_SYM_A_73 },
+	{ 'u', APRSM_SYM_A_75 },
+	{ 'v', APRSM_SYM_A_76 },
+};
+#define NAMEDALT_COUNT  (sizeof(namedAlt) / sizeof(namedAlt[0]))
 
-	if (table != 0U)
+const char *aprsSymbolNameEx(char table, char code)
+{
+	const namedSym_t *t = (table == '/') ? named : namedAlt;
+	size_t n = (table == '/') ? NAMED_COUNT : NAMEDALT_COUNT;
+
+	for (size_t i = 0; i < n; i++)
 	{
-		return NULL;   /* назви лише для первинної таблиці */
-	}
-	for (size_t i = 0; i < NAMED_COUNT; i++)
-	{
-		if (named[i].code == c)
+		if (t[i].code == code)
 		{
-			return named[i].name;
+			return t[i].name;
 		}
 	}
 	return NULL;
 }
 
+const char *aprsModeSymbolName(uint8_t table, uint8_t index)
+{
+	return aprsSymbolNameEx((table == 0U) ? '/' : '\\', (char)('!' + index));
+}
+
 void aprsModeSymbolNextNamed(uint8_t *table, uint8_t *index)
 {
 	/* з будь-якого символу -- до першого названого, що йде ПІСЛЯ нього в списку; не названий -- до першого */
-	size_t cur = NAMED_COUNT;
+	size_t cur = NAMED_CYCLE;
 
 	if (*table == 0U)
 	{
-		for (size_t i = 0; i < NAMED_COUNT; i++)
+		for (size_t i = 0; i < NAMED_CYCLE; i++)
 		{
 			if (named[i].code == (char)('!' + *index))
 			{
@@ -385,7 +474,7 @@ void aprsModeSymbolNextNamed(uint8_t *table, uint8_t *index)
 			}
 		}
 	}
-	size_t next = (cur == NAMED_COUNT) ? 0U : ((cur + 1U) % NAMED_COUNT);
+	size_t next = (cur == NAMED_CYCLE) ? 0U : ((cur + 1U) % NAMED_CYCLE);
 	*table = 0U;
 	*index = (uint8_t)(named[next].code - '!');
 }

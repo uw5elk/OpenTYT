@@ -322,6 +322,17 @@ static void testR14(void)
 	pf("N0CALL", 7, "!4903.50N/07201.75W>088/010144.800MHz", &ax, &pk, b);
 	CHECK((pk.course == 88) && (pk.freqKHz == 144800U), "курс і частота підряд");
 
+	printf("== R14: погода без позиції '_' ==\n");
+	pf("N0CALL", 7, "_10090556c220s004g005t077r000p000P000h50b09900wRSW", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_OTHER) && !pk.hasPos, "тип лишається «інше», позиції нема (вікно не відкриється)");
+	CHECK((pk.wxMask & APRS_WX_WIND) && (pk.windDeg == 220) && (pk.windMph == 4) && (pk.gustMph == 5) && (pk.tempC == 25) && (pk.humPct == 50) && (pk.pressDhPa == 9900),
+			"поля: вітер %u/%u mph, порив %u, %d C, %u %%, %u", pk.windDeg, pk.windMph, pk.gustMph, pk.tempC, pk.humPct, pk.pressDhPa);
+	CHECK(!strcmp(pk.text, "25C 50% 990.0hPa w220/6km/h g8 wRSW"), "текст: «%s»", pk.text);
+	pf("N0CALL", 7, "_1009xx56c220s004", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_OTHER) && (strstr(pk.text, "c220") != NULL), "не MMDDHHMM -- сирий текст");
+	pf("N0CALL", 7, "_10090556", &ax, &pk, b);
+	CHECK((pk.type == APRS_T_OTHER) && (pk.wxMask == 0), "лише відмітка часу -- без падіння");
+
 	printf("== R14 T16: third-party із вкладеним шляхом ==\n");
 	{
 		int u = tpParse("}UW5ELK-1>APDW18,TCPIP*,qAC,T2UKRAINE:!4753.25NR03316.86E&438.950MHz T082 -760 DMR", &ax, &pk, b);

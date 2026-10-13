@@ -1256,6 +1256,45 @@ static void parseMessage(const aprsAx25_t *ax, aprsPacket_t *p)
 	setText(p, t, tl);
 }
 
+/* R14: погода без позиції ("_" + MMDDHHMM + поля) -- розібрані поля текстом ("25C 50% 1026.5hPa w310/6km/h g10"), далі хвіст (код ПЗ). */
+static void wxText(aprsPacket_t *p, const uint8_t *rest, size_t rn)
+{
+	char *t = p->text;
+	size_t cap = sizeof(p->text);
+	size_t o = 0;
+
+	t[0] = 0;
+	if (p->wxMask & APRS_WX_TEMP)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "%dC ", (int)p->tempC);
+	}
+	if (p->wxMask & APRS_WX_HUM)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "%u%% ", (unsigned)p->humPct);
+	}
+	if (p->wxMask & APRS_WX_PRESS)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "%u.%uhPa ", (unsigned)(p->pressDhPa / 10U), (unsigned)(p->pressDhPa % 10U));
+	}
+	if (p->wxMask & APRS_WX_WIND)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "w%u/%ukm/h ", (unsigned)p->windDeg, (unsigned)(((unsigned long)p->windMph * 1609UL + 500UL) / 1000UL));
+	}
+	if (p->wxMask & APRS_WX_GUST)
+	{
+		o += (size_t)snprintf(t + o, cap - o, "g%u ", (unsigned)(((unsigned long)p->gustMph * 1609UL + 500UL) / 1000UL));
+	}
+	for (size_t i = 0; (i < rn) && ((o + 1U) < cap); i++)
+	{
+		t[o++] = ((rest[i] >= 0x20U) && (rest[i] < 0x7FU)) ? (char)rest[i] : ' ';
+	}
+	while ((o > 0U) && (t[o - 1U] == ' '))
+	{
+		o--;
+	}
+	t[(o < cap) ? o : (cap - 1U)] = 0;
+}
+
 void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 {
 	memset(out, 0, sizeof(*out));
@@ -1330,6 +1369,19 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out)
 
 		case ':':
 			parseMessage(ax, out);
+			break;
+
+		case '_':
+			/* погода без позиції: позиції нема -- тип лишається «інше» (вікно маяка не відкривається), але поля розбираємо в текст */
+			if ((n > 9U) && isDig(in[1]) && isDig(in[2]) && isDig(in[3]) && isDig(in[4]) && isDig(in[5]) && isDig(in[6]) && isDig(in[7]) && isDig(in[8]))
+			{
+				size_t used = csWeather(out, in + 9, n - 9U);
+
+				if (out->wxMask != 0U)
+				{
+					wxText(out, in + 9 + used, n - 9U - used);
+				}
+			}
 			break;
 
 		case '<':

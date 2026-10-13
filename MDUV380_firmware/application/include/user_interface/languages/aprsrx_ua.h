@@ -87,8 +87,13 @@
 #define APRSRX_WIN_ALT        "Вис. %ld м"
 #define APRSRX_WIN_FREQ       "%lu.%03lu МГц"
 #define APRSRX_WIN_RANGE      "Радіус %u км"      /* радіус дії; милі перераховуємо в км */
+#define APRSRX_WIN_TEMPHUM    "%d\260C %u%%"       /* «25°C 50%»: температура і вологість */
+#define APRSRX_WIN_TEMP       "%d\260C"
+#define APRSRX_WIN_HUM        "вол. %u%%"
+#define APRSRX_WIN_PRESS      "%u.%u гПа"
+#define APRSRX_WIN_WIND       "Вітер %u\260"
+#define APRSRX_WIN_GUST       "Порив %u км/г"
 #define APRSRX_WIN_MHZ        "МГц"              /* одиниця біля зсуву, коли поруч тон: «T082 -7.6МГц» */
-#define APRSRX_WIN_SYM_FMT    "%c%c %s"            /* таблиця, код, назва */
 #define APRSRX_WIN_SYM2_FMT   "%c%c"               /* таблиця, код, коли назви в нашій таблиці нема */
 
 /* Пункт «Вікно маяка» у меню APRS -> Налаштування (menuAPRSOptions.c; значення праворуч після «:») */

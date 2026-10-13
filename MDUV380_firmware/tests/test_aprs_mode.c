@@ -484,8 +484,8 @@ static void testMisc(void)
 
 	/* символи: назви лише для первинної таблиці */
 	CHECK(aprsModeSymbolName(0, '>' - '!') != NULL, "авто має назву");
-	CHECK(aprsModeSymbolName(1, '>' - '!') == NULL, "у додатковій таблиці назв нема");
-	CHECK(aprsModeSymbolName(0, 0) == NULL, "'!' без назви");
+	CHECK(aprsModeSymbolName(1, '>' - '!') != NULL, "R14: у додатковій таблиці назви є (вікно маяка)");
+	CHECK(aprsModeSymbolName(0, 1) == NULL, "'\"' (зарезервовано) без назви");
 	t = 0; i = '>' - '!';
 	int names = 0;
 	uint8_t startI = i;
