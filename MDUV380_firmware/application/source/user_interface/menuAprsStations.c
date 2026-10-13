@@ -114,57 +114,43 @@ static void coordStr(char *b, size_t n, int32_t u)
 	snprintf(b, n, "%s%lu.%04lu", (u < 0) ? "-" : "", (unsigned long)(t / 10000U), (unsigned long)(t % 10000U));
 }
 
+/* R19 Е1: помножує спільний хелпер -- «ПОЗИВНИЙ  відстань»: 9 + 9 символів. Сектор азимуту і вік -- у картці станції. */
+static void stListText(int n, char *buf, size_t cap, int *opt)
+{
+	const aprsStation_t *s = aprsDbNth(aprsRxDb(), n, ticksGetMillis());
+	char dist[12];
+	uint32_t d;
+	uint16_t brg;
+
+	if (s == NULL)
+	{
+		return;
+	}
+	dist[0] = 0;
+	if (aprsRxStationGeo(s, &d, &brg))
+	{
+		aprsRxFormatDist(dist, sizeof(dist), d);
+	}
+	snprintf(buf, cap, "%-9.9s%9.9s", s->call, dist);
+	*opt = 9;
+}
+
 static void drawList(uint32_t now)
 {
 	aprsRxUi_t *ui = aprsRxUi();
-	const aprsRxDb_t *db = aprsRxDb();
-	int count = aprsDbCount(db);
-	char buf[40];
+	int count = aprsDbCount(aprsRxDb());
 
 	(void)now;
-	statusLine(buf, sizeof(buf));
-	printRow(0, buf);
-
 	if (count == 0)
 	{
-		displayPrintCentered(ST_ROW(4), APRSRX_EMPTY, FONT_SIZE_1);
+		displayPrintCentered(52, APRSRX_EMPTY, FONT_SIZE_3);
 		return;
 	}
 	if (ui->sel >= count)
 	{
 		ui->sel = (uint8_t)(count - 1);
 	}
-	if (ui->sel < ui->scroll)
-	{
-		ui->scroll = ui->sel;
-	}
-	else if (ui->sel >= (ui->scroll + ST_LIST_ROWS))
-	{
-		ui->scroll = (uint8_t)(ui->sel - ST_LIST_ROWS + 1);
-	}
-
-	for (int r = 0; r < ST_LIST_ROWS; r++)
-	{
-		int n = ui->scroll + r;
-		const aprsStation_t *s = aprsDbNth(db, n, ticksGetMillis());
-		char geo[16], age[8];
-		uint32_t dist;
-		uint16_t brg;
-
-		if (s == NULL)
-		{
-			break;
-		}
-		geo[0] = 0;
-		if (aprsRxStationGeo(s, &dist, &brg))
-		{
-			aprsRxFormatGeo(geo, sizeof(geo), dist, brg);
-		}
-		ageStr(age, sizeof(age), aprsRxAgeSec(s));
-		/* маркер(1) + позивний(9) + відстань(10) + вік(5) = 25 символів <= 26 (рядок FONT_SIZE_1) */
-		snprintf(buf, sizeof(buf), "%c%-9s%-10s%5s", (n == ui->sel) ? '>' : ' ', s->call, geo, age);
-		printRow(1 + r, buf);
-	}
+	menuAprsListDraw(count, ui->sel, stListText);
 }
 
 /* R16: «Пакети» -- журнал останніх APRS_JRN_SLOTS прийнятих кадрів (aprsModeHist()). Список: «> ГГ:ХХ ПОЗИВНИЙ D», найновіший зверху (D -- DTI, перший
@@ -175,15 +161,35 @@ static void drawList(uint32_t now)
 #define PKT_SLOT(ui)  ((int)((ui)->scroll >> 4))      /* PACKET: слот журналу */
 #define PKT_TOP(ui)   ((unsigned)((ui)->scroll & 0x0FU))   /* PACKET: перший видимий рядок тексту */
 
+/* R19 Е1: «ГГ:ХХ ПОЗИВНИЙ» (5 + 1 + 9 = 15 символів). DTI і RSSI кадру -- у перегляді кадру (GREEN). */
+static void pktListText(int n, char *buf, size_t cap, int *opt)
+{
+	const aprsJrnEntry_t *e = aprsJrnNth(aprsModeHist(), n);
+	char call[APRS_CALL_LEN], tm[12], dti;
+
+	(void)opt;
+	if (e == NULL)
+	{
+		return;
+	}
+	aprsJrnSummary(e, call, &dti);
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	if (uiSmsTimeStr(e->rxSecs, SMS_TIME_HM, tm, (int)sizeof(tm)) <= 0)
+#endif
+	{
+		snprintf(tm, sizeof(tm), "%s", APRSRX_PKTL_NOTIME);
+	}
+	snprintf(buf, cap, "%-5.5s %-9.9s", tm, call);
+}
+
 static void drawPktList(void)
 {
 	aprsRxUi_t *ui = aprsRxUi();
 	const aprsHist_t *h = aprsModeHist();
-	char buf[40];
 
 	if (h->jrnCount == 0U)
 	{
-		displayPrintCentered(ST_ROW(4), APRSRX_PKT_EMPTY, FONT_SIZE_1);
+		displayPrintCentered(52, APRSRX_PKT_EMPTY, FONT_SIZE_3);
 		printRow(10, APRSRX_PKTL_HINT);
 		return;
 	}
@@ -191,42 +197,7 @@ static void drawPktList(void)
 	{
 		ui->scroll = (uint8_t)(h->jrnCount - 1U);
 	}
-	{
-		char st[40];
-
-		statusLine(st, sizeof(st));
-		snprintf(buf, sizeof(buf), "%-22.22s%u/%u", st, (unsigned)ui->scroll + 1U, (unsigned)h->jrnCount);   /* R17: номер виділеного запису / скільки їх */
-		printRow(0, buf);
-	}
-	for (int r = 0; r < (int)h->jrnCount; r++)
-	{
-		const aprsJrnEntry_t *e = aprsJrnNth(h, r);
-		char call[APRS_CALL_LEN], tm[12], dti;
-
-		if (e == NULL)
-		{
-			break;
-		}
-		aprsJrnSummary(e, call, &dti);
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-		if (uiSmsTimeStr(e->rxSecs, SMS_TIME_HM, tm, (int)sizeof(tm)) <= 0)
-#endif
-		{
-			snprintf(tm, sizeof(tm), "%s", APRSRX_PKTL_NOTIME);
-		}
-		snprintf(buf, sizeof(buf), APRSRX_PKTL_ROW, (r == (int)ui->scroll) ? '>' : ' ', tm, call, dti);
-		{
-			/* R17 Г6: RSSI кадру праворуч (дБм, без одиниці: 4 символи); невідомий -- порожньо */
-			int8_t rs = aprsJrnRssiAtSlot(h, aprsJrnSlotOf(h, r));
-			size_t l = strlen(buf);
-
-			if (rs != (int8_t)APRS_RSSI_NONE)
-			{
-				snprintf(buf + l, sizeof(buf) - l, " %4d", (int)rs);
-			}
-		}
-		printRow(1 + r, buf);
-	}
+	menuAprsListDraw((int)h->jrnCount, (int)ui->scroll, pktListText);
 	printRow(10, APRSRX_PKTL_HINT);
 }
 
@@ -566,8 +537,27 @@ static void draw(void)
 
 	ui->lastDrawMs = now;
 	displayClearBuf();
-	menuDisplayTitle((ui->view == APRS_RX_VIEW_DIAG) ? APRSRX_DIAG_TITLE : ((ui->view == APRS_RX_VIEW_DIAG2) ? APRSRX_DIAG2_TITLE :
-			(((ui->view == APRS_RX_VIEW_PACKET) || (ui->view == APRS_RX_VIEW_PKTLIST)) ? APRSRX_PKT_TITLE : APRSRX_TITLE)));
+	if (ui->view == APRS_RX_VIEW_PKTLIST)
+	{
+		char tl[24];
+		const aprsHist_t *h = aprsModeHist();
+
+		/* R19 Е1: у заголовку -- номер виділеного запису / скільки їх (раніше в рядку стану) */
+		snprintf(tl, sizeof(tl), (h->jrnCount != 0U) ? "%s %u/%u" : "%s", APRSRX_PKT_TITLE, (unsigned)ui->scroll + 1U, (unsigned)h->jrnCount);
+		menuDisplayTitle(tl);
+	}
+	else if ((ui->view != APRS_RX_VIEW_DIAG) && (ui->view != APRS_RX_VIEW_DIAG2) && (ui->view != APRS_RX_VIEW_PACKET) && (ui->view != APRS_RX_VIEW_CARD))
+	{
+		char tl[24];
+
+		statusLine(tl, sizeof(tl));   /* R19 Е1: стан приймача («Слухаю 5/16» або причина) -- у заголовку списку станцій */
+		menuDisplayTitle(tl);
+	}
+	else
+	{
+		menuDisplayTitle((ui->view == APRS_RX_VIEW_DIAG) ? APRSRX_DIAG_TITLE : ((ui->view == APRS_RX_VIEW_DIAG2) ? APRSRX_DIAG2_TITLE :
+				((ui->view == APRS_RX_VIEW_PACKET) ? APRSRX_PKT_TITLE : APRSRX_TITLE)));
+	}
 	switch (ui->view)
 	{
 		case APRS_RX_VIEW_PKTLIST:
@@ -792,6 +782,38 @@ bool menuAprsStationsTick(uiEvent_t *ev)
 const char *menuAprsStationsTypeStr(uint8_t type)
 {
 	return typeStr(type);
+}
+
+/* R19 Е1: спільний список пунктів у стоковому вигляді. Дивись коментар у menuAprsStations.h. */
+void menuAprsListDraw(int count, int sel, aprsListItemFn_t fn)
+{
+	char buf[APRS_LIST_COLS + 8];
+	int saved = menuDataGlobal.currentItemIndex;
+	int top = sel - 2;   /* виділений -- близько верху вікна, як у стокових меню; на краях вікно упирається в межі списку */
+
+	if (top > (count - APRS_LIST_ROWS))
+	{
+		top = count - APRS_LIST_ROWS;
+	}
+	if (top < 0)
+	{
+		top = 0;
+	}
+	menuDataGlobal.currentItemIndex = sel;   /* menuDisplayEntry() виділяє пункт, номер якого збігається з currentItemIndex; повертаємо нижче */
+	for (int k = 0; (k < APRS_LIST_ROWS) && ((top + k) < count); k++)
+	{
+		int opt = 0;
+
+		buf[0] = 0;
+		fn(top + k, buf, sizeof(buf), &opt);
+		buf[APRS_LIST_COLS] = 0;
+		if (opt > (int)strlen(buf))
+		{
+			opt = 0;
+		}
+		menuDisplayEntry(k - 3, top + k, buf, opt, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+	}
+	menuDataGlobal.currentItemIndex = saved;
 }
 
 void menuAprsStationsAgeStr(char *b, size_t n, uint32_t sec)

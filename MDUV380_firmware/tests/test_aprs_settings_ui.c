@@ -32,6 +32,26 @@ static uint8_t s_bcnWin;
 uint8_t aprsRxBcnWinMode(void) { return s_bcnWin; }
 void aprsRxBcnWinSetMode(uint8_t m) { s_bcnWin = m; }
 void menuDisplayTitle(const char *t) { snprintf(s_title, sizeof(s_title), "%s", t); }
+/* R19 Е1: списки -- стокові пункти меню. menuAprsListDraw() справжній живе в menuAprsStations.c (його перевіряє test_aprs_stations_ui); тут -- те саме вікно з 6 рядків */
+static int s_entryMax, s_entryRows;
+void menuAprsListDraw(int count, int sel, aprsListItemFn_t fn)
+{
+	char buf[APRS_LIST_COLS + 8];
+	int top = sel - 2;
+
+	if (top > (count - APRS_LIST_ROWS)) { top = count - APRS_LIST_ROWS; }
+	if (top < 0) { top = 0; }
+	s_entryRows = 0;
+	for (int k = 0; (k < APRS_LIST_ROWS) && ((top + k) < count); k++)
+	{
+		int opt = 0; buf[0] = 0;
+		fn(top + k, buf, sizeof(buf), &opt);
+		buf[APRS_LIST_COLS] = 0;
+		if (s_nrows < 64) { snprintf(s_rows[s_nrows++], 80, "%s%s", ((top + k) == sel) ? ">" : " ", buf); }   /* '>' лише в тесті -- щоб було видно, який рядок виділено */
+		if ((int)strlen(buf) > s_entryMax) { s_entryMax = (int)strlen(buf); }
+		s_entryRows++;
+	}
+}
 
 static void key(char k, uint8_t ev)
 {

@@ -5,6 +5,7 @@
  */
 #include "functions/aprs_rx_cfg.h"
 #include "user_interface/menuAprsSettings.h"
+#include "user_interface/menuAprsStations.h"   /* R19: спільний малювальник списків у стоковому шрифті */
 
 #if defined(APRS_RX)
 
@@ -1103,10 +1104,44 @@ static void asResetAll(void)
 	aprsRxBcnWinSetMode(0U);
 }
 
+/* Рядок списку груп: «Скинути налаштув.» у режимі підтвердження показує запит. */
+static void asGroupText(int g, char *buf, size_t cap, int *opt)
+{
+	const aprsModeUi_t *u = aprsModeUi();
+	const char *name = asGroups[g].name;
+
+	(void)opt;
+	if ((g == AS_G_RESET) && u->resetArmed)
+	{
+		name = APRSM_G_RESET_ASK;
+	}
+	snprintf(buf, cap, "%s", name);
+}
+
+/* Рядок поля групи: «мітка:значення», значення -- кольором опцій. Частота без « МГц» -- щоб влізла в 18 стовпців. */
+static void asRowText(int r, char *buf, size_t cap, int *opt)
+{
+	const aprsModeUi_t *u = aprsModeUi();
+	const asGroup_t *g = &asGroups[(u->scroll < AS_G_COUNT) ? u->scroll : 0U];
+	int id = g->rows[r];
+	const char *lbl = asLabel(id);
+	char val[32];
+
+	if (id == APRSM_F_FREQ)
+	{
+		aprsModeFormatFreq(val, sizeof(val), aprsModeEff()->freq);
+	}
+	else
+	{
+		asValue(id, val, sizeof(val));
+	}
+	snprintf(buf, cap, "%s:%s", lbl, val);
+	*opt = (int)strlen(lbl) + 1;
+}
+
 static void asDraw(void)
 {
 	aprsModeUi_t *u = aprsModeUi();
-	char buf[48], val[32];
 
 	u->lastDrawMs = ticksGetMillis();
 	if (u->edit.active)
@@ -1118,17 +1153,7 @@ static void asDraw(void)
 	if (AS_LEVEL(u) == AS_LEVEL_GROUPS)
 	{
 		menuDisplayTitle(APRSM_SET_TITLE);
-		for (int g = 0; g < AS_G_COUNT; g++)
-		{
-			const char *name = asGroups[g].name;
-
-			if ((g == AS_G_RESET) && u->resetArmed)
-			{
-				name = APRSM_G_RESET_ASK;
-			}
-			snprintf(buf, sizeof(buf), "%c%s", (g == (int)u->scroll) ? '>' : ' ', name);
-			printRow(g, buf);
-		}
+		menuAprsListDraw(AS_G_COUNT, (int)u->scroll, asGroupText);
 		printRow(10, APRSM_S_HINT_G);
 	}
 	else
@@ -1136,13 +1161,7 @@ static void asDraw(void)
 		const asGroup_t *g = &asGroups[(u->scroll < AS_G_COUNT) ? u->scroll : 0U];
 
 		menuDisplayTitle(g->name);
-		for (int r = 0; r < (int)g->n; r++)
-		{
-			asValue(g->rows[r], val, sizeof(val));
-			/* маркер(1) + мітка(9) + пробіл(1) + значення(<=15) = 26 символів */
-			snprintf(buf, sizeof(buf), "%c%-9s %.15s", (r == (int)u->sel) ? '>' : ' ', asLabel(g->rows[r]), val);
-			printRow(r, buf);
-		}
+		menuAprsListDraw((int)g->n, (int)u->sel, asRowText);
 		printRow(10, APRSM_S_HINT_R);
 	}
 	displayRender();

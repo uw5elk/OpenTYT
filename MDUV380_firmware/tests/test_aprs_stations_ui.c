@@ -22,13 +22,24 @@ uint32_t ticksGetMillis(void) { return s_now; }
 static char s_rows[64][80];
 static int  s_nrows, s_renders, s_maxWidth;
 static char s_title[80];
-void displayClearBuf(void) { s_nrows = 0; }
+static int s_entryMax, s_entrySel, s_entryRows, s_entryRowsMax;   /* R19 Е1: стокові рядки меню (menuDisplayEntry): макс. ширина, число виділених, число намальованих */
+menuDataGlobal_t menuDataGlobal;
+void displayClearBuf(void) { s_nrows = 0; s_entrySel = 0; s_entryRows = 0; }
 void displayRender(void) { s_renders++; }
 void displayPrintAt(uint16_t x, uint16_t y, const char *t, ucFont_t f) { (void)x; (void)y; (void)f;
 	if (s_nrows < 64) { snprintf(s_rows[s_nrows++], 80, "%s", t); }
 	if ((int)strlen(t) > s_maxWidth) { s_maxWidth = (int)strlen(t); } }
 void displayPrintCentered(uint16_t y, const char *t, ucFont_t f) { displayPrintAt(0, y, t, f); }
 void menuDisplayTitle(const char *t) { snprintf(s_title, sizeof(s_title), "%s", t); }
+void menuDisplayEntry(int loopOffset, int focusedItem, const char *entryText, int32_t optStart, themeItem_t fgItem, themeItem_t fgOptItem, themeItem_t bgItem)
+{
+	(void)loopOffset; (void)optStart; (void)fgItem; (void)fgOptItem; (void)bgItem;
+	if (s_nrows < 64) { snprintf(s_rows[s_nrows++], 80, "%s", entryText); }
+	if ((int)strlen(entryText) > s_entryMax) { s_entryMax = (int)strlen(entryText); }
+	if (focusedItem == menuDataGlobal.currentItemIndex) { s_entrySel++; }
+	s_entryRows++; if (s_entryRows > s_entryRowsMax) { s_entryRowsMax = s_entryRows; }
+}
+void aprsRxFormatDist(char *buf, size_t n, uint32_t m) { snprintf(buf, n, "%lu.%lukm", (unsigned long)(m / 1000U), (unsigned long)((m % 1000U) / 100U)); }
 
 /* ---- заглушки приймача ---- */
 static aprsRxUi_t s_ui;
@@ -89,7 +100,10 @@ static void checkScreen(const char *what)
 	CHECK(s_maxWidth <= 26, "%s: рядок шириною %d > 26", what, s_maxWidth);
 	if (s_maxWidth > 26) { for (int i = 0; i < s_nrows; i++) { if (strlen(s_rows[i]) > 26) { printf("   [%s]\n", s_rows[i]); } } }
 	CHECK(strlen(s_title) <= 16, "%s: заголовок «%s» > 16", what, s_title);
-	s_maxWidth = 0;
+	CHECK(s_entryMax <= 18, "%s: стоковий рядок шириною %d > 18", what, s_entryMax);   /* R19 Е1: смуга меню -- 18 стовпців */
+	CHECK(s_entryRows <= APRS_LIST_ROWS, "%s: %d стокових рядків > %d", what, s_entryRows, APRS_LIST_ROWS);
+	CHECK((s_entryRows == 0) || (s_entrySel == 1), "%s: у стоковому списку має бути рівно один виділений рядок, а їх %d", what, s_entrySel);   /* виділення не губиться при прокрутці */
+	s_maxWidth = 0; s_entryMax = 0;
 }
 
 static void fill(int n)
@@ -201,22 +215,21 @@ static void testPacketScreens(void)
 	{ char t[160]; memset(t, 0, sizeof(t)); snprintf(t, sizeof(t), "N0CALL-9>APRS:`"); for (size_t i = strlen(t); i < 127; i++) { t[i] = (char)('a' + (i % 26)); } t[127] = 0; jrnPush(t, 1800001000U); }
 	menuAprsPacketEnter();
 	checkScreen("журнал: 8 записів");
-	CHECK(s_nrows == 10, "статус + 8 рядків + підказка (є %d)", s_nrows);
-	CHECK(strstr(s_rows[1], "N0CALL-9") != NULL && s_rows[1][0] == '>', "найновіший зверху й виділений: «%s»", s_rows[1]);
-	CHECK(strstr(s_rows[8], "UW5ELE-4") != NULL, "восьмий -- 4-й кадр з десяти (1..3 витіснено): «%s»", s_rows[8]);
-	CHECK(s_rows[1][strlen(s_rows[1]) - 6] == '`', "DTI Mic-E перед RSSI: «%s»", s_rows[1]);
-	CHECK(strstr(s_rows[2], "UW5ELK-10") != NULL && strlen(s_rows[2]) <= 26, "довгий позивний вміщується: «%s»", s_rows[2]);
-	CHECK(strlen(s_rows[1]) >= 5 && s_rows[1][strlen(s_rows[1]) - 3] == '-' && strlen(s_rows[1]) <= 26, "рядок списку закінчується RSSI (-NN): «%s»", s_rows[1]);
+	CHECK(s_nrows == 7, "R19 Е1: вікно 6 стокових рядків + підказка (є %d)", s_nrows);
+	CHECK(strstr(s_rows[0], "N0CALL-9") != NULL && s_entrySel == 1, "найновіший зверху й виділений: «%s»", s_rows[0]);
+	CHECK(strstr(s_rows[1], "UW5ELK-10") != NULL && strlen(s_rows[1]) <= 18, "довгий позивний вміщується в 18 стовпців: «%s»", s_rows[1]);
+	CHECK(s_rows[0][2] == ':' && strlen(s_rows[0]) == 15, "рядок списку -- «ГГ:ХХ ПОЗИВНИЙ»: «%s»", s_rows[0]);
 	for (int i = 0; i < 8; i++) { click(KEY_DOWN); }
 	CHECK(s_ui.scroll == 0, "8 разів DOWN -- по колу (scroll=%d)", s_ui.scroll);
 	click(KEY_UP);
 	CHECK(s_ui.scroll == 7, "UP з нуля -> останній запис (scroll=%d)", s_ui.scroll);
 	checkScreen("журнал: виділено останній");
+	CHECK(strstr(s_rows[5], "UW5ELE-4") != NULL, "R19 Е1: прокрутка до кінця -- останній (4-й кадр з десяти) внизу вікна, виділений: «%s»", s_rows[5]);
 	click(KEY_DOWN);
 	/* R17 (Г3): ручка (KEY_RIGHT/KEY_LEFT) гортає список так само, як DOWN/UP; у шапці «n/m» */
-	CHECK(s_ui.scroll == 0 && !strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "1/8"), "шапка списку: «n/m» (%s)", s_rows[0]);
+	CHECK(s_ui.scroll == 0 && !strcmp(s_title + strlen(s_title) - 3, "1/8"), "заголовок списку: «n/m» (%s)", s_title);
 	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);
-	CHECK(s_ui.scroll == 1 && !strcmp(s_rows[0] + strlen(s_rows[0]) - 3, "2/8"), "ручка вправо -> наступний запис (scroll=%d, %s)", s_ui.scroll, s_rows[0]);
+	CHECK(s_ui.scroll == 1 && !strcmp(s_title + strlen(s_title) - 3, "2/8"), "ручка вправо -> наступний запис (scroll=%d, %s)", s_ui.scroll, s_title);
 	key(KEY_LEFT, KEY_MOD_PRESS); key(KEY_LEFT, KEY_MOD_UP); key(KEY_LEFT, KEY_MOD_PRESS); key(KEY_LEFT, KEY_MOD_UP);
 	CHECK(s_ui.scroll == 7, "ручка вліво з нуля -> останній запис (scroll=%d)", s_ui.scroll);
 	key(KEY_RIGHT, KEY_MOD_PRESS); key(KEY_RIGHT, KEY_MOD_UP);

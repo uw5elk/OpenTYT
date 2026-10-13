@@ -24,6 +24,15 @@ void menuAprsStationsClose(void);
  * закрито, треба перемалювати список опцій. */
 bool menuAprsStationsTick(uiEvent_t *ev);
 
+/* R19 Е1: спільний список ПУНКТІВ у стоковому вигляді (menuDisplayEntry(), FONT_SIZE_3 8x16, виділення смугою). APRS_LIST_ROWS рядків з y = 16 (під заголовком),
+ * внизу лишається рядок підказки FONT_SIZE_1 (y = 116). Вікно йде за виділеним (стан не зберігається: вибір -- у станах екранів, тож вхід/вихід його не скидає).
+ * Рядок -- до APRS_LIST_COLS символів (текст починається з x = 8, смуга закінчується на x = 156: 18 повних клітинок 8 px). fn() заповнює рядок і *opt: позиція,
+ * з якої текст малюється кольором значення (0 -- одним кольором). */
+#define APRS_LIST_ROWS  6
+#define APRS_LIST_COLS  18
+typedef void (*aprsListItemFn_t)(int index, char *buf, size_t cap, int *opt);
+void menuAprsListDraw(int count, int sel, aprsListItemFn_t fn);
+
 /* Короткий тип пакета і вік («45с», «12хв») -- для рядків «Монітора» (cp1251 з aprsrx_ua.h). */
 const char *menuAprsStationsTypeStr(uint8_t type);
 void menuAprsStationsAgeStr(char *b, size_t n, uint32_t sec);
