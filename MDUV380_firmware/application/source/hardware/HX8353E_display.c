@@ -1570,6 +1570,86 @@ void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 	// ДЕНЬ: глибші насичені акценти на білому; НІЧ: чисто-чорне тло (0x000000) + яскраві
 	// насичені акценти. Інлайн-коментарі з числами контрасту нижче можуть бути застарілі
 	// (вони від попереднього проходу); чинні значення -- самі константи.
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+	// R19 Е8 (форк): ВЛАСНА палітра за замовчуванням для української збірки. Не чіпає збережену в кодплазі тему користувача (themeInit() читає її після цього) --
+	// лише типові значення та «Скинути тему». Принципи: високий контраст на сонці (мінімум 4.5:1 для тексту після квантування в RGB565, перевірено скриптом
+	// theme_contrast.py: ДЕНЬ найменше 5.44, НІЧ найменше 5.26), нічна тема -- темне синювате тло й приглушені кольори замість кислотних. НЕ змінено кольори, що в форку
+	// усталені: смуга RSSI та її червона частина понад S9 (RSSI_BAR/RSSI_BAR_S9P), помилка/попередження, TX, контакт/інфо контакту (жовті вночі), BD/GPS-акценти.
+	// Значення в RGB888; перераховуються у формат дисплея нижче.
+	static const uint32_t themeDefaults[NIGHT + 1][THEME_ITEM_MAX] =
+	{
+		[DAY] =
+		{
+			[THEME_ITEM_FG_DEFAULT]              = 0x000000U, // звичайний текст
+			[THEME_ITEM_BG]                      = 0xFFFFFFU, // тло екрана
+			[THEME_ITEM_FG_DECORATION]           = 0x1C1C1CU, // рамки, роздільники
+			[THEME_ITEM_FG_TEXT_INPUT]           = 0x000000U, // введення тексту
+			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x0A2F44U, // заставка
+			[THEME_ITEM_BG_SPLASHSCREEN]         = 0xFFFFFFU, // тло заставки
+			[THEME_ITEM_FG_NOTIFICATION]         = 0x0A3550U, // сповіщення
+			[THEME_ITEM_FG_WARNING_NOTIFICATION] = 0x804000U, // попередження (як було)
+			[THEME_ITEM_FG_ERROR_NOTIFICATION]   = 0xC80000U, // помилка (як було)
+			[THEME_ITEM_BG_NOTIFICATION]         = 0xFFFFFFU, // тло сповіщення
+			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU, // заголовок меню
+			[THEME_ITEM_BG_MENU_NAME]            = 0x0A4A6EU, // смуга заголовка (синьо-морська)
+			[THEME_ITEM_FG_MENU_ITEM]            = 0x000000U, // пункти меню
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x0A4A6EU, // смуга виділення = колір шапки меню; текст виділеного малюється кольором BG (білим)
+			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0x0A4A6EU, // значення налаштувань
+			[THEME_ITEM_FG_HEADER_TEXT]          = 0x000000U, // текст шапки
+			[THEME_ITEM_BG_HEADER_TEXT]          = 0xD2DCE3U, // тло шапки (холодний світло-сірий)
+			[THEME_ITEM_FG_RSSI_BAR]             = 0x006400U, // смуга RSSI до S9 (як було)
+			[THEME_ITEM_FG_RSSI_BAR_S9P]         = 0xC80000U, // смуга RSSI понад S9 -- червона (як було)
+			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x0A4A6EU, // назва каналу
+			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0x8C0A00U, // контакт (TG/PC) (як було)
+			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0x8C0A00U, // інфо контакту (як було)
+			[THEME_ITEM_FG_ZONE_NAME]            = 0x3F4F5AU, // назва зони (сланцевий)
+			[THEME_ITEM_FG_RX_FREQ]              = 0x000000U, // частота RX
+			[THEME_ITEM_FG_TX_FREQ]              = 0xC80000U, // частота TX (як було)
+			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x0A4A6EU, // значення CSS/squelch
+			[THEME_ITEM_FG_TX_COUNTER]           = 0xC80000U, // лічильник TX (як було)
+			[THEME_ITEM_FG_POLAR_DRAWING]        = 0x404040U, // полярна сітка
+			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x006400U, // точки супутників
+			[THEME_ITEM_FG_GPS_NUMBER]           = 0x000000U, // номери GPS
+			[THEME_ITEM_FG_GPS_COLOUR]           = 0x000078U, // смуги/точки GPS
+			[THEME_ITEM_FG_BD_COLOUR]            = 0xC80000U, // смуги/точки BEIDOU
+		},
+		[NIGHT] =
+		{
+			[THEME_ITEM_FG_DEFAULT]              = 0xE8EEF2U, // звичайний текст (не чисто-білий)
+			[THEME_ITEM_BG]                      = 0x05080CU, // тло екрана (майже чорне, синюватий відтінок)
+			[THEME_ITEM_FG_DECORATION]           = 0x6F8493U, // рамки, роздільники (приглушений сталевий)
+			[THEME_ITEM_FG_TEXT_INPUT]           = 0xE8EEF2U, // введення тексту
+			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x9FD3F0U, // заставка
+			[THEME_ITEM_BG_SPLASHSCREEN]         = 0x05080CU, // тло заставки
+			[THEME_ITEM_FG_NOTIFICATION]         = 0x9FD3F0U, // сповіщення
+			[THEME_ITEM_FG_WARNING_NOTIFICATION] = 0xFFCC55U, // попередження (як було)
+			[THEME_ITEM_FG_ERROR_NOTIFICATION]   = 0xFF7676U, // помилка (як було)
+			[THEME_ITEM_BG_NOTIFICATION]         = 0x05080CU, // тло сповіщення
+			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU, // заголовок меню
+			[THEME_ITEM_BG_MENU_NAME]            = 0x1B4F72U, // смуга заголовка
+			[THEME_ITEM_FG_MENU_ITEM]            = 0xA9D6F0U, // пункти меню
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0xD8A93FU, // смуга виділення (приглушений бурштин; текст виділеного малюється кольором BG -- темним)
+			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0xE3B454U, // значення налаштувань
+			[THEME_ITEM_FG_HEADER_TEXT]          = 0xA9D6F0U, // текст шапки
+			[THEME_ITEM_BG_HEADER_TEXT]          = 0x05080CU, // тло шапки
+			[THEME_ITEM_FG_RSSI_BAR]             = 0x33FF33U, // смуга RSSI до S9 (як було)
+			[THEME_ITEM_FG_RSSI_BAR_S9P]         = 0xFF6A2AU, // смуга RSSI понад S9 (як було)
+			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x7FD8B5U, // назва каналу (м'ятний)
+			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0xFFCC55U, // контакт (жовтий, як було)
+			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0xFFCC55U, // інфо контакту (як було)
+			[THEME_ITEM_FG_ZONE_NAME]            = 0xC5CED5U, // назва зони
+			[THEME_ITEM_FG_RX_FREQ]              = 0xE8EEF2U, // частота RX
+			[THEME_ITEM_FG_TX_FREQ]              = 0xFF7676U, // частота TX (як було)
+			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x7FD8B5U, // значення CSS/squelch
+			[THEME_ITEM_FG_TX_COUNTER]           = 0xFF7676U, // лічильник TX (як було)
+			[THEME_ITEM_FG_POLAR_DRAWING]        = 0x86B9D6U, // полярна сітка
+			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x7FD8B5U, // точки супутників
+			[THEME_ITEM_FG_GPS_NUMBER]           = 0xE8EEF2U, // номери GPS
+			[THEME_ITEM_FG_GPS_COLOUR]           = 0x93B4FFU, // смуги/точки GPS (як було)
+			[THEME_ITEM_FG_BD_COLOUR]            = 0xFF7676U, // смуги/точки BEIDOU (як було)
+		},
+	};
+#else
 	static const uint32_t themeDefaults[NIGHT + 1][THEME_ITEM_MAX] =
 	{
 		[DAY] =
@@ -1651,6 +1731,7 @@ void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 			[THEME_ITEM_FG_BD_COLOUR]            = 0xFF7676U,
 		},
 	};
+#endif
 
 	// invert лишено заради сумісності сигнатури: викликається як (DAY, false) / (NIGHT, true),
 	// тобто дублює daytime. Тему обираємо за daytime, щоб не було двох джерел правди.
