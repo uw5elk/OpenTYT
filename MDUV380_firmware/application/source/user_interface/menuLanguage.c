@@ -302,7 +302,7 @@ static void handleEvent(uiEvent_t *ev)
 		{
 			menuDataGlobal.currentItemIndex = QUICKKEY_ENTRYID(ev->function);
 			settingsSetOptionBit(BIT_SECONDARY_LANGUAGE, ((menuDataGlobal.currentItemIndex > 0) ? true : false));
-			currentLanguage = &languages[(settingsIsOptionBitSet(BIT_SECONDARY_LANGUAGE) ? 1 : 0)];
+			currentLanguage = &languages[LANGUAGE_INDEX_CURRENT()];
 			settingsSaveIfNeeded(true);
 			menuSystemLanguageHasChanged();
 			menuSystemPopAllAndDisplayRootMenu();
@@ -325,7 +325,7 @@ static void handleEvent(uiEvent_t *ev)
 	else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
 		settingsSetOptionBit(BIT_SECONDARY_LANGUAGE, ((menuDataGlobal.currentItemIndex > 0) ? true : false));
-		currentLanguage = &languages[(settingsIsOptionBitSet(BIT_SECONDARY_LANGUAGE) ? 1 : 0)];
+		currentLanguage = &languages[LANGUAGE_INDEX_CURRENT()];
 		settingsSaveIfNeeded(true);
 		menuSystemLanguageHasChanged();
 		menuSystemPopAllAndDisplayRootMenu();

@@ -811,7 +811,7 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 	char nameBuf[NAME_BUFFER_LEN];
 	char buffer[SCREEN_LINE_BUFFER_SIZE];
 #if defined(PLATFORM_VARIANT_DM1701)
-	bool dblHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+	bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #endif
 	bool isTransmitting = isTransmittingIgnoringAPRSBeaconing();
 

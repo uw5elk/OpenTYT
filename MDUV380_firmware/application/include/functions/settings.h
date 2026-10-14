@@ -448,6 +448,17 @@ void settingsSetOptionBit(bitfieldOptions_t bit, bool set);
 bool settingsIsOptionBitSetFromSettings(settingsStruct_t *sets, bitfieldOptions_t bit);
 bool settingsIsOptionBitSet(bitfieldOptions_t bit);
 
+/* R19 Е4/Е5 (форк): в українській збірці пункти «Розмір тексту» і «Шрифт SMS» прибрано -- розмір завжди 1 (звичайна висота), шрифт SMS і повідомлень APRS завжди
+ * великий. Біти BIT_UI_USES_DOUBLE_HEIGHT і BIT_SMS_FONT_SMALL лишаються в розкладці (її не чіпаємо), але ІГНОРУЮТЬСЯ: читати їх треба лише через ці макроси
+ * (константа false -- компілятор викидає мертві гілки). В інших збірках макроси читають біт, як і раніше. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#define UI_USES_DOUBLE_HEIGHT()  (false)
+#define UI_SMS_FONT_SMALL()      (false)
+#else
+#define UI_USES_DOUBLE_HEIGHT()  settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT)
+#define UI_SMS_FONT_SMALL()      settingsIsOptionBitSet(BIT_SMS_FONT_SMALL)
+#endif
+
 void settingsSetDirty(void);
 void settingsSetVFODirty(void);
 void settingsSaveIfNeeded(bool immediately);

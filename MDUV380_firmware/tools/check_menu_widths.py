@@ -467,19 +467,48 @@ if os.path.exists(msg_path):
             lim = LINE_CHARS
         elif name.startswith('APRSMSG_ST_'):
             lim = 9
-        elif name in ('APRSMSG_H_NEW', 'APRSMSG_H_IN', 'APRSMSG_H_OUT', 'APRSMSG_H_DELALL', 'APRSMSG_Q_ONE', 'APRSMSG_Q_ALL'):
-            lim = 20   # R18: великий шрифт 8x16 -- 20 символів у рядку
+        elif name in ('APRSMSG_H_NEW', 'APRSMSG_H_IN', 'APRSMSG_H_OUT', 'APRSMSG_H_DELALL'):
+            lim = 18   # R19 Е1: стоковий пункт меню (menuDisplayEntry, смуга x=4..156) -- 18 стовпців
+        elif name in ('APRSMSG_Q_ONE', 'APRSMSG_Q_ALL'):
+            lim = 20   # R18: великий шрифт 8x16, по центру -- 20 символів у рядку
         else:
             lim = 26
         if len(t) > lim:
             msg_over.append((name, t, len(t), lim))
-    # рядок списку: маркер(1) + мітка(1) + позивний(9) + пробіл(1) + текст/статус(9) + вік(5) = 26
-    if 1 + 1 + 9 + 1 + 9 + 5 > 26:
-        msg_over.append(('рядок списку', '', 26, 26))
+    # R19 Е1: рядок списку у стоковому шрифті -- 18 стовпців: «Вхідні»: ознака(1) + позивний(9) + вік(8); «Надіслані»: позивний(8) + стан(10, найдовше «надіслано» = 9)
+    if 1 + 9 + 8 > 18 or 8 + 10 > 18:
+        msg_over.append(('рядок списку', '', 18, 18))
+    if max(len(mm.get(k, '')) for k in ('APRSMSG_ST_WAIT', 'APRSMSG_ST_SENT', 'APRSMSG_ST_ACK', 'APRSMSG_ST_NOACK')) > 10:
+        msg_over.append(('APRSMSG_ST_*', '', 11, 10))
 for name, t, n, lim in msg_over:
     print(f'  {name}: "{t}" = {n} > {lim}')
 print(f'  разом: {len(msg_over)}')
 fails += msg_over
+
+print('\n=== 9. «Налаштування» APRS у стоковому шрифті (languages/aprsmode_ua.h, R19 Е1): 18 стовпців ===')
+set_over = []
+set_path = os.path.join(LANG, 'aprsmode_ua.h')
+if os.path.exists(set_path):
+    sm = {m.group(1): m.group(2) for m in re.finditer(
+        r'#define\s+(APRSM_\w+)\s+"((?:[^"\\]|\\.)*)"', open(set_path, 'rb').read().decode('cp1251'))}
+    for name, val in sm.items():
+        if name.startswith('APRSM_G_') and len(val) > 18:
+            set_over.append((name, val, len(val), 18))            # групи і запит скидання -- пункти списку
+        elif name == 'APRSM_SET_TITLE' and len(val) > LINE_CHARS:
+            set_over.append((name, val, len(val), LINE_CHARS))    # заголовок
+        elif name.startswith('APRSM_L_') and len(val) > 9:
+            set_over.append((name, val, len(val), 9))             # мітка поля: «мітка:значення» -- лишається >= 8 символів на значення
+        elif name in ('APRSM_S_HINT_G', 'APRSM_S_HINT_R') and len(val) > 26:
+            set_over.append((name, val, len(val), 26))            # підказка FONT_SIZE_1
+    # найдовше значення, що має влізти разом із міткою: частота «144.800» (7), перелічення (APRSM_V_BM*, APRSM_V_PWR_CH тощо)
+    for name, val in sm.items():
+        if name.startswith('APRSM_V_BM') or name in ('APRSM_V_PWR_CH', 'APRSM_V_SRC_CH', 'APRSM_V_ON', 'APRSM_V_OFF'):
+            if len(val) > 9:
+                set_over.append((name, val, len(val), 9))
+for name, t, n, lim in set_over:
+    print(f'  {name}: "{t}" = {n} > {lim}')
+print(f'  разом: {len(set_over)}')
+fails += set_over
 
 print(f'\n{"Є ПЕРЕПОВНЕННЯ" if fails else "Переповнень не знайдено"} (всього: {len(fails)})')
 sys.exit(1 if fails else 0)

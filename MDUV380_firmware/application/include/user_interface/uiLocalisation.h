@@ -57,6 +57,14 @@ typedef enum
 
 
 uint8_t languagesGetCount(void);
+
+/* R19 Е7.2 (форк): індекс поточної мови в languages[]. Українська збірка має одну таблицю (англійську не лінкуємо) -- завжди 0, біт BIT_SECONDARY_LANGUAGE
+ * ігнорується (навіть якщо лишився встановленим від старої прошивки). В інших збірках -- як і раніше за бітом. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#define LANGUAGE_INDEX_CURRENT()  0
+#else
+#define LANGUAGE_INDEX_CURRENT()  (settingsIsOptionBitSet(BIT_SECONDARY_LANGUAGE) ? 1 : 0)
+#endif
 char currentLanguageGetSymbol(LanguageSymbol_t s);
 
 #endif

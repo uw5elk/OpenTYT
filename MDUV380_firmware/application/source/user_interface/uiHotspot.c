@@ -171,7 +171,7 @@ menuStatus_t menuHotspotMode(uiEvent_t *ev, bool isFirstRun)
 
 		hotspotData.displayFWVersion = false;
 #if defined(HAS_COLOURS)
-		hotspotData.doubleHeight = settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT);
+		hotspotData.doubleHeight = UI_USES_DOUBLE_HEIGHT();
 #endif
 
 		displayClearBuf();

@@ -49,7 +49,7 @@ typedef struct
 static amMsgFont_t amMsgFont(void)
 {
 	amMsgFont_t f;
-	bool big = (settingsIsOptionBitSet(BIT_SMS_FONT_SMALL) == false);
+	bool big = (UI_SMS_FONT_SMALL() == false);
 
 	f.font   = big ? FONT_SIZE_3 : FONT_SIZE_2;
 	f.glyphH = big ? FONT_SIZE_3_HEIGHT : FONT_SIZE_2_HEIGHT;
@@ -83,7 +83,7 @@ static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
 	}
 }
 
-/* R15: перший екран «Повідом. APRS» -- Нове / Вхідні / Надіслані. R18: «Вхідні n/m» (n -- прочитані, m -- усього вхідних), «Надіслані» -- усі записи
+/* R15: перший екран «Повідом. APRS» -- Нове / Вхідні / Надіслані. R18: «Вхідні n/m» (n -- НЕпрочитані, як біля конверта; m -- усього вхідних), «Надіслані» -- усі записи
  * напрямку (раніше рахувалась черга передачі і після відправки була 0), четвертий пункт -- «[Видалити всі]». Великий шрифт, смуга вибору. */
 /* R18: у діагностичній збірці (ENABLE_APRS_RX_PROBE) видалення вимкнено -- не вистачає місця до адреси кодека (aprs_rx_cfg.h, APRS_R18_UI). */
 #if defined(APRS_R18_UI)
@@ -91,50 +91,68 @@ static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
 #else
 #define AM_HOME_ITEMS  3
 #endif
-static void drawMsgHome(void)
+/* R19 Е1: пункти першого екрана -- стоковим шрифтом і смугою вибору (menuAprsListDraw). */
+static void msgHomeText(int i, char *buf, size_t cap, int *opt)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
-	aprsMsgUi_t *mu = &aprsModeUi()->msg;
-	char buf[24];
 
-	for (int i = 0; i < AM_HOME_ITEMS; i++)
+	(void)opt;
+	switch (i)
 	{
-		int16_t y = (int16_t)(24 + (i * 22));
-		bool sel = (i == (int)mu->scroll);
-
-		switch (i)
-		{
-			case 0:  snprintf(buf, sizeof(buf), "%s", APRSMSG_H_NEW); break;
-			case 1:  snprintf(buf, sizeof(buf), APRSMSG_H_IN, aprsMsgDirCount(b, AMSG_DIR_IN) - aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN)); break;
-			case 2:  snprintf(buf, sizeof(buf), APRSMSG_H_OUT, aprsMsgDirCount(b, AMSG_DIR_OUT)); break;
+		case 0:  snprintf(buf, cap, "%s", APRSMSG_H_NEW); break;
+		case 1:  snprintf(buf, cap, APRSMSG_H_IN, aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN)); break;   /* R19 Е2: непрочитані / усього -- n збігається з числом біля конверта */
+		case 2:  snprintf(buf, cap, APRSMSG_H_OUT, aprsMsgDirCount(b, AMSG_DIR_OUT)); break;
 #if defined(APRS_R18_UI)
-			default: snprintf(buf, sizeof(buf), "%s", APRSMSG_H_DELALL); break;
+		default: snprintf(buf, cap, "%s", APRSMSG_H_DELALL); break;
 #else
-			default: buf[0] = 0; break;
+		default: buf[0] = 0; break;
 #endif
-		}
-		if (sel)
-		{
-			displayFillRect(0, (int16_t)(y - 1), DISPLAY_SIZE_X, 18, false);   /* смуга вибору (false -- колір переднього плану) */
-		}
-		displayPrintCore(2, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, sel);
 	}
+}
+
+static void drawMsgHome(void)
+{
+	menuAprsListDraw(AM_HOME_ITEMS, (int)aprsModeUi()->msg.scroll, msgHomeText);
 	displayPrintCentered(112, APRSMSG_H_HINT, FONT_SIZE_1);
 }
 
+/* R19 Е1: рядок списку. «Вхідні»: ознака '*' (непрочитане) + позивний(9) + вік (праворуч, 8) = 18 стовпців; «Надіслані»: позивний(8) + слово стану (праворуч, 10).
+ * Текст повідомлення у списку не вміщується -- його видно при читанні. */
+static void msgListText(int i, char *buf, size_t cap, int *opt)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	const aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	const bool out = (mu->dirFilter == AMSG_DIR_OUT);
+	int ri = aprsMsgNth(b, mu->dirFilter, (unsigned)i);
+	const aprsMsgEntry_t *e;
+	char age[10];
+
+	if (ri < 0)
+	{
+		return;
+	}
+	e = &b->list[ri];
+	if (out)
+	{
+		snprintf(buf, cap, "%-8.8s%10.10s", e->call, msgStatusWord(e->status));
+		*opt = 8;
+	}
+	else
+	{
+		msgAgeStr(age, sizeof(age), e, ticksGetMillis());
+		snprintf(buf, cap, "%c%-9.9s%8.8s", e->unread ? '*' : ' ', e->call, age);
+		*opt = 10;
+	}
+}
+
 /* R15: список одного напрямку (mu->dirFilter): «Вхідні» -- маркер '*' у непрочитаних; «Надіслані» -- слово стану (чекає/надіслано/ACK).
- * mu->sel -- номер у відфільтрованому списку; індекс у b->list дає aprsMsgNth(). */
+ * mu->sel -- номер у відфільтрованому списку; індекс у b->list дає aprsMsgNth(). Лічильники -- у заголовку (R19 Е1). */
 static void drawMsgList(void)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
 	aprsMsgUi_t *mu = &aprsModeUi()->msg;
-	const bool out = (mu->dirFilter == AMSG_DIR_OUT);
 	unsigned count = aprsMsgDirCount(b, mu->dirFilter);
-	uint32_t now = ticksGetMillis();
-	char buf[40], age[8];
 
-	snprintf(buf, sizeof(buf), out ? APRSMSG_L_HDR_OUT : APRSMSG_L_HDR, out ? aprsMsgPendingCount(b) : aprsMsgUnreadCount(b), count);
-	printRow(0, buf);
 	if (count == 0U)
 	{
 		displayPrintCentered(AM_ROW(4), APRSMSG_L_EMPTY, FONT_SIZE_1);
@@ -145,28 +163,12 @@ static void drawMsgList(void)
 	{
 		mu->sel = (uint8_t)(count - 1U);
 	}
-	for (unsigned i = 0; i < count; i++)
-	{
-		int ri = aprsMsgNth(b, mu->dirFilter, i);
-		const aprsMsgEntry_t *e;
-		char mark;
-
-		if (ri < 0)
-		{
-			break;
-		}
-		e = &b->list[ri];
-		mark = (out == false) && e->unread ? '*' : ' ';
-		msgAgeStr(age, sizeof(age), e, now);
-		/* маркер вибору(1) + ознака(1) + позивний(9) + пробіл(1) + текст або стан(9) + вік(5) = 26 символів */
-		snprintf(buf, sizeof(buf), "%c%c%-9.9s %-9.9s%5.5s", (i == mu->sel) ? '>' : ' ', mark, e->call,
-				out ? msgStatusWord(e->status) : e->text, age);
-		printRow(1 + (int)i, buf);
-	}
+	menuAprsListDraw((int)count, (int)mu->sel, msgListText);
 #if defined(APRS_R18_UI)
-	printRow(9, APRSMSG_L_HINT_D);    /* R18: видалення -- SK2+GREEN, як у «Повідомленнях» DMR */
-#endif
+	printRow(10, APRSMSG_L_HINT_D);   /* R18: видалення -- SK2+GREEN, як у «Повідомленнях» DMR */
+#else
 	printRow(10, APRSMSG_L_HINT_S);   /* R17: сторінок режиму нема */
+#endif
 }
 
 #if defined(APRS_R18_UI)
@@ -275,8 +277,9 @@ static void drawMsgRead(void)
 }
 
 /* R15: заголовок сторінки «Повідомлення» за виглядом */
-static const char *msgPageTitle(void)
+static const char *msgPageTitle(char *tb, size_t cap)
 {
+	aprsMsgBox_t *b = aprsModeMsgBox();
 	const aprsMsgUi_t *mu = &aprsModeUi()->msg;
 
 	if (mu->view == APRS_MSG_VIEW_READ)
@@ -285,7 +288,15 @@ static const char *msgPageTitle(void)
 	}
 	if (mu->view == APRS_MSG_VIEW_LIST)
 	{
-		return (mu->dirFilter == AMSG_DIR_OUT) ? APRSMSG_TITLE_OUT : APRSMSG_TITLE_IN;
+		if (mu->dirFilter == AMSG_DIR_OUT)
+		{
+			snprintf(tb, cap, APRSMSG_TITLE_OUT, aprsMsgDirCount(b, AMSG_DIR_OUT));
+		}
+		else
+		{
+			snprintf(tb, cap, APRSMSG_TITLE_IN, aprsMsgUnreadCount(b), aprsMsgDirCount(b, AMSG_DIR_IN));
+		}
+		return tb;
 	}
 	return APRSMSG_TITLE;
 }
@@ -868,7 +879,11 @@ static void draw(void)
 		return;
 	}
 	displayClearBuf();
-	menuDisplayTitle(msgPageTitle());
+	{
+		char tb[24];
+
+		menuDisplayTitle(msgPageTitle(tb, sizeof(tb)));
+	}
 	drawMsgPage();
 	displayRender();
 }

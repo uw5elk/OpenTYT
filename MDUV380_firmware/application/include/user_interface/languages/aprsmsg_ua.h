@@ -21,12 +21,12 @@
 #define APRSMSG_TITLE_NEW     "Нове повідом."
 #define APRSMSG_TITLE_REPLY   "Відповідь"
 #define APRSMSG_TITLE_READ    "Повідом. APRS"
-#define APRSMSG_TITLE_IN      "Вхідні APRS"       /* R15: список «Вхідні» */
-#define APRSMSG_TITLE_OUT     "Надіслані APRS"    /* R15: список «Надіслані» */
+#define APRSMSG_TITLE_IN      "Вхідні %u/%u" /* R19 Е1: заголовок списку «Вхідні» -- непрочитані/усього (раніше окремий рядок «Нових: n Усього: m») */
+#define APRSMSG_TITLE_OUT     "Надіслані %u" /* R19 Е1: заголовок списку «Надіслані» -- усього записів */
 
 /* ---- R15: перший екран «Повідом. APRS» (як «Повідомлення» DMR): Нове / Вхідні / Надіслані; великий шрифт, до 20 символів ---- */
 #define APRSMSG_H_NEW         "Нове повідомлення"
-#define APRSMSG_H_IN          "Вхідні %u/%u"      /* R18: прочитані / усього вхідних (іконка-конверт на головному екрані рахує НЕпрочитані -- це інше число) */
+#define APRSMSG_H_IN          "Вхідні %u/%u"      /* R19 Е2: НЕпрочитані / усього вхідних (n збігається з числом біля іконки-конверта; у R18 було «прочитані») */
 #define APRSMSG_H_OUT         "Надіслані %u"      /* R18: усього записів «Надіслані» (було: черга передачі -- після відправки завжди 0) */
 #define APRSMSG_H_HINT        "GREEN:вибір RED:назад"
 
@@ -37,8 +37,6 @@
 #define APRSMSG_ST_NOACK      "без ACK"
 
 /* ---- список ---- */
-#define APRSMSG_L_HDR         "Нових: %u  Усього: %u"       /* R15: «Вхідні» */
-#define APRSMSG_L_HDR_OUT     "В черзі: %u  Усього: %u"     /* R15: «Надіслані» */
 #define APRSMSG_L_EMPTY       "Повідомлень нема"
 #define APRSMSG_L_HINT        "GREEN:чит. RED:назад"        /* R15: «Нове» -- у першому екрані; сторінки -- <> (в режимі) */
 #define APRSMSG_L_HINT_S      "GREEN:читати RED:назад"   /* R13: екран без «Режиму APRS» -- сторінок нема */
@@ -75,6 +73,6 @@
 #define APRSMSG_Q_ALL         "Видалити всі?"
 #define APRSMSG_Q_COUNT       "Записів: %u"
 #define APRSMSG_Q_HINT        "GREEN:так RED:ні"
-#define APRSMSG_L_HINT_D      "SK2+GREEN:видалити"          /* другий рядок підказки списку */
+#define APRSMSG_L_HINT_D      "GREEN:чит. SK2+GREEN:вид."   /* R19 Е1: список займає 6 стокових рядків -- одна об'єднана підказка (було два рядки) */
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSMSG_UA_H_ */
