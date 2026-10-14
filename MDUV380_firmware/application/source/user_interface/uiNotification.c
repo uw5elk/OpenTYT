@@ -1095,7 +1095,14 @@ static void displayAprsBeaconWindow(void)
 		char d[12];
 
 		aprsRxFormatDist(d, sizeof d, w->distM);
-		snprintf(buf, sizeof buf, APRSRX_WIN_DIST_AZ, d, (unsigned)w->bearing);
+		if (aprsBearingKnown(w->distM))
+		{
+			snprintf(buf, sizeof buf, APRSRX_WIN_DIST_AZ, d, (unsigned)w->bearing);
+		}
+		else
+		{
+			snprintf(buf, sizeof buf, "%s", d);   /* R20 Ж1: азимут при відстані < 50 м невизначений -- лише відстань («0м») */
+		}
 		displayPrintCore(4, y, buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
 		y += 18;
 
