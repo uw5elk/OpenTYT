@@ -167,6 +167,58 @@ static void testBackspaceAndCap(void)
 	CHECK(st.key == '2', "перегляд лишився");
 }
 
+
+/* R23 Y2.8: ліміт назви контакту -- 16 символів. Розкладка буфера, як у menuContactDetails.c: contactName[20], [16] -- NUL, [17..19] -- чужі байти
+ * (там живе стан multitap, див. коментар у menuContactDetails.c): multitap не має їх чіпати за жодних обставин. */
+static void testContactNameCap(void)
+{
+	char name[20]; int16_t pos = 0; smsMt_t st = {0};
+	const uint8_t mode = SMS_MT_LAT_LO;
+
+	memset(name, 0, sizeof name);
+	name[17] = (char)0xA1; name[18] = (char)0xB2; name[19] = (char)0xC3;   /* охоронні байти */
+
+	/* 15 символів: клавіші 2 і 3 по черзі (кожна нова -- підтверджує попередню) */
+	for (int i = 0; i < 15; i++)
+	{
+		char key = (i & 1) ? '3' : '2';
+		CHECK(smsMtKey(&st, mode, key, false, name, &pos, 16) == 1, "символ %d вміщається", i + 1);
+	}
+	smsMtCommit(&st, &pos);
+	CHECK(pos == 15 && strlen(name) == 15, "15 підтверджених, довжина %d", (int)strlen(name));
+
+	/* 16-й символ -- у перегляді на межі: стоїть у [15], [16] лишається NUL */
+	CHECK(smsMtKey(&st, mode, '2', false, name, &pos, 16) == 1, "16-й символ вміщається");
+	CHECK(smsMtKey(&st, mode, '2', true, name, &pos, 16) == 1, "гортається на межі");
+	CHECK(strlen(name) == 16 && name[16] == 0, "довжина 16, NUL у [16]");
+	smsMtCommit(&st, &pos);
+
+	/* 17-й і далі -- не вводяться, нічого не змінюється */
+	for (int i = 0; i < 6; i++)
+	{
+		CHECK(smsMtKey(&st, mode, (i & 1) ? '3' : '4', false, name, &pos, 16) == 0, "понад 16 -- відмова (%d)", i);
+	}
+	CHECK(strlen(name) == 16 && pos == 16 && name[16] == 0, "довжина лишилась 16, pos=%d", pos);
+	CHECK((uint8_t)name[17] == 0xA1 && (uint8_t)name[18] == 0xB2 && (uint8_t)name[19] == 0xC3, "охоронні байти [17..19] не зачеплено");
+
+	/* стирання на межі: останній символ можна замінити */
+	smsMtBackspace(&st, name, &pos);
+	CHECK(strlen(name) == 15 && pos == 15, "після стирання 15");
+	CHECK(smsMtKey(&st, mode, '5', false, name, &pos, 16) == 1, "після стирання знову вміщається");
+	CHECK(name[16] == 0 && (uint8_t)name[17] == 0xA1, "[16] NUL, [17] цілий");
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+	/* те саме кирилицею: 16 літер «АБВГҐДЕЄЖЗИІЇЙКЛ» не вилазять за 16 */
+	memset(name, 0, sizeof name); pos = 0; st.key = 0; st.idx = 0;
+	name[17] = (char)0xA1; name[18] = (char)0xB2; name[19] = (char)0xC3;
+	for (int i = 0; i < 20; i++)
+	{
+		smsMtKey(&st, SMS_MT_UA_UP, (i & 1) ? '3' : '2', false, name, &pos, 16);
+	}
+	smsMtCommit(&st, &pos);
+	CHECK(strlen(name) == 16 && name[16] == 0 && (uint8_t)name[17] == 0xA1 && (uint8_t)name[19] == 0xC3, "кирилиця: 16 літер, межі цілі");
+#endif
+}
+
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 /* 33 великі + 33 малі українські літери, cp1251. */
 static const unsigned char UA_UP[] = {
@@ -231,6 +283,7 @@ int main(void)
 	testLatin();
 	testNumAndStar();
 	testBackspaceAndCap();
+	testContactNameCap();
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 	testUkrainian();
 	printf("(українська збірка)\n");

@@ -519,6 +519,28 @@ static bool nameSeqIsCyrillicUtf8(const uint8_t *p, size_t len)
 	return false;
 }
 
+/* R23 Y1: назви з кодплуга, записані CPS від TYT, -- GBK (GB2312). Кирилиця лежить у рядку 0xA7: великі А..Я (33 літери, Ё на алфавітному місці, індекс 6) --
+ * A7A1..A7C1, малі а..я (з ё) -- A7D1..A7F1. Через Ё відстань а->п тут +16, а не +15 як у cp1251. Перетворення -- арифметикою, без таблиці. Українських і, ї, є, ґ у
+ * GB2312 нема (CPS заміняє їх на «?» ще до запису), тож відновлювати нічого. Деталі й підтверджений приклад «Папуга» -- docs/codeplug-encoding.md. */
+static bool nameGbkCyrToCp1251(uint8_t lo, uint8_t *out)
+{
+	uint8_t i;
+
+	if ((lo >= 0xA1U) && (lo <= 0xC1U))
+	{
+		i = (uint8_t)(lo - 0xA1U);
+		*out = (i < 6U) ? (uint8_t)(0xC0U + i) : ((i == 6U) ? 0xA8U : (uint8_t)(0xC0U + i - 1U));   /* Ё -- поза рядом cp1251 (0xA8) */
+		return true;
+	}
+	if ((lo >= 0xD1U) && (lo <= 0xF1U))
+	{
+		i = (uint8_t)(lo - 0xD1U);
+		*out = (i < 6U) ? (uint8_t)(0xE0U + i) : ((i == 6U) ? 0xB8U : (uint8_t)(0xE0U + i - 1U));   /* ё -- 0xB8 */
+		return true;
+	}
+	return false;
+}
+
 size_t aprsNameToDisplay(char *s)
 {
 	size_t n = strlen(s);
@@ -538,6 +560,32 @@ size_t aprsNameToDisplay(char *s)
 	if (!high)
 	{
 		return n;
+	}
+	/* R23 Y1: GBK-кирилиця (пара A7 xx) -> cp1251 на місці; рядок коротшає (2 байти -> 1). Одинокий A7 (кінець обрізаної назви) і A7 з іншим другим байтом лишаються як є. */
+	{
+		size_t r = 0U;
+		size_t w = 0U;
+		bool conv = false;
+		uint8_t c;
+
+		while (r < n)
+		{
+			if ((((uint8_t)s[r]) == 0xA7U) && ((r + 1U) < n) && nameGbkCyrToCp1251((uint8_t)s[r + 1U], &c))
+			{
+				s[w++] = (char)c;
+				r += 2U;
+				conv = true;
+			}
+			else
+			{
+				s[w++] = s[r++];
+			}
+		}
+		if (conv)
+		{
+			s[w] = 0;
+			return w;
+		}
 	}
 	if (!aprsIsUtf8((const uint8_t *)s, n))
 	{

@@ -32,6 +32,10 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
+#if defined(APRS_R21_NAMES)
+#include "functions/sms_multitap.h"
+#include "user_interface/languages/aprsmode_ua.h"   /* R23 Y2: APRSM_L_MTHINT */
+#endif
 
 static void updateScreen(bool isFirstRun, bool updateScreen);
 static void updateCursor(bool moved);
@@ -47,6 +51,115 @@ static char digits[9];
 static char contactName[20];
 static int namePos;
 static int numPos;
+
+#if defined(APRS_R21_NAMES)
+/* R23 Y2: редактор назви контакту -- власний multitap (functions/sms_multitap.c, як у "Нове повідомлення" і редакторі "Режиму APRS") замість стокового
+ * латинського keypadAlphaEnable: "АБВ" -> "абв" -> "ABC" -> "abc" -> "123", перемикання клавішею "#". Кирилиця -- байтами cp1251; поле кодплуга 16 байтів,
+ * тож ліміт -- 16 символів.
+ *
+ * НОВОЇ RAM НЕМАЄ (бриф R23): стан multitap живе у вільних місцях наявних статичних змінних цього екрана --
+ *   contactName[17] -- клавіша, що гортається (smsMt_t.key), [18] -- номер у циклі (smsMt_t.idx), [19] -- режим набору;
+ *   contactName[16] лишається NUL-термінатором (cap = 16, символ перегляду стоїть не далі [15]);
+ *   tmpContact.NOT_IN_CODEPLUGDATA_indexNumber (цим екраном не використовується; у кодплуг не пишеться) -- ticksGetMillis() останнього натискання.
+ * Набір ЗАВЖДИ додає в кінець назви (multitap ведеться по довжині підтвердженого тексту); стирання -- SK2+ЛІВОРУЧ, як у стоковому редакторі. */
+#define CD_NAME_CAP   16
+#define CD_MT_KEY     contactName[17]
+#define CD_MT_IDX     contactName[18]
+#define CD_MT_MODE    contactName[19]
+#define CD_MT_MS      ((uint32_t)tmpContact.NOT_IN_CODEPLUGDATA_indexNumber)
+
+static void cdMtReset(void)
+{
+	CD_MT_KEY = 0;
+	CD_MT_IDX = 0;
+	CD_MT_MODE = (char)((contactName[0] == 0) ? SMS_MT_UA_UP : SMS_MT_UA_LO);   /* порожня назва починається з великої */
+	tmpContact.NOT_IN_CODEPLUGDATA_indexNumber = 0;
+}
+
+static uint8_t cdMtMode(void)
+{
+	return (((uint8_t)CD_MT_MODE) < SMS_MT_MODES) ? (uint8_t)CD_MT_MODE : (uint8_t)SMS_MT_DEFAULT;
+}
+
+/* Підтвердити символ, що гортається (якщо є), і поставити курсор у кінець (не далі 15, як у стоковому редакторі). */
+static void cdMtCommit(void)
+{
+	if (CD_MT_KEY != 0)
+	{
+		smsMt_t mt = { CD_MT_KEY, (uint8_t)CD_MT_IDX };
+		int16_t p = (int16_t)(strlen(contactName) - 1U);   /* символ перегляду -- в останній позиції рядка */
+
+		smsMtCommit(&mt, &p);
+		CD_MT_KEY = 0;
+		CD_MT_IDX = 0;
+		namePos = (p > 15) ? 15 : p;
+	}
+}
+
+static bool cdIsMtKey(uint32_t key)
+{
+	return ((key >= '0') && (key <= '9')) || (key == '*') || (key == KEY_HASH);
+}
+
+/* Текстова клавіша (або "#") у рядку "Назва". */
+static void cdNameKey(uiEvent_t *ev)
+{
+	char k = (char)ev->keys.key;
+	uint8_t mode = cdMtMode();
+	smsMt_t mt = { CD_MT_KEY, (uint8_t)CD_MT_IDX };
+	int16_t p = (int16_t)strlen(contactName);
+
+	if ((ev->keys.event & KEY_MOD_LONG) || ((ev->keys.event & KEY_MOD_PRESS) == 0))
+	{
+		return;
+	}
+
+	if (mt.key != 0)
+	{
+		p--;   /* підтверджений текст закінчується перед символом, що гортається */
+	}
+
+	if (k == KEY_HASH)
+	{
+		smsMtCommit(&mt, &p);
+		CD_MT_MODE = (char)smsMtModeNext(mode);
+	}
+	else if (smsMtKeyMap(mode, k) != NULL)
+	{
+		uint32_t now = ticksGetMillis();
+		bool same = (mt.key == k) && ((now - CD_MT_MS) < SMS_MT_TIMEOUT_MS);
+
+		if (smsMtKey(&mt, mode, k, same, contactName, &p, CD_NAME_CAP) == 1)
+		{
+			tmpContact.NOT_IN_CODEPLUGDATA_indexNumber = (int)now;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	CD_MT_KEY = mt.key;
+	CD_MT_IDX = (char)mt.idx;
+	namePos = (p > 15) ? 15 : p;
+	updateCursor(true);
+	updateScreen(false, false);
+}
+
+/* Індикатор режиму набору (плашка), підказка "#:режим" і лічильник символів -- внизу екрана, під списком (4 рядки його не досягають). */
+static void cdModeChip(void)
+{
+	const char *lbl = smsMtModeLabel(cdMtMode());
+	int16_t chipW = (int16_t)((strlen(lbl) * 6U) + 4U);
+	char cnt[12];
+
+	displayFillRect(0, 108, chipW, 10, false);
+	displayPrintCore(2, 109, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+	displayPrintAt((uint16_t)(chipW + 4), 109, APRSM_L_MTHINT, FONT_SIZE_1);
+	snprintf(cnt, sizeof(cnt), "%d/%d", (int)strlen(contactName), CD_NAME_CAP);
+	displayPrintCore(0, 109, cnt, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
+}
+#endif
 
 enum
 {
@@ -91,6 +204,9 @@ menuStatus_t menuContactDetails(uiEvent_t *ev, bool isFirstRun)
 			memset(contactName, 0, 20);
 			namePos = 0;
 			numPos = 0;
+#if defined(APRS_R21_NAMES)
+			cdMtReset();
+#endif
 
 			if (contactDetailsIndex == 0)
 			{
@@ -106,9 +222,17 @@ menuStatus_t menuContactDetails(uiEvent_t *ev, bool isFirstRun)
 			contactDetailsIndex = contactListContactData.NOT_IN_CODEPLUGDATA_indexNumber;
 			memcpy(&tmpContact, &contactListContactData, CONTACT_DATA_STRUCT_SIZE);
 			itoa(tmpContact.tgNumber, digits, 10);
+#if defined(APRS_R21_NAMES)
+			/* R23 Y2.5: назву з CPS (GBK) показуємо вже перекодованою в cp1251, інакше вона відкрилась би кракозябрами, а будь-яка правка зіпсувала б GBK-пари */
+			codeplugUtilConvertBufToDisplayString(tmpContact.name, contactName, 16);
+#else
 			codeplugUtilConvertBufToString(tmpContact.name, contactName, 16);
+#endif
 			namePos = strlen(contactName);
 			numPos = 0;
+#if defined(APRS_R21_NAMES)
+			cdMtReset();
+#endif
 		}
 
 		menuContactDetailsState = (contactDetailsIndex == 0) ? MENU_CONTACT_DETAILS_FULL : MENU_CONTACT_DETAILS_DISPLAY;
@@ -124,6 +248,14 @@ menuStatus_t menuContactDetails(uiEvent_t *ev, bool isFirstRun)
 	{
 		menuContactDetailsExitCode = MENU_STATUS_SUCCESS;
 
+#if defined(APRS_R21_NAMES)
+		/* R23 Y2: символ, що гортається, підтверджується сам за SMS_MT_TIMEOUT_MS (як у "Нове повідомлення") */
+		if ((menuContactDetailsState == MENU_CONTACT_DETAILS_DISPLAY) && (CD_MT_KEY != 0) && ((ticksGetMillis() - CD_MT_MS) >= SMS_MT_TIMEOUT_MS))
+		{
+			cdMtCommit();
+			updateScreen(false, false);
+		}
+#endif
 		updateCursor(false);
 		if (ev->hasEvent || (menuContactDetailsTimeout > 0))
 		{
@@ -179,6 +311,9 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 
 	menuDisplayTitle(buf);
 
+#if defined(APRS_R21_NAMES)
+	keypadAlphaEnable = false;   /* R23 Y2: набір назви -- власний multitap (cdNameKey), клавіші приходять сирими */
+#else
 	if (menuDataGlobal.currentItemIndex == CONTACT_DETAILS_NAME)
 	{
 		keypadAlphaEnable = true;
@@ -187,6 +322,7 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 	{
 		keypadAlphaEnable = false;
 	}
+#endif
 
 	switch (menuContactDetailsState)
 	{
@@ -386,6 +522,12 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 			promptsPlayNotAfterTx();
 			break;
 	}
+#if defined(APRS_R21_NAMES)
+	if ((menuContactDetailsState == MENU_CONTACT_DETAILS_DISPLAY) && (menuDataGlobal.currentItemIndex == CONTACT_DETAILS_NAME))
+	{
+		cdModeChip();   /* R23 Y2.2: режим набору видно, назву не перекриває */
+	}
+#endif
 	displayRender();
 }
 
@@ -417,6 +559,13 @@ static void handleEvent(uiEvent_t *ev)
 		case MENU_CONTACT_DETAILS_DISPLAY:
 			if (ev->events & KEY_EVENT)
 			{
+#if defined(APRS_R21_NAMES)
+				/* R23 Y2: будь-яка не текстова клавіша (стрілки, GREEN, RED, SK) спершу підтверджує символ, що гортається */
+				if ((CD_MT_KEY != 0) && (ev->keys.key != 0) && (ev->keys.event & KEY_MOD_PRESS) && (cdIsMtKey(ev->keys.key) == false))
+				{
+					cdMtCommit();
+				}
+#endif
 				if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 				{
 					menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, NUM_CONTACT_DETAILS_ITEMS);
@@ -626,6 +775,9 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					else if (menuDataGlobal.currentItemIndex == CONTACT_DETAILS_NAME)
 					{
+#if defined(APRS_R21_NAMES)
+						cdNameKey(ev);   /* R23 Y2: multitap замість стокового латинського введення */
+#else
 						if ((ev->keys.event == KEY_MOD_PREVIEW) && (namePos < 16))
 						{
 							contactName[namePos] = ev->keys.key;
@@ -644,6 +796,7 @@ static void handleEvent(uiEvent_t *ev)
 							announceChar(ev->keys.key);
 							updateScreen(false, false);
 						}
+#endif
 					}
 				}
 			}

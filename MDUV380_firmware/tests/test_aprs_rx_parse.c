@@ -1271,6 +1271,100 @@ static void testNameDisplay(void)
 	CHECK((n == 2U) && !strcmp(b, "\xFF\xFE"), "недійсні лід-байти -- без змін");
 }
 
+/* R23 Y1: імена кодплуга в GBK (CPS від TYT пише кирилицю в рядок 0xA7): A7A1..A7C1 -- А..Я (з Ё), A7D1..A7F1 -- а..я (з ё) -> cp1251 на місці. */
+static void testNameGbk(void)
+{
+	char b[40];
+	size_t n;
+	/* еталон згенеровано Python: bytes([0xA7, lo]).decode('gbk').encode('cp1251') для кожного lo */
+	static const uint8_t wantUp[33] = { 0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xA8, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF };
+	static const uint8_t wantLo[33] = { 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xB8, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF };
+	bool okUp = true;
+	bool okLo = true;
+
+	printf("--- R23 Y1: GBK-кирилиця з кодплуга ---\n");
+	/* підтверджений на залізі приклад: контакт «Папуга» */
+	memcpy(b, "\xA7\xB1\xA7\xD1\xA7\xE1\xA7\xE5\xA7\xD4\xA7\xD1", 13);
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !memcmp(b, "\xCF\xE0\xEF\xF3\xE3\xE0", 7), "«Папуга» GBK -> cp1251 (%u байт)", (unsigned)n);
+	/* Ё і ё поза рядом cp1251 */
+	strcpy(b, "\xA7\xA7");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 1U) && ((uint8_t)b[0] == 0xA8U) && !b[1], "A7A7 -> 0xA8 (Ё)");
+	strcpy(b, "\xA7\xD7");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 1U) && ((uint8_t)b[0] == 0xB8U) && !b[1], "A7D7 -> 0xB8 (ё)");
+	/* межі */
+	strcpy(b, "\xA7\xA1");
+	aprsNameToDisplay(b);
+	CHECK((uint8_t)b[0] == 0xC0U, "A7A1 -> 0xC0 (А)");
+	strcpy(b, "\xA7\xC1");
+	aprsNameToDisplay(b);
+	CHECK((uint8_t)b[0] == 0xDFU, "A7C1 -> 0xDF (Я)");
+	strcpy(b, "\xA7\xD1");
+	aprsNameToDisplay(b);
+	CHECK((uint8_t)b[0] == 0xE0U, "A7D1 -> 0xE0 (а)");
+	strcpy(b, "\xA7\xF1");
+	aprsNameToDisplay(b);
+	CHECK((uint8_t)b[0] == 0xFFU, "A7F1 -> 0xFF (я)");
+	/* усі 33 + 33 літери проти еталона Python */
+	for (int i = 0; i < 33; i++)
+	{
+		b[0] = (char)0xA7; b[1] = (char)(0xA1 + i); b[2] = 0;
+		aprsNameToDisplay(b);
+		if (((uint8_t)b[0] != wantUp[i]) || b[1]) { okUp = false; }
+		b[0] = (char)0xA7; b[1] = (char)(0xD1 + i); b[2] = 0;
+		aprsNameToDisplay(b);
+		if (((uint8_t)b[0] != wantLo[i]) || b[1]) { okLo = false; }
+	}
+	CHECK(okUp, "усі 33 великі літери збігаються з еталоном (Python gbk->cp1251)");
+	CHECK(okLo, "усі 33 малі літери збігаються з еталоном");
+	/* ASCII, «?» замість українських, змішане */
+	strcpy(b, "LOCAL");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 5U) && !strcmp(b, "LOCAL"), "«LOCAL» без змін");
+	strcpy(b, "?\xA7\xD3\xA7\xA4?\xA7\xD0");   /* '?' лишається '?'; A7D0 -- поза діапазоном */
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !memcmp(b, "?\xE2\xC3?\xA7\xD0", 7), "«?» + GBK + «?» + A7D0 поза діапазоном (%u)", (unsigned)n);
+	strcpy(b, "?\xDF? ?");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 5U) && !strcmp(b, "?\xDF? ?"), "назва зі знаками питання без змін");
+	strcpy(b, "?? ??");
+	CHECK((aprsNameToDisplay(b) == 5U) && !strcmp(b, "?? ??"), "«?? ??» (CPS замінив українські літери) без змін");
+	strcpy(b, "TG \xA7\xB1\xA7\xE5");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 5U) && !strcmp(b, "TG \xCF\xF3"), "латиниця + GBK-кирилиця");
+	/* одинокий A7 в кінці (обрізана назва) */
+	strcpy(b, "AB\xA7");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 3U) && !strcmp(b, "AB\xA7"), "одинокий A7 в кінці без змін");
+	strcpy(b, "\xA7");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 1U) && ((uint8_t)b[0] == 0xA7U), "лише A7 без змін");
+	/* A7 з другим байтом поза діапазоном */
+	strcpy(b, "\xA7\x90");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "\xA7\x90"), "A790 без змін");
+	strcpy(b, "\xA7\xC2\xA7\xD0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 4U) && !strcmp(b, "\xA7\xC2\xA7\xD0"), "A7C2, A7D0 (поруч з діапазонами) без змін");
+	/* A7 не в парі після повної пари */
+	strcpy(b, "\xA7\xB1\xA7");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && ((uint8_t)b[0] == 0xCFU) && ((uint8_t)b[1] == 0xA7U) && !b[2], "пара + хвостовий A7: A7 лишився");
+	/* повністю заповнений GBK-парами: 8 літер у 16 байтах -> 8 байтів; буфер рівно 17 (16 + NUL) */
+	{
+		char f[17];
+		memcpy(f, "\xA7\xA1\xA7\xA2\xA7\xA3\xA7\xA4\xA7\xA5\xA7\xA6\xA7\xA7\xA7\xA8", 17);
+		n = aprsNameToDisplay(f);
+		CHECK((n == 8U) && !memcmp(f, "\xC0\xC1\xC2\xC3\xC4\xC5\xA8\xC6", 9), "8 GBK-пар у 16 байтах -> 8 байтів (А Б В Г Д Е Ё Ж)");
+	}
+	/* UTF-8-гілка R21 лишилась */
+	strcpy(b, "\xD0\x9F\xD0\xB0\xD0\xBF\xD1\x83\xD0\xB3\xD0\xB0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !strcmp(b, "\xCF\xE0\xEF\xF3\xE3\xE0"), "UTF-8 «Папуга» і далі працює");
+}
+
 /* R21 З4: кругова перевірка -- QSY, який складає маяк (aprsModeQsyFormat/aprsModeCommentWithQsy), розбирається commentStrip() назад у ті самі
  * частоту, тон і зсув, а текст користувача лишається цілим. */
 static void qsyRound(const char *tag, uint32_t rx, uint32_t tx, char kind, unsigned val, bool wide, const char *cp1251, uint32_t wantKHz,
@@ -2172,6 +2266,7 @@ int main(void)
 	testRawText();
 	testFuzz();
 	testNameDisplay();
+	testNameGbk();
 	testQsyRoundTrip();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
