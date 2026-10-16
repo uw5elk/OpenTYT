@@ -196,6 +196,8 @@ def safety_files(d):
 def test_locked_by_default():
     check(isinstance(cr.RESTORE_UNLOCKED, bool), "RESTORE_UNLOCKED -- булева константа; BK8 підтверджено 2026-10-16")
     check(cr.LOCKED_CAPTION == "доступно після перевірки BK8", "підпис на заблокованій кнопці")
+    _bk8_old = cr.RESTORE_UNLOCKED
+    cr.RESTORE_UNLOCKED = False
     with tempfile.TemporaryDirectory() as d:
         a = spi_a()
         p, _m = make_backup_file(d, a)
@@ -207,6 +209,7 @@ def test_locked_by_default():
             check("BK8" in str(e), "повідомлення про блокування: %s" % e)
         check(radio.requests == [] and radio.x_total == 0 and radio.c_calls == [], "заблоковано: ЖОДНОГО трафіку до рації")
         check(safety_files(d) == [], "заблоковано: страхова копія не створюється")
+    cr.RESTORE_UNLOCKED = _bk8_old
 
 
 # ----------------------------------------------------------------------------------------
