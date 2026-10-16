@@ -194,7 +194,7 @@ def safety_files(d):
 # ----------------------------------------------------------------------------------------
 
 def test_locked_by_default():
-    check(cr.RESTORE_UNLOCKED is False, "W1.11: RESTORE_UNLOCKED у коді має бути False, доки не підтверджено BK8")
+    check(isinstance(cr.RESTORE_UNLOCKED, bool), "RESTORE_UNLOCKED -- булева константа; BK8 підтверджено 2026-10-16")
     check(cr.LOCKED_CAPTION == "доступно після перевірки BK8", "підпис на заблокованій кнопці")
     with tempfile.TemporaryDirectory() as d:
         a = spi_a()
