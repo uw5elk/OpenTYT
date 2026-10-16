@@ -150,6 +150,15 @@ if [ -z "$FILTER" ] || [[ "check_ccm_init" == *"$FILTER"* ]]; then
 	fi
 fi
 
+if [ -z "$FILTER" ] || [[ "aprs_icons_gen" == *"$FILTER"* ]]; then
+	# R20 Ж2: tools/aprs_icons.txt коректний (24x24, без дублікатів/поодиноких пікселів, назви збігаються з aprsmode_ua.h), а aprs_icons.c і docs/aprs-icons.md не застаріли
+	if out="$(python3 "$TESTS_DIR/../tools/aprs_icons_gen.py" --check 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            aprs_icons_gen --check (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        aprs_icons_gen --check (python)"; printf '%s\n' "$out" | tail -10
+	fi
+fi
+
 if [ -z "$FILTER" ] || [[ "test_aprs_capture aprs_offline" == *"$FILTER"* ]]; then
 	# R4: самоперевірки інструментів запису «APRS проби» (без рації): розбір відповідей 0xB5 і
 	# склеювання за номерами блоків; офлайн-аналіз еталонного WAV тим самим C-демодулятором.

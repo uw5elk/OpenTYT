@@ -1022,7 +1022,7 @@ static void aprsWinInfoRows(const aprsRxWin_t *w, int16_t y)
 
 /* Піктограма символу 24x24 (R17 Г5; була 16x16). Накладка (таблиця -- цифра/літера): знак у блоці 8x8 у правому нижньому куті піктограми з ІНВЕРСНИМ
  * тлом (суцільний блок кольору переднього плану, знак -- кольором тла): читається на будь-якій піктограмі. Невідомий символ -- рамка 24x24 з самим
- * знаком коду (FONT_SIZE_1, по центру). */
+ * знаком коду (FONT_SIZE_3, 8x16, по центру). */
 static void aprsWinDrawSymbol(int16_t x, int16_t y, const aprsRxWin_t *w)
 {
 	bool ov = false;
@@ -1044,7 +1044,7 @@ static void aprsWinDrawSymbol(int16_t x, int16_t y, const aprsRxWin_t *w)
 	{
 		displayDrawRect(x, y, APRS_ICON_W, APRS_ICON_H, true);
 		one[0] = ((w->symCode >= 0x20) && (w->symCode < 0x7F)) ? w->symCode : '?';
-		displayPrintCore((int16_t)(x + (APRS_ICON_W / 2) - 3), (int16_t)(y + (APRS_ICON_H / 2) - 4), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+		displayPrintCore((int16_t)(x + (APRS_ICON_W / 2) - 4), (int16_t)(y + (APRS_ICON_H / 2) - 8), one, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);   /* R20 Ж2.6: знак 8x16 по центру рамки */
 	}
 }
 

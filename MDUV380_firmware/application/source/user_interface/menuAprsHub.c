@@ -40,8 +40,18 @@ enum
 #if defined(APRS_RX_PROBE)
 	APRS_HUB_PROBE,
 #endif
+#if defined(ENABLE_APRS_RX_PROBE)
+	APRS_HUB_SYMTAB,      /* R20 Ж2: діагностичний екран «Таблиця символів» (лише diag) */
+#endif
 	APRS_HUB_NUM
 };
+
+#if defined(ENABLE_APRS_RX_PROBE)
+/* Екран «Таблиця символів» не має власного стану (RAM 0): поки він відкритий, menuDataGlobal.currentItemIndex = SYMTAB_OPEN + сторінка (>= APRS_HUB_NUM,
+ * тож не плутається з пунктом списку). Закриття повертає індекс пункту APRS_HUB_SYMTAB; якщо поверх екрана відкрили інше меню (PTT) і повернулися --
+ * menuAprsHub() на першому вході зводить індекс у межі списку. */
+#define SYMTAB_OPEN   100
+#endif
 
 static menuStatus_t hubExitCode = MENU_STATUS_SUCCESS;
 
@@ -67,6 +77,9 @@ static const char *itemName(int n, char *buf, size_t cap)
 		case APRS_HUB_SETTINGS: return APRSM_H_SETTINGS;
 #if defined(APRS_RX_PROBE)
 		case APRS_HUB_PROBE:    return APRSRX_HUB_PROBE;
+#endif
+#if defined(ENABLE_APRS_RX_PROBE)
+		case APRS_HUB_SYMTAB:   return APRSM_DIAG_SYMTAB;
 #endif
 		default:                return "";
 	}
@@ -143,10 +156,53 @@ static void openItem(int n)
 			menuAprsRxProbeEnter();
 			break;
 #endif
+#if defined(ENABLE_APRS_RX_PROBE)
+		case APRS_HUB_SYMTAB:
+			menuDataGlobal.currentItemIndex = SYMTAB_OPEN;
+			menuAprsSymTableDraw(0U);
+			break;
+#endif
 		default:
 			break;
 	}
 }
+
+#if defined(ENABLE_APRS_RX_PROBE)
+/* Події екрана «Таблиця символів»: вниз/праворуч -- наступна сторінка, вгору/ліворуч -- попередня (по колу), RED -- назад до списку. */
+static void symTableEvent(uiEvent_t *ev)
+{
+	unsigned page = (unsigned)(menuDataGlobal.currentItemIndex - SYMTAB_OPEN);
+
+	if (ev->events & FUNCTION_EVENT)
+	{
+		if (ev->function == FUNC_REDRAW)
+		{
+			menuAprsSymTableDraw(page);
+		}
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	{
+		page = (page + 1U) % MENU_APRS_SYMTAB_PAGES;
+	}
+	else if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	{
+		page = (page + MENU_APRS_SYMTAB_PAGES - 1U) % MENU_APRS_SYMTAB_PAGES;
+	}
+	else if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		menuDataGlobal.currentItemIndex = APRS_HUB_SYMTAB;
+		updateScreen(false);
+		return;
+	}
+	else
+	{
+		return;
+	}
+	menuDataGlobal.currentItemIndex = (int)(SYMTAB_OPEN + page);
+	menuAprsSymTableDraw(page);
+}
+#endif
 
 static void handleEvent(uiEvent_t *ev)
 {
@@ -206,6 +262,12 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 	if (isFirstRun)
 	{
 		menuDataGlobal.numItems = APRS_HUB_NUM;
+#if defined(ENABLE_APRS_RX_PROBE)
+		if (menuDataGlobal.currentItemIndex >= APRS_HUB_NUM)
+		{
+			menuDataGlobal.currentItemIndex = APRS_HUB_SYMTAB;   /* повернулися з іншого меню, коли була відкрита «Таблиця символів» */
+		}
+#endif
 		menuDataGlobal.menuOptionsSetQuickkey = 0;
 		menuDataGlobal.menuOptionsTimeout = 0;
 
@@ -260,6 +322,17 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 		if (menuAprsRxProbeTick(ev) == false)
 		{
 			updateScreen(false);
+		}
+		return hubExitCode;
+	}
+#endif
+
+#if defined(ENABLE_APRS_RX_PROBE)
+	if (menuDataGlobal.currentItemIndex >= SYMTAB_OPEN)
+	{
+		if (ev->hasEvent)
+		{
+			symTableEvent(ev);
 		}
 		return hubExitCode;
 	}
