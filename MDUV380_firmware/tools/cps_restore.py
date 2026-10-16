@@ -42,7 +42,7 @@ import cps_link as cl  # noqa: E402
 import codeplug_view as cv  # noqa: E402
 
 # *** Зняти блокування = змінити False на True окремим однорядковим комітом, коли Богдан підтвердить BK8. ***
-RESTORE_UNLOCKED = False
+RESTORE_UNLOCKED = True
 LOCKED_CAPTION = "доступно після перевірки BK8"
 
 SECTOR = cl.SECTOR
