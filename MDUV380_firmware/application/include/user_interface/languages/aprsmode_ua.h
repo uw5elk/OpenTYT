@@ -347,5 +347,7 @@
 
 /* R21 З4: перемикач QSY-інформації в коментарі маяка (група «Маяк») */
 #define APRSM_L_QSY          "QSY інфо"
+#define APRSM_L_RAWC         "Контакт"   /* R22 Z2: вікно сирих байтів назви (contact list, *) */
+#define APRSM_L_RAWG         "Група"
 
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

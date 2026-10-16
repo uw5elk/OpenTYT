@@ -64,6 +64,7 @@ declare -A SRCS=(
 	[test_aprs_fault]="$APP/source/functions/aprs_fault_fmt.c"   # R10-fix4: ЧИСТА частина обробника збою -- hex/dec, CFSR, пошук адрес у стеку, магія запису
 	[test_aprs_stations_ui]="$APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R8-fix: справжній екран «APRS станції», дисплей і приймач -- заглушки
 	[test_codeplug_zone]="$APP/source/functions/codeplug.c"   # R22 Z1: СПРАВЖНІЙ codeplug.c -- вибір зон (єдине правило «справжня зона», ліміт 68 бітів, крок валкодера); залізо -- заглушки в тесті
+	[test_raw_name_fmt]=""   # R22 Z2: форматування вікна «сирі байти назви» (лише заголовок)
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 

@@ -294,7 +294,8 @@ void codeplugZonesInitCache(void)
 	EEPROM_Read(CODEPLUG_ADDR_EX_ZONE_INUSE_PACKED_DATA, (uint8_t *)&codeplugZonesInUseCache, CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE);
 }
 
-_Static_assert(CODEPLUG_ZONE_MASK_BITS == CODEPLUG_ZONES_MAX, "codeplug_zone.h: ліміт бітів маски зон розійшовся з CODEPLUG_ZONES_MAX");
+/* codeplug_zone.h: ліміт бітів маски зон мусить збігатись з CODEPLUG_ZONES_MAX */
+_Static_assert(CODEPLUG_ZONE_MASK_BITS == CODEPLUG_ZONES_MAX, "CODEPLUG_ZONE_MASK_BITS != CODEPLUG_ZONES_MAX");
 
 int codeplugZonesGetCount(void)
 {

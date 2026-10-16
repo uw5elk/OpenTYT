@@ -29,6 +29,10 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
+#if defined(APRS_R21_NAMES)
+#include "user_interface/languages/aprsmode_ua.h"   /* R22 Z2: APRSM_L_RAWC / APRSM_L_RAWG */
+#include "functions/raw_name_fmt.h"
+#endif
 
 typedef enum
 {
@@ -36,6 +40,11 @@ typedef enum
 	MENU_CONTACT_LIST_CONFIRM,
 	MENU_CONTACT_LIST_DELETED,
 	MENU_CONTACT_LIST_TG_IN_RXGROUP
+#if defined(APRS_R21_NAMES)
+	,
+	MENU_CONTACT_LIST_RAW_CONTACT,   /* R22 Z2: сирі 16 байтів назви контакту */
+	MENU_CONTACT_LIST_RAW_GROUP      /* R22 Z2: сирі 16 байтів назви групи (TG list) */
+#endif
 } contactListState_t;
 
 typedef enum
@@ -198,6 +207,41 @@ menuStatus_t menuContactList(uiEvent_t *ev, bool isFirstRun)
 	return menuContactListExitCode;
 }
 
+#if defined(APRS_R21_NAMES)
+/* R22 Z2: ДІАГНОСТИКА кодування назв у кодплузі. Показує СИРІ 16 байтів назви (hex по 8 байтів у рядок, нижче -- ті самі
+ * байти як ASCII, '.' для решти) -- без жодного перекодування. Фото цього вікна дає змогу переписати aprsNameToDisplay()
+ * під справжнє кодування (R23). Нової RAM нема: контакт читається в наявний `contact`, група -- у стек. */
+static void rawNameScreen(const char *kind, int n, int total, int codeplugIdx, const uint8_t *raw, bool valid)
+{
+	char buf[24];
+	char line[24];
+
+	snprintf(buf, sizeof(buf), "%s %d/%d", kind, (n % 10000), (total % 10000));
+	menuDisplayTitle(buf);
+
+	if (valid == false)
+	{
+		displayPrintCentered((DISPLAY_SIZE_Y / 2), currentLanguage->none, FONT_SIZE_3);
+		return;
+	}
+
+	for (int row = 0; row < 2; row++)
+	{
+		rawNameHexRow(&raw[row * 8], line);
+		displayPrintAt(4, (uint16_t)(24 + (row * 12)), line, FONT_SIZE_2);
+	}
+
+	rawNameAscii(raw, line);
+	displayPrintAt(4, 56, line, FONT_SIZE_2);
+
+	if (codeplugIdx > 0)
+	{
+		snprintf(buf, sizeof(buf), "#%d", (codeplugIdx % 10000));   /* номер запису в кодплузі */
+		displayPrintAt(4, 72, buf, FONT_SIZE_2);
+	}
+}
+#endif
+
 static void updateScreen(bool isFirstRun)
 {
 	char nameBuf[33];
@@ -283,6 +327,23 @@ static void updateScreen(bool isFirstRun)
 			displayPrintCentered((DISPLAY_SIZE_Y/2), currentLanguage->in_tg_list, FONT_SIZE_3);
 			displayDrawChoice(CHOICE_DISMISS, false);
 			break;
+
+#if defined(APRS_R21_NAMES)
+		case MENU_CONTACT_LIST_RAW_CONTACT:
+			idx = codeplugContactGetDataForNumberInType(menuDataGlobal.currentItemIndex + 1, contactCallType, &contact);
+			rawNameScreen(APRSM_L_RAWC, (menuDataGlobal.currentItemIndex + 1), menuDataGlobal.numItems, ((idx > 0) ? contact.NOT_IN_CODEPLUGDATA_indexNumber : 0),
+					(const uint8_t *)contact.name, (idx > 0));
+			break;
+
+		case MENU_CONTACT_LIST_RAW_GROUP:
+			{
+				CodeplugRxGroup_t group;
+				bool ok = codeplugRxGroupGetDataForIndex(menuContactListTimeout + 1, &group);   /* menuContactListTimeout тут -- номер групи (0-based); у DISPLAY/RAW він не використовується */
+
+				rawNameScreen(APRSM_L_RAWG, (menuContactListTimeout + 1), CODEPLUG_RX_GROUPLIST_MAX, 0, (const uint8_t *)group.name, ok);
+			}
+			break;
+#endif
 	}
 
 	displayRender();
@@ -407,6 +468,16 @@ static void handleEvent(uiEvent_t *ev)
 				}
 				return;
 			}
+#if defined(APRS_R21_NAMES)
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == false) &&
+					(contactListType == MENU_CONTACT_LIST_CONTACT_DIGITAL) && (menuDataGlobal.numItems > 0))
+			{
+				/* R22 Z2: «*» -- сирі байти назви виділеного контакту (діагностика кодування) */
+				contactListDisplayState = MENU_CONTACT_LIST_RAW_CONTACT;
+				updateScreen(false);
+				return;
+			}
+#endif
 			else if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 			{
 				uiDataGlobal.currentSelectedContactIndex = 0;
@@ -422,6 +493,47 @@ static void handleEvent(uiEvent_t *ev)
 			}
 
 			break;
+
+#if defined(APRS_R21_NAMES)
+		case MENU_CONTACT_LIST_RAW_CONTACT:
+		case MENU_CONTACT_LIST_RAW_GROUP:
+			/* R22 Z2: UP/DOWN -- попередній/наступний контакт (група); «*» -- перемикає контакти <-> групи; RED/GREEN -- назад до списку */
+			if (KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_UP))
+			{
+				bool down = KEYCHECK_PRESS(ev->keys, KEY_DOWN);
+
+				if (contactListDisplayState == MENU_CONTACT_LIST_RAW_CONTACT)
+				{
+					if (down) { menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, menuDataGlobal.numItems); }
+					else      { menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, menuDataGlobal.numItems); }
+				}
+				else
+				{
+					int g = menuContactListTimeout;   /* номер групи, 0-based */
+
+					g = down ? (g + 1) : (g - 1);
+					if (g < 0) { g = (CODEPLUG_RX_GROUPLIST_MAX - 1); }
+					if (g >= CODEPLUG_RX_GROUPLIST_MAX) { g = 0; }
+					menuContactListTimeout = g;
+				}
+				updateScreen(false);
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_STAR))
+			{
+				menuContactListTimeout = 0;
+				contactListDisplayState = (contactListDisplayState == MENU_CONTACT_LIST_RAW_CONTACT) ? MENU_CONTACT_LIST_RAW_GROUP : MENU_CONTACT_LIST_RAW_CONTACT;
+				updateScreen(false);
+			}
+			else if (KEYCHECK_SHORTUP(ev->keys, KEY_RED) || KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+			{
+				menuContactListTimeout = 0;
+				contactListDisplayState = MENU_CONTACT_LIST_DISPLAY;
+				voicePromptsInit(); // flush the VP buffer
+				reloadContactList(contactListType);
+				updateScreen(false);
+			}
+			break;
+#endif
 
 		case MENU_CONTACT_LIST_CONFIRM:
 			if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
