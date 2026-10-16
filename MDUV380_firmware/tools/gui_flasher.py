@@ -48,6 +48,9 @@ import custom_data as cd        # безпечний read/write custom-data бл
                                  # RCTL і т.д. в ОДНОМУ регіоні -- див. коментар у custom_data.py)
 import rctl_config as rctl      # формат блоку "RCTL" (allowlist віддаленого керування)
 import cps_link as cps          # R24: знімок екрана і бекап кодплуга (лише читання, без залежностей крім pyserial)
+import cps_restore as cps_rest  # R25: відновлення кодплуга (ЗАПИС; заблоковано константою RESTORE_UNLOCKED)
+import codeplug_view as cpview  # R25: розбір вмісту кодплуга (спільне декодування назв)
+import codeplug_viewer_gui      # R25: вікно перегляду (лише читання)
 
 try:
     import serial  # той самий пакет, яким уже користується dmr_reboot_dfu.py
@@ -209,7 +212,9 @@ class FlasherApp(tk.Tk):
         self.queue = queue.Queue()
         self.backend = load_usb_backend()
         self.flashing = False
-        self.cps_busy = False   # R24: іде знімок екрана або бекап
+        self.cps_busy = False   # R24: іде знімок екрана, бекап, перегляд або відновлення
+        self._cps_on_done = None
+        self._cps_fail_suffix = "\n\nФайл не збережено."
 
         self.donor_path = self._load_saved_donor()
         self.firmware_path = find_bundled_firmware()
@@ -305,7 +310,7 @@ class FlasherApp(tk.Tk):
         self.rctl_button.pack(side="left", padx=8)
 
         # R24: читання з рації. Другий рядок, бо в першому вже чотири кнопки і шість у 700 пікселів не влізуть.
-        # Обидві дії ЛИШЕ ЧИТАЮТЬ: у рацію нічого не записується.
+        # Знімок і бекап ЛИШЕ ЧИТАЮТЬ: у рацію нічого не записується. (Третій рядок нижче -- перегляд і відновлення, R25.)
         read_frame = ttk.Frame(self)
         read_frame.pack(fill="x", padx=12, pady=(0, 6))
 
@@ -320,6 +325,27 @@ class FlasherApp(tk.Tk):
         self.shot_diag_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(read_frame, text="знімок: діагностика (обидва порядки байтів + сирий буфер)",
                         variable=self.shot_diag_var).pack(side="left", padx=8)
+
+        self.full_snapshot_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(read_frame, text="повний знімок (+ голосові підказки і ключі AES)",
+                        variable=self.full_snapshot_var).pack(side="left", padx=8)
+
+        # R25: перегляд (лише читання) і відновлення (ПИШЕ в рацію; кнопка вимкнена, доки Богдан не підтвердить BK8).
+        view_frame = ttk.Frame(self)
+        view_frame.pack(fill="x", padx=12, pady=(0, 6))
+
+        self.view_file_button = ttk.Button(view_frame, text="Переглянути бекап...", command=self._on_view_file_clicked)
+        self.view_file_button.pack(side="left")
+
+        self.view_radio_button = ttk.Button(view_frame, text="Переглянути кодплуг з рації", command=self._on_view_radio_clicked)
+        self.view_radio_button.pack(side="left", padx=8)
+
+        self.restore_button = ttk.Button(view_frame, text="Відновити кодплуг...", command=self._on_restore_clicked)
+        self.restore_button.pack(side="left", padx=8)
+        self.restore_note = ttk.Label(view_frame, text="" if cps_rest.RESTORE_UNLOCKED else cps_rest.LOCKED_CAPTION,
+                                      foreground="#8a5a00")
+        self.restore_note.pack(side="left")
+        self._refresh_restore_button(True)
 
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=12, pady=(0, 6))
@@ -438,6 +464,8 @@ class FlasherApp(tk.Tk):
                     self._on_flash_finished(*payload)
                 elif kind == "cpsdone":
                     self._on_cps_finished(*payload)
+                elif kind == "confirm":
+                    self._on_confirm_request(*payload)
                 elif kind == "status":
                     self.status_label.config(text=payload, foreground="#14506b")
         except queue.Empty:
@@ -558,19 +586,103 @@ class FlasherApp(tk.Tk):
 
     def _set_cps_buttons(self, enabled):
         state = "normal" if enabled else "disabled"
-        for b in (self.shot_button, self.backup_button, self.flash_button):
+        for b in (self.shot_button, self.backup_button, self.flash_button, self.view_file_button, self.view_radio_button):
             b.config(state=state)
+        self._refresh_restore_button(enabled)
+
+    def _refresh_restore_button(self, enabled):
+        """W1.11: кнопка відновлення НІКОЛИ не вмикається, доки cps_restore.RESTORE_UNLOCKED == False."""
+        self.restore_button.config(state="normal" if (enabled and cps_rest.RESTORE_UNLOCKED) else "disabled")
 
     def _on_screenshot_clicked(self):
         diag = bool(self.shot_diag_var.get())
         self._run_cps_task(lambda: self._screenshot_worker(diag), "Знімаю екран рації...")
 
     def _on_backup_clicked(self):
-        self._run_cps_task(self._backup_worker, "Читаю кодплуг з рації (бекап)...")
+        full = bool(self.full_snapshot_var.get())
+        self._run_cps_task(lambda: self._backup_worker(full), "Читаю кодплуг з рації (бекап)...")
 
-    def _run_cps_task(self, fn, status_text):
+    # --- R25: перегляд ---
+
+    def _on_view_file_clicked(self):
         if self.flashing or self.cps_busy:
             return
+        path = filedialog.askopenfilename(title="Бекап кодплуга", initialdir=self._cps_output_dir(),
+                                          filetypes=[("Бекап кодплуга (.zip)", "*.zip"), ("Усі файли", "*.*")])
+        if not path:
+            return
+        try:
+            cp, _manifest = cpview.codeplug_from_backup(path)
+        except (OSError, cps.CpsError) as e:
+            messagebox.showerror("Помилка", "Не вдалося прочитати бекап:\n{}".format(e))
+            return
+        codeplug_viewer_gui.CodeplugViewerWindow(self, cp, os.path.basename(path), self._cps_output_dir())
+
+    def _on_view_radio_clicked(self):
+        self._run_cps_task(self._view_radio_worker, "Читаю кодплуг з рації для перегляду...",
+                           on_done=self._show_viewer_from_radio, fail_suffix="")
+
+    def _view_radio_worker(self):
+        ser = cps.open_radio()
+        try:
+            cp, _manifest = cpview.codeplug_from_radio(cps.CpsLink(ser), self._cps_progress)
+        finally:
+            ser.close()
+        return cp
+
+    def _show_viewer_from_radio(self, cp):
+        codeplug_viewer_gui.CodeplugViewerWindow(self, cp, "прямо з рації", self._cps_output_dir())
+
+    # --- R25: відновлення (ЗАПИС у рацію) ---
+
+    def _on_restore_clicked(self):
+        if self.flashing or self.cps_busy or not cps_rest.RESTORE_UNLOCKED:
+            return
+        path = filedialog.askopenfilename(title="Бекап, з якого відновити кодплуг", initialdir=self._cps_output_dir(),
+                                          filetypes=[("Бекап кодплуга (.zip)", "*.zip")])
+        if not path:
+            return
+        self._run_cps_task(lambda: self._restore_worker(path), "Відновлюю кодплуг...", on_done=self._restore_done,
+                           fail_suffix="\n\nСтан рації описано вище. Не вимикай програму, поки не прочитаєш повідомлення.")
+
+    def _restore_worker(self, path):
+        ser = cps.open_radio()
+        try:
+            return cps_rest.restore_codeplug(cps.CpsLink(ser), path, self._confirm_from_worker, self._cps_progress, log=print)
+        finally:
+            try:
+                ser.close()
+            except Exception:  # noqa: BLE001 -- рація після C 6 1 перезавантажується, порт може зникнути
+                pass
+
+    def _confirm_from_worker(self, text, _plan):
+        """Викликається з робочого потоку: питання показує головний потік, цей потік чекає на відповідь."""
+        done = threading.Event()
+        answer = {"yes": False}
+        self.queue.put(("confirm", (text, done, answer)))
+        done.wait()
+        return answer["yes"]
+
+    def _on_confirm_request(self, text, done, answer):
+        answer["yes"] = bool(messagebox.askyesno("Відновлення кодплуга", text, icon="warning", default="no"))
+        done.set()
+
+    def _restore_done(self, res):
+        if res.get("cancelled"):
+            messagebox.showinfo("Скасовано", "Рацію не змінено.\nСтрахова копія лишилась:\n{}".format(res["safetyCopy"]))
+        elif res.get("nothingToDo"):
+            messagebox.showinfo("Нічого відновлювати", "Рація вже містить цей кодплуг (крім калібрування й квіккеїв).\n"
+                                                       "Страхова копія:\n{}".format(res["safetyCopy"]))
+        else:
+            messagebox.showinfo("Відновлено", "Кодплуг відновлено й перевірено (записано секторів: {} з {}, {} с).\n"
+                                               "Рація перезавантажується.\n\nСтрахова копія стану ДО відновлення:\n{}".format(
+                                                   res["sectorsWritten"], res["sectorsTotal"], res["seconds"], res["safetyCopy"]))
+
+    def _run_cps_task(self, fn, status_text, on_done=None, fail_suffix="\n\nФайл не збережено."):
+        if self.flashing or self.cps_busy:
+            return
+        self._cps_on_done = on_done
+        self._cps_fail_suffix = fail_suffix
         self.cps_busy = True
         self._set_cps_buttons(False)
         self.progress["value"] = 0
@@ -611,10 +723,10 @@ class FlasherApp(tk.Tk):
             print("Збережено: {}".format(p))
         return paths
 
-    def _backup_worker(self):
+    def _backup_worker(self, full_snapshot=False):
         ser = cps.open_radio()
         try:
-            data, manifest = cps.backup_codeplug(cps.CpsLink(ser), self._cps_progress)
+            data, manifest = cps.backup_codeplug(cps.CpsLink(ser), self._cps_progress, full_snapshot=full_snapshot)
         finally:
             ser.close()
         path = cps.unique_path(self._cps_output_dir(), cps.timestamp_name("codeplug_backup", ".zip"))
@@ -625,19 +737,25 @@ class FlasherApp(tk.Tk):
             manifest["radio"]["gitRevision"], manifest["radio"]["radioType"], manifest["durationSeconds"]))
         print("SHA-256 EEPROM: {}".format(manifest["parts"]["eeprom"]["sha256"]))
         print("SHA-256 флеш:   {}".format(manifest["parts"]["flash"]["sha256"]))
+        if full_snapshot:
+            print("ПОВНИЙ ЗНІМОК: у файлі ключі AES -- зберігай його як секрет.")
         return [path]
 
     def _on_cps_finished(self, ok, reason, result):
         self.cps_busy = False
         self._set_cps_buttons(True)
+        on_done, self._cps_on_done = self._cps_on_done, None
         if ok:
             self.progress["value"] = 100
             self.status_label.config(text="Готово.", foreground="#0a6b2a")
-            messagebox.showinfo("Готово", "Збережено:\n" + "\n".join(result or []))
+            if on_done is not None:
+                on_done(result)
+            else:
+                messagebox.showinfo("Готово", "Збережено:\n" + "\n".join(result or []))
         else:
             self.status_label.config(text="Не вдалося.", foreground="#b00000")
             self._log("!!! Помилка: {}".format(reason))
-            messagebox.showerror("Помилка", "{}\n\nФайл не збережено.".format(reason))
+            messagebox.showerror("Помилка", "{}{}".format(reason, self._cps_fail_suffix))
 
     # --- AES-ключі (окреме вікно -- інший стан USB, рація НЕ в DFU) -----------
 

@@ -3,7 +3,8 @@
 """cps_link.py -- R24: ЧИТАННЯ з рації за CPS-протоколом прошивки (usb_com.c, cpsHandleReadCommand):
 знімок екрана (CPS_ACCESS_DISPLAY_BUFFER) і бекап кодплуга (EEPROM + флеш) у один .zip.
 
-*** У ЦЬОМУ ФАЙЛІ НЕМАЄ ЖОДНОГО ЗАПИСУ В РАЦІЮ. *** Лише запити 'R'. Відновлення з бекапу -- окреме коло.
+*** У ЦЬОМУ ФАЙЛІ НЕМАЄ ЖОДНОГО ЗАПИСУ В РАЦІЮ. *** Лише запити 'R'. Відновлення з бекапу (запис 'X') -- окремий
+файл tools/cps_restore.py (R25); так видно одним поглядом, який код уміє писати.
 
 Лише стандартна бібліотека + pyserial (імпортується ліниво, тільки там, де відкривається порт), тож усю
 логіку (PNG, маніфест, zip, межі) тестує tools/test_cps_link.py без рації й без pyserial.
@@ -22,13 +23,13 @@
     9  CPS_ACCESS_RADIO_INFO      structVersion, radioType, gitRevision, buildDateTime, flashId, features
 Повна карта -- docs/cps-protocol.md.
 
-ФОРМАТ ПІКСЕЛЯ ЕКРАННОГО БУФЕРА (виведено з коду драйвера, НА ЗАЛІЗІ НЕ ПЕРЕВІРЕНО -- крок BK1):
+ФОРМАТ ПІКСЕЛЯ ЕКРАННОГО БУФЕРА (виведено з коду драйвера; ПІДТВЕРДЖЕНО НА ЗАЛІЗІ 16.10.2026, крок BK1: кольори правильні):
     HX8353E_display.c зберігає кольори як PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(x)),
     тобто uint16_t зі ПОМІНЯНИМИ байтами. На little-endian STM32 це означає, що в пам'яті (а отже й у відповіді на
     запит) ПЕРШИМ іде СТАРШИЙ байт звичайного RGB565, другим -- молодший, тобто пікселі читаються як '>H'.
     Для MDUV380 applicationMain.c завжди додає DIPLAYLCD_TYPE_RGB, тож канали -- RGB (R у старших 5 бітах), не BGR.
-    Якщо знімок вийшов з перекрученими кольорами -- GUI/CLI має діагностичний режим, що зберігає обидва порядки байтів
-    та сирий буфер.
+    Діагностичний режим (зберігає обидва порядки байтів і сирий буфер) лишено як інструмент, але для MDUV380 він
+    більше не потрібен.
 """
 import datetime
 import hashlib
@@ -82,6 +83,20 @@ CP_ADDR_RX_GROUP_LEN = 0x8D620                # codeplug.c: CODEPLUG_ADDR_RX_GRO
 CP_ADDR_RX_GROUP = 0x8D6A0                    # codeplug.c: CODEPLUG_ADDR_RX_GROUP
 CP_RXGROUP_SIZE = 80                          # codeplug.h: CODEPLUG_RXGROUP_DATA_STRUCT_SIZE
 CP_RXGROUPS_MAX = 76                          # codeplug.h: CODEPLUG_RX_GROUPLIST_MAX
+
+
+# --- R25 W3.2: «повний знімок» (необов'язково; ВІДНОВЛЕННЯ цих двох ділянок у R25 НЕ реалізовано) --------
+VOICE_PROMPTS_RAW_START = 0xAF400             # voicePrompts.c: VOICE_PROMPTS_FLASH_HEADER_ADDRESS = 0x8F400 + FLASH_ADDRESS_OFFSET
+VOICE_PROMPTS_RAW_END = 0xD8000               # початок бази DMR ID №2 (uiUtilities.c: DMRID_MEMORY_LOCATION_2); кінець підказок ВИВЕДЕНО, не виміряно
+AES_KEYS_RAW_START = 0xD9F9C                  # stock_key_table.py: STOCK_KEY_TABLE_BASE
+AES_KEYS_ENTRY_LEN = 0x64                     # stock_key_table.py: STOCK_KEY_ENTRY_LEN
+AES_KEYS_ENTRIES = 16                         # keyId 0..15 (використовуються 1..15)
+AES_KEYS_RAW_LEN = AES_KEYS_ENTRY_LEN * AES_KEYS_ENTRIES
+FULL_SNAPSHOT_PARTS = (
+    # ключ у manifest["parts"], файл у zip, початок, довжина
+    ("voicePrompts", "voiceprompts.bin", VOICE_PROMPTS_RAW_START, VOICE_PROMPTS_RAW_END - VOICE_PROMPTS_RAW_START),
+    ("aesKeys", "aeskeys.bin", AES_KEYS_RAW_START, AES_KEYS_RAW_LEN),
+)
 
 
 class CpsError(RuntimeError):
@@ -321,7 +336,7 @@ def unique_path(directory, name):
 
 def take_screenshot(link, directory, diagnostic=False, progress=None, now=None, log=print):
     """Зняти екран і зберегти PNG у `directory`. Повертає список збережених шляхів.
-    diagnostic=True -- додатково другий порядок байтів (для перевірки BK1) і сирий буфер .bin."""
+    diagnostic=True -- додатково другий порядок байтів і сирий буфер .bin (порядок байтів уже підтверджено, тож зазвичай не треба)."""
     info = None
     try:
         info = link.radio_info()
@@ -343,7 +358,7 @@ def take_screenshot(link, directory, diagnostic=False, progress=None, now=None, 
             f.write(data)
         saved.append(p)
 
-    # ЗАФІКСОВАНО З КОДУ ДРАЙВЕРА (див. шапку): слова великі-endian, канали RGB.
+    # Підтверджено на залізі (BK1): слова big-endian, канали RGB.
     save("", encode_png(DISPLAY_W, DISPLAY_H, rgb565_to_rgb888(raw, "big")), ".png")
     if diagnostic:
         save("_LE", encode_png(DISPLAY_W, DISPLAY_H, rgb565_to_rgb888(raw, "little")), ".png")
@@ -379,11 +394,13 @@ def verify_random_blocks(link, area, start, data, count=3, rng=None):
     return bad
 
 
-def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_blocks, now_utc=None):
+def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_blocks, now_utc=None, extras=None):
+    """extras -- {ключ частини: (файл, початок, дані)} для повного знімка (W3.2); у маніфесті їх позначено
+    `includes` і `restorable` (відновлюються лише eeprom та flash)."""
     now_utc = now_utc or datetime.datetime.now(datetime.timezone.utc)
-    return {
+    m = {
         "format": 1,
-        "tool": "cps_link.py (R24)",
+        "tool": "cps_link.py (R24/R25)",
         "createdUtc": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "durationSeconds": round(finished - started, 1),
         "radio": dict(info),
@@ -394,17 +411,29 @@ def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_b
                       "derivation": rng_range["derivation"], "sha256": sha256(flash)},
         },
         "selfCheck": {"randomBlocksRereadPerPart": verified_blocks, "result": "ok"},
-        "note": "Лише читання; у рацію нічого не записувалось. Ключі AES (SPI 0xD9F9C...) у бекап не входять.",
+        "note": "Лише читання; у рацію нічого не записувалось. Ключі AES (SPI 0xD9F9C...) у звичайний бекап не входять.",
     }
+    m["includes"] = ["eeprom", "flash"]
+    m["restorable"] = ["eeprom", "flash"]
+    if extras:
+        for key, (fname, start, data) in extras.items():
+            m["parts"][key] = {"file": fname, "area": CPS_ACCESS_FLASH, "start": start, "length": len(data), "sha256": sha256(data),
+                               "restorable": False}
+            m["includes"].append(key)
+        m["note"] = ("Лише читання; у рацію нічого не записувалось. ПОВНИЙ ЗНІМОК: додатково голосові підказки та таблиця ключів AES "
+                     "(SPI 0xD9F9C) -- містить секретні ключі, зберігай файл як секрет. Відновлення цих двох ділянок не реалізовано.")
+    return m
 
 
-def make_zip(eeprom, flash, manifest):
-    """Один .zip: eeprom.bin, flash.bin, manifest.json (повертає байти)."""
+def make_zip(eeprom, flash, manifest, extra_files=None):
+    """Один .zip: eeprom.bin, flash.bin, manifest.json (+ extra_files {ім'я: байти} для повного знімка). Повертає байти."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         z.writestr("eeprom.bin", eeprom)
         z.writestr("flash.bin", flash)
+        for name, data in (extra_files or {}).items():
+            z.writestr(name, data)
     return buf.getvalue()
 
 
@@ -419,22 +448,35 @@ def read_backup_zip(source):
             flash = z.read("flash.bin")
     except (zipfile.BadZipFile, KeyError, ValueError) as e:
         raise CpsError("це не бекап кодплуга або файл пошкоджено: %s" % e)
-    for key, data in (("eeprom", eeprom), ("flash", flash)):
-        part = manifest["parts"][key]
-        if len(data) != part["length"]:
-            raise CpsError("%s.bin: довжина %d, а в маніфесті %d" % (key, len(data), part["length"]))
-        if sha256(data) != part["sha256"]:
-            raise CpsError("%s.bin: SHA-256 не збігається з маніфестом -- файл пошкоджено" % key)
+    try:
+        parts = manifest["parts"]
+        checks = [("eeprom", eeprom), ("flash", flash)]
+        # необов'язкові частини повного знімка (W3.2): якщо вони є в маніфесті -- перевіряємо й їх
+        extra_names = [(k, v["file"]) for k, v in parts.items() if k not in ("eeprom", "flash")]
+        if extra_names:
+            with zipfile.ZipFile(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source) as z:
+                for k, fname in extra_names:
+                    checks.append((k, z.read(fname)))
+        for key, data in checks:
+            part = parts[key]
+            if len(data) != part["length"]:
+                raise CpsError("%s: довжина %d, а в маніфесті %d" % (key, len(data), part["length"]))
+            if sha256(data) != part["sha256"]:
+                raise CpsError("%s: SHA-256 не збігається з маніфестом -- файл пошкоджено" % key)
+    except (KeyError, TypeError, zipfile.BadZipFile) as e:
+        raise CpsError("маніфест бекапу неповний або пошкоджений (немає поля %s)" % e)
     return manifest, eeprom, flash
 
 
-def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print):
+def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False):
     """Прочитати EEPROM і флеш-частину кодплуга, самоперевірити й зібрати .zip.
+    full_snapshot=True (R25 W3.2) -- додатково голосові підказки і таблицю ключів AES (за замовчуванням ВИМКНЕНО).
     progress(percent, text). Повертає (zip_bytes, manifest). При невдалій самоперевірці -- BackupInvalid."""
     started = clock()
     rng_range = flash_backup_range()
     flash_len = rng_range["length"]
-    total = EEPROM_BACKUP_LEN + flash_len
+    extra_len = sum(p[3] for p in FULL_SNAPSHOT_PARTS) if full_snapshot else 0
+    total = EEPROM_BACKUP_LEN + flash_len + extra_len
     verify_cost = 6 * CHUNK
 
     def step(done_before):
@@ -451,22 +493,35 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
 
     eeprom = read_part(link, CPS_ACCESS_EEPROM, 0, EEPROM_BACKUP_LEN, step(0))
     flash = read_part(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash_len, step(EEPROM_BACKUP_LEN))
+    extras = {}
+    extra_files = {}
+    if full_snapshot:
+        done_before = EEPROM_BACKUP_LEN + flash_len
+        for key, fname, start, length in FULL_SNAPSHOT_PARTS:
+            log("Повний знімок: %s -- сирі 0x%X .. 0x%X (%d Б)." % (key, start, start + length, length))
+            data = read_part(link, CPS_ACCESS_FLASH, start, length, step(done_before))
+            done_before += length
+            extras[key] = (fname, start, data)
+            extra_files[fname] = data
 
     if progress:
         progress(int(100.0 * total / (total + verify_cost)), "Самоперевірка: перечитую випадкові блоки...")
     rng = rng or random.SystemRandom()
     bad = verify_random_blocks(link, CPS_ACCESS_EEPROM, 0, eeprom, 3, rng)
     bad_f = verify_random_blocks(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash, 3, rng)
-    if bad or bad_f:
-        where = ", ".join(["EEPROM 0x%X" % a for a in bad] + ["флеш 0x%X" % a for a in bad_f])
+    bad_x = []
+    for key, (_fname, start, data) in extras.items():
+        bad_x += ["%s 0x%X" % (key, a) for a in verify_random_blocks(link, CPS_ACCESS_FLASH, start, data, 3, rng)]
+    if bad or bad_f or bad_x:
+        where = ", ".join(["EEPROM 0x%X" % a for a in bad] + ["флеш 0x%X" % a for a in bad_f] + bad_x)
         raise BackupInvalid("самоперевірка не пройшла: повторне читання блоку дало інші байти (%s). Бекап НЕ збережено. "
                             "Рація могла записувати налаштування під час читання -- спробуй ще раз, не торкаючись кнопок." % where)
 
     finished = clock()
-    manifest = build_manifest(info, eeprom, flash, rng_range, started, finished, 3, now_utc)
+    manifest = build_manifest(info, eeprom, flash, rng_range, started, finished, 3, now_utc, extras or None)
     if progress:
         progress(100, "Готово")
-    return make_zip(eeprom, flash, manifest), manifest
+    return make_zip(eeprom, flash, manifest, extra_files), manifest
 
 
 # =========================================================================================
@@ -484,6 +539,7 @@ def main(argv=None):
     b = sub.add_parser("backup", help="бекап кодплуга -> .zip")
     b.add_argument("--port")
     b.add_argument("--outdir", default=".")
+    b.add_argument("--full", action="store_true", help="повний знімок: ще й голосові підказки та ключі AES (секретно!)")
     a = ap.parse_args(argv)
 
     ser = open_radio(a.port)
@@ -499,7 +555,7 @@ def main(argv=None):
                 if pct != last[0] and pct % 5 == 0:
                     last[0] = pct
                     print("%3d%%  %s" % (pct, text))
-            data, manifest = backup_codeplug(link, prog)
+            data, manifest = backup_codeplug(link, prog, full_snapshot=a.full)
             os.makedirs(a.outdir, exist_ok=True)
             path = unique_path(a.outdir, timestamp_name("codeplug_backup", ".zip"))
             with open(path, "wb") as f:
