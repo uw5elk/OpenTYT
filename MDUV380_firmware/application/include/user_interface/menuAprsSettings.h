@@ -15,7 +15,7 @@
 /* Відкрити сесію налаштувань (вимикає «Слухати APRS») і намалювати список груп. false -- зараз не можна (передача); користувачу показано сповіщення. */
 bool menuAprsSettingsEnter(void);
 /* R21 З5: пресет розумного маяка 0..6 зі стокової таблиці (menuAPRSOptions.c); name -- його назва; NULL -- номер поза таблицею. */
-#if defined(APRS_R21_MENU)
+#if defined(APRS_R21_PRESETS)
 const aprsSmartBeaconingSettings_t *aprsSmartPresetGet(unsigned i, const char **name);
 #endif
 /* Кожен тік меню «APRS», поки відкрито «Налаштування». false -- користувач вийшов (RED зі списку груп): сесію закрито, треба перемалювати меню. */

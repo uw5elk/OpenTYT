@@ -1322,7 +1322,7 @@ static int asLevelEvent(uiEvent_t *ev)
 		asRowGreen(asRowId(u));
 		return 1;
 	}
-#if defined(APRS_R21_MENU)
+#if defined(APRS_R21_PRESETS)
 	/* R21 З5: пресети розумного маяка -- цифри 0..6, як у стоковому екрані (Default, Car, e-Bike, Bike, Walking, Sailing, APRSdroid); лише в групі «Розумний маяк» */
 	if ((u->scroll == AS_G_SMART) && KEYCHECK_SHORTUP_NUMBER(ev->keys) && (BUTTONCHECK_DOWN(ev, (BUTTON_SK1 | BUTTON_SK2)) == 0))
 	{

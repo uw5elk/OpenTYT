@@ -765,10 +765,10 @@ static const menuItemNewData_t optionsMenuItems[] =
 	{ 218, MENU_THEME           },
 #endif
 #if !defined(PLATFORM_GD77S) && !defined(APRS_R21_MENU)
-	// R21 З5 (форк): в користувацькій українській збірці з APRS є меню «APRS» (MENU_APRS_HUB, головне меню) -> «Налаштування» -- УСІ стокові налаштування APRS там
+	// R21 З5 (форк): в українській збірці з APRS (user і diag) є меню «APRS» (MENU_APRS_HUB, головне меню) -> «Налаштування» -- УСІ стокові налаштування APRS там
 	// (menuAprsSettings.c); другий вхід «Опції -> APRS» прибрано. Безпечно для швидких клавіш: меню верхнього рівня зберігає ID меню, а не позицію (як
 	// MENU_RSSI_SCREEN, MENU_CALL_REPLAY, MENU_LANGUAGE). MENU_APRS у menuFunctions[] і menuAPRSOptions() ЛИШИЛИСЬ -- стара прив'язка відкриє той екран.
-	// Умова -- APRS_R21_MENU, а не LANGUAGE_BUILD_UKRAINIAN: українська збірка БЕЗ приймача APRS (ua/uacr) іншого входу в налаштування APRS не має; diag лишає обидва входи (aprs_rx_cfg.h).
+	// Умова -- APRS_R21_MENU (є хаб «APRS»), а не LANGUAGE_BUILD_UKRAINIAN: українська збірка БЕЗ приймача APRS (ua/uacr) хаба не має і іншого входу в налаштування APRS теж.
 	{ 257, MENU_APRS            },
 #endif
 #if defined(ENABLE_AES)
