@@ -58,8 +58,7 @@ done:
 
 static int append_burst(uint8_t *q, int n, uint8_t typeByte, const uint8_t *p12)
 {
-	q[n * 13 + 0] = typeByte;
-	memcpy(q + n * 13 + 1, p12, 12);
+	dmr_rctl_burst_put(q, n, typeByte, p12);   /* R21 З2: крок запису = DMR_RCTL_BURST_STRIDE (19), а не 13 */
 	return n + 1;
 }
 

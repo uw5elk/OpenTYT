@@ -8,6 +8,7 @@
  */
 #include "crypto/dmr_rctl_stock.h"
 #include "crypto/dmr_rctl_pdu.h"   /* DMR_RCTL_ALLOW_* */
+#include "functions/dmr_data.h"   /* DMR_DATA_BURST_LEN, DMR_DATA_MAX_BURSTS -- РЕАЛЬНА розкладка черги драйвера (потрібен -DENABLE_DMR_DATA) */
 #include <stdio.h>
 #include <string.h>
 
@@ -73,15 +74,15 @@ int main(void)
 
 	/* --- черга TX: правильна кількість бургстів, останній = команда, решта преамбули --- */
 	{
-		uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * 13];
+		uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * DMR_RCTL_BURST_STRIDE];
 		int n = dmr_rctl_stock_build_tx(DMR_RCTL_STOCK_DISABLE, SRC, DST, q);
 		CHECK(n == DMR_RCTL_STOCK_PREAMBLES + 1, "кількість бургстів = преамбули + 1");
 		int all_csbk = 1;
-		for (int i = 0; i < n; i++) { if (q[i * 13] != DMR_RCTL_STOCK_BURST_CSBK) { all_csbk = 0; } }
+		for (int i = 0; i < n; i++) { if (q[i * DMR_RCTL_BURST_STRIDE] != DMR_RCTL_STOCK_BURST_CSBK) { all_csbk = 0; } }
 		CHECK(all_csbk, "усі бургсти типу CSBK");
 		/* останній бургст має розбиратись як Disable */
 		dmr_rctl_stock_cmd_t pc;
-		CHECK(dmr_rctl_stock_parse(q + (n - 1) * 13 + 1, &pc, NULL, NULL) == 1 && pc == DMR_RCTL_STOCK_DISABLE,
+		CHECK(dmr_rctl_stock_parse(q + (n - 1) * DMR_RCTL_BURST_STRIDE + 1, &pc, NULL, NULL) == 1 && pc == DMR_RCTL_STOCK_DISABLE,
 		      "останній бургст = команда Disable");
 		/* перший бургст — преамбула (не команда) з лічильником = PREAMBLES */
 		CHECK(dmr_rctl_stock_parse(q + 1, NULL, NULL, NULL) == 0 && q[1] == 0xBD && q[4] == DMR_RCTL_STOCK_PREAMBLES,
@@ -129,15 +130,15 @@ int main(void)
 		CHECK(dmr_rctl_stock_parse_ack(b, NULL, NULL) == 0, "битий CRC квитанції відкидається");
 
 		/* черга TX квитанції: рівно ACK_REPEATS бургстів CSBK, кожен розбирається як квитанція */
-		uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * 13];
+		uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * DMR_RCTL_BURST_STRIDE];
 		int n = dmr_rctl_stock_build_ack_tx(RT4D, STOCKID, q);
 		CHECK(n == DMR_RCTL_STOCK_ACK_REPEATS, "черга квитанції = ACK_REPEATS бургстів");
 		int okq = 1;
 		for (int i = 0; i < n; i++)
 		{
-			if (q[i * 13] != DMR_RCTL_STOCK_BURST_CSBK) { okq = 0; }
+			if (q[i * DMR_RCTL_BURST_STRIDE] != DMR_RCTL_STOCK_BURST_CSBK) { okq = 0; }
 			uint32_t a = 0, c = 0;
-			if (!dmr_rctl_stock_parse_ack(q + i * 13 + 1, &a, &c) || a != RT4D || c != STOCKID) { okq = 0; }
+			if (!dmr_rctl_stock_parse_ack(q + i * DMR_RCTL_BURST_STRIDE + 1, &a, &c) || a != RT4D || c != STOCKID) { okq = 0; }
 		}
 		CHECK(okq, "усі бургсти квитанції валідні й однакові");
 	}
@@ -222,6 +223,84 @@ int main(void)
 		      "Call Alert з ALLOW_CALL_ALERT -> діяти");
 		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CALL_ALERT, REQ_DST, REQ_DST, DMR_RCTL_ALLOW_CHECK) == 0,
 		      "Call Alert лише з ALLOW_CHECK -> ігнор");
+	}
+
+	/* --- R21 З2: черга RCTL, прочитана ТАК, ЯК ЇЇ ЧИТАЄ ДРАЙВЕР dmrDataTxLoad*() (dmr_data.c) ---------------------------------------------------------
+	 * Регресія 29.09..R20 (ae083d1): DMR_DATA_BURST_LEN 12 -> 18, крок запису черги 13 -> 19, а збирачі лишились на 13: драйвер копіює count*(1+18) байтів і бере
+	 * запис i з зсуву i*19 -- перший бургст виходив правильним, решта -- зсунутими й сміттєвими, стокова рація команд не бачила (хост-тести цього не ловили, бо
+	 * самі індексували чергу з тим же кроком 13). Тепер: драйвер моделюється буквально -- memcpy у масив [MAX_BURSTS][1+DMR_DATA_BURST_LEN], читання s_bursts[i]. */
+	{
+		static uint8_t drv[DMR_DATA_MAX_BURSTS][1 + DMR_DATA_BURST_LEN];   /* як s_bursts у dmr_data.c */
+		static const struct { dmr_rctl_stock_cmd_t c; const char *hex; const char *nm; } cap[] = {
+			{ DMR_RCTL_STOCK_CHECK,   "a4 10 00 00 26 ea 3d 26 ea 0f 93 7c", "Check" },
+			{ DMR_RCTL_STOCK_MONITOR, "9d 10 00 01 26 ea 3d 26 ea 0f a3 88", "Monitor" },
+			{ DMR_RCTL_STOCK_ENABLE,  "a4 10 00 7e 26 ea 3d 26 ea 0f 25 95", "Enable" },
+			{ DMR_RCTL_STOCK_DISABLE, "a4 10 00 7f 26 ea 3d 26 ea 0f 9d f4", "Disable" },
+		};
+
+		CHECK(DMR_RCTL_BURST_PAYLOAD == DMR_DATA_BURST_LEN, "R21 З2: DMR_RCTL_BURST_PAYLOAD == DMR_DATA_BURST_LEN драйвера");
+		CHECK(DMR_RCTL_BURST_STRIDE == (1 + DMR_DATA_BURST_LEN), "R21 З2: крок запису черги RCTL == 1 + DMR_DATA_BURST_LEN");
+		CHECK((DMR_RCTL_STOCK_PREAMBLES + 1) <= DMR_DATA_MAX_BURSTS, "R21 З2: преамбули + команда вміщаються в чергу драйвера");
+
+		for (unsigned k = 0; k < sizeof(cap) / sizeof(cap[0]); k++)
+		{
+			uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * DMR_RCTL_BURST_STRIDE];
+			char nm[64];
+			int n = dmr_rctl_stock_build_tx(cap[k].c, SRC, DST, q);
+			int okPre = 1, okPad = 1;
+
+			memset(drv, 0xEE, sizeof(drv));                                     /* «сміття» у черзі драйвера, щоб зсув не пройшов непоміченим */
+			memcpy(drv, q, (size_t)n * (1 + DMR_DATA_BURST_LEN));              /* dmrDataTxLoadDelayedEx(): memcpy(s_bursts, bursts, count*(1+LEN)) */
+			for (int i = 0; i < n - 1; i++)
+			{
+				uint8_t want[12];
+
+				dmr_rctl_stock_preamble(DST, SRC, (uint8_t)(DMR_RCTL_STOCK_PREAMBLES - i), want);
+				if ((drv[i][0] != DMR_RCTL_STOCK_BURST_CSBK) || (memcmp(&drv[i][1], want, 12) != 0)) { okPre = 0; }
+			}
+			for (int i = 0; i < n; i++)
+			{
+				for (int j = 13; j < (1 + DMR_DATA_BURST_LEN); j++) { if (drv[i][j] != 0) { okPad = 0; } }   /* дописка нульова, не сміття зі стека */
+			}
+			snprintf(nm, sizeof nm, "R21 З2: %s -- усі %d бургстів на місці в черзі драйвера, тип CSBK, преамбули 16..1", cap[k].nm, n);
+			CHECK(n == DMR_RCTL_STOCK_PREAMBLES + 1 && okPre, nm);
+			snprintf(nm, sizeof nm, "R21 З2: %s -- команда байт-у-байт зі стокового захоплення (останній запис драйвера)", cap[k].nm);
+			CHECK(drv[n - 1][0] == DMR_RCTL_STOCK_BURST_CSBK && eqhex(&drv[n - 1][1], cap[k].hex), nm);
+			CHECK(okPad, "R21 З2: дописка навантаження до 18 байтів нульова (детермінована)");
+		}
+
+		/* квитанція: ACK_REPEATS записів, кожен -- правильна квитанція */
+		{
+			uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * DMR_RCTL_BURST_STRIDE];
+			int n = dmr_rctl_stock_build_ack_tx_for(DMR_RCTL_STOCK_DISABLE, SRC, DST, q);
+			int ok = (n == DMR_RCTL_STOCK_ACK_REPEATS);
+
+			memset(drv, 0xEE, sizeof(drv));
+			memcpy(drv, q, (size_t)n * (1 + DMR_DATA_BURST_LEN));
+			for (int i = 0; ok && (i < n); i++)
+			{
+				uint32_t rq = 0, rp = 0;
+				dmr_rctl_stock_cmd_t c;
+
+				ok = (drv[i][0] == DMR_RCTL_STOCK_BURST_CSBK) && dmr_rctl_stock_parse_ack_for(&drv[i][1], &c, &rq, &rp) &&
+						(c == DMR_RCTL_STOCK_DISABLE) && (rq == SRC) && (rp == DST);
+			}
+			CHECK(ok, "R21 З2: квитанція у черзі драйвера -- усі повтори розбираються");
+		}
+
+		/* Call Alert: адреси dst,src (виняток), останній запис -- команда, що розбирається */
+		{
+			uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * DMR_RCTL_BURST_STRIDE];
+			int n = dmr_rctl_stock_build_tx(DMR_RCTL_STOCK_CALL_ALERT, 2u, 1u, q);   /* еталон BBD_0009: відправник 2 -> отримувач 1 */
+			dmr_rctl_stock_cmd_t c;
+
+			memset(drv, 0xEE, sizeof(drv));
+			memcpy(drv, q, (size_t)n * (1 + DMR_DATA_BURST_LEN));
+			CHECK(dmr_rctl_stock_parse(&drv[n - 1][1], &c, NULL, NULL) == 1 && c == DMR_RCTL_STOCK_CALL_ALERT,
+					"R21 З2: Call Alert -- останній запис черги драйвера розбирається як Call Alert");
+			CHECK(eqhex(&drv[n - 1][1], "9f 10 00 00 00 00 01 00 00 02 79 41"),
+					"R21 З2: Call Alert -- запит байт-у-байт з ефіру BBD_0009 (CRC 0x7941) у черзі драйвера");
+		}
 	}
 
 	printf(fails ? "\nПРОВАЛЕНО: %d\n" : "\nУсі тести пройдено\n", fails);

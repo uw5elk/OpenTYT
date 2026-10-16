@@ -42,14 +42,14 @@ int main(void)
     uint32_t src = 0xABCDEF;
     uint8_t  keyId = 3;
 
-    uint8_t q[DMR_RCTL_TX_BURST_COUNT * 13];
+    uint8_t q[DMR_RCTL_TX_BURST_COUNT * DMR_RCTL_BURST_STRIDE];
     int n = dmr_rctl_build_tx_bursts(dst, src, keyId, key, &m, q);
     CHECK(n == DMR_RCTL_TX_BURST_COUNT, "burst count == DMR_RCTL_TX_BURST_COUNT (10)");
 
     /* burst 0..5: CSBK preamble, addressed to dst/src, individual (not group) call */
     for (int i = 0; i < 6; i++)
     {
-        const uint8_t *b = q + i * 13;
+        const uint8_t *b = q + i * DMR_RCTL_BURST_STRIDE;
         char name[64]; snprintf(name, sizeof name, "preamble[%d] type == CSBK (0x30)", i);
         CHECK(b[0] == 0x30, name);
         uint32_t bdst = ((uint32_t)b[1 + 4] << 16) | ((uint32_t)b[1 + 5] << 8) | b[1 + 6];
@@ -61,16 +61,16 @@ int main(void)
         snprintf(name, sizeof name, "preamble[%d] group-call bit clear (individual)", i);
         CHECK((b[1 + 2] & 0xC0) != 0xC0, name);
     }
-    CHECK(q[6 * 13 + 0] == 0x60, "burst 6 type == Data Header (0x60, Unconfirmed)");
-    CHECK(q[7 * 13 + 0] == 0x60, "burst 7 type == Data Header (0x60, ENC ext)");
-    CHECK(q[7 * 13 + 1 + 3] == keyId, "ENC ext header carries keyId");
-    CHECK(q[8 * 13 + 0] == 0x70, "burst 8 type == Rate-1/2 (0x70)");
-    CHECK(q[9 * 13 + 0] == 0x70, "burst 9 type == Rate-1/2 (0x70)");
+    CHECK(q[6 * DMR_RCTL_BURST_STRIDE + 0] == 0x60, "burst 6 type == Data Header (0x60, Unconfirmed)");
+    CHECK(q[7 * DMR_RCTL_BURST_STRIDE + 0] == 0x60, "burst 7 type == Data Header (0x60, ENC ext)");
+    CHECK(q[7 * DMR_RCTL_BURST_STRIDE + 1 + 3] == keyId, "ENC ext header carries keyId");
+    CHECK(q[8 * DMR_RCTL_BURST_STRIDE + 0] == 0x70, "burst 8 type == Rate-1/2 (0x70)");
+    CHECK(q[9 * DMR_RCTL_BURST_STRIDE + 0] == 0x70, "burst 9 type == Rate-1/2 (0x70)");
 
     /* reassemble the 24-byte wire PDU from the two rate-1/2 blocks and round-trip it */
     uint8_t pdu[24];
-    memcpy(pdu, q + 8 * 13 + 1, 12);
-    memcpy(pdu + 12, q + 9 * 13 + 1, 12);
+    memcpy(pdu, q + 8 * DMR_RCTL_BURST_STRIDE + 1, 12);
+    memcpy(pdu + 12, q + 9 * DMR_RCTL_BURST_STRIDE + 1, 12);
 
     uint32_t want = ((uint32_t)pdu[20] << 24) | ((uint32_t)pdu[21] << 16) |
                     ((uint32_t)pdu[22] << 8) | (uint32_t)pdu[23];
@@ -105,16 +105,16 @@ int main(void)
      *
      * Відкритий кадр НЕ несе ENC-заголовка, тому бургстів на один менше, і саме за цим
      * приймач розрізняє, розшифровувати кадр чи читати як є. */
-    uint8_t qc[DMR_RCTL_TX_BURST_COUNT * 13];
+    uint8_t qc[DMR_RCTL_TX_BURST_COUNT * DMR_RCTL_BURST_STRIDE];
     int nClear = dmr_rctl_build_tx_bursts(dst, src, keyId, NULL, &m, qc);
     CHECK(nClear == (DMR_RCTL_TX_BURST_COUNT - 1), "відкритий кадр: на один бургст менше (без ENC-заголовка)");
-    CHECK(qc[6 * 13 + 0] == 0x60, "відкритий: бургст 6 -- Data Header");
-    CHECK(qc[7 * 13 + 0] == 0x70, "відкритий: бургст 7 -- одразу Rate-1/2, ENC-заголовка немає");
-    CHECK(qc[8 * 13 + 0] == 0x70, "відкритий: бургст 8 -- Rate-1/2");
+    CHECK(qc[6 * DMR_RCTL_BURST_STRIDE + 0] == 0x60, "відкритий: бургст 6 -- Data Header");
+    CHECK(qc[7 * DMR_RCTL_BURST_STRIDE + 0] == 0x70, "відкритий: бургст 7 -- одразу Rate-1/2, ENC-заголовка немає");
+    CHECK(qc[8 * DMR_RCTL_BURST_STRIDE + 0] == 0x70, "відкритий: бургст 8 -- Rate-1/2");
 
     uint8_t pduC[24];
-    memcpy(pduC, qc + 7 * 13 + 1, 12);
-    memcpy(pduC + 12, qc + 8 * 13 + 1, 12);
+    memcpy(pduC, qc + 7 * DMR_RCTL_BURST_STRIDE + 1, 12);
+    memcpy(pduC + 12, qc + 8 * DMR_RCTL_BURST_STRIDE + 1, 12);
     uint32_t wantC = ((uint32_t)pduC[20] << 24) | ((uint32_t)pduC[21] << 16) |
                      ((uint32_t)pduC[22] << 8) | (uint32_t)pduC[23];
     CHECK(dmr_rctl_crc32(pduC, 24) == wantC, "відкритий: CRC32 зібраного PDU правильний");

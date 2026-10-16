@@ -25,6 +25,7 @@
 #define DMR_RCTL_STOCK_H
 
 #include <stdint.h>
+#include "crypto/dmr_rctl_burst.h"   /* DMR_RCTL_BURST_STRIDE -- крок запису черги */
 
 typedef enum
 {
@@ -52,8 +53,8 @@ typedef enum
  * Те саме значення DTB_CSBK, що в dmr_rctl_frame.c/dmr_sms.c. */
 #define DMR_RCTL_STOCK_BURST_CSBK  0x30
 
-/* Черга бургстів = преамбули + команда, у форматі dmrDataTxLoad(): count*(1 тип + 12 даних).
- * q має вмістити >= (DMR_RCTL_STOCK_PREAMBLES+1)*13 байт. Повертає кількість бургстів. */
+/* Черга бургстів = преамбули + команда, у форматі dmrDataTxLoad(): count*DMR_RCTL_BURST_STRIDE (1 тип + 18 навантаження, з них 12 -- CSBK; R21 З2: було 13).
+ * q має вмістити >= (DMR_RCTL_STOCK_PREAMBLES+1)*DMR_RCTL_BURST_STRIDE байт. Повертає кількість бургстів. */
 int dmr_rctl_stock_build_tx(dmr_rctl_stock_cmd_t cmd, uint32_t src, uint32_t dst, uint8_t *q);
 
 /* Зібрати один 12-байтний CSBK команди (для тестів / точкового використання). */
@@ -111,7 +112,7 @@ void dmr_rctl_stock_ack_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32
 void dmr_rctl_stock_ack(uint32_t requester, uint32_t responder, uint8_t out12[12]);
 
 /* Черга бургстів квитанції у форматі dmrDataTxLoad() (повтори підряд, без преамбул —
- * так шле стокова). q має вмістити >= DMR_RCTL_STOCK_ACK_REPEATS*13 байт.
+ * так шле стокова). q має вмістити >= DMR_RCTL_STOCK_ACK_REPEATS*DMR_RCTL_BURST_STRIDE байт.
  * Повертає кількість бургстів. */
 int dmr_rctl_stock_build_ack_tx_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32_t responder, uint8_t *q);
 int dmr_rctl_stock_build_ack_tx(uint32_t requester, uint32_t responder, uint8_t *q);

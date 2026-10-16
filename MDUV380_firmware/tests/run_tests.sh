@@ -78,6 +78,7 @@ FW_INCS="-I$FW/tools/hoststub -include $FW/tools/hoststub/host_compat.h -I$FW -I
  -I$FW/application/include"
 declare -A XFLAGS=(
 	[test_dmr_sms_replay]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
+	[test_dmr_rctl_stock]="-DENABLE_DMR_DATA"   # R21 З2: тест читає чергу так, як драйвер (functions/dmr_data.h)
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_afsk]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_rx_parse]="-DENABLE_APRS_RX"

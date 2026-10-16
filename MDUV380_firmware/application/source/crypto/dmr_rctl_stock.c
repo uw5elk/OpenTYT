@@ -75,13 +75,19 @@ int dmr_rctl_stock_build_tx(dmr_rctl_stock_cmd_t cmd, uint32_t src, uint32_t dst
 	for (int i = 0; i < DMR_RCTL_STOCK_PREAMBLES; i++)
 	{
 		/* лічильник = кадрів, що лишились разом із командою: 16..1, потім команда */
-		q[n * 13] = DMR_RCTL_STOCK_BURST_CSBK;
-		dmr_rctl_stock_preamble(dst, src, (uint8_t)(DMR_RCTL_STOCK_PREAMBLES - i), q + n * 13 + 1);
+		uint8_t p12[12];
+
+		dmr_rctl_stock_preamble(dst, src, (uint8_t)(DMR_RCTL_STOCK_PREAMBLES - i), p12);
+		dmr_rctl_burst_put(q, n, DMR_RCTL_STOCK_BURST_CSBK, p12);   /* R21 З2: крок запису 19, а не 13 */
 		n++;
 	}
-	q[n * 13] = DMR_RCTL_STOCK_BURST_CSBK;
-	dmr_rctl_stock_command(cmd, src, dst, q + n * 13 + 1);
-	n++;
+	{
+		uint8_t p12[12];
+
+		dmr_rctl_stock_command(cmd, src, dst, p12);
+		dmr_rctl_burst_put(q, n, DMR_RCTL_STOCK_BURST_CSBK, p12);
+		n++;
+	}
 	return n;
 }
 
@@ -132,8 +138,10 @@ int dmr_rctl_stock_build_ack_tx_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester
 	if ((int)cmd < 0 || (int)cmd >= DMR_RCTL_STOCK_NUM_CMDS) { return 0; }
 	for (int i = 0; i < DMR_RCTL_STOCK_ACK_REPEATS; i++)
 	{
-		q[i * 13] = DMR_RCTL_STOCK_BURST_CSBK;
-		dmr_rctl_stock_ack_for(cmd, requester, responder, q + i * 13 + 1);
+		uint8_t p12[12];
+
+		dmr_rctl_stock_ack_for(cmd, requester, responder, p12);
+		dmr_rctl_burst_put(q, i, DMR_RCTL_STOCK_BURST_CSBK, p12);   /* R21 З2: крок запису 19, а не 13 */
 	}
 	return DMR_RCTL_STOCK_ACK_REPEATS;
 }
