@@ -47,6 +47,7 @@ import stock_key_table as skt   # wrap/unwrap-логіка стокової та
 import custom_data as cd        # безпечний read/write custom-data блоків (тема/AES-селектор/
                                  # RCTL і т.д. в ОДНОМУ регіоні -- див. коментар у custom_data.py)
 import rctl_config as rctl      # формат блоку "RCTL" (allowlist віддаленого керування)
+import cps_link as cps          # R24: знімок екрана і бекап кодплуга (лише читання, без залежностей крім pyserial)
 
 try:
     import serial  # той самий пакет, яким уже користується dmr_reboot_dfu.py
@@ -208,6 +209,7 @@ class FlasherApp(tk.Tk):
         self.queue = queue.Queue()
         self.backend = load_usb_backend()
         self.flashing = False
+        self.cps_busy = False   # R24: іде знімок екрана або бекап
 
         self.donor_path = self._load_saved_donor()
         self.firmware_path = find_bundled_firmware()
@@ -301,6 +303,23 @@ class FlasherApp(tk.Tk):
         self.rctl_button = ttk.Button(action_frame, text="Віддалене керування (RCTL)...",
                                       command=self._open_rctl_config)
         self.rctl_button.pack(side="left", padx=8)
+
+        # R24: читання з рації. Другий рядок, бо в першому вже чотири кнопки і шість у 700 пікселів не влізуть.
+        # Обидві дії ЛИШЕ ЧИТАЮТЬ: у рацію нічого не записується.
+        read_frame = ttk.Frame(self)
+        read_frame.pack(fill="x", padx=12, pady=(0, 6))
+
+        self.shot_button = ttk.Button(read_frame, text="Знімок екрана",
+                                      command=self._on_screenshot_clicked)
+        self.shot_button.pack(side="left")
+
+        self.backup_button = ttk.Button(read_frame, text="Бекап кодплуга",
+                                        command=self._on_backup_clicked)
+        self.backup_button.pack(side="left", padx=8)
+
+        self.shot_diag_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(read_frame, text="знімок: діагностика (обидва порядки байтів + сирий буфер)",
+                        variable=self.shot_diag_var).pack(side="left", padx=8)
 
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=12, pady=(0, 6))
@@ -417,6 +436,10 @@ class FlasherApp(tk.Tk):
                     self.progress["value"] = payload
                 elif kind == "done":
                     self._on_flash_finished(*payload)
+                elif kind == "cpsdone":
+                    self._on_cps_finished(*payload)
+                elif kind == "status":
+                    self.status_label.config(text=payload, foreground="#14506b")
         except queue.Empty:
             pass
         self.after(50, self._poll_queue)
@@ -424,7 +447,7 @@ class FlasherApp(tk.Tk):
     # --- сама прошивка (у фоновому потоці) ------------------------------------
 
     def _on_flash_clicked(self):
-        if self.flashing:
+        if self.flashing or self.cps_busy:
             return
 
         if not self.firmware_path or not os.path.isfile(self.firmware_path):
@@ -525,6 +548,96 @@ class FlasherApp(tk.Tk):
         finally:
             sys.stdout = old_stdout
             self.queue.put(("done", (ok, reason)))
+
+    # --- R24: знімок екрана і бекап кодплуга (лише читання, звичайний режим рації) -----
+
+    def _cps_output_dir(self):
+        d = Path.home() / "MD-UV390UKR"
+        d.mkdir(parents=True, exist_ok=True)
+        return str(d)
+
+    def _set_cps_buttons(self, enabled):
+        state = "normal" if enabled else "disabled"
+        for b in (self.shot_button, self.backup_button, self.flash_button):
+            b.config(state=state)
+
+    def _on_screenshot_clicked(self):
+        diag = bool(self.shot_diag_var.get())
+        self._run_cps_task(lambda: self._screenshot_worker(diag), "Знімаю екран рації...")
+
+    def _on_backup_clicked(self):
+        self._run_cps_task(self._backup_worker, "Читаю кодплуг з рації (бекап)...")
+
+    def _run_cps_task(self, fn, status_text):
+        if self.flashing or self.cps_busy:
+            return
+        self.cps_busy = True
+        self._set_cps_buttons(False)
+        self.progress["value"] = 0
+        self.status_label.config(text=status_text, foreground="#14506b")
+        self._log("=" * 30)
+        self._log(status_text)
+
+        def worker():
+            old_stdout = sys.stdout
+            sys.stdout = QueueWriter(self.queue)
+            ok, reason, result = False, None, None
+            try:
+                result = fn()
+                ok = True
+            except cps.CpsError as e:
+                reason = str(e)
+            except Exception as e:  # noqa: BLE001 -- показуємо будь-яку помилку, не ховаємо
+                reason = "несподівана помилка: {}".format(e)
+            finally:
+                sys.stdout = old_stdout
+                self.queue.put(("cpsdone", (ok, reason, result)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _cps_progress(self, pct, text):
+        self.queue.put(("progress", pct))
+        self.queue.put(("status", text))
+
+    def _screenshot_worker(self, diagnostic):
+        ser = cps.open_radio()
+        try:
+            # ВАЖЛИВО: команду "C",0 (екран CPS) тут НЕ надсилаємо -- знімок мав би показати поточний екран рації, а не екран CPS.
+            paths = cps.take_screenshot(cps.CpsLink(ser), self._cps_output_dir(), diagnostic=diagnostic,
+                                        progress=lambda d, t: self.queue.put(("progress", int(100.0 * d / t))))
+        finally:
+            ser.close()
+        for p in paths:
+            print("Збережено: {}".format(p))
+        return paths
+
+    def _backup_worker(self):
+        ser = cps.open_radio()
+        try:
+            data, manifest = cps.backup_codeplug(cps.CpsLink(ser), self._cps_progress)
+        finally:
+            ser.close()
+        path = cps.unique_path(self._cps_output_dir(), cps.timestamp_name("codeplug_backup", ".zip"))
+        with open(path, "wb") as f:
+            f.write(data)
+        print("Збережено: {}".format(path))
+        print("Прошивка в рації: {} (radioType {}), читання тривало {} с.".format(
+            manifest["radio"]["gitRevision"], manifest["radio"]["radioType"], manifest["durationSeconds"]))
+        print("SHA-256 EEPROM: {}".format(manifest["parts"]["eeprom"]["sha256"]))
+        print("SHA-256 флеш:   {}".format(manifest["parts"]["flash"]["sha256"]))
+        return [path]
+
+    def _on_cps_finished(self, ok, reason, result):
+        self.cps_busy = False
+        self._set_cps_buttons(True)
+        if ok:
+            self.progress["value"] = 100
+            self.status_label.config(text="Готово.", foreground="#0a6b2a")
+            messagebox.showinfo("Готово", "Збережено:\n" + "\n".join(result or []))
+        else:
+            self.status_label.config(text="Не вдалося.", foreground="#b00000")
+            self._log("!!! Помилка: {}".format(reason))
+            messagebox.showerror("Помилка", "{}\n\nФайл не збережено.".format(reason))
 
     # --- AES-ключі (окреме вікно -- інший стан USB, рація НЕ в DFU) -----------
 
