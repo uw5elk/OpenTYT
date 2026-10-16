@@ -535,15 +535,15 @@ static void air_audit(void)
 	air_one("неточність 6 (0.1°)", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5024.00N", "03012.00E", "TYT");
 
 	/* R21 З4: QSY каналу ставиться ПЕРШИМ у коментар в ефірі; текст користувача йде після нього; довгий -- обрізається текст, не QSY */
-	s_airQsy = "438.950MHz C082 -760";
+	s_airQsy = "438.950MHz T082 -760";
 	aprsModeCfgInit(&c);
-	air_one("QSY + коментар", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760 TYT");
+	air_one("QSY + коментар", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz T082 -760 TYT");
 	aprsModeCfgInit(&c); c.comment[0] = 0; c.ov |= APRSM_OV_COMMENT;
-	air_one("QSY без коментаря", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760");
+	air_one("QSY без коментаря", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz T082 -760");
 	aprsModeCfgInit(&c); memcpy(c.comment, "\xCF\xF0\xE8\xE2\xB3\xF2", 6); c.ov |= APRSM_OV_COMMENT;
-	air_one("QSY + кирилиця", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760 \xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD1\x96\xD1\x82");
+	air_one("QSY + кирилиця", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz T082 -760 \xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD1\x96\xD1\x82");
 	aprsModeCfgInit(&c); strcpy(c.comment, "012345678901234567890123"); c.ov |= APRSM_OV_COMMENT;
-	air_one("QSY + довгий коментар обрізано", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760 0123456789012345678901");
+	air_one("QSY + довгий коментар обрізано", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz T082 -760 0123456789012345678901");
 	s_airQsy = NULL;
 }
 

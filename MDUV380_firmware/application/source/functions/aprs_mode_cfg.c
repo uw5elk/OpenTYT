@@ -311,7 +311,7 @@ size_t aprsModeQsyFormat(char *out, size_t cap, uint32_t rxFreq, uint32_t txFreq
 	}
 	if (toneKind == 'C')
 	{
-		snprintf(tone, sizeof(tone), "%c%03u", wide ? 'C' : 'c', toneVal % 1000U);
+		snprintf(tone, sizeof(tone), "%c%03u", wide ? 'T' : 't', toneVal % 1000U);   /* специфікація: «Tnnn» -- тон PL, ціле число Гц; малі літери -- вузька смуга */
 	}
 	else if (toneKind == 'D')
 	{

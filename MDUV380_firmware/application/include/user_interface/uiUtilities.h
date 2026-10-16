@@ -298,6 +298,12 @@ const char *uiSafeStr(const char *p);
 #define UI_SAFE_STR(p)   (p)
 #endif
 
+/* R21 З6: компактний індикатор передачі маяка APRS у шапці (замість великого «APRS Tx» шрифтом 4, що ховався за S-метром і перекривав контакт). Малює «APRS»
+ * шрифтом 1 у слоті фільтра/TS (x = 25..48, між прапорцем «a» і потужністю), стираючи те, що там було. Лише APRS_RX; без нього -- стокова поведінка. */
+#if defined(APRS_R21_TXLABEL)
+void uiUtilityDrawAprsTxLabel(void);
+#endif
+
 uint8_t *coordsToMaidenhead(uint8_t *maidenheadBuffer, double longitude, double latitude);
 void buildLocationAndMaidenheadStrings(char *locationBufferOrNull, char *maidenheadBufferOrNull, bool locIsValid);
 double latLonFixed32ToDouble(uint32_t fixedVal);

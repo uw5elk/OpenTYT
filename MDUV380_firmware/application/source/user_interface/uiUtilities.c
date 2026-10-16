@@ -2068,6 +2068,22 @@ static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
 }
 #endif
 
+#if defined(APRS_R21_TXLABEL)
+/* R21 З6: див. uiUtilities.h. Слот: x = 25..48 (4 символи по 6 px) -- прапорець «a» закінчується на x = 24 (DMR: 1+18+6), потужність у найгіршому випадку
+ * ("250mW", 30 px) починається з x = 50. Малюється в шапці, тож S-метр (нижче шапки) і рядок контакту не зачіпаються. */
+void uiUtilityDrawAprsTxLabel(void)
+{
+	themeItem_t fgItem, bgItem;
+
+	displayThemeGetForegroundAndBackgroundItems(&fgItem, &bgItem);
+	displayThemeApply(THEME_ITEM_FG_HEADER_TEXT, THEME_ITEM_BG_HEADER_TEXT);
+	displayFillRect(25, DISPLAY_Y_POS_HEADER - 1, 24, 9, true);
+	displayThemeApply(THEME_ITEM_FG_TX_COUNTER, THEME_ITEM_BG_HEADER_TEXT);
+	displayPrintCore(25, DISPLAY_Y_POS_HEADER, "APRS", FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	displayThemeApply(fgItem, bgItem);
+}
+#endif
+
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
 {
 	const int MODE_TEXT_X_OFFSET = 1;
@@ -2378,6 +2394,13 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 			displayThemeApply(fgItem, bgItem);
 		}
 	}
+
+#if defined(APRS_R21_TXLABEL)
+	if (aprsIsTXing && (isVFOSweepScanning == false) && (isVFODualWatchScanning == false))
+	{
+		uiUtilityDrawAprsTxLabel();   // R21 З6: передача маяка APRS -- «APRS» замість фільтра/TS
+	}
+#endif
 
 	// Power
 	sprintf(buffer, "%s%s", UI_SAFE_STR(getPowerLevel(powerLevel)), UI_SAFE_STR(getPowerLevelUnit(powerLevel)));

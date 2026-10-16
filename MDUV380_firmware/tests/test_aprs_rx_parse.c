@@ -1304,7 +1304,7 @@ static void testQsyRoundTrip(void)
 	printf("--- R21 З4: QSY у коментарі маяка ---\n");
 	/* еталонні рядки (форма з брифу і з логу Direwolf) */
 	n = aprsModeQsyFormat(o, sizeof(o), 43895000UL, 43135000UL, 'C', 82U, true);
-	CHECK(!strcmp(o, "438.950MHz C082 -760") && (n == 20U), "репітер: «%s»", o);
+	CHECK(!strcmp(o, "438.950MHz T082 -760") && (n == 20U), "репітер: «%s»", o);
 	n = aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL, 0, 0U, true);
 	CHECK(!strcmp(o, "144.800MHz Toff +000") && (n == 20U), "симплекс без тону: «%s»", o);
 	aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL, 0, 0U, false);
@@ -1316,17 +1316,17 @@ static void testQsyRoundTrip(void)
 	aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL + 500000UL, 0, 0U, true);
 	CHECK(!strcmp(o, "144.800MHz Toff +500"), "зсув 5 МГц -> +500: «%s»", o);
 	aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL - 6000UL, 'C', 1231U % 1000U, true);
-	CHECK(!strcmp(o, "144.800MHz C231 -006"), "зсув -60 кГц: «%s»", o);
+	CHECK(!strcmp(o, "144.800MHz T231 -006"), "зсув -60 кГц: «%s»", o);
 	CHECK((aprsModeQsyFormat(o, sizeof(o), 0U, 0U, 0, 0U, true) == 0U) && !o[0], "частоти нема -- порожньо");
 	CHECK((aprsModeQsyFormat(o, 10U, 14480000UL, 14480000UL, 0, 0U, true) == 0U) && !o[0], "малий буфер -- порожньо, без запису за межі");
 	CHECK((aprsModeQsyFormat(NULL, 10U, 14480000UL, 14480000UL, 0, 0U, true) == 0U), "NULL -- без падіння");
 
 	/* кругова перевірка: те, що склав маяк, розбирається назад */
-	qsyRound("репітер", 43895000UL, 43135000UL, 'C', 82U, true, "", 438950U, "C082", -7600);
+	qsyRound("репітер", 43895000UL, 43135000UL, 'C', 82U, true, "", 438950U, "T082", -7600);
 	qsyRound("симплекс", 14480000UL, 14480000UL, 0, 0U, true, "TYT MD-UV390", 144800U, "Toff", 0);
 	qsyRound("вузька", 14480000UL, 14480000UL, 0, 0U, false, "TYT", 144800U, "toff", 0);
 	qsyRound("DCS", 43135000UL, 43895000UL, 'D', 0x23U, true, "x", 431350U, "D023", 7600);
-	qsyRound("CTCSS 67 Гц", 14575000UL, 14500000UL, 'C', 67U, true, "\xCF\xF0\xE8\xE2\xB3\xF2", 145750U, "C067", -750);
+	qsyRound("CTCSS 67 Гц", 14575000UL, 14500000UL, 'C', 67U, true, "\xCF\xF0\xE8\xE2\xB3\xF2", 145750U, "T067", -750);
 
 	/* текст користувача після QSY цілий */
 	{
@@ -1355,14 +1355,14 @@ static void testQsyRoundTrip(void)
 		memset(longTxt, 'x', 24);
 		longTxt[24] = 0;
 		n = aprsModeCommentWithQsy(longTxt, qsy, cm, sizeof(cm));
-		CHECK((n == strlen(cm)) && (n <= APRSM_COMMENT_AIR_MAX) && !strncmp(cm, "438.950MHz C082 -760 x", 22), "довгий текст: %u байт, QSY ціле: «%s»", (unsigned)n, cm);
+		CHECK((n == strlen(cm)) && (n <= APRSM_COMMENT_AIR_MAX) && !strncmp(cm, "438.950MHz T082 -760 x", 22), "довгий текст: %u байт, QSY ціле: «%s»", (unsigned)n, cm);
 		CHECK(n == 20U + 1U + 22U, "текст обрізано до місця, що лишилось (%u байт)", (unsigned)n);
 		/* кирилиця: обрізання не рве UTF-8 посеред літери */
 		memset(longTxt, 0xE0, 24);   /* «а» x24 -> 2 байти кожна */
 		longTxt[24] = 0;
 		n = aprsModeCommentWithQsy(longTxt, qsy, cm, sizeof(cm));
-		CHECK((n <= APRSM_COMMENT_AIR_MAX) && aprsIsUtf8((const uint8_t *)cm, n) && !strncmp(cm, "438.950MHz C082 -760 ", 21), "кирилиця: %u байт, UTF-8 не порвано", (unsigned)n);
-		pf("US5EX", 7, "!4753.25N/03316.86E[438.950MHz C082 -760 \xD0\xB0\xD0\xB0", &ax, &pk, b);
+		CHECK((n <= APRSM_COMMENT_AIR_MAX) && aprsIsUtf8((const uint8_t *)cm, n) && !strncmp(cm, "438.950MHz T082 -760 ", 21), "кирилиця: %u байт, UTF-8 не порвано", (unsigned)n);
+		pf("US5EX", 7, "!4753.25N/03316.86E[438.950MHz T082 -760 \xD0\xB0\xD0\xB0", &ax, &pk, b);
 		/* без QSY -- поведінка колишня */
 		n = aprsModeCommentWithQsy("TYT", NULL, cm, sizeof(cm));
 		CHECK(!strcmp(cm, "TYT") && (n == 3U), "без QSY (NULL) -- тільки текст");
@@ -1370,10 +1370,10 @@ static void testQsyRoundTrip(void)
 		CHECK(!strcmp(cm, "TYT") && (n == 3U), "без QSY (\"\") -- тільки текст");
 		/* порожній текст -- без кінцевого пробілу */
 		n = aprsModeCommentWithQsy("", qsy, cm, sizeof(cm));
-		CHECK(!strcmp(cm, "438.950MHz C082 -760") && (n == 20U), "порожній текст -- лише QSY, без пробілу в кінці: «%s»", cm);
+		CHECK(!strcmp(cm, "438.950MHz T082 -760") && (n == 20U), "порожній текст -- лише QSY, без пробілу в кінці: «%s»", cm);
 		/* мінімальний буфер */
 		n = aprsModeCommentWithQsy("abc", qsy, cm, 22U);
-		CHECK((n == strlen(cm)) && (n <= 21U) && !strncmp(cm, "438.950MHz C082 -760", 20), "буфер 22 байти: QSY ціле, не вилазить за межі: «%s»", cm);
+		CHECK((n == strlen(cm)) && (n <= 21U) && !strncmp(cm, "438.950MHz T082 -760", 20), "буфер 22 байти: QSY ціле, не вилазить за межі: «%s»", cm);
 		n = aprsModeCommentWithQsy("abc", qsy, cm, 1U);
 		CHECK((n == 0U) && !cm[0], "буфер 1 байт: порожньо");
 	}

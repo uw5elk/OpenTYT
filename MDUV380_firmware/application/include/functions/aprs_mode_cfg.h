@@ -143,8 +143,8 @@ void aprsModeEffective(const aprsModeCfg_t *c, const aprsModeDefaults_t *d, aprs
 void aprsModeToBeaconCfg(const aprsModeEff_t *e, aprsModeRawCfg_t *out);
 
 /* R21 З4: QSY у коментарі маяка -- той самий формат, що додає стокова передача (aprs.c, aprsSendPacket) і що розбирає commentStrip() (R14):
- * «FFF.FFFMHz Xnnn ±nnn» -- частота прийому каналу (кГц), тон, зсув TX-RX у десятках кГц. toneKind: 'C' -- CTCSS (toneVal = тон/10 Гц, «C082»),
- * 'D' -- DCS (toneVal -- код, шістнадцяткові цифри), інакше «Toff». wide=false -- літери малі (вузька смуга: «c082», «toff»), як у стоковій.
+ * «FFF.FFFMHz Xnnn ±nnn» -- частота прийому каналу (кГц), тон, зсув TX-RX у десятках кГц. toneKind: 'C' -- CTCSS (toneVal = тон у Гц без десяткових, пишеться як «T082» -- основна форма APRS Frequency Spec; стокова TYT шле «C082», обидві форми допустимі),
+ * 'D' -- DCS (toneVal -- код, шістнадцяткові цифри), інакше «Toff». wide=false -- літери малі (вузька смуга: «t082», «toff»; за специфікацією мала перша літера = NARROW).
  * Зсув понад 9,9 МГц -- «+000». rxFreq/txFreq -- в одиницях 10 Гц, як у каналі. out має вміщати APRSM_QSY_LEN; порожній рядок (повертає 0) --
  * частоти нема або поза 1..999,999 МГц. */
 #if defined(APRS_R21_QSY)

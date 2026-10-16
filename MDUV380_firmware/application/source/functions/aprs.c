@@ -2003,29 +2003,40 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 
 		if (configIsValid && positionIsValid)
 		{
-			int16_t yPos = (fromSatScreen ?
-#if defined(HAS_COLOURS)
-					(DISPLAY_SIZE_Y / 4)
-#else
-					DISPLAY_Y_POS_CONTACT
+#if defined(APRS_R21_TXLABEL)
+			/* R21 З6: власний екран і канал -- компактний «APRS» у шапці (великий «APRS Tx» ховався за S-метром і перекривав контакт). Супутниковий екран -- стоково. */
+			if (fromSatScreen == false)
+			{
+				uiUtilityDrawAprsTxLabel();
+				displayRender();
+			}
+			else
 #endif
-					: DISPLAY_Y_POS_TX_TIMER);
-			ucFont_t font = (fromSatScreen ? FONT_SIZE_3 : FONT_SIZE_4);
-			int16_t fontHeight = (fromSatScreen ? FONT_SIZE_3_HEIGHT : FONT_SIZE_4_HEIGHT);
+			{
+				int16_t yPos = (fromSatScreen ?
+#if defined(HAS_COLOURS)
+						(DISPLAY_SIZE_Y / 4)
+#else
+						DISPLAY_Y_POS_CONTACT
+#endif
+						: DISPLAY_Y_POS_TX_TIMER);
+				ucFont_t font = (fromSatScreen ? FONT_SIZE_3 : FONT_SIZE_4);
+				int16_t fontHeight = (fromSatScreen ? FONT_SIZE_3_HEIGHT : FONT_SIZE_4_HEIGHT);
 #if ! defined(HAS_COLOURS)
-			int16_t tBorder = (fromSatScreen ? 0 : 6);
-			int16_t bBorder = (fromSatScreen ? -1 : 12);
+				int16_t tBorder = (fromSatScreen ? 0 : 6);
+				int16_t bBorder = (fromSatScreen ? -1 : 12);
 #endif
 
-			displayThemeApply(THEME_ITEM_FG_TX_COUNTER, THEME_ITEM_BG);
+				displayThemeApply(THEME_ITEM_FG_TX_COUNTER, THEME_ITEM_BG);
 #if defined(HAS_COLOURS)
-			displayFillRect(0, yPos, DISPLAY_SIZE_X, fontHeight, true);
+				displayFillRect(0, yPos, DISPLAY_SIZE_X, fontHeight, true);
 #else
-			displayFillRect(0, (yPos + tBorder), DISPLAY_SIZE_X, (fontHeight - bBorder), true);
+				displayFillRect(0, (yPos + tBorder), DISPLAY_SIZE_X, (fontHeight - bBorder), true);
 #endif
-			displayPrintCentered(yPos, buffer, font);
-			displayThemeResetToDefault();
-			displayRender();
+				displayPrintCentered(yPos, buffer, font);
+				displayThemeResetToDefault();
+				displayRender();
+			}
 		}
 		else
 		{

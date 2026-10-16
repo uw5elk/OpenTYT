@@ -1232,7 +1232,7 @@ static void testQsy(void)
 	CHECK(aprsModeEnter(), "вхід");
 	aprsModeRequestBeacon();
 	tickMs(10);
-	CHECK((s_txCalls == 1) && !strcmp(s_txLastQsy, "438.950MHz c082 -760"), "канал користувача -> QSY «%s»", s_txLastQsy);
+	CHECK((s_txCalls == 1) && !strcmp(s_txLastQsy, "438.950MHz t082 -760"), "канал користувача -> QSY «%s»", s_txLastQsy);
 	aprsModeExit();
 
 	/* смуга 25 кГц -- великі літери; тону нема -- Toff */
