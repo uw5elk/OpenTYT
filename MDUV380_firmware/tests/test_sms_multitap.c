@@ -219,6 +219,65 @@ static void testContactNameCap(void)
 #endif
 }
 
+/* R23-fix F2: стирання в редакторі назви контакту -- та сама послідовність, що cdNameBackspace() (menuContactDetails.c): p = довжина
+ * підтвердженого тексту (strlen, мінус символ перегляду), далі smsMtBackspace. Спершу гине символ, що гортається, потім останній підтверджений. */
+static void contactBackspace(smsMt_t *st, char *name)
+{
+	int16_t p = (int16_t)strlen(name);
+
+	if (st->key != 0) { p--; }
+	smsMtBackspace(st, name, &p);
+}
+
+static int16_t contactConfirmed(const smsMt_t *st, const char *name)
+{
+	return (int16_t)(strlen(name) - ((st->key != 0) ? 1U : 0U));
+}
+
+static void testContactNameErase(void)
+{
+	char name[20]; smsMt_t st = {0};
+	const uint8_t mode = SMS_MT_LAT_LO;
+	int16_t pos;
+
+	memset(name, 0, sizeof name);
+	name[17] = (char)0xA1; name[18] = (char)0xB2; name[19] = (char)0xC3;
+
+	/* "a" (клавіша 2) і "d" (клавіша 3) -- "d" ще гортається */
+	pos = contactConfirmed(&st, name);
+	CHECK(smsMtKey(&st, mode, '2', false, name, &pos, 16) == 1, "a");
+	pos = contactConfirmed(&st, name);
+	CHECK(smsMtKey(&st, mode, '3', false, name, &pos, 16) == 1, "d");
+	CHECK(strcmp(name, "ad") == 0 && st.key == '3', "назва \"ad\", d гортається");
+
+	contactBackspace(&st, name);
+	CHECK(strcmp(name, "a") == 0 && st.key == 0, "перше стирання знімає символ, що гортається");
+	contactBackspace(&st, name);
+	CHECK(name[0] == 0, "друге стирання знімає останній підтверджений");
+	contactBackspace(&st, name);
+	contactBackspace(&st, name);
+	CHECK(name[0] == 0 && st.key == 0, "стирання порожньої назви безпечне");
+
+	/* після повного стирання набір знову з початку */
+	pos = contactConfirmed(&st, name);
+	CHECK(smsMtKey(&st, mode, '2', false, name, &pos, 16) == 1 && strcmp(name, "a") == 0, "набір після повного стирання");
+	smsMtCommit(&st, &pos);
+
+	/* на межі 16: стирання символу, що гортається, звільняє місце, охоронні байти цілі */
+	memset(name, 0, 17); st.key = 0; st.idx = 0;
+	for (int i = 0; i < 16; i++)
+	{
+		pos = contactConfirmed(&st, name);
+		smsMtKey(&st, mode, (i & 1) ? '3' : '2', false, name, &pos, 16);
+	}
+	CHECK(strlen(name) == 16 && st.key != 0, "16 символів, останній гортається");
+	contactBackspace(&st, name);
+	CHECK(strlen(name) == 15 && st.key == 0 && name[16] == 0, "стерто символ, що гортається: 15");
+	pos = contactConfirmed(&st, name);
+	CHECK(smsMtKey(&st, mode, '5', false, name, &pos, 16) == 1 && strlen(name) == 16, "після стирання 16-й знову вміщається");
+	CHECK((uint8_t)name[17] == 0xA1 && (uint8_t)name[18] == 0xB2 && (uint8_t)name[19] == 0xC3, "охоронні байти [17..19] цілі");
+}
+
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 /* 33 великі + 33 малі українські літери, cp1251. */
 static const unsigned char UA_UP[] = {
@@ -284,6 +343,7 @@ int main(void)
 	testNumAndStar();
 	testBackspaceAndCap();
 	testContactNameCap();
+	testContactNameErase();
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 	testUkrainian();
 	printf("(українська збірка)\n");

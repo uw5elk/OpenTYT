@@ -351,4 +351,7 @@
 /* R23 Y2: редактор назви контакту (multitap) */
 #define APRSM_L_MTHINT       "#:режим"
 
+/* R23-fix F7: підказка біля індикатора режиму набору назви контакту: коротке «#» -- режим, довге -- шпаргалка розкладки */
+#define APRSM_N_MTHINT2      "#:режим дов:розкл"
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

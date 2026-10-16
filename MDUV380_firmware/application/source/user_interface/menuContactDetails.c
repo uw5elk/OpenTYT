@@ -35,6 +35,8 @@
 #if defined(APRS_R21_NAMES)
 #include "functions/sms_multitap.h"
 #include "user_interface/languages/aprsmode_ua.h"   /* R23 Y2: APRSM_L_MTHINT */
+#include "user_interface/languages/messages_ua.h"   /* R23-fix F5: MSGS_TITLE_LAYOUT_FMT, MSGS_HINT_LAYOUT -- ті самі рядки, що в шпаргалці SMS */
+#include "user_interface/uiSmsKeys.h"                /* R23-fix F5: uiSmsKeyLayoutDraw() -- спільна шпаргалка розкладки */
 #endif
 
 static void updateScreen(bool isFirstRun, bool updateScreen);
@@ -49,8 +51,25 @@ static const char *callTypeString[3];
 static int contactDetailsIndex;
 static char digits[9];
 static char contactName[20];
-static int namePos;
+#if !defined(APRS_R21_NAMES)
+static int namePos;   /* R23-fix F1: у збірці з APRS_R21_NAMES позиції редагування нема -- набір завжди в кінець */
+#endif
 static int numPos;
+
+static int menuContactDetailsState;
+/* Таймер екранів «збережено/дубль»; у стані DISPLAY (R23-fix F5) -- код клавіші, що закрила шпаргалку: її відпускання ковтається (без нової RAM). */
+static int menuContactDetailsTimeout;
+
+enum
+{
+	MENU_CONTACT_DETAILS_DISPLAY = 0,
+	MENU_CONTACT_DETAILS_SAVED,
+	MENU_CONTACT_DETAILS_EXISTS,
+	MENU_CONTACT_DETAILS_FULL
+#if defined(APRS_R21_NAMES)
+	,MENU_CONTACT_DETAILS_LAYOUT   /* R23-fix F5: шпаргалка розкладки (довге «#»); окремої змінної не треба -- це ще одне значення стану */
+#endif
+};
 
 #if defined(APRS_R21_NAMES)
 /* R23 Y2: редактор назви контакту -- власний multitap (functions/sms_multitap.c, як у "Нове повідомлення" і редакторі "Режиму APRS") замість стокового
@@ -61,7 +80,12 @@ static int numPos;
  *   contactName[17] -- клавіша, що гортається (smsMt_t.key), [18] -- номер у циклі (smsMt_t.idx), [19] -- режим набору;
  *   contactName[16] лишається NUL-термінатором (cap = 16, символ перегляду стоїть не далі [15]);
  *   tmpContact.NOT_IN_CODEPLUGDATA_indexNumber (цим екраном не використовується; у кодплуг не пишеться) -- ticksGetMillis() останнього натискання.
- * Набір ЗАВЖДИ додає в кінець назви (multitap ведеться по довжині підтвердженого тексту); стирання -- SK2+ЛІВОРУЧ, як у стоковому редакторі. */
+ * Набір ЗАВЖДИ додає в кінець назви (multitap ведеться по довжині підтвердженого тексту).
+ *
+ * R23-fix: поле назви працює як COMPOSE у SMS -- стокової курсорної навігації (moveCursorLeft/RightInString, namePos як позиція правки) тут НЕМАЄ:
+ *   ЛІВОРУЧ (коротко) -- стерти символ (спершу той, що гортається, потім останній підтверджений -- smsMtBackspace, як у menuMessages.c);
+ *   ПРАВОРУЧ -- нічого; «#» коротко (на відпусканні) -- режим набору; «#» довго -- шпаргалка розкладки (uiSmsKeyLayoutDraw, як у SMS),
+ *   закривається будь-якою клавішею, відпускання якої ковтається (menuContactDetailsTimeout). ВГОРУ/ВНИЗ, як і раніше, перемикають поля. */
 #define CD_NAME_CAP   16
 #define CD_MT_KEY     contactName[17]
 #define CD_MT_IDX     contactName[18]
@@ -92,8 +116,44 @@ static void cdMtCommit(void)
 		smsMtCommit(&mt, &p);
 		CD_MT_KEY = 0;
 		CD_MT_IDX = 0;
-		namePos = (p > 15) ? 15 : p;
 	}
+}
+
+/* Позиція курсора на екрані: під символом, що гортається, або одразу за текстом (не далі 15, як у стоковому редакторі). Лише відображення. */
+static int cdCursorPos(void)
+{
+	int n = (int)strlen(contactName);
+
+	if ((CD_MT_KEY != 0) && (n > 0))
+	{
+		n--;
+	}
+	return (n > 15) ? 15 : n;
+}
+
+/* Стерти символ: спершу той, що гортається, далі останній підтверджений (як ЛІВОРУЧ у COMPOSE повідомлень). Перемальовує виклик. */
+static void cdNameBackspace(void)
+{
+	smsMt_t mt = { CD_MT_KEY, (uint8_t)CD_MT_IDX };
+	int16_t p = (int16_t)strlen(contactName);
+
+	if (mt.key != 0)
+	{
+		p--;   /* підтверджений текст закінчується перед символом, що гортається */
+	}
+	smsMtBackspace(&mt, contactName, &p);
+	CD_MT_KEY = mt.key;
+	CD_MT_IDX = (char)mt.idx;
+}
+
+/* Шпаргалка розкладки поточного режиму -- той самий екран, що «Клавіші» у SMS (спільний uiSmsKeyLayoutDraw). */
+static void cdLayoutShow(void)
+{
+	char title[24];
+
+	snprintf(title, sizeof title, MSGS_TITLE_LAYOUT_FMT, smsMtModeLabel(cdMtMode()));
+	uiSmsKeyLayoutDraw(cdMtMode(), title, MSGS_HINT_LAYOUT);
+	displayRender();
 }
 
 static bool cdIsMtKey(uint32_t key)
@@ -101,18 +161,13 @@ static bool cdIsMtKey(uint32_t key)
 	return ((key >= '0') && (key <= '9')) || (key == '*') || (key == KEY_HASH);
 }
 
-/* Текстова клавіша (або "#") у рядку "Назва". */
+/* Текстова клавіша (або "#") у рядку "Назва". Цифри/"*" діють на натисканні; "#" -- на відпусканні (коротко: режим) або на довгому утриманні (шпаргалка). */
 static void cdNameKey(uiEvent_t *ev)
 {
 	char k = (char)ev->keys.key;
 	uint8_t mode = cdMtMode();
 	smsMt_t mt = { CD_MT_KEY, (uint8_t)CD_MT_IDX };
 	int16_t p = (int16_t)strlen(contactName);
-
-	if ((ev->keys.event & KEY_MOD_LONG) || ((ev->keys.event & KEY_MOD_PRESS) == 0))
-	{
-		return;
-	}
 
 	if (mt.key != 0)
 	{
@@ -121,11 +176,27 @@ static void cdNameKey(uiEvent_t *ev)
 
 	if (k == KEY_HASH)
 	{
+		if (KEYCHECK_LONGDOWN(ev->keys, KEY_HASH))
+		{
+			cdMtCommit();   /* символ, що гортається, лишається в назві */
+			menuContactDetailsState = MENU_CONTACT_DETAILS_LAYOUT;
+			cdLayoutShow();
+			return;
+		}
+		if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) == false)
+		{
+			return;   /* натискання й повтори довгого утримання не чіпаємо */
+		}
 		smsMtCommit(&mt, &p);
 		CD_MT_MODE = (char)smsMtModeNext(mode);
 	}
-	else if (smsMtKeyMap(mode, k) != NULL)
+	else
 	{
+		if ((ev->keys.event & KEY_MOD_LONG) || ((ev->keys.event & KEY_MOD_PRESS) == 0) || (smsMtKeyMap(mode, k) == NULL))
+		{
+			return;
+		}
+
 		uint32_t now = ticksGetMillis();
 		bool same = (mt.key == k) && ((now - CD_MT_MS) < SMS_MT_TIMEOUT_MS);
 
@@ -134,14 +205,9 @@ static void cdNameKey(uiEvent_t *ev)
 			tmpContact.NOT_IN_CODEPLUGDATA_indexNumber = (int)now;
 		}
 	}
-	else
-	{
-		return;
-	}
 
 	CD_MT_KEY = mt.key;
 	CD_MT_IDX = (char)mt.idx;
-	namePos = (p > 15) ? 15 : p;
 	updateCursor(true);
 	updateScreen(false, false);
 }
@@ -155,7 +221,7 @@ static void cdModeChip(void)
 
 	displayFillRect(0, 108, chipW, 10, false);
 	displayPrintCore(2, 109, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
-	displayPrintAt((uint16_t)(chipW + 4), 109, APRSM_L_MTHINT, FONT_SIZE_1);
+	displayPrintAt((uint16_t)(chipW + 4), 109, APRSM_N_MTHINT2, FONT_SIZE_1);
 	snprintf(cnt, sizeof(cnt), "%d/%d", (int)strlen(contactName), CD_NAME_CAP);
 	displayPrintCore(0, 109, cnt, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
 }
@@ -169,17 +235,6 @@ enum
 	CONTACT_DETAILS_TS,
 	NUM_CONTACT_DETAILS_ITEMS
 };// The last item in the list is used so that we automatically get a total number of items in the list
-
-static int menuContactDetailsState;
-static int menuContactDetailsTimeout;
-
-enum
-{
-	MENU_CONTACT_DETAILS_DISPLAY = 0,
-	MENU_CONTACT_DETAILS_SAVED,
-	MENU_CONTACT_DETAILS_EXISTS,
-	MENU_CONTACT_DETAILS_FULL
-};
 
 menuStatus_t menuContactDetails(uiEvent_t *ev, bool isFirstRun)
 {
@@ -202,7 +257,9 @@ menuStatus_t menuContactDetails(uiEvent_t *ev, bool isFirstRun)
 			tmpContact.tgNumber = 0;
 			digits[0] = 0x00;
 			memset(contactName, 0, 20);
+#if !defined(APRS_R21_NAMES)
 			namePos = 0;
+#endif
 			numPos = 0;
 #if defined(APRS_R21_NAMES)
 			cdMtReset();
@@ -228,7 +285,9 @@ menuStatus_t menuContactDetails(uiEvent_t *ev, bool isFirstRun)
 #else
 			codeplugUtilConvertBufToString(tmpContact.name, contactName, 16);
 #endif
+#if !defined(APRS_R21_NAMES)
 			namePos = strlen(contactName);
+#endif
 			numPos = 0;
 #if defined(APRS_R21_NAMES)
 			cdMtReset();
@@ -275,7 +334,11 @@ static void updateCursor(bool moved)
 		switch (menuDataGlobal.currentItemIndex)
 		{
 			case CONTACT_DETAILS_NAME:
+#if defined(APRS_R21_NAMES)
+				menuUpdateCursor(cdCursorPos(), moved, true);
+#else
 				menuUpdateCursor(namePos, moved, true);
+#endif
 				break;
 
 			case CONTACT_DETAILS_TG:
@@ -298,6 +361,13 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 	char rightSideVar[SCREEN_LINE_BUFFER_SIZE];
 	voicePrompt_t rightSidePrompt;
 
+#if defined(APRS_R21_NAMES)
+	if (menuContactDetailsState == MENU_CONTACT_DETAILS_LAYOUT)
+	{
+		cdLayoutShow();   /* R23-fix F5: також при FUNC_REDRAW */
+		return;
+	}
+#endif
 	displayClearBuf();
 
 	if (tmpContact.name[0] == 0x00)
@@ -560,8 +630,23 @@ static void handleEvent(uiEvent_t *ev)
 			if (ev->events & KEY_EVENT)
 			{
 #if defined(APRS_R21_NAMES)
-				/* R23 Y2: будь-яка не текстова клавіша (стрілки, GREEN, RED, SK) спершу підтверджує символ, що гортається */
-				if ((CD_MT_KEY != 0) && (ev->keys.key != 0) && (ev->keys.event & KEY_MOD_PRESS) && (cdIsMtKey(ev->keys.key) == false))
+				/* R23-fix F5: шпаргалку закрито НАТИСКАННЯМ клавіші; її відпускання (RED/GREEN діють на відпусканні) тут ковтаємо */
+				if (menuContactDetailsTimeout != 0)
+				{
+					if ((ev->keys.key == (char)menuContactDetailsTimeout) && (ev->keys.event & KEY_MOD_UP))
+					{
+						menuContactDetailsTimeout = 0;
+						return;
+					}
+					if (ev->keys.event & KEY_MOD_PRESS)
+					{
+						menuContactDetailsTimeout = 0;   /* уже інша клавіша */
+					}
+				}
+				/* R23 Y2: будь-яка не текстова клавіша (стрілки, GREEN, RED, SK) спершу підтверджує символ, що гортається.
+				 * Виняток (R23-fix F2): ЛІВОРУЧ у назві -- стирає символ, що гортається, як у COMPOSE повідомлень. */
+				if ((CD_MT_KEY != 0) && (ev->keys.key != 0) && (ev->keys.event & KEY_MOD_PRESS) && (cdIsMtKey(ev->keys.key) == false)
+						&& ((ev->keys.key != KEY_LEFT) || (menuDataGlobal.currentItemIndex != CONTACT_DETAILS_NAME)))
 				{
 					cdMtCommit();
 				}
@@ -578,6 +663,7 @@ static void handleEvent(uiEvent_t *ev)
 					updateScreen(false, true);
 					menuContactDetailsExitCode |= MENU_STATUS_LIST_TYPE;
 				}
+#if !defined(APRS_R21_NAMES)
 				else if (KEYCHECK_LONGDOWN(ev->keys, KEY_RIGHT) || KEYCHECK_LONGDOWN_REPEAT(ev->keys, KEY_RIGHT))
 				{
 					if (menuDataGlobal.currentItemIndex == CONTACT_DETAILS_NAME)
@@ -586,6 +672,7 @@ static void handleEvent(uiEvent_t *ev)
 						updateScreen(false, !voicePromptsIsPlaying());
 					}
 				}
+#endif
 				else if (KEYCHECK_SHORTUP(ev->keys, KEY_RIGHT)
 #if defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 						|| KEYCHECK_SHORTUP(ev->keys, KEY_ROTARY_INCREMENT)
@@ -595,9 +682,13 @@ static void handleEvent(uiEvent_t *ev)
 					switch(menuDataGlobal.currentItemIndex)
 					{
 						case CONTACT_DETAILS_NAME:
+#if defined(APRS_R21_NAMES)
+							allowedToSpeakUpdate = false;   /* R23-fix F3: праворуч у назві -- нічого (позиції правки нема) */
+#else
 							moveCursorRightInString(contactName, &namePos, 16, BUTTONCHECK_DOWN(ev, BUTTON_SK2));
 							updateCursor(true);
 							allowedToSpeakUpdate = (strlen(contactName) == 0);
+#endif
 							break;
 
 						case CONTACT_DETAILS_TG:
@@ -630,6 +721,7 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					updateScreen(false, allowedToSpeakUpdate);
 				}
+#if !defined(APRS_R21_NAMES)
 				else if (KEYCHECK_LONGDOWN(ev->keys, KEY_LEFT) || KEYCHECK_LONGDOWN_REPEAT(ev->keys, KEY_LEFT))
 				{
 					if (menuDataGlobal.currentItemIndex == CONTACT_DETAILS_NAME)
@@ -638,6 +730,7 @@ static void handleEvent(uiEvent_t *ev)
 						updateScreen(false, !voicePromptsIsPlaying());
 					}
 				}
+#endif
 				else if (KEYCHECK_SHORTUP(ev->keys, KEY_LEFT)
 #if defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 						|| KEYCHECK_SHORTUP(ev->keys, KEY_ROTARY_DECREMENT)
@@ -647,9 +740,15 @@ static void handleEvent(uiEvent_t *ev)
 					switch(menuDataGlobal.currentItemIndex)
 					{
 						case CONTACT_DETAILS_NAME:
+#if defined(APRS_R21_NAMES)
+							cdNameBackspace();   /* R23-fix F2: ЛІВОРУЧ = стерти символ (smsMtBackspace), як у COMPOSE SMS */
+							updateCursor(true);
+							allowedToSpeakUpdate = false;
+#else
 							moveCursorLeftInString(contactName, &namePos, BUTTONCHECK_DOWN(ev, BUTTON_SK2));
 							updateCursor(true);
 							allowedToSpeakUpdate = (strlen(contactName) == 0);
+#endif
 							break;
 
 						case CONTACT_DETAILS_TG:
@@ -821,6 +920,19 @@ static void handleEvent(uiEvent_t *ev)
 				updateScreen(false, allowedToSpeakUpdate);
 			}
 			break;
+
+#if defined(APRS_R21_NAMES)
+		case MENU_CONTACT_DETAILS_LAYOUT:
+			/* Закриває лише нове НАТИСКАННЯ (не повтор довгого утримання й не відпускання «#», яким шпаргалку відкрито).
+			 * Валкодер шле натискання й відпускання однією подією -- ковтати нічого. */
+			if ((ev->events & KEY_EVENT) && (ev->keys.event & KEY_MOD_PRESS) && ((ev->keys.event & KEY_MOD_LONG) == 0))
+			{
+				menuContactDetailsTimeout = (ev->keys.event & KEY_MOD_UP) ? 0 : (int)(uint8_t)ev->keys.key;
+				menuContactDetailsState = MENU_CONTACT_DETAILS_DISPLAY;
+				updateScreen(false, false);
+			}
+			break;
+#endif
 
 		case MENU_CONTACT_DETAILS_FULL:
 			if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) || KEYCHECK_SHORTUP(ev->keys, KEY_RED))
