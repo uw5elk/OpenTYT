@@ -345,4 +345,7 @@
 #define APRSM_DIAG_SYMTAB    "Таблиця символів"
 #define APRSM_DIAG_SYMTAB_T  "Символи %c %u/4"
 
+/* R21 З4: перемикач QSY-інформації в коментарі маяка (група «Маяк») */
+#define APRSM_L_QSY          "QSY інфо"
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

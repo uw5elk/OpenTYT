@@ -182,6 +182,17 @@ static void testStock(void)
 	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) == 0, "ручка вліво -- стиснення вимк");
 	click(KEY_GREEN);
 	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0, "GREEN -- перемикач, стиснення знов увімк");
+	/* R21 З4: «QSY інфо» -- наступний рядок після «Стиснення»; типово увімкнено, зберігається в блоці режиму (qsyOff) */
+	click(KEY_DOWN);
+	CHECK(asRowId(aprsModeUi()) == AS_S_QSY, "рядок «QSY інфо»");
+	CHECK(aprsModeCfg()->qsyOff == 0U, "типово QSY увімкнено");
+	click(KEY_LEFT);
+	CHECK(aprsModeCfg()->qsyOff == 1U, "ручка вліво -- QSY вимкнено");
+	click(KEY_GREEN);
+	CHECK(aprsModeCfg()->qsyOff == 0U, "GREEN -- перемикач, QSY знов увімкнено");
+	click(KEY_LEFT);
+	CHECK(aprsModeCfg()->qsyOff == 1U, "QSY вимкнено перед скиданням");
+	click(KEY_UP);
 	selectRow(AS_G_SMART, 0);
 	click(KEY_RIGHT);
 	CHECK(aprsSettingsCopy.smart.slowRate == APRS_SMART_BEACON_SLOW_RATE_DEFAULT + 1, "повільний +1");

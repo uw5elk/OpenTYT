@@ -34,6 +34,7 @@
 #define APRSM_FREQ_DEFAULT    14480000UL /* 144,800 МГц, одиниці 10 Гц */
 #define APRSM_INTERVALS       6          /* 0 / 5 / 10 / 15 / 30 / 60 хв */
 #define APRSM_SQL_MAX         21         /* 0 -- типовий; 1..21 -- 0..100 % (як у каналі) */
+#define APRSM_QSY_LEN         24         /* R21 З4: «FFF.FFFMHz Cnnn +nnn» (20 символів) + NUL, з запасом */
 #define APRSM_ICON_MAX        93         /* iconIndex: символ = '!' + iconIndex (0x21..0x7E) */
 
 /* Які поля задано з рації (інакше -- типове значення з кодплуга). */
@@ -65,6 +66,7 @@ typedef struct
 	uint8_t  ambiguity;                     /* 0..7 (як біти 5-7 flags конфігу: 0 -- точно) */
 	uint8_t  interval;                      /* індекс: 0 -- вимкнено, 1..5 -- 5/10/15/30/60 хв (без оверрайду) */
 	uint8_t  sql;                           /* 0..APRSM_SQL_MAX (без оверрайду) */
+	uint8_t  qsyOff;                        /* R21 З4: 1 -- не додавати QSY в коментар маяка; 0 (типово, і в старих блоках) -- додавати. Лежить у біті 7 байта 7 блоку */
 } aprsModeCfg_t;
 
 /* Дзеркало CodeplugAPRSConfig_t (functions/codeplug.h) -- рівно ті самі байти (64). Прошивка перевіряє
@@ -139,6 +141,18 @@ void aprsModeEffective(const aprsModeCfg_t *c, const aprsModeDefaults_t *d, aprs
  * Частота QSY = 0 (режим уже стоїть на частоті), позиція йде окремо (не USE_POSITION). Коментар тут НЕ
  * кладеться (у ефір він іде UTF-8, довший за comment[24]) -- див. aprsModeCommentToUtf8(). */
 void aprsModeToBeaconCfg(const aprsModeEff_t *e, aprsModeRawCfg_t *out);
+
+/* R21 З4: QSY у коментарі маяка -- той самий формат, що додає стокова передача (aprs.c, aprsSendPacket) і що розбирає commentStrip() (R14):
+ * «FFF.FFFMHz Xnnn ±nnn» -- частота прийому каналу (кГц), тон, зсув TX-RX у десятках кГц. toneKind: 'C' -- CTCSS (toneVal = тон/10 Гц, «C082»),
+ * 'D' -- DCS (toneVal -- код, шістнадцяткові цифри), інакше «Toff». wide=false -- літери малі (вузька смуга: «c082», «toff»), як у стоковій.
+ * Зсув понад 9,9 МГц -- «+000». rxFreq/txFreq -- в одиницях 10 Гц, як у каналі. out має вміщати APRSM_QSY_LEN; порожній рядок (повертає 0) --
+ * частоти нема або поза 1..999,999 МГц. */
+#if defined(APRS_R21_QSY)
+size_t aprsModeQsyFormat(char *out, size_t cap, uint32_t rxFreq, uint32_t txFreq, char toneKind, unsigned toneVal, bool wide);
+/* Коментар для ефіру: «QSY␠текст». cp1251 -> UTF-8 (aprsModeCommentToUtf8), QSY (якщо не порожній) стоїть ПЕРШИМ і не обрізається -- коли разом не влазять
+ * у cap-1 байт, обрізається текст користувача (не посеред символу). Порожній текст -- без кінцевого пробілу. Повертає довжину результату. */
+size_t aprsModeCommentWithQsy(const char *cp1251, const char *qsy, char *out, size_t cap);
+#endif
 
 /* ---- перевірки й текст ------------------------------------------------------------------------------ */
 bool aprsModeFreqValid(uint32_t f);                 /* 135..174 МГц або 400..480 МГц (в одиницях 10 Гц) */

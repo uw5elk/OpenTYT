@@ -256,7 +256,7 @@ int ovf_test(void)
 		aprsTxProgress = APRS_TX_IDLE;
 		trxIsTransmitting = false;
 		s_activateRx = 0;
-		aprsModeTxResult_t r = aprsModeTxBeacon(&e);
+		aprsModeTxResult_t r = aprsModeTxBeacon(&e, NULL);
 		CHECK(r == APRS_MODE_TX_TOOBIG, "aprsModeTxBeacon мав повернути TOOBIG, є %d", (int)r);
 		CHECK(aprsTxProgress == APRS_TX_IDLE, "передачу не завершено: стан %d", (int)aprsTxProgress);
 		CHECK(trxIsTransmitting == false && trxTransmissionEnabled == false, "передавач лишився ввімкненим");
@@ -440,6 +440,7 @@ int main(void)
 
 /* R17 (Г2.3): АУДИТ «видно в ефірі». Кожне поле налаштувань режиму змінюємо ПО ОДНОМУ (оверрайд у aprsModeCfg_t -> aprsModeEffective -> справжній
  * aprsModeTxBeacon -> кадр AX.25) і порівнюємо весь кадр з незалежним еталоном (ref_frame). Що в кадрі не змінилось -- провал. */
+static const char *s_airQsy = NULL;   /* R21 З4: QSY, що передається в aprsModeTxBeacon() */
 static void air_one(const char *tag, const aprsModeCfg_t *c, const aprsModeDefaults_t *d, const char *call, int ssid, const char (*pname)[6],
 		const int *pssid, int npaths, char table, char sym, const char *lat, const char *lon, const char *comment)
 {
@@ -455,7 +456,7 @@ static void air_one(const char *tag, const aprsModeCfg_t *c, const aprsModeDefau
 	nonVolatileSettings.txFreqLimited = BAND_LIMITS_NONE;
 	aprsTxProgress = APRS_TX_IDLE;
 	trxIsTransmitting = false;
-	CHECK(aprsModeTxBeacon(&e) == APRS_MODE_TX_OK, "%s: маяк не пішов", tag);
+	CHECK(aprsModeTxBeacon(&e, s_airQsy) == APRS_MODE_TX_OK, "%s: маяк не пішов", tag);
 	ref_frame(&ref, call, ssid, pname, pssid, npaths, table, sym, lat, lon, comment, APRSM_COMMENT_AIR_MAX);
 	bytes = (ref.bits + 7U) / 8U;
 	CHECK(encoderData.packetBufferBitPosition == ref.bits, "%s: довжина кадру %u біт, еталон %u", tag, (unsigned)encoderData.packetBufferBitPosition, ref.bits);
@@ -532,6 +533,18 @@ static void air_audit(void)
 
 	aprsModeCfgInit(&c); c.latU = 50456700; c.lonU = 30256700; c.ov |= APRSM_OV_LAT | APRSM_OV_LON | APRSM_OV_AMB; c.ambiguity = 6;
 	air_one("неточність 6 (0.1°)", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5024.00N", "03012.00E", "TYT");
+
+	/* R21 З4: QSY каналу ставиться ПЕРШИМ у коментар в ефірі; текст користувача йде після нього; довгий -- обрізається текст, не QSY */
+	s_airQsy = "438.950MHz C082 -760";
+	aprsModeCfgInit(&c);
+	air_one("QSY + коментар", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760 TYT");
+	aprsModeCfgInit(&c); c.comment[0] = 0; c.ov |= APRSM_OV_COMMENT;
+	air_one("QSY без коментаря", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760");
+	aprsModeCfgInit(&c); memcpy(c.comment, "\xCF\xF0\xE8\xE2\xB3\xF2", 6); c.ov |= APRSM_OV_COMMENT;
+	air_one("QSY + кирилиця", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760 \xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD1\x96\xD1\x82");
+	aprsModeCfgInit(&c); strcpy(c.comment, "012345678901234567890123"); c.ov |= APRSM_OV_COMMENT;
+	air_one("QSY + довгий коментар обрізано", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "438.950MHz C082 -760 0123456789012345678901");
+	s_airQsy = NULL;
 }
 
 /* ---- ланцюжок aprsModeTxBeacon() ----------------------------------------------------------------------- */
@@ -559,7 +572,7 @@ int tx_chain_test(void)
 		nonVolatileSettings.txFreqLimited = BAND_LIMITS_NONE;
 		aprsTxProgress = APRS_TX_IDLE;
 
-		aprsModeTxResult_t r = aprsModeTxBeacon(&e);
+		aprsModeTxResult_t r = aprsModeTxBeacon(&e, NULL);
 
 		CHECK(r == APRS_MODE_TX_OK, "aprsModeTxBeacon повернув %d", (int)r);
 		CHECK(aprsConfig == &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL], "aprsConfig не повернуто на статичний конфіг (висить на стеку?)");
@@ -574,7 +587,7 @@ int tx_chain_test(void)
 			bad.latU = 95000000;
 			aprsTxProgress = APRS_TX_IDLE;
 			trxIsTransmitting = false;
-			r = aprsModeTxBeacon(&bad);
+			r = aprsModeTxBeacon(&bad, NULL);
 			CHECK(r == APRS_MODE_TX_NOPOS, "широта 95°: очікували NOPOS, є %d", (int)r);
 			CHECK(aprsTxProgress == APRS_TX_IDLE && trxIsTransmitting == false, "широта 95°: передачу не завершено");
 			CHECK(aprsConfig == &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL], "широта 95°: aprsConfig висить");
@@ -583,7 +596,7 @@ int tx_chain_test(void)
 		/* друга передача поспіль */
 		aprsTxProgress = APRS_TX_IDLE;
 		trxIsTransmitting = false;
-		r = aprsModeTxBeacon(&e);
+		r = aprsModeTxBeacon(&e, NULL);
 		CHECK(r == APRS_MODE_TX_OK, "друга передача: %d", (int)r);
 		CHECK(aprsConfig == &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL], "друга передача: aprsConfig висить");
 
@@ -686,7 +699,7 @@ int tx_chain_test(void)
 		strcpy(e.comment, "TYT");
 		e.iconTable = 0; e.iconIndex = ('>' - '!');
 		aprsTxProgress = APRS_TX_IDLE; trxIsTransmitting = false;
-		r = aprsModeTxBeacon(&e);
+		r = aprsModeTxBeacon(&e, NULL);
 		CHECK(r == APRS_MODE_TX_OK, "маяк після повідомлення: %d", (int)r);
 		CHECK(s_modeInfo == NULL, "маяк після повідомлення: s_modeInfo лишився");
 		{

@@ -1013,7 +1013,7 @@ static size_t csFreq(aprsPacket_t *p, const uint8_t *c, size_t n)
 		return 0U;
 	}
 	p->freqKHz = (uint32_t)a * 1000U + (uint32_t)b;
-	if (((at + 5U) <= n) && (c[at] == ' ') && ((c[at + 1U] == 'T') || (c[at + 1U] == 'C') || (c[at + 1U] == 'D')) &&
+	if (((at + 5U) <= n) && (c[at] == ' ') && ((c[at + 1U] == 'T') || (c[at + 1U] == 'C') || (c[at + 1U] == 'D') || (c[at + 1U] == 't') || (c[at + 1U] == 'c') || (c[at + 1U] == 'd')) &&   /* R21 З4: малі -- вузька смуга (так шле стокова) */
 			((memcmp(c + at + 2U, "off", 3) == 0) || (csNum(c + at + 2U, n - at - 2U, 3) >= 0)))
 	{
 		memcpy(p->tone, c + at + 1U, 4);
