@@ -85,6 +85,7 @@ SECTIONS
   .text :
   {
     . = ALIGN(4);
+    __text_start = .;  /* R21 З1.1: межі коду для звіту про збій (відбір адрес повернення зі стека); лише символи, образ не змінюють */
     *(.text)           /* .text sections (code) */
     *(.text*)          /* .text* sections (code) */
     *(.glue_7)         /* glue arm to thumb code */

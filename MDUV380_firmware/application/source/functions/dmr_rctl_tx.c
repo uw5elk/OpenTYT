@@ -29,6 +29,10 @@
 #include <string.h>
 #include <stdio.h>
 
+/* R21 З2: розкладка черги RCTL (крок запису) ПОВИННА збігатись із драйвером dmrDataTxLoad*() -- інакше команди йдуть в ефір зсунутими (так було 29.09..R20). */
+_Static_assert(DMR_RCTL_BURST_PAYLOAD == DMR_DATA_BURST_LEN, "RCTL burst payload must equal DMR_DATA_BURST_LEN");
+_Static_assert(DMR_RCTL_BURST_STRIDE == (1 + DMR_DATA_BURST_LEN), "RCTL burst stride must equal the dmr_data queue record size");
+
 /* Український текст -- ЛИШЕ через rctl_ua.h (cp1251). Писати кирилицю прямо тут не
  * можна: файл у UTF-8, а шрифт рації індексується байтом cp1251, тож на екрані вийде
  * каша. Перевіряється автоматично -- tools/check_string_encoding.py. */
@@ -84,7 +88,7 @@ int dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg)
 	m.seq = seq;
 	m.arg = arg;
 
-	uint8_t q[DMR_RCTL_TX_BURST_COUNT * 13];
+	uint8_t q[DMR_RCTL_TX_BURST_COUNT * DMR_RCTL_BURST_STRIDE];
 	int n = dmr_rctl_build_tx_bursts(targetId, trxDMRID, keyId, key, &m, q);
 	if (n <= 0) { return -4; }
 
@@ -110,7 +114,7 @@ int dmrRctlStockSend(int cmd, uint32_t targetId)
 	if (dmrDataTxActive()) { return -2; }
 	if ((cmd < 0) || (cmd >= DMR_RCTL_STOCK_NUM_CMDS)) { return -4; }
 
-	uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * 13];
+	uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * DMR_RCTL_BURST_STRIDE];
 	int n = dmr_rctl_stock_build_tx((dmr_rctl_stock_cmd_t)cmd, trxDMRID, targetId, q);
 	if (n <= 0) { return -4; }
 
@@ -432,7 +436,7 @@ void dmrRctlStockRxDiagReset(void)
  * Формат -- та сама команда зі старшим бітом керуючого байта (RCTL_COMPAT.md §6). */
 static void sendStockAck(dmr_rctl_stock_cmd_t cmd, uint32_t requester)
 {
-	uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * 13];
+	uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * DMR_RCTL_BURST_STRIDE];
 	int n = dmr_rctl_stock_build_ack_tx_for(cmd, requester, trxDMRID, q);
 	if (n > 0) { dmrDataTxLoad(q, (uint8_t)n); }
 }

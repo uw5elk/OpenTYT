@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "functions/aprs_mode_cfg.h"   /* R21 З4: складач QSY для кругової перевірки */
 #include "functions/aprs_rx_parse.h"
 
 static int fails = 0;
@@ -1203,6 +1204,201 @@ static void testBeaconOrder(void)
 	}
 }
 
+/* R21 З3: імена з кодплуга -- UTF-8 (кирилиця з CPS) -> cp1251 для показу; усе інше не чіпається. */
+static void testNameDisplay(void)
+{
+	char b[40];
+	size_t n;
+
+	printf("--- R21 З3: імена кодплуга для показу ---\n");
+	/* «Папуга» в UTF-8 -> cp1251 */
+	strcpy(b, "\xD0\x9F\xD0\xB0\xD0\xBF\xD1\x83\xD0\xB3\xD0\xB0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !strcmp(b, "\xCF\xE0\xEF\xF3\xE3\xE0"), "«Папуга» UTF-8 -> cp1251 (%u байт)", (unsigned)n);
+	/* ASCII не чіпається */
+	strcpy(b, "LOCAL");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 5U) && !strcmp(b, "LOCAL"), "«LOCAL» без змін");
+	strcpy(b, "");
+	CHECK((aprsNameToDisplay(b) == 0U) && !b[0], "порожнє ім'я");
+	/* cp1251 «Папуга» вже готовий -- не чіпаємо */
+	strcpy(b, "\xCF\xE0\xEF\xF3\xE3\xE0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !strcmp(b, "\xCF\xE0\xEF\xF3\xE3\xE0"), "cp1251 «Папуга» без змін");
+	/* змішане: латиниця + кирилиця UTF-8 («TG Київ») */
+	strcpy(b, "TG \xD0\x9A\xD0\xB8\xD1\x97\xD0\xB2");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 7U) && !strcmp(b, "TG \xCA\xE8\xBF\xE2"), "«TG Київ»: латиниця + кирилиця (%u)", (unsigned)n);
+	/* обрізане посеред символу (поле 16 байтів): «Рівненщина-1» -> хвіст відкинуто */
+	strcpy(b, "\xD0\x9A\xD0\xB8\xD1");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "\xCA\xE8"), "обрізаний хвіст UTF-8 відкинуто (%u)", (unsigned)n);
+	strcpy(b, "AB\xD0\x9A\xD0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 3U) && !strcmp(b, "AB\xCA"), "обрізаний лід-байт після повного символу");
+	/* УВАГА: лише ОДИН байт >= 0x80 без пари -- це cp1251 */
+	strcpy(b, "A\xCF");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "A\xCF"), "одинокий байт cp1251 без змін");
+	/* cp1251, що ВИГЛЯДАЄ як UTF-8: «Ві» = C2 B3 (коректна пара U+00B3, не кирилиця) -- лишаємо */
+	strcpy(b, "\xC2\xB3");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "\xC2\xB3"), "«Ві» (C2 B3) -- не кирилиця, без змін");
+	/* некирилична багатобайтова (німецька ü = C3 BC) -- без змін */
+	strcpy(b, "M\xC3\xBCller");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 7U) && !strcmp(b, "M\xC3\xBCller"), "ü (C3 BC) без змін");
+	/* кирилиця cp1251 з двох байтів, що збігаються з UTF-8-парою: «Рі» (D0 B3): пряме обмеження (задокументоване) */
+	/* нормальні назви cp1251: «Київ» CA E8 BF E2 -- не UTF-8 */
+	strcpy(b, "\xCA\xE8\xBF\xE2");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 4U) && !strcmp(b, "\xCA\xE8\xBF\xE2"), "cp1251 «Київ» без змін");
+	/* максимальне ім'я 16 байтів UTF-8 (8 літер) -> 8 байтів */
+	strcpy(b, "\xD0\x90\xD0\x91\xD0\x92\xD0\x93\xD0\x94\xD0\x95\xD0\x96\xD0\x97");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 8U) && !strcmp(b, "\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7"), "16 байтів UTF-8 -> 8 літер");
+	/* розділові: «Київ — 1» (тире U+2014 = E2 80 94) -> 0x97 */
+	strcpy(b, "\xD0\x9A \xE2\x80\x94 1");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 5U) && !strcmp(b, "\xCA \x97 1"), "тире U+2014 -> 0x97");
+	/* емодзі (F0 9F 98 80) разом з кирилицею: послідовність не з дозволених -> без змін */
+	strcpy(b, "\xD0\x9A\xF0\x9F\x98\x80");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !strcmp(b, "\xD0\x9A\xF0\x9F\x98\x80"), "емодзі -- рядок не чіпаємо");
+	/* чисті ASCII-байти з 0x80..0xFF у кінці без кирилиці: усі байти >= 0x80 не UTF-8 */
+	strcpy(b, "\xFF\xFE");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "\xFF\xFE"), "недійсні лід-байти -- без змін");
+}
+
+/* R21 З4: кругова перевірка -- QSY, який складає маяк (aprsModeQsyFormat/aprsModeCommentWithQsy), розбирається commentStrip() назад у ті самі
+ * частоту, тон і зсув, а текст користувача лишається цілим. */
+static void qsyRound(const char *tag, uint32_t rx, uint32_t tx, char kind, unsigned val, bool wide, const char *cp1251, uint32_t wantKHz,
+		const char *wantTone, int wantShiftKHz)
+{
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	uint8_t b[400];
+	char qsy[APRSM_QSY_LEN];
+	char cm[64];
+	char info[120];
+
+	aprsModeQsyFormat(qsy, sizeof(qsy), rx, tx, kind, val, wide);
+	aprsModeCommentWithQsy(cp1251, qsy, cm, sizeof(cm));
+	snprintf(info, sizeof(info), "!4753.25N/03316.86E[%s", cm);
+	pf("US5EX", 7, info, &ax, &pk, b);
+	CHECK((pk.type == APRS_T_POSITION) && pk.hasPos && (pk.freqKHz == wantKHz), "%s: частота %u кГц (чекаємо %u), QSY «%s»", tag, pk.freqKHz, wantKHz, qsy);
+	CHECK(!strcmp(pk.tone, wantTone), "%s: тон «%s» (чекаємо «%s»)", tag, pk.tone, wantTone);
+	CHECK(pk.hasShift && (pk.shiftKHz == wantShiftKHz), "%s: зсув %d кГц (чекаємо %d)", tag, pk.shiftKHz, wantShiftKHz);
+}
+
+static void testQsyRoundTrip(void)
+{
+	char o[48];
+	size_t n;
+	aprsAx25_t ax;
+	aprsPacket_t pk;
+	uint8_t b[400];
+	char info[120];
+
+	printf("--- R21 З4: QSY у коментарі маяка ---\n");
+	/* еталонні рядки (форма з брифу і з логу Direwolf) */
+	n = aprsModeQsyFormat(o, sizeof(o), 43895000UL, 43135000UL, 'C', 82U, true);
+	CHECK(!strcmp(o, "438.950MHz T082 -760") && (n == 20U), "репітер: «%s»", o);
+	n = aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL, 0, 0U, true);
+	CHECK(!strcmp(o, "144.800MHz Toff +000") && (n == 20U), "симплекс без тону: «%s»", o);
+	aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL, 0, 0U, false);
+	CHECK(!strcmp(o, "144.800MHz toff +000"), "вузька смуга -- малі літери: «%s»", o);
+	aprsModeQsyFormat(o, sizeof(o), 43135000UL, 43895000UL, 'D', 0x23U, true);
+	CHECK(!strcmp(o, "431.350MHz D023 +760"), "DCS, плюсовий зсув: «%s»", o);
+	aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL + 1000000UL, 0, 0U, true);   /* +10 МГц */
+	CHECK(!strcmp(o, "144.800MHz Toff +000"), "зсув понад 9,9 МГц -- +000: «%s»", o);
+	aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL + 500000UL, 0, 0U, true);
+	CHECK(!strcmp(o, "144.800MHz Toff +500"), "зсув 5 МГц -> +500: «%s»", o);
+	aprsModeQsyFormat(o, sizeof(o), 14480000UL, 14480000UL - 6000UL, 'C', 1231U % 1000U, true);
+	CHECK(!strcmp(o, "144.800MHz T231 -006"), "зсув -60 кГц: «%s»", o);
+	CHECK((aprsModeQsyFormat(o, sizeof(o), 0U, 0U, 0, 0U, true) == 0U) && !o[0], "частоти нема -- порожньо");
+	CHECK((aprsModeQsyFormat(o, 10U, 14480000UL, 14480000UL, 0, 0U, true) == 0U) && !o[0], "малий буфер -- порожньо, без запису за межі");
+	CHECK((aprsModeQsyFormat(NULL, 10U, 14480000UL, 14480000UL, 0, 0U, true) == 0U), "NULL -- без падіння");
+
+	/* кругова перевірка: те, що склав маяк, розбирається назад */
+	qsyRound("репітер", 43895000UL, 43135000UL, 'C', 82U, true, "", 438950U, "T082", -7600);
+	qsyRound("симплекс", 14480000UL, 14480000UL, 0, 0U, true, "TYT MD-UV390", 144800U, "Toff", 0);
+	qsyRound("вузька", 14480000UL, 14480000UL, 0, 0U, false, "TYT", 144800U, "toff", 0);
+	qsyRound("DCS", 43135000UL, 43895000UL, 'D', 0x23U, true, "x", 431350U, "D023", 7600);
+	qsyRound("CTCSS 67 Гц", 14575000UL, 14500000UL, 'C', 67U, true, "\xCF\xF0\xE8\xE2\xB3\xF2", 145750U, "T067", -750);
+
+	/* текст користувача після QSY цілий */
+	{
+		char qsy[APRSM_QSY_LEN];
+		char cm[64];
+
+		aprsModeQsyFormat(qsy, sizeof(qsy), 43895000UL, 43135000UL, 'C', 82U, true);
+		aprsModeCommentWithQsy("TYT MD-UV390", qsy, cm, sizeof(cm));
+		snprintf(info, sizeof(info), "!4753.25N/03316.86E[%s", cm);
+		pf("US5EX", 7, info, &ax, &pk, b);
+		CHECK(!strcmp(pk.text, "TYT MD-UV390"), "текст після QSY цілий: «%s»", pk.text);
+		/* кирилиця в тексті: UTF-8 в ефірі -> cp1251 при розборі */
+		aprsModeCommentWithQsy("\xCF\xF0\xE8\xE2\xB3\xF2", qsy, cm, sizeof(cm));
+		snprintf(info, sizeof(info), "!4753.25N/03316.86E[%s", cm);
+		pf("US5EX", 7, info, &ax, &pk, b);
+		CHECK(!strcmp(pk.text, "\xCF\xF0\xE8\xE2\xB3\xF2"), "кирилиця після QSY: «%s»", pk.text);
+	}
+
+	/* обрізання: коментар 43 байти разом із QSY; QSY ціле, обрізається текст користувача */
+	{
+		char qsy[APRSM_QSY_LEN];
+		char cm[APRSM_COMMENT_AIR_MAX + 1U];
+		char longTxt[APRSM_COMMENT_LEN];
+
+		aprsModeQsyFormat(qsy, sizeof(qsy), 43895000UL, 43135000UL, 'C', 82U, true);
+		memset(longTxt, 'x', 24);
+		longTxt[24] = 0;
+		n = aprsModeCommentWithQsy(longTxt, qsy, cm, sizeof(cm));
+		CHECK((n == strlen(cm)) && (n <= APRSM_COMMENT_AIR_MAX) && !strncmp(cm, "438.950MHz T082 -760 x", 22), "довгий текст: %u байт, QSY ціле: «%s»", (unsigned)n, cm);
+		CHECK(n == 20U + 1U + 22U, "текст обрізано до місця, що лишилось (%u байт)", (unsigned)n);
+		/* кирилиця: обрізання не рве UTF-8 посеред літери */
+		memset(longTxt, 0xE0, 24);   /* «а» x24 -> 2 байти кожна */
+		longTxt[24] = 0;
+		n = aprsModeCommentWithQsy(longTxt, qsy, cm, sizeof(cm));
+		CHECK((n <= APRSM_COMMENT_AIR_MAX) && aprsIsUtf8((const uint8_t *)cm, n) && !strncmp(cm, "438.950MHz T082 -760 ", 21), "кирилиця: %u байт, UTF-8 не порвано", (unsigned)n);
+		pf("US5EX", 7, "!4753.25N/03316.86E[438.950MHz T082 -760 \xD0\xB0\xD0\xB0", &ax, &pk, b);
+		/* без QSY -- поведінка колишня */
+		n = aprsModeCommentWithQsy("TYT", NULL, cm, sizeof(cm));
+		CHECK(!strcmp(cm, "TYT") && (n == 3U), "без QSY (NULL) -- тільки текст");
+		n = aprsModeCommentWithQsy("TYT", "", cm, sizeof(cm));
+		CHECK(!strcmp(cm, "TYT") && (n == 3U), "без QSY (\"\") -- тільки текст");
+		/* порожній текст -- без кінцевого пробілу */
+		n = aprsModeCommentWithQsy("", qsy, cm, sizeof(cm));
+		CHECK(!strcmp(cm, "438.950MHz T082 -760") && (n == 20U), "порожній текст -- лише QSY, без пробілу в кінці: «%s»", cm);
+		/* мінімальний буфер */
+		n = aprsModeCommentWithQsy("abc", qsy, cm, 22U);
+		CHECK((n == strlen(cm)) && (n <= 21U) && !strncmp(cm, "438.950MHz T082 -760", 20), "буфер 22 байти: QSY ціле, не вилазить за межі: «%s»", cm);
+		n = aprsModeCommentWithQsy("abc", qsy, cm, 1U);
+		CHECK((n == 0U) && !cm[0], "буфер 1 байт: порожньо");
+	}
+
+	/* блок налаштувань: прапор qsyOff у біті 7 байта 7, довжина блоку 72, старі блоки -- QSY увімкнено */
+	{
+		aprsModeCfg_t c, r;
+		uint8_t blk[APRSM_BLOCK_LEN];
+
+		aprsModeCfgInit(&c);
+		CHECK(c.qsyOff == 0U, "типово QSY увімкнено");
+		aprsModeCfgToBytes(&c, blk);
+		CHECK((blk[7] & 0x80U) == 0U, "QSY увімкнено -- біт 7 чистий (сумісно зі старими блоками)");
+		c.qsyOff = 1U;
+		c.ambiguity = 3U;
+		c.ov = APRSM_OV_AMB;
+		aprsModeCfgToBytes(&c, blk);
+		CHECK((blk[7] == 0x83U), "qsyOff + неточність 3 -> байт 7 = 0x%02X", blk[7]);
+		CHECK(aprsModeCfgFromBytes(&r, blk, APRSM_BLOCK_LEN) && (r.qsyOff == 1U) && (r.ambiguity == 3U) && (r.ov & APRSM_OV_AMB), "round trip: qsyOff=1, неточність 3 збережено");
+		c.qsyOff = 0U;
+		aprsModeCfgToBytes(&c, blk);
+		CHECK(aprsModeCfgFromBytes(&r, blk, APRSM_BLOCK_LEN) && (r.qsyOff == 0U) && (r.ambiguity == 3U), "round trip: qsyOff=0");
+	}
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -1975,6 +2171,8 @@ int main(void)
 	testStage3();
 	testRawText();
 	testFuzz();
+	testNameDisplay();
+	testQsyRoundTrip();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

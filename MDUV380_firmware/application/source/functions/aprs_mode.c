@@ -476,6 +476,49 @@ static void buildChan(aprsModeMem_t *m)
 	codeplugChannelSetFlag(&m->chan, CHANNEL_FLAG_BW_25K, 0);
 }
 
+#if defined(APRS_R21_QSY)
+/* R21 З4: рядок QSY для коментаря маяка -- з каналу, з якого зайшли в режим (savedChan; під час режиму currentChannelData вказує на «канал» режиму з
+ * частотою APRS, а не на канал користувача). Правила стокової (aprs.c): частота RX, тон RX (CTCSS «C», DCS «D»; цифровий канал -- без тону), зсув TX-RX,
+ * смуга 25 кГц -- великі літери, 12,5 -- малі. Порожній рядок -- QSY вимкнено в налаштуваннях або каналу нема. */
+static void qsyForChannel(const aprsModeMem_t *m, char *out, size_t cap)
+{
+	const CodeplugChannel_t *ch = m->savedChan;
+	char kind = 0;
+	unsigned val = 0;
+	bool wide = true;
+
+	if (cap > 0U)
+	{
+		out[0] = 0;
+	}
+	if ((m->cfg.qsyOff != 0U) || (ch == NULL))
+	{
+		return;
+	}
+	if ((ch->chMode == RADIO_MODE_ANALOG) && (ch->rxTone != CODEPLUG_CSS_TONE_NONE))
+	{
+		CodeplugCSSTypes_t t = codeplugGetCSSType(ch->rxTone);
+
+		if (t == CSS_TYPE_CTCSS)
+		{
+			kind = 'C';
+			val = (unsigned)(ch->rxTone / 10U);
+		}
+		else if (t & CSS_TYPE_DCS)
+		{
+			kind = 'D';
+			val = (unsigned)(ch->rxTone & ~CSS_TYPE_DCS_MASK);
+		}
+	}
+	if (ch->chMode == RADIO_MODE_ANALOG)
+	{
+		wide = (codeplugChannelGetFlag((CodeplugChannel_t *)ch, CHANNEL_FLAG_BW_25K) != 0U);
+	}
+	(void)aprsModeQsyFormat(out, cap, ch->rxFreq, ch->txFreq, kind, val, wide);
+}
+
+#endif /* APRS_R21_QSY */
+
 static void tune(const aprsModeMem_t *m)
 {
 	uint32_t f = m->eff.freq;
@@ -1265,9 +1308,17 @@ void aprsModeTick(void)
 	{
 		aprsModeTxResult_t r;
 		aprsModeBcnState_t st;
+#if defined(APRS_R21_QSY)
+		char qsy[APRSM_QSY_LEN];
+#endif
 
 		AM_TRACE(211);   /* частота вільна: перед aprsModeTxBeacon() (далі 220..) */
-		r = aprsModeTxBeacon(&m->eff);
+#if defined(APRS_R21_QSY)
+		qsyForChannel(m, qsy, sizeof(qsy));   /* R21 З4 */
+		r = aprsModeTxBeacon(&m->eff, qsy);
+#else
+		r = aprsModeTxBeacon(&m->eff, NULL);
+#endif
 		AM_TRACE(212);   /* aprsModeTxBeacon() повернув керування */
 
 		switch (r)

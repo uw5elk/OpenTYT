@@ -198,7 +198,8 @@ typedef enum
 	APRS_MODE_TX_NOCALL,
 	APRS_MODE_TX_TOOBIG       /* R10-fix2: кадр AX.25 не влазить у буфер -- передачу скасовано */
 } aprsModeTxResult_t;
-aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e);
+/* R21 З4: qsy -- готовий рядок «FFF.FFFMHz Xnnn ±nnn» каналу, з якого зайшли в режим (aprsModeQsyFormat()), що ставиться ПЕРШИМ у коментар маяка; NULL або "" -- без QSY. */
+aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e, const char *qsy);
 /* R11: повідомлення/ACK APRS (info -- з aprs_msg.c). R13 (П.6): from — позивний-SSID відправника з завдання черги («CALL[-SS]»): замінює позивний
  * режиму; NULL або "" — позивний режиму, як було. */
 aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info, const char *from);

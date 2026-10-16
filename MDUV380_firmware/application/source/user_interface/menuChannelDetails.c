@@ -269,7 +269,7 @@ static void readAprsConfig(void)
 	{
 		if (codeplugAPRSGetDataForIndex(tmpChannel.aprsConfigIndex, &aprsConfig))
 		{
-			codeplugUtilConvertBufToString((char *)&aprsConfig.name, aprsConfigName, sizeof(aprsConfig.name));
+			codeplugUtilConvertBufToDisplayString((char *)&aprsConfig.name, aprsConfigName, sizeof(aprsConfig.name));
 			hasAprsConfig = true;
 		}
 		else
@@ -450,7 +450,7 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 							else
 							{
 								codeplugRxGroupGetDataForIndex(tmpChannel.rxGroupList, &rxGroupBuf);
-								codeplugUtilConvertBufToString(rxGroupBuf.name, tmpBuf, 16);
+								codeplugUtilConvertBufToDisplayString(rxGroupBuf.name, tmpBuf, 16);
 								snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", tmpBuf);
 							}
 						}
@@ -470,7 +470,7 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 							else
 							{
 								codeplugContactGetDataForIndex(tmpChannel.contact, &contactBuf);
-								codeplugUtilConvertBufToString(contactBuf.name, tmpBuf, 16);
+								codeplugUtilConvertBufToDisplayString(contactBuf.name, tmpBuf, 16);
 								snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", tmpBuf);
 							}
 						}

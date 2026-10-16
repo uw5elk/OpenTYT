@@ -174,7 +174,7 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 	}
 	else
 	{
-		codeplugUtilConvertBufToString(tmpContact.name, buf, 16);
+		codeplugUtilConvertBufToDisplayString(tmpContact.name, buf, 16);
 	}
 
 	menuDisplayTitle(buf);

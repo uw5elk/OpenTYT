@@ -142,7 +142,7 @@ static void updateScreen(bool isFirstRun)
 		}
 
 		codeplugZoneGetDataForNumber(s_zoneMap[mNum], &zoneBuf);   // mNum -- екранний індекс -> справжня зона
-		codeplugUtilConvertBufToString(zoneBuf.name, nameBuf, 16);// need to convert to zero terminated string
+		codeplugUtilConvertBufToDisplayString(zoneBuf.name, nameBuf, 16);// need to convert to zero terminated string
 
 		menuDisplayEntry(i, mNum, (char *)nameBuf, 0, THEME_ITEM_FG_ZONE_NAME, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
 

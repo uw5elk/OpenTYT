@@ -864,13 +864,17 @@ static void settingsStep(int f, int dir)
 enum
 {
 	AS_S_MODE = 32, AS_S_POWER, AS_S_BINT, AS_S_COMPR, AS_S_SLOW, AS_S_FAST, AS_S_LOWSPD, AS_S_HISPD, AS_S_ANGLE, AS_S_SLOPE,
-	AS_S_TIME, AS_S_DECAY, AS_S_SOURCE, AS_S_BCNWIN
+	AS_S_TIME, AS_S_DECAY, AS_S_SOURCE, AS_S_BCNWIN, AS_S_QSY   /* R21 З4: QSY у коментарі маяка -- у блоці режиму, не в стокових налаштуваннях (рядок є лише при APRS_R21_QSY) */
 };
 
 enum { AS_G_STATION = 0, AS_G_BEACON, AS_G_SMART, AS_G_POS, AS_G_RX, AS_G_RESET, AS_G_COUNT };
 
 static const uint8_t asRowsStation[] = { APRSM_F_CALL, APRSM_F_SSID, APRSM_F_SYMBOL, APRSM_F_COMMENT };
-static const uint8_t asRowsBeacon[] = { AS_S_MODE, AS_S_POWER, AS_S_BINT, APRSM_F_PATH1, APRSM_F_PATH2, AS_S_COMPR, APRSM_F_INTERVAL };
+static const uint8_t asRowsBeacon[] = { AS_S_MODE, AS_S_POWER, AS_S_BINT, APRSM_F_PATH1, APRSM_F_PATH2, AS_S_COMPR,
+#if defined(APRS_R21_QSY)
+		AS_S_QSY,
+#endif
+		APRSM_F_INTERVAL };
 static const uint8_t asRowsSmart[] = { AS_S_SLOW, AS_S_FAST, AS_S_LOWSPD, AS_S_HISPD, AS_S_ANGLE, AS_S_SLOPE, AS_S_TIME, AS_S_DECAY };
 static const uint8_t asRowsPos[] = { AS_S_SOURCE, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB };
 static const uint8_t asRowsRx[] = { APRSM_F_FREQ, APRSM_F_SQL, AS_S_BCNWIN };
@@ -943,6 +947,9 @@ static const asEnum_t asEnums[] =
 	{ AS_S_COMPR,  2U, APRSM_L_COMPR,  { APRSM_V_OFF, APRSM_V_ON } },
 	{ AS_S_DECAY,  2U, APRSM_L_DECAY,  { APRSM_V_OFF, APRSM_V_ON } },
 	{ AS_S_SOURCE, 2U, APRSM_L_SOURCE, { APRSM_V_SRC_CH, APRSM_V_SRC_GPS } },
+#if defined(APRS_R21_QSY)
+	{ AS_S_QSY,    2U, APRSM_L_QSY,    { APRSM_V_OFF, APRSM_V_ON } },
+#endif
 	{ AS_S_BCNWIN, 3U, APRSM_L_BCNWIN, { APRSRX_OPT_BCNWIN_ALL, APRSRX_OPT_BCNWIN_NEW, APRSRX_OPT_BCNWIN_OFF } }
 };
 
@@ -998,6 +1005,9 @@ static uint8_t asEnumGet(int r)
 		case AS_S_COMPR:  return ((s->state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0U) ? 1U : 0U;
 		case AS_S_DECAY:  return ((s->state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) != 0U) ? 1U : 0U;
 		case AS_S_SOURCE: return ((s->state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U) ? 1U : 0U;
+#if defined(APRS_R21_QSY)
+		case AS_S_QSY:    return (aprsModeCfg()->qsyOff != 0U) ? 0U : 1U;   /* R21 З4 */
+#endif
 		default:          return aprsRxBcnWinMode();
 	}
 }
@@ -1015,6 +1025,12 @@ static void asEnumSet(int r, uint8_t v)
 		case AS_S_BCNWIN:
 			aprsRxBcnWinSetMode(v);
 			return;
+#if defined(APRS_R21_QSY)
+		case AS_S_QSY:
+			aprsModeCfg()->qsyOff = (v != 0U) ? 0U : 1U;   /* R21 З4: у блоці режиму; запис у флеш -- як у решти полів (aprsModeCfgChanged) */
+			aprsModeCfgChanged(0x8000U);
+			return;
+#endif
 		case AS_S_COMPR:  bit = (uint8_t)APRS_BEACONING_STATE_COMPRESSED_FORMAT; break;
 		case AS_S_DECAY:  bit = (uint8_t)APRS_BEACONING_STATE_DECAY_ALGO_ENABLED; break;
 		default:          /* AS_S_SOURCE: канал / GPS -- два біти стану (інший скидається) */
@@ -1203,7 +1219,11 @@ static void asRowGreen(int r)
 	}
 	if (r >= AS_S_MODE)
 	{
-		if ((r == AS_S_COMPR) || (r == AS_S_DECAY))
+		if ((r == AS_S_COMPR) || (r == AS_S_DECAY)
+#if defined(APRS_R21_QSY)
+				|| (r == AS_S_QSY)
+#endif
+				)
 		{
 			asEnumSet(r, (uint8_t)(asEnumGet(r) ^ 1U));
 		}
@@ -1302,6 +1322,21 @@ static int asLevelEvent(uiEvent_t *ev)
 		asRowGreen(asRowId(u));
 		return 1;
 	}
+#if defined(APRS_R21_PRESETS)
+	/* R21 З5: пресети розумного маяка -- цифри 0..6, як у стоковому екрані (Default, Car, e-Bike, Bike, Walking, Sailing, APRSdroid); лише в групі «Розумний маяк» */
+	if ((u->scroll == AS_G_SMART) && KEYCHECK_SHORTUP_NUMBER(ev->keys) && (BUTTONCHECK_DOWN(ev, (BUTTON_SK1 | BUTTON_SK2)) == 0))
+	{
+		const char *nm = NULL;
+		const aprsSmartBeaconingSettings_t *pr = aprsSmartPresetGet((unsigned)(ev->keys.key - '0'), &nm);
+
+		if (pr != NULL)
+		{
+			memcpy(&aprsSettingsCopy.smart, pr, sizeof(aprsSmartBeaconingSettings_t));
+			uiNotificationShowShort(1000, nm, false);
+			return 1;
+		}
+	}
+#endif
 	return 0;
 }
 

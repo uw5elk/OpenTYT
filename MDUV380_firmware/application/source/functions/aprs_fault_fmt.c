@@ -75,12 +75,12 @@ const char *aprsFaultCfsrName(uint32_t cfsr)
 	return "";
 }
 
-bool aprsFaultAddrIsCode(uint32_t v)
+bool aprsFaultAddrIsCode(uint32_t v, uint32_t textLo, uint32_t textHi)
 {
-	return ((v & 1U) != 0U) && (v > 0x08000001UL) && (v < 0x08100000UL);
+	return ((v & 1U) != 0U) && (v >= textLo) && (v < textHi);
 }
 
-int aprsFaultScanStack(const uint32_t *words, size_t n, uint32_t *out, int maxOut)
+int aprsFaultScanStack(const uint32_t *words, size_t n, uint32_t *out, int maxOut, uint32_t textLo, uint32_t textHi)
 {
 	int found = 0;
 
@@ -88,7 +88,7 @@ int aprsFaultScanStack(const uint32_t *words, size_t n, uint32_t *out, int maxOu
 	{
 		uint32_t v = words[i];
 
-		if (aprsFaultAddrIsCode(v) && ((found == 0) || (out[found - 1] != v)))
+		if (aprsFaultAddrIsCode(v, textLo, textHi) && ((found == 0) || (out[found - 1] != v)))
 		{
 			out[found++] = v;
 		}

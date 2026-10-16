@@ -13,6 +13,8 @@
  *   10..13 адреси повернення зі стека   14 лічильник kick (+біт 31 «сторож увімкнено», біт 30 «IWDG запущено»)
  *   15 стан сторожа (останній kick | лічильник «застрягло» << 16)   16 останній крок трасування (мс від T0 << 16 | n)
  *   17 його значення v   18 T0 (мс)   19 дескриптор головного завдання FreeRTOS
+ * R21 З1.1: у користувацькій збірці (без APRS_MODE_TRACE) регістри 16..18 -- це 5-й..7-й кадри стека (AFLT_NSTK = 7); у діагностичній --
+ * трасування, кадрів 4.
  */
 #include "functions/aprs_fault.h"
 
@@ -44,6 +46,12 @@ enum
 	S_KICK, S_WSEEN, S_TRN, S_TRV, S_T0, S_TASK,
 	S_COUNT
 };
+/* Регістр i-го кадра стека: перші 4 -- S_STK0.., решта (лише user) -- ті ж регістри, що трасування (S_TRN, S_TRV, S_T0). */
+#define STKREG(i)     (((i) < 4) ? (S_STK0 + (i)) : (S_TRN + ((i) - 4)))
+_Static_assert((AFLT_NSTK <= 4) || (STKREG(AFLT_NSTK - 1) <= S_T0), "stack frames overflow into non-free backup registers");
+#if defined(APRS_MODE_TRACE)
+_Static_assert(AFLT_NSTK == 4, "diag build: backup regs 16..18 are used by the trace");
+#endif
 _Static_assert(S_COUNT == 20, "RTC has 20 backup registers");
 _Static_assert(offsetof(RTC_TypeDef, BKP19R) == (offsetof(RTC_TypeDef, BKP0R) + (19U * 4U)), "BKP0R..BKP19R must be contiguous");
 
@@ -96,19 +104,27 @@ static uint32_t safeWords(uint32_t a, uint32_t max)
 }
 
 /* ---- запис ----------------------------------------------------------------------------------------------- */
+/* Межі коду (.text) із лінкерного скрипта: у стеку шукаємо адреси повернення лише тут, а не в усьому флеші (.rodata, шрифти). */
+extern uint32_t __text_start;
+extern uint32_t _etext;
+
+/* R21 З1.1: дивимось 256 слів (1 КБ) вгору від вершини стека, а не 96: ланцюжок printf -> libc займає кількасот байтів, і код прошивки
+ * лежить глибше. Обмеження safeWords() -- кінець RAM/CCM. */
+#define AF_SCAN_WORDS 256U
+
 static void recStackScan(uint32_t spBefore)
 {
 	uint32_t found[AFLT_NSTK] = { 0 };
 	int n = 0;
-	uint32_t words = safeWords(spBefore, 96U);
+	uint32_t words = safeWords(spBefore, AF_SCAN_WORDS);
 
 	if ((spBefore & 3U) == 0U && words > 0U)
 	{
-		n = aprsFaultScanStack((const uint32_t *)spBefore, words, found, AFLT_NSTK);
+		n = aprsFaultScanStack((const uint32_t *)spBefore, words, found, AFLT_NSTK, (uint32_t)&__text_start, (uint32_t)&_etext);
 	}
 	for (int i = 0; i < AFLT_NSTK; i++)
 	{
-		BKP(S_STK0 + i) = (i < n) ? found[i] : 0U;
+		BKP(STKREG(i)) = (i < n) ? found[i] : 0U;
 	}
 }
 
@@ -138,7 +154,7 @@ static void load(aprsFaultRec_t *r)
 	r->r0 = BKP(S_R0);
 	for (int i = 0; i < AFLT_NSTK; i++)
 	{
-		r->stk[i] = BKP(S_STK0 + i);
+		r->stk[i] = BKP(STKREG(i));
 	}
 #if defined(APRS_MODE_TRACE)
 	r->trace = trn & 0xFFFFU;
@@ -244,9 +260,10 @@ static void drawPage(const aprsFaultRec_t *r, uint32_t page)
 				b[2] = '-';
 				b[3] = 0;
 			}
-			displayPrintAt(0, (uint16_t)(14 + (i * 20)), b, FONT_SIZE_3);
+			/* R21 З1.1: до 7 рядків -- шрифт 8x8 з кроком 12 пікселів (128 px екрана: 12 + 7*12 = 96) */
+			displayPrintAt(0, (uint16_t)(12 + (i * 12)), b, FONT_SIZE_2);
 		}
-		displayPrintAt(0, 100, "ADDR2LINE ON .MAP", FONT_SIZE_1);
+		displayPrintAt(0, 104, "ADDR2LINE ON .MAP", FONT_SIZE_1);
 	}
 	displayRenderWithoutNotification();
 }
@@ -572,6 +589,10 @@ void aprsFaultInit(void)
 			for (int i = S_PC; i <= S_STK3; i++)
 			{
 				BKP(i) = 0U;
+			}
+			for (int i = 4; i < AFLT_NSTK; i++)   /* R21: кадри 5..7 живуть у регістрах, вільних від трасування (лише user) */
+			{
+				BKP(STKREG(i)) = 0U;
 			}
 			BKP(S_MAGIC) = aprsFaultMagicFromKind(AFLT_KIND_IWDG);
 		}

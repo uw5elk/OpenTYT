@@ -924,7 +924,7 @@ void uiVFOModeUpdateScreen(int txTimeSecs)
 								}
 								else
 								{
-									codeplugUtilConvertBufToString(currentContactData.name, buffer, 16);
+									codeplugUtilConvertBufToDisplayString(currentContactData.name, buffer, 16);
 								}
 							}
 						}

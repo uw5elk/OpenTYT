@@ -179,7 +179,7 @@ static void updateScreen(bool inputModeHasChanged)
 				voicePromptsAppendPrompt(PROMPT_CONTACT);
 				{
 					char buf2[17];
-					codeplugUtilConvertBufToString((inAnalog ? dtmfContact.name : contact.name), buf2, 16);
+					codeplugUtilConvertBufToDisplayString((inAnalog ? dtmfContact.name : contact.name), buf2, 16);
 
 					if (strlen(buf2))
 					{
@@ -210,7 +210,7 @@ static void updateScreen(bool inputModeHasChanged)
 	{
 		displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG);
 
-		codeplugUtilConvertBufToString((inAnalog ? dtmfContact.name : contact.name), buf, 16);
+		codeplugUtilConvertBufToDisplayString((inAnalog ? dtmfContact.name : contact.name), buf, 16);
 #if defined(HAS_COLOURS)
 		displayPrintCenteredDoubleHeight(((DISPLAY_SIZE_Y / 2) - (dblHeight ? FONT_SIZE_3_HEIGHT : 0)), buf, FONT_SIZE_3, dblHeight);
 		displayPrintCenteredDoubleHeight(((DISPLAY_SIZE_Y - FONT_SIZE_3_HEIGHT) - (dblHeight ? FONT_SIZE_3_HEIGHT : 0)), (char *)digits, FONT_SIZE_3, dblHeight);
@@ -321,7 +321,7 @@ static void announceContactName(void)
 	if (nonVolatileSettings.audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD)
 	{
 		char buf[17];
-		codeplugUtilConvertBufToString((inAnalog ? dtmfContact.name : contact.name), buf, 16);
+		codeplugUtilConvertBufToDisplayString((inAnalog ? dtmfContact.name : contact.name), buf, 16);
 		voicePromptsInit();
 
 		if (strlen(buf))
@@ -386,7 +386,7 @@ static void handleEvent(uiEvent_t *ev)
 						voicePromptsAppendPrompt(PROMPT_CONTACT);
 						{
 							char buf[17];
-							codeplugUtilConvertBufToString((inAnalog ? dtmfContact.name : contact.name), buf, 16);
+							codeplugUtilConvertBufToDisplayString((inAnalog ? dtmfContact.name : contact.name), buf, 16);
 							voicePromptsAppendString(buf);
 						}
 						break;

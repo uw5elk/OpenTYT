@@ -1789,7 +1789,7 @@ static void cpsHandleCommand(void)
 			hasToReply = true;
 			replyLength = 1;
 			break;
-		case 0x91: // SUB queue + key a DMR data call: [2]=burst count, [3..]=count x (1 type byte + 12 payload)
+		case 0x91: // SUB queue + key a DMR data call: [2]=burst count, [3..]=count x (1 type byte + DMR_DATA_BURST_LEN=18 payload; R21: було 12)
 			dmrDataTxLoad((const uint8_t *)&com_requestbuffer[3], com_requestbuffer[2]);
 			usbComSendBuf[0] = com_requestbuffer[0];
 			hasToReply = true;

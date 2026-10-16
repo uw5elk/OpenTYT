@@ -954,11 +954,11 @@ static void updateLHItem(LinkItem_t *item)
 		{
 			if ((item->talkGroupOrPcId & 0x00FFFFFF) == ALL_CALL_VALUE)
 			{
-				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s", currentLanguage->all_call);
+				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s", UI_SAFE_STR(currentLanguage->all_call));
 			}
 			else
 			{
-				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s %u", currentLanguage->tg, (item->talkGroupOrPcId & 0x00FFFFFF));
+				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s %u", UI_SAFE_STR(currentLanguage->tg), (item->talkGroupOrPcId & 0x00FFFFFF));
 			}
 		}
 
@@ -1536,7 +1536,7 @@ bool contactIDLookup(uint32_t id, ContactCalltype_t calltype, char *buffer)
 
 	if (contactIndex != -1)
 	{
-		codeplugUtilConvertBufToString(contact.name, buffer, 16);
+		codeplugUtilConvertBufToDisplayString(contact.name, buffer, 16);
 		return true;
 	}
 
@@ -1555,7 +1555,7 @@ static void displayChannelNameOrRxFrequency(char *buffer, size_t maxLen)
 		else
 #endif
 		{
-			codeplugUtilConvertBufToString(currentChannelData->name, buffer, 16);
+			codeplugUtilConvertBufToDisplayString(currentChannelData->name, buffer, 16);
 			displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
 		}
 	}
@@ -2068,6 +2068,22 @@ static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
 }
 #endif
 
+#if defined(APRS_R21_TXLABEL)
+/* R21 З6: див. uiUtilities.h. Слот: x = 25..48 (4 символи по 6 px) -- прапорець «a» закінчується на x = 24 (DMR: 1+18+6), потужність у найгіршому випадку
+ * ("250mW", 30 px) починається з x = 50. Малюється в шапці, тож S-метр (нижче шапки) і рядок контакту не зачіпаються. */
+void uiUtilityDrawAprsTxLabel(void)
+{
+	themeItem_t fgItem, bgItem;
+
+	displayThemeGetForegroundAndBackgroundItems(&fgItem, &bgItem);
+	displayThemeApply(THEME_ITEM_FG_HEADER_TEXT, THEME_ITEM_BG_HEADER_TEXT);
+	displayFillRect(25, DISPLAY_Y_POS_HEADER - 1, 24, 9, true);
+	displayThemeApply(THEME_ITEM_FG_TX_COUNTER, THEME_ITEM_BG_HEADER_TEXT);
+	displayPrintCore(25, DISPLAY_Y_POS_HEADER, "APRS", FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	displayThemeApply(fgItem, bgItem);
+}
+#endif
+
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
 {
 	const int MODE_TEXT_X_OFFSET = 1;
@@ -2325,7 +2341,7 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 						if (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_FORCE_DMO) == 0)
 						{
 							snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%s%d",
-									((contactTSActive && (monitorModeData.isEnabled == false)) ? "cS" : currentLanguage->ts),
+									((contactTSActive && (monitorModeData.isEnabled == false)) ? "cS" : UI_SAFE_STR(currentLanguage->ts)),
 									((monitorModeData.isEnabled && (dmrMonitorCapturedTS != -1))? (dmrMonitorCapturedTS + 1) : trxGetDMRTimeSlot() + 1));
 						}
 						else
@@ -2379,8 +2395,15 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		}
 	}
 
+#if defined(APRS_R21_TXLABEL)
+	if (aprsIsTXing && (isVFOSweepScanning == false) && (isVFODualWatchScanning == false))
+	{
+		uiUtilityDrawAprsTxLabel();   // R21 З6: передача маяка APRS -- «APRS» замість фільтра/TS
+	}
+#endif
+
 	// Power
-	sprintf(buffer, "%s%s", getPowerLevel(powerLevel), getPowerLevelUnit(powerLevel));
+	sprintf(buffer, "%s%s", UI_SAFE_STR(getPowerLevel(powerLevel)), UI_SAFE_STR(getPowerLevelUnit(powerLevel)));
 
 	if (isVFOSweepScanning) // Need to shift to the right due to sweep span
 	{
@@ -3120,7 +3143,7 @@ ANNOUNCE_STATIC void announceZoneName(bool voicePromptWasPlaying)
 		voicePromptsAppendLanguageString(currentLanguage->zone);
 	}
 
-	codeplugUtilConvertBufToString(currentZone.name, nameBuf, 16);
+	codeplugUtilConvertBufToDisplayString(currentZone.name, nameBuf, 16);
 
 	if (strcmp(nameBuf, currentLanguage->all_channels) == 0)
 	{
@@ -3173,7 +3196,7 @@ ANNOUNCE_STATIC void announceContactNameTgOrPc(bool voicePromptWasPlaying)
 			voicePromptsAppendLanguageString(currentLanguage->contact);
 		}
 
-		codeplugUtilConvertBufToString(currentContactData.name, nameBuf, 16);
+		codeplugUtilConvertBufToDisplayString(currentContactData.name, nameBuf, 16);
 		voicePromptsAppendString(nameBuf);
 	}
 	else
@@ -3309,7 +3332,7 @@ ANNOUNCE_STATIC void announceChannelName(bool voicePromptWasPlaying)
 	{
 		char voiceBuf[17];
 
-		codeplugUtilConvertBufToString(channelScreenChannelData.name, voiceBuf, 16);
+		codeplugUtilConvertBufToDisplayString(channelScreenChannelData.name, voiceBuf, 16);
 		voicePromptsAppendString(voiceBuf);
 
 		if (uiDataGlobal.reverseRepeaterChannel)
@@ -3675,16 +3698,16 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen)
 		{
 			if (id == ALL_CALL_VALUE)
 			{
-				snprintf(nameBuf, bufferLen, "%s", currentLanguage->all_call);
+				snprintf(nameBuf, bufferLen, "%s", UI_SAFE_STR(currentLanguage->all_call));
 			}
 			else
 			{
-				snprintf(nameBuf, bufferLen, "%s %u", currentLanguage->tg, (trxTalkGroupOrPcId & 0x00FFFFFF));
+				snprintf(nameBuf, bufferLen, "%s %u", UI_SAFE_STR(currentLanguage->tg), (trxTalkGroupOrPcId & 0x00FFFFFF));
 			}
 		}
 		else
 		{
-			codeplugUtilConvertBufToString(contact.name, nameBuf, 16);
+			codeplugUtilConvertBufToDisplayString(contact.name, nameBuf, 16);
 		}
 	}
 	else
@@ -3709,7 +3732,7 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen)
 				{
 					if (id == ALL_CALL_VALUE)
 					{
-						snprintf(nameBuf, bufferLen, "%s", currentLanguage->all_call);
+						snprintf(nameBuf, bufferLen, "%s", UI_SAFE_STR(currentLanguage->all_call));
 					}
 					else
 					{
@@ -3720,7 +3743,7 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen)
 		}
 		else
 		{
-			codeplugUtilConvertBufToString(contact.name, nameBuf, 16);
+			codeplugUtilConvertBufToDisplayString(contact.name, nameBuf, 16);
 		}
 	}
 }
@@ -4708,8 +4731,28 @@ void showErrorMessage(const char *message)
 	displayRender();
 }
 
+#if defined(ENABLE_APRS_RX)
+/* R21 З1.3: чи вказівник схожий на рядок у флеші прошивки, RAM або CCM. Усе інше (периферія 0x40xxxxxx, 0, малі числа) -- "?". */
+const char *uiSafeStr(const char *p)
+{
+	uintptr_t a = (uintptr_t)p;
+
+	if (((a >= 0x08000000UL) && (a < 0x08100000UL)) || ((a >= 0x20000000UL) && (a < 0x20020000UL)) || ((a >= 0x10000000UL) && (a < 0x10010000UL)))
+	{
+		return p;
+	}
+	return "?";
+}
+#endif
+
 const char *getPowerLevel(uint8_t level)
 {
+#if defined(ENABLE_APRS_RX)
+	if (level > MAX_POWER_SETTING_NUM)   // R21 З1.3: таблиці POWER_LEVELS/UNITS мають MAX_POWER_SETTING_NUM + 1 елементів; поза ними -- читання сміття як вказівника
+	{
+		level = MAX_POWER_SETTING_NUM;
+	}
+#endif
 #if defined(PLATFORM_MDUV380) && !defined(PLATFORM_VARIANT_UV380_PLUS_10W)
 	return POWER_LEVELS[(settingsIsOptionBitSet(BIT_FORCE_10W_RADIO) ? 1U : 0U)][level];
 #else
@@ -4719,6 +4762,12 @@ const char *getPowerLevel(uint8_t level)
 
 const char *getPowerLevelUnit(uint8_t level)
 {
+#if defined(ENABLE_APRS_RX)
+	if (level > MAX_POWER_SETTING_NUM)
+	{
+		level = MAX_POWER_SETTING_NUM;
+	}
+#endif
 	return POWER_LEVEL_UNITS[level];
 }
 

@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include "crypto/dmr_rctl_pdu.h"
+#include "crypto/dmr_rctl_burst.h"   /* DMR_RCTL_BURST_STRIDE -- крок запису черги */
 
 /* 6 CSBK-преамбул + Unconfirmed Data Header + ENC extended header + 2 rate-1/2 блоки з
  * 16-байтним зашифрованим PDU (24 B = ct(16)+pad(4)+crc32(4), поділені по 12 B/блок). */
@@ -35,8 +36,8 @@ uint32_t dmr_rctl_crc32(const uint8_t *pdu, int len);
  * Потрібно для каналів без ключа: команди мають ходити і там, а доступ вирішує цільова
  * рація своїми дозволами. Саме наявність/відсутність ENC-заголовка приймач і використовує,
  * щоб зрозуміти, розшифровувати кадр чи читати як є.
- * q має вмістити >= DMR_RCTL_TX_BURST_COUNT*13 байт (розкладка як у dmrDataTxLoad():
- * count*(1 байт типу + 12 байт корисного навантаження)).
+ * q має вмістити >= DMR_RCTL_TX_BURST_COUNT*DMR_RCTL_BURST_STRIDE байт (розкладка як у dmrDataTxLoad():
+ * count*(1 байт типу + DMR_DATA_BURST_LEN=18 байт навантаження, з них 12 -- дані бургста); R21 З2: крок був 13).
  * Повертає кількість бургстів (>0): DMR_RCTL_TX_BURST_COUNT для шифрованого кадру,
  * на один менше для відкритого.
  * Чиста функція — без STM32/флешу/глобального стану, повністю тестована на хості. */

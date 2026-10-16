@@ -2003,29 +2003,40 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 
 		if (configIsValid && positionIsValid)
 		{
-			int16_t yPos = (fromSatScreen ?
-#if defined(HAS_COLOURS)
-					(DISPLAY_SIZE_Y / 4)
-#else
-					DISPLAY_Y_POS_CONTACT
+#if defined(APRS_R21_TXLABEL)
+			/* R21 З6: власний екран і канал -- компактний «APRS» у шапці (великий «APRS Tx» ховався за S-метром і перекривав контакт). Супутниковий екран -- стоково. */
+			if (fromSatScreen == false)
+			{
+				uiUtilityDrawAprsTxLabel();
+				displayRender();
+			}
+			else
 #endif
-					: DISPLAY_Y_POS_TX_TIMER);
-			ucFont_t font = (fromSatScreen ? FONT_SIZE_3 : FONT_SIZE_4);
-			int16_t fontHeight = (fromSatScreen ? FONT_SIZE_3_HEIGHT : FONT_SIZE_4_HEIGHT);
+			{
+				int16_t yPos = (fromSatScreen ?
+#if defined(HAS_COLOURS)
+						(DISPLAY_SIZE_Y / 4)
+#else
+						DISPLAY_Y_POS_CONTACT
+#endif
+						: DISPLAY_Y_POS_TX_TIMER);
+				ucFont_t font = (fromSatScreen ? FONT_SIZE_3 : FONT_SIZE_4);
+				int16_t fontHeight = (fromSatScreen ? FONT_SIZE_3_HEIGHT : FONT_SIZE_4_HEIGHT);
 #if ! defined(HAS_COLOURS)
-			int16_t tBorder = (fromSatScreen ? 0 : 6);
-			int16_t bBorder = (fromSatScreen ? -1 : 12);
+				int16_t tBorder = (fromSatScreen ? 0 : 6);
+				int16_t bBorder = (fromSatScreen ? -1 : 12);
 #endif
 
-			displayThemeApply(THEME_ITEM_FG_TX_COUNTER, THEME_ITEM_BG);
+				displayThemeApply(THEME_ITEM_FG_TX_COUNTER, THEME_ITEM_BG);
 #if defined(HAS_COLOURS)
-			displayFillRect(0, yPos, DISPLAY_SIZE_X, fontHeight, true);
+				displayFillRect(0, yPos, DISPLAY_SIZE_X, fontHeight, true);
 #else
-			displayFillRect(0, (yPos + tBorder), DISPLAY_SIZE_X, (fontHeight - bBorder), true);
+				displayFillRect(0, (yPos + tBorder), DISPLAY_SIZE_X, (fontHeight - bBorder), true);
 #endif
-			displayPrintCentered(yPos, buffer, font);
-			displayThemeResetToDefault();
-			displayRender();
+				displayPrintCentered(yPos, buffer, font);
+				displayThemeResetToDefault();
+				displayRender();
+			}
 		}
 		else
 		{
@@ -2179,7 +2190,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
  * AFSK-модулятор у перериванні TIM6), а завершення -- aprsBeaconingTick() -> APRS_TX_FINISHED ... FINAL_STAGE,
  * який повертає режим/смугу з currentChannelData (тобто з «каналу» режиму -- ті самі FM 12,5 кГц).
  * Блокує лише на затримку TX (APRS_XMIT_TX_DELAY, 50 мс), як стоковий. */
-static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info, const char *from)
+static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info, const char *from, const char *qsy)
 {
 	aprsModeRawCfg_t cfg;
 	aprsChannelSettingsInUse_t channelSettings;
@@ -2268,7 +2279,12 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info,
 		aprsModeToBeaconCfg(e, &cfg);
 	}
 	AM_TRACE(230);   /* перед aprsModeCommentToUtf8 */
-	(void)aprsModeCommentToUtf8(e->comment, comment, sizeof(comment));
+#if defined(APRS_R21_QSY)
+	(void)aprsModeCommentWithQsy(e->comment, (info == NULL) ? qsy : NULL, comment, sizeof(comment));   /* R21 З4: QSY лише в маяку, не в повідомленні */
+#else
+	(void)qsy;
+	(void)aprsModeCommentToUtf8(e->comment, comment, sizeof(comment));   // diag: без QSY (див. aprs_rx_cfg.h)
+#endif
 	AM_TRACE(231);   /* після aprsModeCommentToUtf8 */
 
 	memset(&loc, 0, sizeof(loc));
@@ -2312,9 +2328,9 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info,
 #endif
 
 #if defined(ENABLE_APRS_RX)
-aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
+aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e, const char *qsy)
 {
-	return modeTxCommon(e, NULL, NULL);
+	return modeTxCommon(e, NULL, NULL, qsy);
 }
 
 /* R11: повідомлення/ACK APRS у ефір. Той самий шлях, що й маяк (modeTxCommon()): рація вже стоїть на частоті APRS у «Режимі APRS»
@@ -2326,7 +2342,7 @@ aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info, c
 	{
 		return APRS_MODE_TX_TOOBIG;   // не повідомлення -- не передаємо
 	}
-	return modeTxCommon(e, info, from);
+	return modeTxCommon(e, info, from, NULL);
 }
 
 bool aprsBeaconingMessagesAllowed(void)

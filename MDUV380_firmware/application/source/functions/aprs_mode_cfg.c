@@ -283,6 +283,83 @@ uint16_t aprsModeCp1251ToUcs2(uint8_t c)   /* R11: не static -- нею кор�
 	}
 }
 
+#if defined(APRS_R21_QSY)
+size_t aprsModeQsyFormat(char *out, size_t cap, uint32_t rxFreq, uint32_t txFreq, char toneKind, unsigned toneVal, bool wide)
+{
+	uint32_t rxK = rxFreq / 100U;   /* 10 Гц -> кГц */
+	int32_t off = (int32_t)(txFreq / 100U) - (int32_t)rxK;
+	char tone[6];
+	char sgn = '+';
+
+	if ((out == NULL) || (cap == 0U))
+	{
+		return 0;
+	}
+	out[0] = 0;
+	if ((cap < APRSM_QSY_LEN) || (rxK == 0U) || (rxK >= 1000000U))
+	{
+		return 0;
+	}
+	if ((off > 9900) || (off < -9900))
+	{
+		off = 0;   /* як у стокової: понад 9,9 МГц -- зсув не передається */
+	}
+	if (off < 0)
+	{
+		sgn = '-';
+		off = -off;
+	}
+	if (toneKind == 'C')
+	{
+		snprintf(tone, sizeof(tone), "%c%03u", wide ? 'T' : 't', toneVal % 1000U);   /* специфікація: «Tnnn» -- тон PL, ціле число Гц; малі літери -- вузька смуга */
+	}
+	else if (toneKind == 'D')
+	{
+		snprintf(tone, sizeof(tone), "%c%03X", wide ? 'D' : 'd', toneVal & 0xFFFU);
+	}
+	else
+	{
+		snprintf(tone, sizeof(tone), "%s", wide ? "Toff" : "toff");
+	}
+	snprintf(out, cap, "%03u.%03uMHz %s %c%03d", (unsigned)(rxK / 1000U), (unsigned)(rxK % 1000U), tone, sgn, (int)(off / 10));
+	return strlen(out);
+}
+
+size_t aprsModeCommentWithQsy(const char *cp1251, const char *qsy, char *out, size_t cap)
+{
+	size_t l;
+	size_t n;
+
+	if ((out == NULL) || (cap == 0U))
+	{
+		return 0;
+	}
+	if ((qsy == NULL) || (qsy[0] == 0))
+	{
+		return aprsModeCommentToUtf8(cp1251, out, cap);
+	}
+	l = strlen(qsy);
+	if (l >= cap)
+	{
+		l = cap - 1U;   /* на практиці не буває: QSY 20 байт, cap 44 */
+	}
+	memcpy(out, qsy, l);
+	out[l] = 0;
+	if ((l + 2U) >= cap)
+	{
+		return l;
+	}
+	n = aprsModeCommentToUtf8(cp1251, out + l + 1U, cap - l - 1U);
+	if (n == 0U)
+	{
+		return l;   /* тексту нема -- без кінцевого пробілу */
+	}
+	out[l] = ' ';
+	return l + 1U + n;
+}
+
+#endif /* APRS_R21_QSY */
+
 size_t aprsModeCommentToUtf8(const char *cp1251, char *out, size_t cap)
 {
 	size_t n = 0;
@@ -723,7 +800,7 @@ static uint8_t sum8(const uint8_t *b, size_t n)
 }
 
 /* Розкладка блоку (APRSM_BLOCK_LEN = 72):
- *  0..1 'A','M'   2 версія   3 interval   4 sql   5..6 ov   7 ambiguity
+ *  0..1 'A','M'   2 версія   3 interval   4 sql   5..6 ov   7 ambiguity (біт 7 -- qsyOff, R21)
  *  8..11 freq   12..18 call   19 ssid   20..26 path1   27 path1Ssid   28..34 path2   35 path2Ssid
  *  36 iconTable   37 iconIndex   38..62 comment(25)   63..66 latU   67..70 lonU   71 контрольна сума (байти 0..70) */
 void aprsModeCfgToBytes(const aprsModeCfg_t *c, uint8_t out[APRSM_BLOCK_LEN])
@@ -736,7 +813,7 @@ void aprsModeCfgToBytes(const aprsModeCfg_t *c, uint8_t out[APRSM_BLOCK_LEN])
 	out[4] = c->sql;
 	out[5] = (uint8_t)c->ov;
 	out[6] = (uint8_t)(c->ov >> 8);
-	out[7] = c->ambiguity;
+	out[7] = (uint8_t)((c->ambiguity & 0x7FU) | (c->qsyOff ? 0x80U : 0U));   /* R21 З4: біт 7 -- QSY вимкнено (старі блоки: 0 -> QSY ввімкнено) */
 	put32(&out[8], c->freq);
 	memcpy(&out[12], c->call, APRSM_CALL_LEN);
 	out[19] = c->ssid;
@@ -763,7 +840,8 @@ bool aprsModeCfgFromBytes(aprsModeCfg_t *c, const uint8_t *b, size_t len)
 	c->interval = (b[3] < APRSM_INTERVALS) ? b[3] : 0U;
 	c->sql = (b[4] <= APRSM_SQL_MAX) ? b[4] : 0U;
 	c->ov = (uint16_t)(b[5] | ((uint16_t)b[6] << 8)) & APRSM_OV_ALL;
-	c->ambiguity = b[7];
+	c->ambiguity = b[7] & 0x7FU;   /* біт 7 -- qsyOff (R21 З4); значення 8..127, як і раніше, знімають оверрайд */
+	c->qsyOff = (uint8_t)((b[7] >> 7) & 1U);
 	c->freq = get32(&b[8]);
 	memcpy(c->call, &b[12], APRSM_CALL_LEN);
 	c->call[APRSM_CALL_LEN - 1U] = 0;

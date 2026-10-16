@@ -112,9 +112,27 @@ bool aprsBeaconingIsSuspended(void) { return s_bcnSuspended; }
 void aprsBeaconingSetSuspend(bool s) { s_bcnSuspended = s; if (s) { s_setSuspendTrue++; } else { s_setSuspendFalse++; } }
 void aprsBeaconingResetTimers(void) { s_resetTimers++; }
 void aprsModeAbortTx(void) { s_abortTx++; aprsTxProgress = APRS_TX_IDLE; }
-aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e)
+/* R21 З5: пресети розумного маяка (справжня таблиця -- menuAPRSOptions.c; тут дві рядки-заглушки зі стоковими значеннями «Default» і «Car») */
+const aprsSmartBeaconingSettings_t *aprsSmartPresetGet(unsigned i, const char **name)
+{
+	static const aprsSmartBeaconingSettings_t t[2] =
+	{
+		{ APRS_SMART_BEACON_SLOW_RATE_DEFAULT, APRS_SMART_BEACON_FAST_RATE_DEFAULT, APRS_SMART_BEACON_LOW_SPEED_DEFAULT, APRS_SMART_BEACON_HIGH_SPEED_DEFAULT,
+				APRS_SMART_BEACON_TURN_ANGLE_DEFAULT, APRS_SMART_BEACON_TURN_SLOPE_DEFAULT, APRS_SMART_BEACON_TURN_TIME_DEFAULT },
+		{ 30U, 180U, 7U, 90U, 30U, 25U, 15U }
+	};
+	if (i >= 2U) { return NULL; }
+	if (name != NULL) { *name = (i == 0U) ? "Default" : "Car"; }
+	return &t[i];
+}
+static char s_txLastQsy[APRSM_QSY_LEN];   /* R21 З4: що передали як QSY */
+CodeplugCSSTypes_t codeplugGetCSSType(uint16_t tone) { return (tone & 0x8000U) ? CSS_TYPE_DCS : CSS_TYPE_CTCSS; }
+static uint8_t s_chanBw25 = 0;   /* R21 З4: що поверне codeplugChannelGetFlag(BW_25K) */
+uint8_t codeplugChannelGetFlag(CodeplugChannel_t *channelBuf, ChannelFlag_t flag) { (void)channelBuf; return (flag == CHANNEL_FLAG_BW_25K) ? s_chanBw25 : 0U; }
+aprsModeTxResult_t aprsModeTxBeacon(const aprsModeEff_t *e, const char *qsy)
 {
 	s_txCalls++;
+	snprintf(s_txLastQsy, sizeof(s_txLastQsy), "%s", (qsy != NULL) ? qsy : "(NULL)");
 	s_txLastEff = *e;
 	return s_txResult;
 }
@@ -1201,6 +1219,65 @@ static void testBeaconOnce(void)
 }
 
 /* R18 Д5: гаряча клавіша SK1+3 на ГОЛОВНОМУ екрані (меню «Слухати»/«Передати маяк» прибрано) */
+/* R21 З4: QSY у маяку береться з каналу, З ЯКОГО ЗАЙШЛИ в режим (а не з «каналу» режиму на 144,800), і вимикається налаштуванням. */
+static void testQsy(void)
+{
+	aprsModeCfg_t *c;
+
+	/* FM-канал 438.950 з тоном 82.5 Гц, зсув -7,6 МГц, смуга 12,5 */
+	resetWorld();
+	s_userChan.chMode = RADIO_MODE_ANALOG;
+	s_userChan.rxFreq = 43895000UL; s_userChan.txFreq = 43135000UL; s_userChan.rxTone = 825U; s_userChan.txTone = 825U;
+	s_chanBw25 = 0;
+	CHECK(aprsModeEnter(), "вхід");
+	aprsModeRequestBeacon();
+	tickMs(10);
+	CHECK((s_txCalls == 1) && !strcmp(s_txLastQsy, "438.950MHz t082 -760"), "канал користувача -> QSY «%s»", s_txLastQsy);
+	aprsModeExit();
+
+	/* смуга 25 кГц -- великі літери; тону нема -- Toff */
+	resetWorld();
+	s_userChan.chMode = RADIO_MODE_ANALOG;
+	s_userChan.rxFreq = 14575000UL; s_userChan.txFreq = 14575000UL; s_userChan.rxTone = 0xFFFFU;
+	s_chanBw25 = 1;
+	CHECK(aprsModeEnter(), "вхід");
+	aprsModeRequestBeacon();
+	tickMs(10);
+	CHECK(!strcmp(s_txLastQsy, "145.750MHz Toff +000"), "25 кГц без тону -> «%s»", s_txLastQsy);
+	aprsModeExit();
+
+	/* цифровий канал: частота є, тону нема */
+	resetWorld();
+	s_userChan.chMode = RADIO_MODE_DIGITAL;
+	s_userChan.rxFreq = 43025000UL; s_userChan.txFreq = 43025000UL; s_userChan.rxTone = 825U;
+	s_chanBw25 = 0;
+	CHECK(aprsModeEnter(), "вхід");
+	aprsModeRequestBeacon();
+	tickMs(10);
+	CHECK(!strcmp(s_txLastQsy, "430.250MHz Toff +000"), "DMR-канал -> «%s»", s_txLastQsy);
+	aprsModeExit();
+
+	/* вимкнено в налаштуваннях: рядок порожній (не NULL) */
+	resetWorld();
+	s_userChan.chMode = RADIO_MODE_ANALOG;
+	s_userChan.rxFreq = 43895000UL; s_userChan.txFreq = 43135000UL; s_userChan.rxTone = 0xFFFFU;
+	s_chanBw25 = 1;
+	CHECK(aprsModeEnter(), "вхід");
+	c = aprsModeCfg();
+	c->qsyOff = 1U;
+	aprsModeCfgChanged(0x8000U);
+	aprsModeRequestBeacon();
+	tickMs(10);
+	CHECK((s_txCalls == 1) && (s_txLastQsy[0] == 0), "QSY вимкнено -> порожній рядок «%s»", s_txLastQsy);
+	c->qsyOff = 0U;
+	aprsModeCfgChanged(0x8000U);
+	tickMs(4000);
+	aprsModeRequestBeacon();
+	tickMs(3100);
+	CHECK((s_txCalls == 2) && !strcmp(s_txLastQsy, "438.950MHz Toff -760"), "знову ввімкнено -> «%s»", s_txLastQsy);
+	aprsModeExit();
+}
+
 static void testHotkeyOnMain(void)
 {
 	resetWorld();
@@ -1280,6 +1357,7 @@ int main(void)
 	testSaveBlankRegion();
 	testSettingsSession();
 	testBeaconOnce();
+	testQsy();
 	testHotkeyOnMain();
 	if (s_fail != 0)
 	{
