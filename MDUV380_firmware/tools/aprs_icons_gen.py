@@ -93,6 +93,14 @@ def to_bytes(rows):
     return bytes(out)
 
 
+# R20-fix: піктограми, які МАЮТЬ бути симетричними відносно вертикальної осі кадру (щити, кола, літаки, будівлі, хмарки тощо). Раніше їх малювали
+# навколо колонки 12, а центр кадру 24 px -- між колонками 11 і 12, тому виходили «криві». Тепер це перевіряється: будь-яка правка txt, що ламає
+# дзеркальність цих символів, не пройде перевірку. Бічні види (транспорт, тварини) і піктограми з написами сюди не входять.
+SYMMETRIC_LR = r"""
+/! /# /$ /& /' /( /+ /, /- /. // /0 /8 /A /E /G /M /O /S /W /[ /\ /] /^ /` /d /g /h /l /m /n /o /r /t /w /x /z
+\! \# \$ \% \& \' \* \+ \, \- \0 \8 \= \A \C \H \L \O \S \U \V \W \X \\ \^ \a \c \d \i \l \n \o \t \y \z
+""".split()
+
 def validate(icons):
     names = open(NAMES_H, 'rb').read().decode('cp1251')
     defs = {m.group(1): m.group(2) for m in re.finditer(r'#define\s+(APRSM_SYM_\w+)\s+"([^"]*)"', names)}
@@ -105,6 +113,10 @@ def validate(icons):
             for x in range(W):
                 if p[y][x] and not any(0 <= x + dx < W and 0 <= y + dy < H and p[y + dy][x + dx] for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy):
                     raise Err('%s%s: поодинокий піксель (x=%d, y=%d) -- на цьому екрані він розмивається' % (table, code, x, y))
+        if (table + code) in SYMMETRIC_LR:
+            bad = sum(1 for y in range(H) for x in range(W // 2) if p[y][x] != p[y][W - 1 - x])
+            if bad:
+                raise Err('%s%s: піктограма має бути симетричною, а розбіжностей із дзеркалом -- %d пікселів' % (table, code, bad))
         key = ('APRSM_SYM_' + BASE_NAMES[code]) if (table == '/' and code in BASE_NAMES) else 'APRSM_SYM_%s_%02X' % ('P' if table == '/' else 'A', ord(code))
         if key not in defs:
             raise Err('%s%s: у aprsmode_ua.h нема %s (назва «%s»)' % (table, code, key, name))
