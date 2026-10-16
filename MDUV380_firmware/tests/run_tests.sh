@@ -195,6 +195,15 @@ if [ -z "$FILTER" ] || [[ "test_cps_restore" == *"$FILTER"* ]]; then
 	fi
 fi
 
+# R26: CSV-обмін кодплуга (tools/cps_csv.py) -- оборотність байт-у-байт, кирилиця, кома/крапка, відмови до запису, імпорт через шлях відновлення.
+if [ -z "$FILTER" ] || [[ "test_cps_csv" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_csv.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_cps_csv (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_csv (python)"; printf '%s\n' "$out" | tail -10
+	fi
+fi
+
 # Python-самоперевірка декодера ефірних записів (tools/dmr_data_rx.py). Потрібні numpy+scipy;
 # якщо їх немає (напр. мінімальний CI) -- пропускаємо з попередженням, а не валимо прогін.
 if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
