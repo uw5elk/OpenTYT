@@ -15,6 +15,13 @@
 bool menuAprsSettingsEnter(void);
 /* Кожен тік меню «APRS», поки відкрито «Налаштування». false -- користувач вийшов (RED зі списку груп): сесію закрито, треба перемалювати меню. */
 bool menuAprsSettingsTick(uiEvent_t *ev);
+
+#if defined(ENABLE_APRS_RX_PROBE)
+/* R20 Ж2: діагностичний екран «Таблиця символів» -- 8 сторінок по 24 піктограми (6x4); малює лише сторінку, стану не має. */
+#define MENU_APRS_SYMTAB_PAGES     8U
+#define MENU_APRS_SYMTAB_PER_PAGE  24U
+void menuAprsSymTableDraw(unsigned page);
+#endif
 #endif
 
 #endif /* _OPENGD77_MENU_APRS_SETTINGS_H_ */

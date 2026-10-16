@@ -185,18 +185,22 @@ uint32_t aprsRxAgeSec(const aprsStation_t *st)
 
 void aprsRxFormatGeo(char *buf, size_t size, uint32_t distM, uint16_t bearing)
 {
+	/* R20 Ж1: буквений сектор -- лише коли азимут визначений (distM >= APRS_BEARING_MIN_M); відстань показуємо завжди. */
+	const char *sector = aprsBearingKnown(distM) ? aprsBearingName(bearing) : "";
+	const char *sp = aprsBearingKnown(distM) ? " " : "";
+
 	if (distM < 1000U)
 	{
-		snprintf(buf, size, "%lu" APRSRX_M " %s", (unsigned long)distM, aprsBearingName(bearing));
+		snprintf(buf, size, "%lu" APRSRX_M "%s%s", (unsigned long)distM, sp, sector);
 	}
 	else if (distM < 10000U)
 	{
 		uint32_t t = (distM + 50U) / 100U;   /* десяті частки км */
-		snprintf(buf, size, "%lu.%lu" APRSRX_KM " %s", (unsigned long)(t / 10U), (unsigned long)(t % 10U), aprsBearingName(bearing));
+		snprintf(buf, size, "%lu.%lu" APRSRX_KM " %s", (unsigned long)(t / 10U), (unsigned long)(t % 10U), sector);
 	}
 	else
 	{
-		snprintf(buf, size, "%lu" APRSRX_KM " %s", (unsigned long)((distM + 500U) / 1000U), aprsBearingName(bearing));
+		snprintf(buf, size, "%lu" APRSRX_KM " %s", (unsigned long)((distM + 500U) / 1000U), sector);
 	}
 }
 

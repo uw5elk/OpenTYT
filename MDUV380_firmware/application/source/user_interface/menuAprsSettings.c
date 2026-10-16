@@ -229,9 +229,36 @@ static void symDrawIcon(int16_t x, int16_t y, uint8_t table, uint8_t index, bool
 		one[0] = c;
 		one[1] = 0;
 		displayDrawRect(x, y, APRS_ICON_W, APRS_ICON_H, (onBar == false));
-		displayPrintCore((int16_t)(x + 9), (int16_t)(y + 8), one, FONT_SIZE_1, TEXT_ALIGN_LEFT, onBar);
+		displayPrintCore((int16_t)(x + 8), (int16_t)(y + 4), one, FONT_SIZE_3, TEXT_ALIGN_LEFT, onBar);   /* R20 Ж2.6: знак 8x16 по центру рамки */
 	}
 }
+
+#if defined(ENABLE_APRS_RX_PROBE)
+/* R20 Ж2: діагностичний екран «Таблиця символів» (лише diag): сітка 6x4 піктограм 24x24, сторінка 0..7 (0..3 -- первинна '/', 4..7 -- додаткова '\\').
+ * Символ без піктограми -- рамка зі знаком (Ж2.6): так видно, яких піктограм бракує. Стану не має (сторінку тримає викликач) -- RAM 0. */
+void menuAprsSymTableDraw(unsigned page)
+{
+	char title[24];
+	uint8_t table = (page < MENU_APRS_SYMTAB_PAGES / 2U) ? 0U : 1U;
+	unsigned base = (page % (MENU_APRS_SYMTAB_PAGES / 2U)) * MENU_APRS_SYMTAB_PER_PAGE;
+	unsigned i;
+
+	displayClearBuf();
+	snprintf(title, sizeof(title), APRSM_DIAG_SYMTAB_T, (table == 0U) ? '/' : '\\', (page % (MENU_APRS_SYMTAB_PAGES / 2U)) + 1U);
+	menuDisplayTitle(title);
+	for (i = 0U; i < MENU_APRS_SYMTAB_PER_PAGE; i++)
+	{
+		unsigned idx = base + i;
+
+		if (idx >= 94U)
+		{
+			break;
+		}
+		symDrawIcon((int16_t)(2 + ((i % 6U) * 26U)), (int16_t)(AM_ROW(0) + ((i / 6U) * 26U)), table, (uint8_t)idx, false);
+	}
+	displayRender();
+}
+#endif
 
 static void symEditDraw(void)
 {

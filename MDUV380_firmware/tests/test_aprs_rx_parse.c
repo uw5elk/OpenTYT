@@ -1437,7 +1437,8 @@ int main(void)
 		}
 
 		/* нульова відстань / нема геопозиції */
-		CHECK(aprsBeaconArrowVisible(true, 5) && !aprsBeaconArrowVisible(true, 0) && !aprsBeaconArrowVisible(false, 1000), "стрілка: є геопозиція й відстань > 0");
+		CHECK(!aprsBeaconArrowVisible(true, 5) && !aprsBeaconArrowVisible(true, 0) && !aprsBeaconArrowVisible(true, 49) && aprsBeaconArrowVisible(true, 50) && aprsBeaconArrowVisible(true, 1000) && !aprsBeaconArrowVisible(false, 1000),
+				"R20 Ж1: стрілка -- є геопозиція й відстань >= APRS_BEARING_MIN_M (50 м)");
 
 		/* режими вікна */
 		{
@@ -1931,6 +1932,20 @@ int main(void)
 		CHECK((brg == 270), "на захід: азимут %u", brg);
 		aprsGeo(50000000, 30000000, 50000000, 30000000, &d, &brg);
 		CHECK(d == 0, "та сама точка: %u м", d);
+		/* R20 Ж1: власний маяк, повернутий digipeater-ом: стиснена позиція (base-91) відрізняється від налаштованої на частки метра. */
+		aprsGeo(50000000, 30000000, 50000000, 29999999, &d, &brg);
+		CHECK((d == 0) && (brg == 270), "причина Ж1: 1 мкград різниці по довготі -> %u м, 'азимут' %u (шум)", d, brg);
+		CHECK(!aprsBearingKnown(d) && !aprsBeaconArrowVisible(true, d), "... азимут невизначений, стрілки нема");
+		aprsGeo(50000000, 30000000, 50000000, 30000000, &d, &brg);
+		CHECK((d == 0) && !aprsBearingKnown(d) && !aprsBeaconArrowVisible(true, d), "дві однакові позиції: 0 м, азимут невизначений, стрілки нема");
+		aprsGeo(50000000, 30000000, 50000090, 30000000, &d, &brg);   /* ~10 м на північ */
+		CHECK((d >= 9) && (d <= 11) && !aprsBearingKnown(d) && !aprsBeaconArrowVisible(true, d), "різниця ~10 м (%u м): азимут невизначений, стрілки нема", d);
+		aprsGeo(50000000, 30000000, 50000440, 30000000, &d, &brg);   /* ~49 м на північ -- ще нижче порога */
+		CHECK((d >= 48) && (d <= 50) && !aprsBearingKnown(d - 1U), "різниця ~49 м (%u м) -- на межі порога", d);
+		aprsGeo(50000000, 30000000, 50000450, 30000000, &d, &brg);   /* ~50 м на північ */
+		CHECK((d >= 50) && (d <= 51) && aprsBearingKnown(d) && aprsBeaconArrowVisible(true, d) && (brg == 0), "різниця ~50 м (%u м): азимут є і правильний (%u)", d, brg);
+		aprsGeo(50000000, 30000000, 50000000, 30000700, &d, &brg);   /* ~50 м на схід (на 50° пн.ш.) */
+		CHECK(aprsBearingKnown(d) && (brg == 90), "~50 м на схід: азимут %u, відстань %u", brg, d);
 		/* незалежна перевірка гаверсинусом на довільній парі */
 		int32_t la = 50450000, lo = 30523000, lb = 49839000, lob = 24029000;   /* ~ 470 км */
 		aprsGeo(la, lo, lb, lob, &d, &brg);

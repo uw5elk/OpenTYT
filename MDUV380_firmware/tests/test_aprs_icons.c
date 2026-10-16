@@ -71,7 +71,7 @@ int main(void)
 		}
 		CHECK(bad == 0, "усі 20 піктограм: силует із суцільними лініями (не крапки, не залита пляма)");
 	}
-	CHECK(aprsIconFind('/', 'Z', &ov) == NULL, "невідомий символ /Z -> NULL (рамка з кодом)");
+	CHECK(aprsIconFind('/', 'Q', &ov) == NULL, "зарезервований /Q -> NULL (рамка зі знаком символу)");
 	a = aprsIconFind('/', '&', &ov);
 	CHECK((a != NULL) && !ov, "/& -- без накладки");
 	b = aprsIconFind('R', '&', &ov);
@@ -82,6 +82,57 @@ int main(void)
 	CHECK((aprsIconFind('1', '#', &ov) != NULL) && ov && (aprsIconFind('1', '#', &ov) != aprsIconFind('/', '#', &ov)), "накладка на діджі -- піктограма додаткової таблиці");
 	CHECK(aprsIconFind('~', '>', &ov) == NULL, "таблиці '~' нема -> NULL");
 	CHECK((aprsIconFind('A', 'q', &ov) == NULL) && !ov, "невідомий код в додатковій -> NULL, накладки нема");
+
+	printf("== R20: повна таблиця ==\n");
+	{
+		int icons = 0, names = 0, nameNoIcon = 0, iconNoName = 0, empty = 0, bad = 0;
+		static const char reservedP[] = "\"DJQ{}", reservedA[] = "\"1234567Z]}q";
+
+		for (int c = '!'; c <= '~'; c++)
+		{
+			for (int tb = 0; tb < 2; tb++)
+			{
+				char t = tb ? '\\' : '/';
+				const uint8_t *ic = aprsIconFind(t, (char)c, &ov);
+				const char *nm = aprsSymbolNameEx(t, (char)c);
+				int resv = (strchr(tb ? reservedA : reservedP, c) != NULL);
+
+				icons += (ic != NULL);
+				names += (nm != NULL);
+				if ((nm != NULL) && (ic == NULL)) { nameNoIcon++; printf("  FAIL %c%c має назву «%s», але нема піктограми\n", t, c, nm); }
+				if ((nm == NULL) && (ic != NULL)) { iconNoName++; printf("  FAIL %c%c має піктограму, але нема назви\n", t, c); }
+				if (resv && (ic != NULL)) { bad++; printf("  FAIL зарезервований %c%c має піктограму\n", t, c); }
+				if ((ic == NULL) && !resv) { bad++; printf("  FAIL %c%c: нема піктограми, а код не зарезервований\n", t, c); }
+				if (ic != NULL)
+				{
+					int nz = 0;
+					for (int k = 0; k < ICON_BYTES; k++) { nz += (ic[k] != 0); }
+					if (nz < 6) { empty++; printf("  FAIL %c%c: майже порожня піктограма\n", t, c); }
+				}
+			}
+		}
+		CHECK((icons == 170) && ((unsigned)icons == aprsIconCount()), "піктограм %d (aprsIconCount() = %u), очікувано 170 (88 первинних + 82 додаткових; решта 18 кодів зарезервовані специфікацією)", icons, aprsIconCount());
+		CHECK((nameNoIcon == 0) && (iconNoName == 0) && (names == icons), "кожен названий символ має піктограму й навпаки (назв %d)", names);
+		CHECK((empty == 0) && (bad == 0), "піктограми непорожні, зарезервовані коди їх не мають");
+	}
+	{
+		/* первинна таблиця -- пул A (є і в діагностичній збірці): кожна піктограма різна, крім навмисних повторів (накладка на ті самі зображення) */
+		int same = 0;
+
+		for (int c1 = '!'; c1 <= '~'; c1++)
+		{
+			const uint8_t *i1 = aprsIconFind('/', (char)c1, &ov);
+
+			for (int c2 = c1 + 1; (i1 != NULL) && (c2 <= '~'); c2++)
+			{
+				const uint8_t *i2 = aprsIconFind('/', (char)c2, &ov);
+
+				if ((i2 != NULL) && (memcmp(i1, i2, ICON_BYTES) == 0)) { same++; printf("  FAIL /%c і /%c однакові\n", c1, c2); }
+			}
+		}
+		CHECK(same == 0, "усі первинні піктограми попарно різні");
+	}
+	CHECK(aprsIconFind('/', 0x7F, &ov) == NULL && aprsIconFind('/', ' ', &ov) == NULL, "код поза '!'...'~' -> NULL");
 
 	printf("== назви символів ==\n");
 	{

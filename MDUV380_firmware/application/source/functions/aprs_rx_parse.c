@@ -2297,9 +2297,14 @@ void aprsArrowPoly(aprsArrowPoly_t *p, int16_t cx, int16_t cy, int16_t len, uint
 	p->tipY = p->t[2].y[1];
 }
 
+bool aprsBearingKnown(uint32_t distM)
+{
+	return distM >= APRS_BEARING_MIN_M;
+}
+
 bool aprsBeaconArrowVisible(bool hasGeo, uint32_t distM)
 {
-	return hasGeo && (distM > 0U);
+	return hasGeo && aprsBearingKnown(distM);   /* R20 Ж1: було distM > 0 -- на часткових метрах стрілка й «270°» були шумом */
 }
 
 uint16_t aprsKnotsToKmh(uint16_t kn)
