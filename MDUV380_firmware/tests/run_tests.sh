@@ -177,6 +177,15 @@ if [ -z "$FILTER" ] || [[ "test_aprs_capture aprs_offline" == *"$FILTER"* ]]; th
 	fi
 fi
 
+# R24: знімок екрана і бекап кодплуга (tools/cps_link.py, tools/cps_backup_info.py) -- підставна «рація», лише стандартна бібліотека.
+if [ -z "$FILTER" ] || [[ "test_cps_link" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_link.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_cps_link (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_link (python)"; printf '%s\n' "$out" | tail -10
+	fi
+fi
+
 # Python-самоперевірка декодера ефірних записів (tools/dmr_data_rx.py). Потрібні numpy+scipy;
 # якщо їх немає (напр. мінімальний CI) -- пропускаємо з попередженням, а не валимо прогін.
 if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
