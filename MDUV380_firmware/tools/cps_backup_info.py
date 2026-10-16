@@ -8,8 +8,8 @@
 
 Що друкує: прошивку з маніфесту, позивний і DMR ID, кількість зон / каналів / контактів / груп, назви перших
 контактів, груп і зон. Назви в кодплузі -- 16 байтів, дописка 0xFF; CPS від TYT пише їх у GBK (кирилиця -- пари
-0xA7 xx, docs/codeplug-encoding.md), а назви, набрані на самій рації, -- у cp1251. Режим `auto` вгадує так: якщо в
-назві є пара 0xA7 xx з діапазону кирилиці GBK -- декодує як GBK, інакше -- як cp1251.
+A7 xx, docs/codeplug-encoding.md), а назви, набрані на самій рації, -- у cp1251. Режим `auto` вгадує так: якщо в
+назві є пара A7 xx з діапазону кирилиці GBK -- декодує як GBK, інакше -- як cp1251.
 """
 import argparse
 import os
@@ -19,112 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cps_link as cl  # noqa: E402
 
 
-def _gbk_cyrillic_pair(raw):
-    """Чи є в байтах пара 0xA7 xx з діапазону кирилиці GBK (A1..C1 великі, D1..F1 малі) -- та сама вузька ознака, що в прошивці."""
-    for i in range(len(raw) - 1):
-        if raw[i] == 0xA7 and (0xA1 <= raw[i + 1] <= 0xC1 or 0xD1 <= raw[i + 1] <= 0xF1):
-            return True
-    return False
-
-
-def name_bytes(raw):
-    """Байти назви до першого 0xFF/0x00 (codeplugUtilConvertBufToString зупиняється на 0xFF)."""
-    out = bytearray()
-    for b in raw:
-        if b in (0xFF, 0x00):
-            break
-        out.append(b)
-    return bytes(out)
-
-
-def decode_name(raw, encoding="auto"):
-    b = name_bytes(raw)
-    if encoding == "gbk" or (encoding == "auto" and _gbk_cyrillic_pair(b)):
-        return b.decode("gbk", errors="replace")
-    return b.decode("cp1251", errors="replace")
-
-
-def bcd_to_int(raw4):
-    """Поле BCD як у прошивці: bcd2int(byteSwap32(LE-слово)) == десяткові цифри із шістнадцяткового запису байтів."""
-    v = 0
-    for byte in raw4:
-        v = v * 100 + (byte >> 4) * 10 + (byte & 0x0F)
-    return v
-
-
-def popcount_bytes(b):
-    return sum(bin(x).count("1") for x in b)
-
-
-class Codeplug:
-    """Зручний доступ до адрес кодплуга всередині eeprom.bin / flash.bin."""
-
-    def __init__(self, manifest, eeprom, flash):
-        self.manifest = manifest
-        self.eeprom = eeprom
-        self.flash = flash
-        self.flash_cp_start = manifest["parts"]["flash"]["codeplugStart"]
-
-    def ee(self, addr, n):
-        return self.eeprom[addr:addr + n]
-
-    def fl(self, cp_addr, n):
-        off = cp_addr - self.flash_cp_start
-        if off < 0 or off + n > len(self.flash):
-            raise cl.CpsError("адреса кодплуга 0x%X поза флеш-частиною бекапу" % cp_addr)
-        return self.flash[off:off + n]
-
-    # --- загальне ---
-    def callsign(self, enc="auto"):
-        return decode_name(self.ee(cl.CP_ADDR_USER_CALLSIGN, 8), enc)
-
-    def dmr_id(self):
-        return bcd_to_int(self.ee(cl.CP_ADDR_USER_DMRID, 4))
-
-    # --- зони ---
-    def zone_bits(self):
-        mask = self.ee(cl.CP_ADDR_EX_ZONE_INUSE, 32)
-        return [bit for bit in range(cl.CP_ZONES_MAX) if (mask[bit >> 3] >> (bit & 7)) & 1]
-
-    def channels_per_zone(self):
-        """Як codeplugInitChannelsPerZone(): байт 0x806F у 0..4 -> формат на 80 каналів у зоні, інакше 16."""
-        return 80 if 0x00 <= self.ee(0x806F, 1)[0] <= 0x04 else 16
-
-    def zone_names(self, enc="auto"):
-        stride = 16 + 2 * self.channels_per_zone()
-        return [decode_name(self.ee(cl.CP_ADDR_EX_ZONE_LIST + bit * stride, 16), enc) for bit in self.zone_bits()]
-
-    # --- канали ---
-    def channel_count(self):
-        n = popcount_bytes(self.ee(cl.CP_ADDR_CHANNEL_HEADER_EEPROM, 16))
-        bank = 16 + cl.CP_CHANNELS_PER_BANK * cl.CP_CHANNEL_SIZE
-        for b in range(1, cl.CP_CHANNELS_BANKS):
-            n += popcount_bytes(self.fl(cl.CP_ADDR_CHANNEL_HEADER_FLASH + (b - 1) * bank, 16))
-        return n
-
-    # --- контакти ---
-    def contacts(self, enc="auto"):
-        """Список (номер 1.., назва, id, тип) для контактів у роботі (перший байт назви != 0xFF)."""
-        out = []
-        for i in range(cl.CP_CONTACTS_MAX):
-            rec = self.fl(cl.CP_ADDR_CONTACTS + i * cl.CP_CONTACT_SIZE, cl.CP_CONTACT_SIZE)
-            if rec[0] == 0xFF:
-                continue
-            out.append((i + 1, decode_name(rec[:16], enc), bcd_to_int(rec[16:20]), rec[20], bytes(rec[:16])))
-        return out
-
-    # --- RX-групи ---
-    def rx_groups(self, enc="auto"):
-        lens = self.fl(cl.CP_ADDR_RX_GROUP_LEN, cl.CP_RXGROUPS_MAX)
-        out = []
-        for i in range(cl.CP_RXGROUPS_MAX):
-            if lens[i] > 0:
-                rec = self.fl(cl.CP_ADDR_RX_GROUP + i * cl.CP_RXGROUP_SIZE, cl.CP_RXGROUP_SIZE)
-                out.append((i + 1, decode_name(rec[:16], enc), lens[i]))
-        return out
-
-
-CALL_TYPES = {0: "група", 1: "приват", 2: "всім"}
+# Усе декодування назв і розбір кодплуга -- у codeplug_view.py (R25 W2.3: одна спільна реалізація для цього скрипта й вікна перегляду).
+from codeplug_view import (Codeplug, CALL_TYPES, bcd_to_int, decode_name, decode_name_ex, name_bytes,  # noqa: E402,F401
+                           gbk_cyrillic_pair as _gbk_cyrillic_pair, popcount_bytes)
 
 
 def describe(manifest, eeprom, flash, names=10, enc="auto", raw=False, out=print):
@@ -155,7 +52,7 @@ def describe(manifest, eeprom, flash, names=10, enc="auto", raw=False, out=print
     if names > 0 and contacts:
         out("")
         out("Перші контакти:")
-        for num, name, ident, ctype, rawname in contacts[:names]:
+        for num, name, ident, ctype, rawname, _enc in contacts[:names]:
             line = "  №%-4d %-18s %9d  %s" % (num, name, ident, CALL_TYPES.get(ctype, "тип %d" % ctype))
             if raw:
                 line += "   [%s]" % name_bytes(rawname).hex()
@@ -163,7 +60,7 @@ def describe(manifest, eeprom, flash, names=10, enc="auto", raw=False, out=print
     if names > 0 and groups:
         out("")
         out("Перші групи RX:")
-        for num, name, n in groups[:names]:
+        for num, name, n, _enc, _members in groups[:names]:
             out("  №%-3d %-18s контактів у списку: %d" % (num, name, n))
 
 
