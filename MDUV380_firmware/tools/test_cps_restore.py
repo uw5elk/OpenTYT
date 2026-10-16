@@ -34,8 +34,9 @@ def check(cond, msg):
 
 
 class FakeRadioX(base.FakeRadio):
-    def __init__(self, spi, die_after_x=None, corrupt_commit=False, stale_sector=None, **kw):
+    def __init__(self, spi, die_after_x=None, corrupt_commit=False, stale_sector=None, drift=None, **kw):
         super().__init__(spi, **kw)
+        self.drift = drift                   # {адреса: байт}: після КОЖНОГО запису сектора рація «сама» міняє ці байти (як LUCZ від ручки)
         self.sector = -1 if stale_sector is None else stale_sector
         self.buf = bytearray(4096)
         self.die_after_x = die_after_x       # після стількох X-команд рація «замовкає» (і не обробляє наступної)
@@ -112,6 +113,8 @@ class FakeRadioX(base.FakeRadio):
             self.spi[self.sector * 4096:self.sector * 4096 + 4096] = buf
             self.commits.append(self.sector)
             self.sector = -1
+            for a_, v_ in (self.drift or {}).items():
+                self.spi[a_] = v_
             return self._ok(3)
         if sub == 4:
             self.x_calls.append((4, 0))
@@ -168,14 +171,24 @@ def rewrite_zip(path, new_path, edit_manifest=None, edit_files=None):
             zout.writestr(n, b)
 
 
-class Unlocked:
-    """Тимчасово зняти блокування W1.11 (у тестах; у коді вона стоїть False)."""
+class _Lock:
+    """Тимчасово виставити блокування W1.11 у потрібний стан і повернути як було (чи стоїть воно в коді зараз -- тесту байдуже)."""
+    value = None
+
     def __enter__(self):
         self.old = cr.RESTORE_UNLOCKED
-        cr.RESTORE_UNLOCKED = True
+        cr.RESTORE_UNLOCKED = self.value
 
     def __exit__(self, *a):
         cr.RESTORE_UNLOCKED = self.old
+
+
+class Unlocked(_Lock):
+    value = True
+
+
+class Locked(_Lock):
+    value = False
 
 
 def run_restore(radio, path, confirm=lambda t, p: True, **kw):
@@ -193,19 +206,21 @@ def safety_files(d):
 #  T0: блокування
 # ----------------------------------------------------------------------------------------
 
-def test_locked_by_default():
-    check(cr.RESTORE_UNLOCKED is False, "W1.11: RESTORE_UNLOCKED у коді має бути False, доки не підтверджено BK8")
+def test_locked():
+    """При блокуванні до рації не йде жодного байта (і страхова копія не створюється)."""
     check(cr.LOCKED_CAPTION == "доступно після перевірки BK8", "підпис на заблокованій кнопці")
     with tempfile.TemporaryDirectory() as d:
         a = spi_a()
         p, _m = make_backup_file(d, a)
         radio = FakeRadioX(spi_b(a))
-        try:
-            cr.restore_codeplug(cl.CpsLink(radio), p, lambda t, pl: True, log=lambda *_: None)
-            check(False, "заблоковане відновлення мало відмовити")
-        except cr.RestoreRefused as e:
-            check("BK8" in str(e), "повідомлення про блокування: %s" % e)
-        check(radio.requests == [] and radio.x_total == 0 and radio.c_calls == [], "заблоковано: ЖОДНОГО трафіку до рації")
+        with Locked():
+            try:
+                cr.restore_codeplug(cl.CpsLink(radio), p, lambda t, pl: True, log=lambda *_: None)
+                check(False, "заблоковане відновлення мало відмовити")
+            except cr.RestoreRefused as e:
+                check("BK8" in str(e), "повідомлення про блокування: %s" % e)
+        check(radio.requests == [] and radio.x_total == 0 and radio.c_calls == [] and radio.writes_seen == [],
+              "заблоковано: ЖОДНОГО трафіку до рації")
         check(safety_files(d) == [], "заблоковано: страхова копія не створюється")
 
 
@@ -415,6 +430,29 @@ def test_interruption_and_verify():
 
 
 # ----------------------------------------------------------------------------------------
+#  T7 (R26 V4.1): що не звіряється після запису
+# ----------------------------------------------------------------------------------------
+
+def test_verify_exclusions():
+    for label, addr, ok in (("LUCZ 0x6000", 0x6000, True), ("0x607F (як на залізі)", 0x607F, True), ("межа 0x608E", 0x608E, True),
+                            ("0x608F -- вже звіряється", 0x608F, False), ("0x5FFF -- звіряється", 0x5FFF, False),
+                            ("контакти (флеш)", 0xA7700, False), ("зони 0x8100", 0x8100, False), ("канали 0x3800", 0x3800, False)):
+        with tempfile.TemporaryDirectory() as d:
+            a = spi_a()
+            good, _mf = make_backup_file(d, a)
+            b = spi_b(a)
+            radio = FakeRadioX(b, drift={addr: (a[addr] ^ 0x5A) & 0xFF})
+            try:
+                res, _p = run_restore(radio, good)
+                check(ok, "%s: розбіжність мала бути ПОМИЛКОЮ" % label)
+                check("0x6000..0x608E" in res["unverified"] and "квіккеїв" in res["unverified"], "підсумок називає, що не звірялось")
+            except cr.RestoreVerifyFailed as e:
+                check(not ok, "%s: розбіжність НЕ мала бути помилкою: %s" % (label, str(e)[:80]))
+                if not ok:
+                    check("Не звірялось" in str(e) and "0x6000..0x608E" in str(e), "текст помилки називає, що не звіряється й чому")
+
+
+# ----------------------------------------------------------------------------------------
 #  T4: одна функція назв
 # ----------------------------------------------------------------------------------------
 
@@ -591,8 +629,8 @@ def test_full_snapshot():
 
 
 def main():
-    for t in (test_locked_by_default, test_refusals, test_full_cycle, test_interruption_and_verify, test_names, test_filters_and_tables,
-              test_full_snapshot):
+    for t in (test_locked, test_refusals, test_full_cycle, test_interruption_and_verify, test_verify_exclusions, test_names,
+              test_filters_and_tables, test_full_snapshot):
         try:
             t()
         except Exception as e:  # noqa: BLE001
