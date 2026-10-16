@@ -196,6 +196,17 @@ static void testStock(void)
 	selectRow(AS_G_SMART, 0);
 	click(KEY_RIGHT);
 	CHECK(aprsSettingsCopy.smart.slowRate == APRS_SMART_BEACON_SLOW_RATE_DEFAULT + 1, "повільний +1");
+	/* R21 З5: цифри 0..6 -- пресети розумного маяка, як у стоковому екрані */
+	click('1');
+	CHECK((aprsSettingsCopy.smart.slowRate == 30U) && (aprsSettingsCopy.smart.fastRate == 180U) && (aprsSettingsCopy.smart.highSpeed == 90U), "цифра 1 -- пресет «Car»");
+	click('0');
+	CHECK((aprsSettingsCopy.smart.slowRate == APRS_SMART_BEACON_SLOW_RATE_DEFAULT) && (aprsSettingsCopy.smart.turnTime == APRS_SMART_BEACON_TURN_TIME_DEFAULT), "цифра 0 -- пресет «Default»");
+	click('9');
+	CHECK(aprsSettingsCopy.smart.slowRate == APRS_SMART_BEACON_SLOW_RATE_DEFAULT, "цифра 9 -- нема пресета, нічого не змінилось");
+	selectRow(AS_G_BEACON, 0);
+	click('1');
+	CHECK(aprsSettingsCopy.smart.slowRate == APRS_SMART_BEACON_SLOW_RATE_DEFAULT, "цифри поза групою «Розумний маяк» пресетів не вмикають");
+	selectRow(AS_G_SMART, 0);
 	click(KEY_RED); click(KEY_RED);   /* вихід */
 	CHECK(s_stockSetCalls == 1 && s_stockSettings.mode == APRS_BEACONING_MODE_PTT && s_stockSettings.power == 1, "при виході стокові параметри застосовано (%d)", s_stockSetCalls);
 }

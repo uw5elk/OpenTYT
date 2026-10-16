@@ -112,6 +112,19 @@ bool aprsBeaconingIsSuspended(void) { return s_bcnSuspended; }
 void aprsBeaconingSetSuspend(bool s) { s_bcnSuspended = s; if (s) { s_setSuspendTrue++; } else { s_setSuspendFalse++; } }
 void aprsBeaconingResetTimers(void) { s_resetTimers++; }
 void aprsModeAbortTx(void) { s_abortTx++; aprsTxProgress = APRS_TX_IDLE; }
+/* R21 З5: пресети розумного маяка (справжня таблиця -- menuAPRSOptions.c; тут дві рядки-заглушки зі стоковими значеннями «Default» і «Car») */
+const aprsSmartBeaconingSettings_t *aprsSmartPresetGet(unsigned i, const char **name)
+{
+	static const aprsSmartBeaconingSettings_t t[2] =
+	{
+		{ APRS_SMART_BEACON_SLOW_RATE_DEFAULT, APRS_SMART_BEACON_FAST_RATE_DEFAULT, APRS_SMART_BEACON_LOW_SPEED_DEFAULT, APRS_SMART_BEACON_HIGH_SPEED_DEFAULT,
+				APRS_SMART_BEACON_TURN_ANGLE_DEFAULT, APRS_SMART_BEACON_TURN_SLOPE_DEFAULT, APRS_SMART_BEACON_TURN_TIME_DEFAULT },
+		{ 30U, 180U, 7U, 90U, 30U, 25U, 15U }
+	};
+	if (i >= 2U) { return NULL; }
+	if (name != NULL) { *name = (i == 0U) ? "Default" : "Car"; }
+	return &t[i];
+}
 static char s_txLastQsy[APRSM_QSY_LEN];   /* R21 З4: що передали як QSY */
 CodeplugCSSTypes_t codeplugGetCSSType(uint16_t tone) { return (tone & 0x8000U) ? CSS_TYPE_DCS : CSS_TYPE_CTCSS; }
 static uint8_t s_chanBw25 = 0;   /* R21 З4: що поверне codeplugChannelGetFlag(BW_25K) */

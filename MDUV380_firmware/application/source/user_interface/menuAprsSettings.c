@@ -1322,6 +1322,21 @@ static int asLevelEvent(uiEvent_t *ev)
 		asRowGreen(asRowId(u));
 		return 1;
 	}
+#if defined(APRS_R21_MENU)
+	/* R21 З5: пресети розумного маяка -- цифри 0..6, як у стоковому екрані (Default, Car, e-Bike, Bike, Walking, Sailing, APRSdroid); лише в групі «Розумний маяк» */
+	if ((u->scroll == AS_G_SMART) && KEYCHECK_SHORTUP_NUMBER(ev->keys) && (BUTTONCHECK_DOWN(ev, (BUTTON_SK1 | BUTTON_SK2)) == 0))
+	{
+		const char *nm = NULL;
+		const aprsSmartBeaconingSettings_t *pr = aprsSmartPresetGet((unsigned)(ev->keys.key - '0'), &nm);
+
+		if (pr != NULL)
+		{
+			memcpy(&aprsSettingsCopy.smart, pr, sizeof(aprsSmartBeaconingSettings_t));
+			uiNotificationShowShort(1000, nm, false);
+			return 1;
+		}
+	}
+#endif
 	return 0;
 }
 

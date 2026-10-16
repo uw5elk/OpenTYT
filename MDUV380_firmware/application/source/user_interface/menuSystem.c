@@ -764,7 +764,11 @@ static const menuItemNewData_t optionsMenuItems[] =
 #if defined(HAS_COLOURS)
 	{ 218, MENU_THEME           },
 #endif
-#if !defined(PLATFORM_GD77S)
+#if !defined(PLATFORM_GD77S) && !defined(APRS_R21_MENU)
+	// R21 З5 (форк): в користувацькій українській збірці з APRS є меню «APRS» (MENU_APRS_HUB, головне меню) -> «Налаштування» -- УСІ стокові налаштування APRS там
+	// (menuAprsSettings.c); другий вхід «Опції -> APRS» прибрано. Безпечно для швидких клавіш: меню верхнього рівня зберігає ID меню, а не позицію (як
+	// MENU_RSSI_SCREEN, MENU_CALL_REPLAY, MENU_LANGUAGE). MENU_APRS у menuFunctions[] і menuAPRSOptions() ЛИШИЛИСЬ -- стара прив'язка відкриє той екран.
+	// Умова -- APRS_R21_MENU, а не LANGUAGE_BUILD_UKRAINIAN: українська збірка БЕЗ приймача APRS (ua/uacr) іншого входу в налаштування APRS не має; diag лишає обидва входи (aprs_rx_cfg.h).
 	{ 257, MENU_APRS            },
 #endif
 #if defined(ENABLE_AES)

@@ -122,6 +122,23 @@ static aprsSmartBeaconingSettings_t smartPresets[SMART_BEACONING_PRESETS_MAX] =
 		}
 };
 
+#if defined(APRS_R21_MENU)
+/* R21 З5: пресети розумного маяка (цифри 0..6 у стоковому екрані) потрібні й єдиному екрану «APRS -> Налаштування» (menuAprsSettings.c) -- беруться звідси,
+ * таблиця одна. Поза APRS_R21_MENU функції немає: типова збірка байт-у-байт стокова. NULL -- номер поза таблицею. */
+const aprsSmartBeaconingSettings_t *aprsSmartPresetGet(unsigned i, const char **name)
+{
+	if (i >= SMART_BEACONING_PRESETS_MAX)
+	{
+		return NULL;
+	}
+	if (name != NULL)
+	{
+		*name = sbPresetsStr[i];
+	}
+	return &smartPresets[i];
+}
+#endif
+
 static menuStatus_t menuAPRSExitCode = MENU_STATUS_SUCCESS;
 #if defined(APRS_RX)
 static uint8_t bcnWinCopy;   /* R13: робоча копія «Вікно маяка»; у налаштування потрапляє разом з рештою (applySettings()), RED її відкидає */
