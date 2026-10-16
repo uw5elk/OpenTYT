@@ -416,6 +416,7 @@ void codeplugZoneSetSelected(int selectedZone,int selectedChannel);
 void codeplugZonesInitCache(void);
 int codeplugZonesGetCount(void);
 bool codeplugZoneGetDataForNumber(int indexNum, CodeplugZone_t *returnBuf);
+bool codeplugZoneIsUsable(int zoneNum, CodeplugZone_t *z);   /* R22 Z1.1: єдине правило «справжня зона» */
 uint32_t codeplugChannelGetOptionalDMRID(CodeplugChannel_t *channelBuf);
 void codeplugChannelSetOptionalDMRID(CodeplugChannel_t *channelBuf, uint32_t dmrID);
 uint8_t codeplugChannelGetFlag(CodeplugChannel_t *channelBuf, ChannelFlag_t flag);

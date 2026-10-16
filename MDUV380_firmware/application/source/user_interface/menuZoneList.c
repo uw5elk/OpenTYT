@@ -36,10 +36,11 @@ static void setZoneToUserSelection(void);
 
 static menuStatus_t menuZoneExitCode = MENU_STATUS_SUCCESS;
 
-// Форк: у списку зон приховуємо ПОРОЖНІ зони (позначені "в роботі", але без жодного каналу) --
-// вони лише плутають. Будуємо відображення "екранний індекс -> справжній номер зони", куди
-// потрапляють тільки непорожні зони + завжди віртуальна "Всі канали" (остання). Та сама логіка
-// пропуску, що й при перемиканні зон валкодером (uiChannelMode.c, баг #2), лише тепер і в меню.
+// Форк: у списку зон приховуємо все, що не є СПРАВЖНЬОЮ зоною (порожні, "сміттєві", з видаленим першим каналом).
+// Будуємо відображення "екранний індекс -> справжній номер зони" + завжди віртуальна "Всі канали" (остання).
+// R22 Z1.3: правило -- ТА САМА codeplugZoneIsUsable(), що й у перемиканні зон валкодером SK2+енкодер
+// (uiChannelMode.c, selectPrevNextZone). До R22 цей коментар стверджував це, але валкодер відкидав лише порожні
+// зони -- розходження й давало "зони, яких немає в меню".
 static uint8_t s_zoneMap[CODEPLUG_ALL_ZONES_MAX];
 static int     s_zoneMapCount;
 
@@ -47,28 +48,12 @@ static void buildZoneMap(void)
 {
 	int total = codeplugZonesGetCount();
 	int allChannelsZone = total - 1;   // остання зона -- віртуальна "Всі канали"
-	CodeplugZone_t z;
 
 	s_zoneMapCount = 0;
-	for (int zn = 0; zn < total; zn++)
+	for (int zn = 0; (zn < total) && (s_zoneMapCount < (int)CODEPLUG_ALL_ZONES_MAX); zn++)
 	{
-		if (zn == allChannelsZone)
-		{
-			s_zoneMap[s_zoneMapCount++] = (uint8_t)zn;   // "Всі канали" -- завжди показуємо
-			continue;
-		}
-		if (!codeplugZoneGetDataForNumber(zn, &z))
-		{
-			continue;   // не вдалось прочитати зону -- точно не показуємо
-		}
-		// "Справжня" зона: має канали І перший канал реально ІСНУЄ (в таблиці in-use).
-		// Це відсіює три випадки заразом:
-		//  - порожні зони (0 каналів);
-		//  - "сміттєві" зони (лишки CPS: numChannels з гарантованого сміття, channels[0] поза межами);
-		//  - зони, чий перший канал колись видалили (індекс валідний, але каналу вже немає) --
-		//    саме такі й виглядали "порожніми" попри валідний діапазон.
-		if ((z.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0) &&
-		    codeplugAllChannelsIndexIsInUse(z.channels[0]))
+		// "Всі канали" -- завжди показуємо (codeplugZoneIsUsable() теж каже "так")
+		if ((zn == allChannelsZone) || codeplugZoneIsUsable(zn, NULL))
 		{
 			s_zoneMap[s_zoneMapCount++] = (uint8_t)zn;
 		}

@@ -30,6 +30,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "functions/codeplug.h"
+#include "functions/codeplug_zone.h"
 #include "hardware/EEPROM.h"
 #include "hardware/SPI_Flash.h"
 #include "functions/trx.h"
@@ -293,16 +294,15 @@ void codeplugZonesInitCache(void)
 	EEPROM_Read(CODEPLUG_ADDR_EX_ZONE_INUSE_PACKED_DATA, (uint8_t *)&codeplugZonesInUseCache, CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE);
 }
 
+/* codeplug_zone.h: ліміт бітів маски зон мусить збігатись з CODEPLUG_ZONES_MAX */
+_Static_assert(CODEPLUG_ZONE_MASK_BITS == CODEPLUG_ZONES_MAX, "CODEPLUG_ZONE_MASK_BITS != CODEPLUG_ZONES_MAX");
+
 int codeplugZonesGetCount(void)
 {
-	int numZones = 1;// Add one extra zone to allow for the special 'All Channels' Zone
-
-	for(int i = 0; i < CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE; i++)
-	{
-		numZones += __builtin_popcount(codeplugZonesInUseCache[i]);
-	}
-
-	return numZones;
+	/* R22 Z1.2: рахуємо лише перші CODEPLUG_ZONES_MAX (68) бітів маски. Маска в EEPROM -- 256 бітів, і сміттєві
+	 * біти за межею 68 завищували кількість зон (і переповнювали s_zoneMap[69] у меню «Зони»). +1 -- віртуальна
+	 * зона «Всі канали». */
+	return 1 + codeplugZoneMaskCount(codeplugZonesInUseCache);
 }
 
 bool codeplugZoneGetDataForNumber(int zoneNum, CodeplugZone_t *returnBuf)
@@ -327,28 +327,8 @@ bool codeplugZoneGetDataForNumber(int zoneNum, CodeplugZone_t *returnBuf)
 	{
 		// Need to find the index into the Zones data for the specific Zone number.
 		// Because the Zones data is not guaranteed to be packed by the CPS (though we should attempt to make the CPS always pack the Zones)
-		int count = -1;// Need to start counting at -1 because the Zone number is zero indexed
-		int foundIndex = -1;
-
-		// Go though each byte in the In Use table
-		for(int i = 0; i < CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE; i++)
-		{
-			// Go though each binary bit, counting them one by one
-			for(int j = 0; j < 8; j++)
-			{
-				if (((codeplugZonesInUseCache[i] >> j) & 0x01) == 0x01)
-				{
-					count++;
-
-					if (count == zoneNum)
-					{
-						// found it. So save the index before we exit the "for" loops
-						foundIndex = (i * 8) + j;
-						break;// Will break out of this loop, but the outer loop breaks because it also checks for foundIndex
-					}
-				}
-			}
-		}
+		// R22 Z1.2: n-а зона маски -- лише серед перших CODEPLUG_ZONES_MAX бітів (було: усі 256)
+		int foundIndex = codeplugZoneMaskNthBit(codeplugZonesInUseCache, zoneNum);
 
 		if (foundIndex != -1)
 		{
@@ -377,6 +357,29 @@ bool codeplugZoneGetDataForNumber(int zoneNum, CodeplugZone_t *returnBuf)
 	}
 
 	return false;
+}
+
+/* R22 Z1.1: ЄДИНЕ правило «справжня зона» для меню «Зони» і валкодера SK2+енкодер. «Всі канали» (остання, віртуальна)
+ * -- завжди придатна. Решта: дані зони прочитано, є канали, перший канал реально існує (див. codeplug_zone.h).
+ * z може бути NULL -- тоді дані читаються в тимчасовий буфер. При поверненні false вміст *z -- «порожня» зона. */
+bool codeplugZoneIsUsable(int zoneNum, CodeplugZone_t *z)
+{
+	CodeplugZone_t tmp;
+	bool ok;
+
+	if (z == NULL)
+	{
+		z = &tmp;
+	}
+
+	ok = codeplugZoneGetDataForNumber(zoneNum, z);
+
+	if (zoneNum == (codeplugZonesGetCount() - 1))
+	{
+		return ok;   /* «Всі канали» -- завжди */
+	}
+
+	return codeplugZoneUsableCheck(ok, z->NOT_IN_CODEPLUGDATA_numChannelsInZone, codeplugAllChannelsIndexIsInUse(z->channels[0]));
 }
 
 bool codeplugZoneAddChannelToZoneAndSave(int channelIndex, CodeplugZone_t *zoneBuf)

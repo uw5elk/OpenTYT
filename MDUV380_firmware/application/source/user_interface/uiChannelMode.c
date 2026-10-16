@@ -26,6 +26,7 @@
  *
  */
 #include "user_interface/uiGlobals.h"
+#include "functions/codeplug_zone.h"
 #include "functions/trx.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
@@ -1896,49 +1897,22 @@ static void handleEvent(uiEvent_t *ev)
 }
 
 #if ! defined(PLATFORM_GD77S)
+/* R22 Z1.3: той самий предикат, що й у меню «Зони» (buildZoneMap) -- codeplugZoneIsUsable() у codeplug.c. */
+static bool zoneStepUsable(int zoneNum, void *ctx)
+{
+	(void)ctx;
+	return codeplugZoneIsUsable(zoneNum, NULL);
+}
+
 static void selectPrevNextZone(bool nextZone)
 {
-	int numZones = codeplugZonesGetCount();
-
-	// Пропускаємо ПОРОЖНІ зони (позначені "в роботі", але без жодного каналу) -- вони лише
-	// плутають при перемиканні. Віртуальну "Всі канали" (остання зона) не пропускаємо
-	// ніколи. guard обмежує цикл кількістю зон -- захист від зациклення, якщо порожні всі.
-	for (int guard = 0; guard < numZones; guard++)
-	{
-		if (nextZone)
-		{
-			settingsIncrement(nonVolatileSettings.currentZone, 1);
-
-			if (nonVolatileSettings.currentZone >= numZones)
-			{
-				settingsSet(nonVolatileSettings.currentZone, 0);
-			}
-		}
-		else
-		{
-			if (nonVolatileSettings.currentZone == 0)
-			{
-				settingsSet(nonVolatileSettings.currentZone, (int16_t) (numZones - 1));
-			}
-			else
-			{
-				settingsDecrement(nonVolatileSettings.currentZone, 1);
-			}
-		}
-
-		// "Всі канали" -- остання зона (віртуальна), її не пропускаємо.
-		if (nonVolatileSettings.currentZone == (numZones - 1))
-		{
-			break;
-		}
-
-		CodeplugZone_t z;
-		codeplugZoneGetDataForNumber(nonVolatileSettings.currentZone, &z);
-		if (z.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0)
-		{
-			break;   // непорожня зона -- зупиняємось на ній
-		}
-	}
+	// Пропускаємо все, що не є СПРАВЖНЬОЮ зоною: порожні (позначені "в роботі", але без каналів), "сміттєві"
+	// (канали не існують) та зони з видаленим першим каналом. R22: раніше тут перевірялась лише кількість
+	// каналів, тож валкодер зупинявся на сміттєвих зонах, яких немає в меню "Зони" (їхні "канали" -- байти
+	// флешу, а це й давало HardFault R19/R21). Віртуальну "Всі канали" (остання зона) не пропускаємо ніколи;
+	// цикл у codeplugZoneStep() обмежено кількістю зон -- захист від зациклення, якщо несправжні всі.
+	settingsSet(nonVolatileSettings.currentZone,
+			(int16_t) codeplugZoneStep(nonVolatileSettings.currentZone, codeplugZonesGetCount(), nextZone, zoneStepUsable, NULL));
 
 	currentChannelData->rxFreq = 0U; // Flag to the Channel screen that the channel data is now invalid and needs to be reloaded
 }
@@ -3132,6 +3106,14 @@ void uiChannelModeColdStart(void)
 // This can also be called from the VFO, on VFO -> New Channel, as currentZone could be uninitialized.
 void uiChannelInitializeCurrentZone(void)
 {
+#if ! defined(PLATFORM_GD77S)
+	// R22 Z1.4: збережена зона могла бути "сміттєвою" (її вибрав валкодер до R22) або зникнути після запису кодплуга --
+	// тоді замість сміттєвих каналів стартуємо з віртуальної "Всі канали" (остання зона).
+	if (!codeplugZoneIsUsable(nonVolatileSettings.currentZone, &currentZone))
+	{
+		settingsSet(nonVolatileSettings.currentZone, (int16_t) (codeplugZonesGetCount() - 1));
+	}
+#endif
 	codeplugZoneGetDataForNumber(nonVolatileSettings.currentZone, &currentZone);
 	codeplugUtilConvertBufToDisplayString(currentZone.name, currentZoneName, 16);// need to convert to zero terminated string
 
