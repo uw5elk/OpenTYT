@@ -422,7 +422,7 @@ static void updatePickContact(void)
 		if (codeplugContactGetDataForNumberInType(mNum + 1, CONTACT_CALLTYPE_PC, &c))
 		{
 			char name[17];
-			codeplugUtilConvertBufToString(c.name, name, 16);
+			codeplugUtilConvertBufToDisplayString(c.name, name, 16);
 			snprintf(buf, sizeof buf, "%s", name);
 		}
 		else

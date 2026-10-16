@@ -37,6 +37,9 @@
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiGlobals.h"
 #include "interfaces/settingsStorage.h"
+#if defined(APRS_R21_NAMES)
+#include "functions/aprs_rx_parse.h"
+#endif
 
 
 const int CODEPLUG_ADDR_EX_ZONE_BASIC = 0x8000;
@@ -263,6 +266,14 @@ void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len)
 	}
 	outBuf[len] = 0;
 }
+
+#if defined(APRS_R21_NAMES)
+void codeplugUtilConvertBufToDisplayString(char *codeplugBuf, char *outBuf, int len)
+{
+	codeplugUtilConvertBufToString(codeplugBuf, outBuf, len);
+	aprsNameToDisplay(outBuf);   /* R21 З3: UTF-8 -> cp1251 лише для показу */
+}
+#endif
 
 void codeplugUtilConvertStringToBuf(char *inBuf, char *outBuf, int len)
 {

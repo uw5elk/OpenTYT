@@ -1203,6 +1203,73 @@ static void testBeaconOrder(void)
 	}
 }
 
+/* R21 З3: імена з кодплуга -- UTF-8 (кирилиця з CPS) -> cp1251 для показу; усе інше не чіпається. */
+static void testNameDisplay(void)
+{
+	char b[40];
+	size_t n;
+
+	printf("--- R21 З3: імена кодплуга для показу ---\n");
+	/* «Папуга» в UTF-8 -> cp1251 */
+	strcpy(b, "\xD0\x9F\xD0\xB0\xD0\xBF\xD1\x83\xD0\xB3\xD0\xB0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !strcmp(b, "\xCF\xE0\xEF\xF3\xE3\xE0"), "«Папуга» UTF-8 -> cp1251 (%u байт)", (unsigned)n);
+	/* ASCII не чіпається */
+	strcpy(b, "LOCAL");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 5U) && !strcmp(b, "LOCAL"), "«LOCAL» без змін");
+	strcpy(b, "");
+	CHECK((aprsNameToDisplay(b) == 0U) && !b[0], "порожнє ім'я");
+	/* cp1251 «Папуга» вже готовий -- не чіпаємо */
+	strcpy(b, "\xCF\xE0\xEF\xF3\xE3\xE0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !strcmp(b, "\xCF\xE0\xEF\xF3\xE3\xE0"), "cp1251 «Папуга» без змін");
+	/* змішане: латиниця + кирилиця UTF-8 («TG Київ») */
+	strcpy(b, "TG \xD0\x9A\xD0\xB8\xD1\x97\xD0\xB2");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 7U) && !strcmp(b, "TG \xCA\xE8\xBF\xE2"), "«TG Київ»: латиниця + кирилиця (%u)", (unsigned)n);
+	/* обрізане посеред символу (поле 16 байтів): «Рівненщина-1» -> хвіст відкинуто */
+	strcpy(b, "\xD0\x9A\xD0\xB8\xD1");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "\xCA\xE8"), "обрізаний хвіст UTF-8 відкинуто (%u)", (unsigned)n);
+	strcpy(b, "AB\xD0\x9A\xD0");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 3U) && !strcmp(b, "AB\xCA"), "обрізаний лід-байт після повного символу");
+	/* УВАГА: лише ОДИН байт >= 0x80 без пари -- це cp1251 */
+	strcpy(b, "A\xCF");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "A\xCF"), "одинокий байт cp1251 без змін");
+	/* cp1251, що ВИГЛЯДАЄ як UTF-8: «Ві» = C2 B3 (коректна пара U+00B3, не кирилиця) -- лишаємо */
+	strcpy(b, "\xC2\xB3");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "\xC2\xB3"), "«Ві» (C2 B3) -- не кирилиця, без змін");
+	/* некирилична багатобайтова (німецька ü = C3 BC) -- без змін */
+	strcpy(b, "M\xC3\xBCller");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 7U) && !strcmp(b, "M\xC3\xBCller"), "ü (C3 BC) без змін");
+	/* кирилиця cp1251 з двох байтів, що збігаються з UTF-8-парою: «Рі» (D0 B3): пряме обмеження (задокументоване) */
+	/* нормальні назви cp1251: «Київ» CA E8 BF E2 -- не UTF-8 */
+	strcpy(b, "\xCA\xE8\xBF\xE2");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 4U) && !strcmp(b, "\xCA\xE8\xBF\xE2"), "cp1251 «Київ» без змін");
+	/* максимальне ім'я 16 байтів UTF-8 (8 літер) -> 8 байтів */
+	strcpy(b, "\xD0\x90\xD0\x91\xD0\x92\xD0\x93\xD0\x94\xD0\x95\xD0\x96\xD0\x97");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 8U) && !strcmp(b, "\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7"), "16 байтів UTF-8 -> 8 літер");
+	/* розділові: «Київ — 1» (тире U+2014 = E2 80 94) -> 0x97 */
+	strcpy(b, "\xD0\x9A \xE2\x80\x94 1");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 5U) && !strcmp(b, "\xCA \x97 1"), "тире U+2014 -> 0x97");
+	/* емодзі (F0 9F 98 80) разом з кирилицею: послідовність не з дозволених -> без змін */
+	strcpy(b, "\xD0\x9A\xF0\x9F\x98\x80");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 6U) && !strcmp(b, "\xD0\x9A\xF0\x9F\x98\x80"), "емодзі -- рядок не чіпаємо");
+	/* чисті ASCII-байти з 0x80..0xFF у кінці без кирилиці: усі байти >= 0x80 не UTF-8 */
+	strcpy(b, "\xFF\xFE");
+	n = aprsNameToDisplay(b);
+	CHECK((n == 2U) && !strcmp(b, "\xFF\xFE"), "недійсні лід-байти -- без змін");
+}
+
 int main(void)
 {
 	aprsAx25_t ax;
@@ -1975,6 +2042,7 @@ int main(void)
 	testStage3();
 	testRawText();
 	testFuzz();
+	testNameDisplay();
 
 	printf(fails ? "ПРОВАЛЕНО: %d\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

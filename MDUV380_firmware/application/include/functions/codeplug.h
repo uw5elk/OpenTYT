@@ -481,6 +481,19 @@ static inline void codeplugChannelSetAesKeySlot(CodeplugChannel_t *channelBuf, u
 void codeplugChannelGetDataWithOffsetAndLengthForIndex(int index, CodeplugChannel_t *channelBuf, uint8_t offset, int length);
 void codeplugChannelGetDataForIndex(int index, CodeplugChannel_t *channelBuf);
 void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len);
+/* R21 З3: APRS_R21_NAMES -- показ імен кодплуга з UTF-8 у cp1251: лише користувацька українська збірка (ENABLE_APRS_RX без проби), як картки R20: перекодування
+ * коштує 248 Б флешу, а запас diag до кодека мав би впасти нижче порогу 2048 Б. Умова тут, а не в aprs_rx_cfg.h: той файл включає ENABLE_APRS_RX для проби
+ * і змінив би склад коду інших файлів diag. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN) && defined(ENABLE_APRS_RX) && !defined(ENABLE_APRS_RX_PROBE) && defined(ENABLE_AES)
+#define APRS_R21_NAMES 1
+#endif
+/* R21 З3: те саме, але для ПОКАЗУ: ім'я в UTF-8 (кирилиця з CPS) перекодовується в cp1251 шрифта (aprsNameToDisplay). Кодплуг не переписується. Потоки
+ * редагування й запису (codeplugUtilConvertStringToBuf) беруть сирі байти -- їх не чіпати. Лише користувацька українська збірка (APRS_R21_NAMES); інакше -- псевдонім (байт-у-байт стоковий, diag теж). */
+#if defined(APRS_R21_NAMES)
+void codeplugUtilConvertBufToDisplayString(char *codeplugBuf, char *outBuf, int len);
+#else
+#define codeplugUtilConvertBufToDisplayString(a, b, c) codeplugUtilConvertBufToString((a), (b), (c))
+#endif
 void codeplugUtilConvertStringToBuf(char *inBuf, char *outBuf, int len);
 uint32_t bcd2int(uint32_t i);
 uint32_t int2bcd(uint32_t i);

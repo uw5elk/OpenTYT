@@ -240,7 +240,7 @@ static void updateScreen(bool isFirstRun)
 
 					if (idx > 0)
 					{
-						codeplugUtilConvertBufToString(((contactListType == MENU_CONTACT_LIST_CONTACT_DIGITAL) ? contact.name : dtmfContact.name), nameBuf, 16); // need to convert to zero terminated string
+						codeplugUtilConvertBufToDisplayString(((contactListType == MENU_CONTACT_LIST_CONTACT_DIGITAL) ? contact.name : dtmfContact.name), nameBuf, 16); // need to convert to zero terminated string
 						menuDisplayEntry(i, mNum, (char*) nameBuf, 0, THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
 					}
 
@@ -264,20 +264,20 @@ static void updateScreen(bool isFirstRun)
 			break;
 
 		case MENU_CONTACT_LIST_CONFIRM:
-			codeplugUtilConvertBufToString(contactListContactData.name, nameBuf, 16);
+			codeplugUtilConvertBufToDisplayString(contactListContactData.name, nameBuf, 16);
 			menuDisplayTitle(nameBuf);
 			displayPrintCentered(16, currentLanguage->delete_contact_qm, FONT_SIZE_3);
 			displayDrawChoice(CHOICE_YESNO, false);
 			break;
 
 		case MENU_CONTACT_LIST_DELETED:
-			codeplugUtilConvertBufToString(contactListContactData.name, nameBuf, 16);
+			codeplugUtilConvertBufToDisplayString(contactListContactData.name, nameBuf, 16);
 			displayPrintCentered(16, currentLanguage->contact_deleted, FONT_SIZE_3);
 			displayDrawChoice(CHOICE_DISMISS, false);
 			break;
 
 		case MENU_CONTACT_LIST_TG_IN_RXGROUP:
-			codeplugUtilConvertBufToString(contactListContactData.name, nameBuf, 16);
+			codeplugUtilConvertBufToDisplayString(contactListContactData.name, nameBuf, 16);
 			menuDisplayTitle(nameBuf);
 			displayPrintCentered(16, currentLanguage->contact_used, FONT_SIZE_3);
 			displayPrintCentered((DISPLAY_SIZE_Y/2), currentLanguage->in_tg_list, FONT_SIZE_3);
@@ -486,7 +486,7 @@ static void updateSubMenuScreen(void)
 
 	displayClearBuf();
 
-	codeplugUtilConvertBufToString((contactListType == MENU_CONTACT_LIST_CONTACT_DIGITAL) ? contactListContactData.name : contactListDTMFContactData.name, buf, 16);
+	codeplugUtilConvertBufToDisplayString((contactListType == MENU_CONTACT_LIST_CONTACT_DIGITAL) ? contactListContactData.name : contactListDTMFContactData.name, buf, 16);
 	menuDisplayTitle(buf);
 
 	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)

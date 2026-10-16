@@ -133,6 +133,9 @@ void aprsPacketParse(const aprsAx25_t *ax, aprsPacket_t *out);
 size_t aprsDecodeText(const uint8_t *in, size_t n, char *out, size_t outSize);
 /* Чи байти -- коректний UTF-8 (без надмірних кодувань і сурогатів). */
 bool aprsIsUtf8(const uint8_t *p, size_t n);
+/* R21 З3: ім'я з кодплуга (NUL-термінований рядок) -> cp1251 для показу, НА МІСЦІ: лише якщо це безсумнівно UTF-8 з кирилицею (можливо, з обрізаним у кінці
+ * символом); ASCII і cp1251 не чіпає. Кодплуг не переписується. Повертає довжину. s має вміщати результат (він не довший за вхід). */
+size_t aprsNameToDisplay(char *s);
 
 /* Повідомлення адресоване нам: ownCall (до 6 симв., будь-який регістр, хвостові пробіли ігноруються),
  * ownSsid 0..15 (більше -- завжди false). msgTo -- вже без хвостових пробілів, ВЕРХНІЙ регістр (aprsPacketParse()).

@@ -960,7 +960,7 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 				else
 #endif
 				{
-					codeplugUtilConvertBufToString(currentChannelData->name, nameBuf, 16);
+					codeplugUtilConvertBufToDisplayString(currentChannelData->name, nameBuf, 16);
 				}
 
 				uiUtilityDisplayInformation(nameBuf, (uiDataGlobal.reverseRepeaterChannel ? DISPLAY_INFO_CHANNEL_INVERTED : DISPLAY_INFO_CHANNEL), yOverride);
@@ -1047,7 +1047,7 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 						}
 						else
 						{
-							codeplugUtilConvertBufToString(currentContactData.name, nameBuf, 16);
+							codeplugUtilConvertBufToDisplayString(currentContactData.name, nameBuf, 16);
 						}
 					}
 
@@ -3133,7 +3133,7 @@ void uiChannelModeColdStart(void)
 void uiChannelInitializeCurrentZone(void)
 {
 	codeplugZoneGetDataForNumber(nonVolatileSettings.currentZone, &currentZone);
-	codeplugUtilConvertBufToString(currentZone.name, currentZoneName, 16);// need to convert to zero terminated string
+	codeplugUtilConvertBufToDisplayString(currentZone.name, currentZoneName, 16);// need to convert to zero terminated string
 
 	if ((nonVolatileSettings.roaming != ROAMING_OFF) &&
 			settingsLocationIsValid() &&
@@ -3463,7 +3463,7 @@ static void checkAndUpdateSelectedChannelForGD77S(uint16_t chanNum, bool forceSp
 			voicePromptsAppendPrompt(PROMPT_CHANNEL);
 			voicePromptsAppendInteger(chanNum);
 			voicePromptsAppendPrompt(PROMPT_SILENCE);
-			codeplugUtilConvertBufToString(currentChannelData->name, buf, 16);
+			codeplugUtilConvertBufToDisplayString(currentChannelData->name, buf, 16);
 			voicePromptsAppendString(buf);
 			voicePromptsPlay();
 		}
@@ -3480,7 +3480,7 @@ static void buildSpeechChannelDetailsForGD77S()
 {
 	char buf[17];
 
-	codeplugUtilConvertBufToString(currentChannelData->name, buf, 16);
+	codeplugUtilConvertBufToDisplayString(currentChannelData->name, buf, 16);
 	voicePromptsAppendString(buf);
 
 	voicePromptsAppendPrompt(PROMPT_SILENCE);
@@ -3524,7 +3524,7 @@ static void buildSpeechUiModeForGD77S(GD77S_UIMODES_t uiMode)
 	switch (uiMode)
 	{
 		case GD77S_UIMODE_TG_OR_SQUELCH: // Channel
-			codeplugUtilConvertBufToString(currentChannelData->name, buf, 16);
+			codeplugUtilConvertBufToDisplayString(currentChannelData->name, buf, 16);
 			voicePromptsAppendString(buf);
 
 			if (trxGetMode() == RADIO_MODE_DIGITAL)
@@ -3589,7 +3589,7 @@ static void buildSpeechUiModeForGD77S(GD77S_UIMODES_t uiMode)
 				CodeplugDTMFContact_t dtmfContact;
 
 				codeplugDTMFContactGetDataForNumber(GD77SParameters.dtmfListSelected + 1, &dtmfContact);
-				codeplugUtilConvertBufToString(dtmfContact.name, buf, 16);
+				codeplugUtilConvertBufToDisplayString(dtmfContact.name, buf, 16);
 				voicePromptsAppendString(buf);
 			}
 			else

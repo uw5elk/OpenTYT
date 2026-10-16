@@ -1495,7 +1495,7 @@ static void pickContactUpdate(void)
 		if (codeplugContactGetDataForNumberInType(mNum + 1, callType, &c))
 		{
 			char name[17];
-			codeplugUtilConvertBufToString(c.name, name, 16);
+			codeplugUtilConvertBufToDisplayString(c.name, name, 16);
 			snprintf(buf, sizeof buf, "%s", name);
 		}
 		else

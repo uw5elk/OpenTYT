@@ -1536,7 +1536,7 @@ bool contactIDLookup(uint32_t id, ContactCalltype_t calltype, char *buffer)
 
 	if (contactIndex != -1)
 	{
-		codeplugUtilConvertBufToString(contact.name, buffer, 16);
+		codeplugUtilConvertBufToDisplayString(contact.name, buffer, 16);
 		return true;
 	}
 
@@ -1555,7 +1555,7 @@ static void displayChannelNameOrRxFrequency(char *buffer, size_t maxLen)
 		else
 #endif
 		{
-			codeplugUtilConvertBufToString(currentChannelData->name, buffer, 16);
+			codeplugUtilConvertBufToDisplayString(currentChannelData->name, buffer, 16);
 			displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
 		}
 	}
@@ -3120,7 +3120,7 @@ ANNOUNCE_STATIC void announceZoneName(bool voicePromptWasPlaying)
 		voicePromptsAppendLanguageString(currentLanguage->zone);
 	}
 
-	codeplugUtilConvertBufToString(currentZone.name, nameBuf, 16);
+	codeplugUtilConvertBufToDisplayString(currentZone.name, nameBuf, 16);
 
 	if (strcmp(nameBuf, currentLanguage->all_channels) == 0)
 	{
@@ -3173,7 +3173,7 @@ ANNOUNCE_STATIC void announceContactNameTgOrPc(bool voicePromptWasPlaying)
 			voicePromptsAppendLanguageString(currentLanguage->contact);
 		}
 
-		codeplugUtilConvertBufToString(currentContactData.name, nameBuf, 16);
+		codeplugUtilConvertBufToDisplayString(currentContactData.name, nameBuf, 16);
 		voicePromptsAppendString(nameBuf);
 	}
 	else
@@ -3309,7 +3309,7 @@ ANNOUNCE_STATIC void announceChannelName(bool voicePromptWasPlaying)
 	{
 		char voiceBuf[17];
 
-		codeplugUtilConvertBufToString(channelScreenChannelData.name, voiceBuf, 16);
+		codeplugUtilConvertBufToDisplayString(channelScreenChannelData.name, voiceBuf, 16);
 		voicePromptsAppendString(voiceBuf);
 
 		if (uiDataGlobal.reverseRepeaterChannel)
@@ -3684,7 +3684,7 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen)
 		}
 		else
 		{
-			codeplugUtilConvertBufToString(contact.name, nameBuf, 16);
+			codeplugUtilConvertBufToDisplayString(contact.name, nameBuf, 16);
 		}
 	}
 	else
@@ -3720,7 +3720,7 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen)
 		}
 		else
 		{
-			codeplugUtilConvertBufToString(contact.name, nameBuf, 16);
+			codeplugUtilConvertBufToDisplayString(contact.name, nameBuf, 16);
 		}
 	}
 }
