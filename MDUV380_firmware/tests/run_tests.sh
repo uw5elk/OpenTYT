@@ -63,6 +63,7 @@ declare -A SRCS=(
 	[test_aprs_icons]="$APP/source/functions/aprs_icons.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R14: піктограми 16x16 і назви символів APRS (вікно маяка)
 	[test_aprs_fault]="$APP/source/functions/aprs_fault_fmt.c"   # R10-fix4: ЧИСТА частина обробника збою -- hex/dec, CFSR, пошук адрес у стеку, магія запису
 	[test_aprs_stations_ui]="$APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R8-fix: справжній екран «APRS станції», дисплей і приймач -- заглушки
+	[test_codeplug_zone]="$APP/source/functions/codeplug.c"   # R22 Z1: СПРАВЖНІЙ codeplug.c -- вибір зон (єдине правило «справжня зона», ліміт 68 бітів, крок валкодера); залізо -- заглушки в тесті
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 
@@ -78,6 +79,7 @@ FW_INCS="-I$FW/tools/hoststub -include $FW/tools/hoststub/host_compat.h -I$FW -I
  -I$FW/application/include"
 declare -A XFLAGS=(
 	[test_dmr_sms_replay]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
+	[test_codeplug_zone]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
 	[test_dmr_rctl_stock]="-DENABLE_DMR_DATA"   # R21 З2: тест читає чергу так, як драйвер (functions/dmr_data.h)
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_afsk]="-DENABLE_APRS_RX_PROBE"
