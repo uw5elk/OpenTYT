@@ -289,6 +289,15 @@ void showErrorMessage(const char *message);
 const char *getPowerLevel(uint8_t level);
 const char *getPowerLevelUnit(uint8_t level);
 
+/* R21 З1.3: захист аргументів %s у малюванні головного екрана/шапки. У збірках з ENABLE_APRS_RX вказівник поза флешем/RAM/CCM (напр. 0x40026440 --
+ * регістри DMA2 з польових збоїв R20) замінюється на "?" замість того, щоб падати в memchr/strlen усередині printf. Інші збірки: нуль коду. */
+#if defined(ENABLE_APRS_RX)
+const char *uiSafeStr(const char *p);
+#define UI_SAFE_STR(p)   uiSafeStr(p)
+#else
+#define UI_SAFE_STR(p)   (p)
+#endif
+
 uint8_t *coordsToMaidenhead(uint8_t *maidenheadBuffer, double longitude, double latitude);
 void buildLocationAndMaidenheadStrings(char *locationBufferOrNull, char *maidenheadBufferOrNull, bool locIsValid);
 double latLonFixed32ToDouble(uint32_t fixedVal);

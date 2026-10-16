@@ -886,7 +886,7 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 
 					if (directChannelNumber > 0)
 					{
-						snprintf(nameBuf, NAME_BUFFER_LEN, "%s %d", currentLanguage->gotoChannel, directChannelNumber);
+						snprintf(nameBuf, NAME_BUFFER_LEN, "%s %d", UI_SAFE_STR(currentLanguage->gotoChannel), directChannelNumber);
 					}
 					else
 					{
@@ -931,7 +931,7 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 						else
 						{
 							snprintf(nameBuf, NAME_BUFFER_LEN, "%s Ch%c%d",
-									(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? currentLanguage->all_channels : currentZoneName),
+									(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? UI_SAFE_STR(currentLanguage->all_channels) : currentZoneName),
 									(channelIsSkipped ? '^' : ':'),
 									(codeplugGetLastUsedChannelInCurrentZone() + (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? 0 : 1)));
 						}

@@ -954,11 +954,11 @@ static void updateLHItem(LinkItem_t *item)
 		{
 			if ((item->talkGroupOrPcId & 0x00FFFFFF) == ALL_CALL_VALUE)
 			{
-				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s", currentLanguage->all_call);
+				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s", UI_SAFE_STR(currentLanguage->all_call));
 			}
 			else
 			{
-				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s %u", currentLanguage->tg, (item->talkGroupOrPcId & 0x00FFFFFF));
+				snprintf(item->talkgroup, SCREEN_LINE_BUFFER_SIZE, "%s %u", UI_SAFE_STR(currentLanguage->tg), (item->talkGroupOrPcId & 0x00FFFFFF));
 			}
 		}
 
@@ -2325,7 +2325,7 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 						if (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_FORCE_DMO) == 0)
 						{
 							snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%s%d",
-									((contactTSActive && (monitorModeData.isEnabled == false)) ? "cS" : currentLanguage->ts),
+									((contactTSActive && (monitorModeData.isEnabled == false)) ? "cS" : UI_SAFE_STR(currentLanguage->ts)),
 									((monitorModeData.isEnabled && (dmrMonitorCapturedTS != -1))? (dmrMonitorCapturedTS + 1) : trxGetDMRTimeSlot() + 1));
 						}
 						else
@@ -2380,7 +2380,7 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 	}
 
 	// Power
-	sprintf(buffer, "%s%s", getPowerLevel(powerLevel), getPowerLevelUnit(powerLevel));
+	sprintf(buffer, "%s%s", UI_SAFE_STR(getPowerLevel(powerLevel)), UI_SAFE_STR(getPowerLevelUnit(powerLevel)));
 
 	if (isVFOSweepScanning) // Need to shift to the right due to sweep span
 	{
@@ -3675,11 +3675,11 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen)
 		{
 			if (id == ALL_CALL_VALUE)
 			{
-				snprintf(nameBuf, bufferLen, "%s", currentLanguage->all_call);
+				snprintf(nameBuf, bufferLen, "%s", UI_SAFE_STR(currentLanguage->all_call));
 			}
 			else
 			{
-				snprintf(nameBuf, bufferLen, "%s %u", currentLanguage->tg, (trxTalkGroupOrPcId & 0x00FFFFFF));
+				snprintf(nameBuf, bufferLen, "%s %u", UI_SAFE_STR(currentLanguage->tg), (trxTalkGroupOrPcId & 0x00FFFFFF));
 			}
 		}
 		else
@@ -3709,7 +3709,7 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen)
 				{
 					if (id == ALL_CALL_VALUE)
 					{
-						snprintf(nameBuf, bufferLen, "%s", currentLanguage->all_call);
+						snprintf(nameBuf, bufferLen, "%s", UI_SAFE_STR(currentLanguage->all_call));
 					}
 					else
 					{
@@ -4708,8 +4708,28 @@ void showErrorMessage(const char *message)
 	displayRender();
 }
 
+#if defined(ENABLE_APRS_RX)
+/* R21 З1.3: чи вказівник схожий на рядок у флеші прошивки, RAM або CCM. Усе інше (периферія 0x40xxxxxx, 0, малі числа) -- "?". */
+const char *uiSafeStr(const char *p)
+{
+	uintptr_t a = (uintptr_t)p;
+
+	if (((a >= 0x08000000UL) && (a < 0x08100000UL)) || ((a >= 0x20000000UL) && (a < 0x20020000UL)) || ((a >= 0x10000000UL) && (a < 0x10010000UL)))
+	{
+		return p;
+	}
+	return "?";
+}
+#endif
+
 const char *getPowerLevel(uint8_t level)
 {
+#if defined(ENABLE_APRS_RX)
+	if (level > MAX_POWER_SETTING_NUM)   // R21 З1.3: таблиці POWER_LEVELS/UNITS мають MAX_POWER_SETTING_NUM + 1 елементів; поза ними -- читання сміття як вказівника
+	{
+		level = MAX_POWER_SETTING_NUM;
+	}
+#endif
 #if defined(PLATFORM_MDUV380) && !defined(PLATFORM_VARIANT_UV380_PLUS_10W)
 	return POWER_LEVELS[(settingsIsOptionBitSet(BIT_FORCE_10W_RADIO) ? 1U : 0U)][level];
 #else
@@ -4719,6 +4739,12 @@ const char *getPowerLevel(uint8_t level)
 
 const char *getPowerLevelUnit(uint8_t level)
 {
+#if defined(ENABLE_APRS_RX)
+	if (level > MAX_POWER_SETTING_NUM)
+	{
+		level = MAX_POWER_SETTING_NUM;
+	}
+#endif
 	return POWER_LEVEL_UNITS[level];
 }
 

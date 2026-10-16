@@ -27,7 +27,14 @@
 #define AFLT_MAGIC_BASE     0xFA170000UL
 #define AFLT_MAGIC_MASK     0xFFFF0000UL
 
-#define AFLT_NSTK           4    /* скільки адрес повернення зі стека зберігаємо */
+/* Скільки адрес повернення зі стека зберігаємо. R21 З1.1: чотирьох кадрів замало (збій у printf-ланцюжку: перші кадри -- це libc, до коду прошивки
+ * не доходило). Користувацька збірка не має трасування (APRS_MODE_TRACE), тож backup-регістри 16..18 (S_TRN/S_TRV/S_T0) вільні і йдуть під стек:
+ * 4 + 3 = 7. Діагностична збірка тримає трасування у цих регістрах -- там 4, як було. RAM не росте: це регістри RTC. */
+#if defined(APRS_MODE_TRACE)
+#define AFLT_NSTK           4
+#else
+#define AFLT_NSTK           7
+#endif
 
 /* Запис про збій. Для KIND_WDG: pc/lr/sp -- збережений контекст ГОЛОВНОГО завдання (де воно застрягло);
  * addr/r0 -- PC/LR того, що виконував процесор у мить спрацювання сторожа (напр. IDLE). */
@@ -49,11 +56,12 @@ size_t aprsFaultDec(char *out, uint32_t v);
 const char *aprsFaultKindName(uint32_t kind);
 /* Назва «головної» причини за CFSR (старший за пріоритетом виставлений біт); "" -- жодного біта. */
 const char *aprsFaultCfsrName(uint32_t cfsr);
-/* Адреса схожа на код у флеші прошивки (Thumb: непарна, 0x08000001..0x080FFFFF). */
-bool aprsFaultAddrIsCode(uint32_t v);
-/* Перші maxOut адрес повернення з масиву слів стека (від вершини вгору); повертає скільки знайдено.
+/* Адреса схожа на повернення в код: Thumb (непарна) і в [textLo, textHi) -- межі секції .text (символи лінкера __text_start/_etext).
+ * R21 З1.1: раніше брали будь-що у флеші, і в звіт потрапляли вказівники на .rodata (напр. font_6x8) -- вони збивали з пантелику. */
+bool aprsFaultAddrIsCode(uint32_t v, uint32_t textLo, uint32_t textHi);
+/* Перші maxOut адрес повернення з масиву слів стека (від вершини вгору); повертає скільки знайдено. Беруться лише адреси в [textLo, textHi).
  * Дублікати поспіль пропускаються. Це ЕВРИСТИКА: у стеку лишаються й старі значення. */
-int aprsFaultScanStack(const uint32_t *words, size_t n, uint32_t *out, int maxOut);
+int aprsFaultScanStack(const uint32_t *words, size_t n, uint32_t *out, int maxOut, uint32_t textLo, uint32_t textHi);
 /* Чи слово магії відповідає валідному запису (повертає вид або 0). */
 uint32_t aprsFaultKindFromMagic(uint32_t magicWord);
 uint32_t aprsFaultMagicFromKind(uint32_t kind);

@@ -63,25 +63,67 @@ int main(void)
 		CHECK(strlen(n) <= 20U, "біт %d: назва задовга", bit);
 	}
 
-	/* адреса коду: Thumb (непарна) у флеші */
-	CHECK(aprsFaultAddrIsCode(0x0800ABCDU), "код");
-	CHECK(!aprsFaultAddrIsCode(0x0800ABCCU), "парна адреса -- не Thumb");
-	CHECK(!aprsFaultAddrIsCode(0x20001235U), "RAM");
-	CHECK(!aprsFaultAddrIsCode(0x08100001U), "за межею флешу");
-	CHECK(!aprsFaultAddrIsCode(1U), "1");
+	/* адреса коду: Thumb (непарна) і лише всередині .text [lo, hi) -- не будь-що у флеші (R21 З1.1) */
+	{
+		const uint32_t lo = 0x0800C100U, hi = 0x08040000U;   /* умовний .text; далі до 0x08075000 -- .rodata (шрифти) */
+
+		CHECK(aprsFaultAddrIsCode(0x0800CBCDU, lo, hi), "код");
+		CHECK(!aprsFaultAddrIsCode(0x0800CBCCU, lo, hi), "парна адреса -- не Thumb");
+		CHECK(!aprsFaultAddrIsCode(0x20001235U, lo, hi), "RAM");
+		CHECK(!aprsFaultAddrIsCode(0x10000011U, lo, hi), "CCM");
+		CHECK(!aprsFaultAddrIsCode(0x0806961DU, lo, hi), "rodata (font_6x8) вище .text");
+		CHECK(!aprsFaultAddrIsCode(0x0800C0FFU, lo, hi), "вектори/нижче .text");
+		CHECK(aprsFaultAddrIsCode(0x0800C101U, lo, hi), "перша адреса .text");
+		CHECK(!aprsFaultAddrIsCode(hi + 1U, lo, hi), "саме за кінцем .text");
+		CHECK(aprsFaultAddrIsCode(hi - 1U, lo, hi), "остання непарна в .text");
+		CHECK(!aprsFaultAddrIsCode(1U, lo, hi), "1");
+	}
 
 	/* пошук у стеку: порядок збережено, порожнє/сміття пропущено, дублікати поспіль злиті, ліміт */
 	{
-		uint32_t st[] = { 0U, 0x20001235U, 0x0800AAAB, 0x0800AAAB, 0xFFFFFFFFU, 0x0800BBBB, 0x08001001, 0x0800CCC1, 0x0800DDD1 };
+		const uint32_t lo = 0x0800C100U, hi = 0x08040000U;
+		uint32_t st[] = { 0U, 0x20001235U, 0x0800AAAB, 0x0800AAAB, 0xFFFFFFFFU, 0x0800BBBB, 0x0800D001, 0x0800CCC1, 0x0800DDD1 };
 		uint32_t out[AFLT_NSTK] = { 0 };
-		int n = aprsFaultScanStack(st, sizeof(st) / sizeof(st[0]), out, AFLT_NSTK);
+		int n = aprsFaultScanStack(st, sizeof(st) / sizeof(st[0]), out, AFLT_NSTK, lo - 0xC000U, hi);
 
-		CHECK(n == 4, "знайдено %d", n);
-		CHECK(out[0] == 0x0800AAABU && out[1] == 0x0800BBBBU && out[2] == 0x08001001U && out[3] == 0x0800CCC1U, "порядок: %08X %08X %08X %08X",
+		CHECK(n == 5 || AFLT_NSTK < 5, "знайдено %d", n);
+		CHECK(out[0] == 0x0800AAABU && out[1] == 0x0800BBBBU && out[2] == 0x0800D001U && out[3] == 0x0800CCC1U, "порядок: %08X %08X %08X %08X",
 				(unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
-		CHECK(aprsFaultScanStack(st, 0, out, AFLT_NSTK) == 0, "порожній стек");
-		CHECK(aprsFaultScanStack(st, 3, out, AFLT_NSTK) == 1, "обмежена довжина");
+		CHECK(aprsFaultScanStack(st, 0, out, AFLT_NSTK, lo, hi) == 0, "порожній стек");
+		CHECK(aprsFaultScanStack(st, 4, out, AFLT_NSTK, lo - 0xC000U, hi) == 1, "обмежена довжина");
 	}
+
+	/* R21 З1.1: суміш .text / .rodata / RAM / сміття -> у звіт лише .text, без font_* */
+	{
+		const uint32_t lo = 0x0800C100U, hi = 0x08040000U;
+		uint32_t st[] = {
+			0x0806961DU,   /* font_6x8 у .rodata (адреса з реального збою) */
+			0x0800D235U,   /* .text */
+			0x20007659U,   /* RAM, непарне */
+			0x08100001U,   /* поза флешем */
+			0x0801E3A9U,   /* .text */
+			0x0805B9A9U,   /* _printf_i+0x1E0 (у реальній збірці це .text; тут за межею умовного hi) */
+			0x08041001U,   /* .rodata умовного образу */
+			0x0803FFFFU,   /* остання непарна .text */
+			0x00000001U, 0xDEADBEEFU, 0xFFFFFFFFU,
+			0x0800C101U    /* перша адреса .text */
+		};
+		uint32_t out[8] = { 0 };
+		int n = aprsFaultScanStack(st, sizeof(st) / sizeof(st[0]), out, 8, lo, hi);
+
+		CHECK(n == 4, "суміш: знайдено %d, чекали 4", n);
+		CHECK(out[0] == 0x0800D235U && out[1] == 0x0801E3A9U && out[2] == 0x0803FFFFU && out[3] == 0x0800C101U,
+				"суміш: %08X %08X %08X %08X", (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
+		for (int i = 0; i < n; i++)
+		{
+			CHECK(out[i] >= lo && out[i] < hi && (out[i] & 1U) != 0U, "кадр %d поза .text: %08X", i, (unsigned)out[i]);
+		}
+		/* ліміт maxOut і запас: кадрів у записі не менше 6 у користувацькій збірці */
+		CHECK(aprsFaultScanStack(st, sizeof(st) / sizeof(st[0]), out, 2, lo, hi) == 2, "ліміт maxOut = 2");
+	}
+#if !defined(APRS_MODE_TRACE)
+	CHECK(AFLT_NSTK >= 6, "R21 З1.1: у користувацькій збірці має бути не менше 6 кадрів стека (зараз %d)", AFLT_NSTK);
+#endif
 
 	if (s_fail != 0)
 	{
