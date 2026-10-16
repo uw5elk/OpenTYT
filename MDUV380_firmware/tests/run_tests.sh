@@ -204,6 +204,30 @@ if [ -z "$FILTER" ] || [[ "test_cps_csv" == *"$FILTER"* ]]; then
 	fi
 fi
 
+# R26 V2/V3: контакти-редактор і темна тема. Логіка й палітра -- у будь-якому python3; віджети Tk -- лише з tkinter + xvfb-run (інакше цю частину
+# тест сам пропускає й каже про це).
+for T in test_contact_edit test_gui_theme; do
+	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
+		PYTK=""
+		for cand in python3 python3.12 python3.11 python3.10 python3.13; do
+			if command -v "$cand" >/dev/null 2>&1 && "$cand" -c "import tkinter" 2>/dev/null; then PYTK="$cand"; break; fi
+		done
+		if [ -n "$PYTK" ] && command -v xvfb-run >/dev/null 2>&1; then
+			if out="$(timeout 240 xvfb-run -a "$PYTK" -B "$TESTS_DIR/../tools/$T.py" 2>&1)"; then
+				pass=$((pass + 1)); echo "ok            $T (python + Tk під xvfb)"
+			else
+				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python + Tk під xvfb)"; printf '%s\n' "$out" | tail -10
+			fi
+		else
+			if out="$(python3 -B "$TESTS_DIR/../tools/$T.py" 2>&1)"; then
+				pass=$((pass + 1)); echo "ok            $T (python; частину з Tk пропущено -- нема tkinter або xvfb-run)"
+			else
+				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python)"; printf '%s\n' "$out" | tail -10
+			fi
+		fi
+	fi
+done
+
 # Python-самоперевірка декодера ефірних записів (tools/dmr_data_rx.py). Потрібні numpy+scipy;
 # якщо їх немає (напр. мінімальний CI) -- пропускаємо з попередженням, а не валимо прогін.
 if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
