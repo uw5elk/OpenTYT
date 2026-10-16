@@ -528,6 +528,67 @@ def test_add_change_delete():
               "APRS: коментар змінено, решта запису та сама")
 
 
+def test_aprs_contiguity():
+    """Прошивка читає APRS-конфіги ПІДРЯД з №1 до першого недійсного (codeplugAPRSInitCache): експорт показує лише їх, а імпорт не
+    дозволяє розриву (і не «оживляє» приховані записи за розривом)."""
+    spi = make_fixture_spi()
+    cp, _data = codeplug_of(spi)
+    img = cc.Image.from_codeplug(cp)
+    a0 = bytearray(dict(img.aprs())[0])
+    a1 = bytearray(a0)
+    a1[:8] = b"APRS2\x00\x00\x00"
+    a2 = bytearray(a0)
+    a2[:8] = b"HIDDEN\x00\x00"
+    # --- розрив: слоти 0 і 2 дійсні, 1 порожній -> прошивка бачить лише №1 ---
+    gap = cc.Image.from_codeplug(cp)
+    gap.set_aprs(2, bytes(a2))
+    check([s_ for s_, _r in gap.aprs()] == [0], "розрив: прошивка бачить лише слот 0")
+    with tempfile.TemporaryDirectory() as d:
+        cc.export_files(gap, d, ",", log=lambda *_: None)
+        rows = read_csv_rows(os.path.join(d, "APRS.csv"))
+        check(len(rows) == 2, "експорт показує лише видимий конфіг: %r" % rows)
+        res = import_dir(gap, d)
+        check(images_equal(res, gap), "розрив: імпорт без правок байт-у-байт")
+        # новий конфіг -> слот 1; прихований слот 2 ожив би -- його стирають із попередженням
+        rows.append(["APRS2", "7", "", "0", "", "0", "0", "58", "x", "0", "True", "48,0098", "33,4845", "144,80000", "True", "0", "APRS2"])
+        write_csv_rows(os.path.join(d, "APRS.csv"), rows)
+        res = import_dir(gap, d)
+        vis = {s_: r for s_, r in res.image.aprs()}
+        check(sorted(vis) == [0, 1] and vis[1][:5] == b"APRS2", "новий конфіг став №2, видимих рівно 2: %r" % sorted(vis))
+        check(res.image.ee(cc.ADDR_APRS + 2 * 64, 64) == b"\xff" * 64 and any("Стерто приховані" in w for w in res.warnings),
+              "прихований запис за кінцем стерто з попередженням: %r" % res.warnings)
+    # --- два видимі конфіги: видалити перший (розрив) -- відмова; видалити останній -- можна ---
+    two = cc.Image.from_codeplug(cp)
+    two.set_aprs(1, bytes(a1))
+    with tempfile.TemporaryDirectory() as d:
+        cc.export_files(two, d, ",", log=lambda *_: None)
+        p = os.path.join(d, "APRS.csv")
+        rows = read_csv_rows(p)
+        check(len(rows) == 3, "два конфіги в експорті")
+        write_csv_rows(p, [rows[0], rows[2]])
+        try:
+            import_dir(two, d)
+            check(False, "видалення першого з двох APRS-конфігів мало бути відхилене")
+        except cc.CsvImportRefused as e:
+            check("підряд" in str(e), "відмова пояснює суцільність: %s" % e)
+        write_csv_rows(p, [rows[0], rows[1]])
+        res = import_dir(two, d)
+        check([s_ for s_, _r in res.image.aprs()] == [0] and len(res.removed) == 1, "видалення останнього -- ок: %s" % res.summary())
+        # канал посилається на видалений конфіг №2 -> лише Contacts/APRS завантажено: відмова за висячим посиланням
+        for fn in ("Channels.csv", "Contacts.csv", "TG_Lists.csv", "Zones.csv", "DTMF.csv"):
+            os.unlink(os.path.join(d, fn))
+        img2 = cc.Image.from_codeplug(cp)
+        img2.set_aprs(1, bytes(a1))
+        rec = bytearray(img2.channel_rec(2))
+        rec[cc.O_APRS] = 2
+        img2.set_channel_rec(2, bytes(rec))
+        try:
+            import_dir(img2, d)
+            check(False, "видалення APRS-конфіга, на який посилається канал, мало бути відхилене")
+        except cc.CsvImportRefused as e:
+            check("APRS-конфіг №2" in str(e), "названо висячу ціль: %s" % e)
+
+
 def test_no_x_on_refusal_and_cli():
     """T5 доказ: імпорт у рацію з поганим CSV не посилає жодної X-команди й не робить страхової копії."""
     spi = make_fixture_spi()
@@ -604,7 +665,7 @@ def test_import_to_radio():
 
 
 def main():
-    for t in (test_format_and_roundtrip, test_cyrillic, test_decimal_and_tab, test_refusals, test_name_limit, test_add_change_delete,
+    for t in (test_format_and_roundtrip, test_cyrillic, test_decimal_and_tab, test_refusals, test_name_limit, test_add_change_delete, test_aprs_contiguity,
               test_no_x_on_refusal_and_cli, test_import_to_radio):
         try:
             t()

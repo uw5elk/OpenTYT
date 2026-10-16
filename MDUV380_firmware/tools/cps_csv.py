@@ -323,13 +323,29 @@ class Image:
         self.set_ee(a, bytes([b]))
 
     # --- APRS ---
+    @staticmethod
+    def _aprs_valid(rec):
+        return rec[0] != 0xFF and struct.unpack_from("<H", rec, 62)[0] in (APRS_MAGIC, 0x4152)
+
     def aprs(self):
+        """Конфіги, які бачить прошивка: codeplugAPRSInitCache() рахує їх ПІДРЯД з №1 і зупиняється на першому недійсному
+        (name[0] == 0xFF або не та сигнатура). Дійсні записи ПІСЛЯ першого недійсного прошивка не бачить -- ми теж."""
         out = []
         for i in range(APRS_MAX):
             rec = self.ee(ADDR_APRS + i * APRS_SIZE, APRS_SIZE)
-            magic = struct.unpack_from("<H", rec, 62)[0]
-            if rec[0] != 0xFF and magic in (APRS_MAGIC, 0x4152):
-                out.append((i, rec))
+            if not self._aprs_valid(rec):
+                break
+            out.append((i, rec))
+        return out
+
+    def aprs_revived(self, first):
+        """Суцільна низка дійсних за виглядом записів, що починається зі слота `first`: якщо `first` -- перший слот після
+        нашого префікса, прошивка ПОЧНЕ їх бачити (раніше вони були за розривом нумерації)."""
+        out = []
+        i = first
+        while i < APRS_MAX and self._aprs_valid(self.ee(ADDR_APRS + i * APRS_SIZE, APRS_SIZE)):
+            out.append(i)
+            i += 1
         return out
 
     def set_aprs(self, slot, rec):
@@ -1326,11 +1342,9 @@ def _sec_aprs(s, tab):
     olds = [(slot, *s._names_of(rec[:8])) for slot, rec in s.old.aprs()]
     oldrec = dict(s.old.aprs())
     slots, gone = _match_rows(keys, olds)
-    claimed = set(x for x in slots if x is not None)
-    free_pool = sorted(gone)
-    n_rows = 0
+    final = {}                    # слот -> новий запис (для збережених і нових)
+    fresh = []                    # (рядок, запис) нових конфігів; слот призначається нижче
     for (ln, row), slot, (c, r) in zip(tab.rows, slots, keys):
-        n_rows += 1
         old = oldrec.get(slot) if slot is not None else None
         raw = s.pick_name(f, ln, c, r, old[:8] if old else None, 8, fill=b"\x00")
         if raw is None:
@@ -1338,7 +1352,6 @@ def _sec_aprs(s, tab):
         rec = bytearray(old) if old else bytearray(b"\x00" * 64)
         if not old:
             struct.pack_into("<H", rec, 62, APRS_MAGIC)
-            rec[55:59] = bytes(4)
         rec[:8] = raw
         old_vals = aprs_decode(old, s.dp) if old else None
         changes = []
@@ -1355,20 +1368,50 @@ def _sec_aprs(s, tab):
             s.problem(f, ln, "«%s»: %s" % (c or r, e))
             continue
         if old is None:
-            slot = s.alloc("aprs", set(oldrec) | claimed, free_pool, APRS_MAX)
-            if slot is None:
-                s.problem(f, ln, "немає вільного місця для APRS-конфігу (максимум %d)" % APRS_MAX)
-                continue
-            claimed.add(slot)
-            s.img.set_aprs(slot, bytes(rec))
-            s.res.added.append(("APRS", readable_text(rec[:8])))
-        elif bytes(rec) != bytes(old):
-            s.img.set_aprs(slot, bytes(rec))
-            s.res.changed.append(("APRS", "%s: %s" % (readable_text(rec[:8]), ", ".join(changes) or "назва")))
+            fresh.append((ln, bytes(rec)))
+        else:
+            final[slot] = bytes(rec)
+            if bytes(rec) != bytes(old):
+                s.res.changed.append(("APRS", "%s: %s" % (readable_text(rec[:8]), ", ".join(changes) or "назва")))
+    # призначення слотів новим конфігам: спершу звільнені (так нумерація лишається суцільною), далі -- в кінець
+    pool = sorted(gone)
+    end = len(olds)
+    for ln, rec in fresh:
+        if pool:
+            slot = pool.pop(0)
+            s.reused.add(("aprs", slot + 1))
+        else:
+            slot = end
+            end += 1
+        if slot >= APRS_MAX:
+            s.problem(f, ln, "немає вільного місця для APRS-конфігу (максимум %d)" % APRS_MAX)
+            continue
+        final[slot] = rec
+        s.res.added.append(("APRS", readable_text(rec[:8])))
     for slot in gone:
-        if slot in free_pool:
-            s.img.set_aprs(slot, b"\xff" * APRS_SIZE)
         s.res.removed.append(("APRS", readable_text(oldrec[slot][:8])))
+    # прошивка читає конфіги ПІДРЯД з №1 до першого недійсного: після змін зайняті слоти мусять бути префіксом
+    if final or gone:
+        occupied = sorted(final)
+        if occupied != list(range(len(occupied))):
+            lost = [str(sl + 1) for sl in sorted(set(oldrec) - set(final))]
+            s.problem(f, 0, "після змін APRS-конфіги не йдуть підряд з №1 (зайняті №%s): рація читає їх до першого порожнього, решта зникла б. "
+                      "Видалення конфіга з середини (№%s) не підтримується -- замість цього перейменуй/зміни його або видали з кінця." % (
+                          ", ".join(str(x + 1) for x in occupied), ", ".join(lost)))
+            return
+        if any(bytes(final[sl]) != bytes(oldrec.get(sl, b"")) for sl in final) or gone:
+            for sl, rec in final.items():
+                if sl not in oldrec or rec != bytes(oldrec[sl]):
+                    s.img.set_aprs(sl, rec)
+            for sl in gone:
+                if sl not in final:
+                    s.img.set_aprs(sl, b"\xff" * APRS_SIZE)
+            orphans = s.img.aprs_revived(len(final))
+            for sl in orphans:                  # приховані записи за кінцем: інакше вони «ожили» б як зайві конфіги
+                s.img.set_aprs(sl, b"\xff" * APRS_SIZE)
+            if orphans:
+                s.warn("Стерто приховані APRS-конфіги на слотах №%s (вони були за розривом нумерації й рації не видні; після змін ожили б)." % (
+                    ", ".join(str(x + 1) for x in orphans)))
 
 
 # ------------------------------------------------------------------ DTMF
