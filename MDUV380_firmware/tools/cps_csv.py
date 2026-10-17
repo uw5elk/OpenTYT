@@ -813,7 +813,7 @@ def export_files(cp_or_image, outdir, dp=None, log=print):
         w = _writer(f)
         w.writerow(CONTACT_HDR + [READABLE])
         for _slot, rec in img.contacts():
-            res1 = rec[22]
+            res1 = rec[23]
             ts = "Disabled" if res1 & 0x01 else str(((res1 & 0x02) >> 1) + 1)
             w.writerow([compat_text(rec[:16]), str(cv.bcd_to_int(rec[16:20])), CALL_TYPE_NAMES.get(rec[20], "Group"), ts, readable_text(rec[:16])])
     with _open_out(out("tg_lists")) as f:
@@ -1211,7 +1211,7 @@ def _sec_contacts(s, tab):
         rec = bytearray(old) if old else bytearray(b"\xff" * 16 + bytes(8))
         if not old:
             rec[16:20] = bytes(4)
-            rec[22] = 0xFF
+            rec[23] = 0x01
         rec[:16] = raw
         changes = []
         try:
@@ -1234,15 +1234,15 @@ def _sec_contacts(s, tab):
                 changes.append("ID Type")
             txt = row[ic_ts] if ic_ts is not None and ic_ts < len(row) else None
             if old:
-                old_ts = "Disabled" if old[22] & 1 else str(((old[22] & 2) >> 1) + 1)
+                old_ts = "Disabled" if old[23] & 1 else str(((old[23] & 2) >> 1) + 1)
             else:
                 old_ts = None
             if txt is not None and (not old or norm_text(txt) != norm_text(old_ts)):
                 tl = txt.strip().casefold()
                 if tl in ("disabled", "off", "none", ""):
-                    rec[22] |= 1
+                    rec[23] |= 1
                 elif tl in ("1", "2"):
-                    rec[22] = (rec[22] & ~3 & 0xFF) | ((int(tl) - 1) << 1)
+                    rec[23] = (rec[23] & ~3 & 0xFF) | ((int(tl) - 1) << 1)
                 else:
                     raise ValueError("TS Override: Disabled / 1 / 2, а не %r" % txt)
                 changes.append("TS Override")
