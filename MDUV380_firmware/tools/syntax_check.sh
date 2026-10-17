@@ -114,7 +114,11 @@ DEFS_APRSRXLITE=("${DEFS_COMMON[@]}" -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX
 # структурі в CCM, а не в позиченому буфері "Переслухати" (aprs_mode.c).
 DEFS_APRSPROBENOCR=("${DEFS_UA[@]}" -DENABLE_APRS_RX_PROBE)                 # build-ukrainian + проба, без "Переслухати" (як у CI)
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR)
+# AES-fix2: діагностика AES (DMR_AES_DIAG_RX) і збірка-кандидат AES_TX_MI_CURRENT -- у CI їх нема, а виклики з HR-C6000.c
+# (dmrAesDiagTxBurst, dmrAesTxSkipBurst) іх мають бачити; AES_TX_PHASE_FIX_OFF -- перемикач «до фіксу» для вимірювання.
+DEFS_AESDIAG=("${DEFS_AES1[@]}" -DDMR_AES_DIAG_RX -DAES_TX_MI_CURRENT -DAES_TX_PHASE_FIX_OFF)
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.
