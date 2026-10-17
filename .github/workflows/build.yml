@@ -119,6 +119,55 @@ jobs:
             MDUV380_firmware/build/*.elf
             MDUV380_firmware/build/*.map
 
+  # AES-fix1 A2: ДВІ прошивки-кандидати на базі збірки aes (ENABLE_AES=1, без нічого іншого) для польової
+  # звірки зі стоковою TYT. Різниця ЛИШЕ в тому, який MI наша передача кладе в late entry:
+  #   openuv380-10w-aes-mi-next    -- MI НАСТУПНОГО суперфрейму (look-ahead; так було досі);
+  #   openuv380-10w-aes-mi-current -- MI ПОТОЧНОГО суперфрейму (AES_TX_MI_CURRENT=1).
+  # Приймач в обох однаковий (приймає MI з ефіру й сам вчить конвенцію). Звичайна збірка aes вище
+  # (openuv380-10w-aes1) лишається без змін і збігається з aes-mi-next байт-у-байт за кодом.
+  build-aes-mi:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant: ["next", "current"]
+    name: build (aes-mi-${{ matrix.variant }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM GNU toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "14.2.Rel1"
+      - name: Build
+        working-directory: MDUV380_firmware
+        run: |
+          if [ "${{ matrix.variant }}" = "current" ]; then CUR=1; else CUR=0; fi
+          make -j$(nproc) ENABLE_AES=1 AES_TX_MI_CURRENT=$CUR
+      - name: Report size
+        working-directory: MDUV380_firmware
+        run: arm-none-eabi-size build/openuv380-10w.elf
+      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+        working-directory: MDUV380_firmware
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
+      - name: Перевірити, що перемикач справді (не)ввімкнено в збірці
+        working-directory: MDUV380_firmware
+        run: |
+          # у .bin немає прапорців; перевіряємо, що Makefile передав -D саме так, як треба
+          if [ "${{ matrix.variant }}" = "current" ]; then
+            make -n -B ENABLE_AES=1 AES_TX_MI_CURRENT=1 | grep -q -- "-DAES_TX_MI_CURRENT" || { echo "ПОМИЛКА: -DAES_TX_MI_CURRENT не передано"; exit 1; }
+          else
+            ! make -n -B ENABLE_AES=1 AES_TX_MI_CURRENT=0 | grep -q -- "-DAES_TX_MI_CURRENT" || { echo "ПОМИЛКА: -DAES_TX_MI_CURRENT зайвий"; exit 1; }
+          fi
+          echo "OK: aes-mi-${{ matrix.variant }}"
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: openuv380-10w-aes-mi-${{ matrix.variant }}
+          retention-days: 2
+          compression-level: 9
+          path: |
+            MDUV380_firmware/build/*.bin
+            MDUV380_firmware/build/*.hex
+
   # Українська збірка: окрема робота, а не ще один пункт матриці вище, щоб не чіпати
   # наявні перевірки. Дає готовий .bin, який можна прошити з будь-якої ОС -- локальний
   # тулчейн для цього не потрібен (а на Windows/macOS збірка й неможлива: Makefile

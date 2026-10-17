@@ -77,6 +77,13 @@ def main():
           f"BOOTSTRAP={cnt[5]} RESEED={cnt[6]} LATEENTRY-int={leInt}   late-entry-decode: ok={leOk} fail={leFail}")
     print(f"        LC-reads={lcReads}  valid-PI={piValid}  RxBurst-calls={burstCalls}  "
           f"(non-PI LCs = {lcReads-piValid})")
+    trl = data[3]
+    tail = data[32 + ring * rec:32 + ring * rec + trl]
+    if trl >= 7 and len(tail) >= 7:   # AES-fix1: хвіст після кільця
+        tw, tm, tr = struct.unpack_from("<3H", tail, 0)
+        fl = tail[6]
+        print(f"resync MI: прийнято «двічі поспіль»={tw}  «пропущено один суперфрейм»={tm}  відхилено={tr}   "
+              f"прапорці: PI-якір={fl & 1} конвенція={'ПОТОЧНИЙ' if fl & 2 else 'наступний'} підтверджена={(fl >> 2) & 1}")
     print("-" * 90)
     print(" # |   ts   dT | type   | seq last | mi        leMi      | flags")
     print("-" * 90)
@@ -103,12 +110,13 @@ def main():
             f.append("SEEDED" if (fl & 2) else "no-seed")
             f.append("wasActive" if (fl & 4) else "wasIdle")
             fs = " ".join(f)
-        elif t == 2:   # WRAP (active self-advance)
-            fs = ("LE-OK" if (fl & 1) else "LE-FAIL") + (" confirmed" if (fl & 8) else "")
+        elif t == 2:   # WRAP (active self-advance); AES-fix1: біти 5-6 = 3 -> розбіжне MI відхилено (лише запам'ятано)
+            fs = ("LE-OK" if (fl & 1) else "LE-FAIL") + (" diverge" if (fl & 8) else "") + (" REJECTED(pending)" if ((fl >> 5) & 3) == 3 else "")
         elif t == 6:   # BOOTSTRAP (idle -> active from late entry)
             fs = ("LE-OK" if (fl & 1) else "LE-FAIL") + (" confirmed" if (fl & 8) else "") + (" ACTIVATED" if (fl & 0x10) else " (no-seed)")
         elif t == 7:   # RESEED (active track switch on diverging confirmed late entry)
-            fs = "SWITCHED-TRACK" + (" confirmed" if (fl & 8) else "")
+            how = (fl >> 5) & 3   # AES-fix1: 1 «двічі поспіль», 2 «пропущено один суперфрейм», 0 = виклик без якоря PI
+            fs = "SWITCHED-TRACK" + {0: " (late-entry call)", 1: " (twice in a row)", 2: " (missed one superframe)"}.get(how, "")
         elif t in (3, 4):
             fs = "wasActive" if (fl & 1) else "wasIdle"
         elif t == 8:   # LATEENTRY: chip late-entry interrupt fired. seq = slotState it fired in.

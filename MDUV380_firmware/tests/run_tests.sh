@@ -64,6 +64,7 @@ declare -A SRCS=(
 	[test_aprs_fault]="$APP/source/functions/aprs_fault_fmt.c"   # R10-fix4: ЧИСТА частина обробника збою -- hex/dec, CFSR, пошук адрес у стеку, магія запису
 	[test_aprs_stations_ui]="$APP/source/functions/aprs_rx_parse.c $APP/source/functions/dmr_sms_text.c -lm"   # R8-fix: справжній екран «APRS станції», дисплей і приймач -- заглушки
 	[test_codeplug_zone]="$APP/source/functions/codeplug.c"   # R22 Z1: СПРАВЖНІЙ codeplug.c -- вибір зон (єдине правило «справжня зона», ліміт 68 бітів, крок валкодера); залізо -- заглушки в тесті
+	[test_aes_resync]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix1: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- ресинхронізація MI, захист від хибного CRC4, обидві конвенції late entry; залізо -- заглушки в тесті
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 
@@ -93,6 +94,7 @@ declare -A XFLAGS=(
 	[test_aprs_frame]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX -DAPRS_MODE_NO_TRACE -Wl,--unresolved-symbols=ignore-all -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 	[test_aprs_frame_ovf]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX -DAPRS_MODE_NO_TRACE -Wl,--unresolved-symbols=ignore-all -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 	[test_aprs_stations_ui]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_APRS_RX -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
+	[test_aes_resync]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix1
 	[test_dmr_sms_store]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 )
 
@@ -102,6 +104,10 @@ SMSDIAG_TOO=(test_dmr_sms_replay)
 # ui4: тести, які ще раз збираються з -DLANGUAGE_BUILD_UKRAINIAN (бінарник <назва>_ua) --
 # кириличні розкладки існують лише в українській збірці.
 UA_TOO=(test_sms_multitap)
+# AES-fix1: тест ресинхронізації збирається ще й зі збіркою-кандидатом AES_TX_MI_CURRENT (бінарник <назва>_cur)
+# та з діагностикою прийому DMR_AES_DIAG_RX (<назва>_diag) -- інакше ні цей режим, ні діагностичний код у CI не компілювалися б.
+MICUR_TOO=(test_aes_resync)
+DIAGRX_TOO=(test_aes_resync)
 
 rm -rf "$BUILD" && mkdir -p "$BUILD"
 
@@ -120,10 +126,14 @@ for src in "$TESTS_DIR"/test_*.c; do
 	variants=("")
 	for d in "${SMSDIAG_TOO[@]}"; do [ "$d" = "$name" ] && variants+=("-DENABLE_SMS_DIAG"); done
 	for d in "${UA_TOO[@]}"; do [ "$d" = "$name" ] && variants+=("-DLANGUAGE_BUILD_UKRAINIAN"); done
+	for d in "${MICUR_TOO[@]}"; do [ "$d" = "$name" ] && variants+=("-DAES_TX_MI_CURRENT"); done
+	for d in "${DIAGRX_TOO[@]}"; do [ "$d" = "$name" ] && variants+=("-DDMR_AES_DIAG_RX"); done
 	for vflag in "${variants[@]}"; do
 		vname="$name"
 		[ "$vflag" = "-DENABLE_SMS_DIAG" ] && vname="${name}_smsdiag"
 		[ "$vflag" = "-DLANGUAGE_BUILD_UKRAINIAN" ] && vname="${name}_ua"
+		[ "$vflag" = "-DAES_TX_MI_CURRENT" ] && vname="${name}_cur"
+		[ "$vflag" = "-DDMR_AES_DIAG_RX" ] && vname="${name}_diag"
 		bin="$BUILD/$vname"
 		# shellcheck disable=SC2086
 		if ! out="$("$CC" "${CFLAGS[@]}" $xflags $vflag "${INC[@]}" -o "$bin" "$src" $extra 2>&1)"; then
