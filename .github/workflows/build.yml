@@ -35,8 +35,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Встановити Pillow (потрібен рендереру екрана)
-        run: pip install pillow
+      - name: Встановити Pillow, pyserial, pyusb (рендерер екрана; GUI-тести імпортують gui_flasher)
+        run: pip install pillow pyserial pyusb
       - name: Синтаксична перевірка хостовим gcc
         run: ./MDUV380_firmware/tools/syntax_check.sh
       - name: Ширина підписів меню
