@@ -55,6 +55,22 @@ X_TIMEOUT = 2.0                           # секунд на відповідь
 X_COMMIT_TIMEOUT = 8.0                    # X 3: стирання сектора + 16 сторінок
 POST_RESTORE_SUB = 1                      # 'C' 6 1 -- див. шапку
 
+# R26 V4.1: що НЕ звіряється після запису, бо рація міняє це сама, поки ми пишемо/читаємо (EEPROM, адреси кодплуга):
+#   * 20 байтів квіккеїв -- прошивка їх не перезаписує зовсім;
+#   * 0x6000..0x608E -- "останній використаний канал у зоні" (LUCZ, тег "LUCZ" + по байту на зону, 0x6000..0x604A) і початок
+#     структури налаштувань (0x604B..): поточний канал/зона/індекс у списку груп. Вони змінюються від кожного повороту
+#     ручки; на залізі це вже дало розбіжність в один байт (0x607F, 01 -> 02) між двома бекапами поспіль.
+#     (Що саме лежить на 0x607F -- гіпотеза: одне з полів "поточний ...", структура settingsStruct_t.)
+# Решта EEPROM і весь флеш-кодплуг звіряються байт-у-байт (через SHA-256).
+LUCZ_START = 0x6000
+LUCZ_END = 0x608F                         # виключно
+UNSTABLE_EEPROM = (
+    (QUICKKEYS_START, QUICKKEYS_START + QUICKKEYS_LEN, "20 байтів квіккеїв 0x%X..0x%X" % (QUICKKEYS_START, QUICKKEYS_START + QUICKKEYS_LEN - 1)),
+    (LUCZ_START, LUCZ_END, "0x%X..0x%X (останній канал у зоні та початок налаштувань: міняються при кожному повороті ручки)"
+     % (LUCZ_START, LUCZ_END - 1)),
+)
+UNVERIFIED_TEXT = "; ".join(r[2] for r in UNSTABLE_EEPROM)
+
 REQUIRED_RADIO_FIELDS = ("radioType", "structVersion")
 REQUIRED_PART_FIELDS = ("file", "area", "start", "length", "sha256")
 
@@ -194,19 +210,21 @@ def compute_plan(cur_ee, cur_fl, bk_ee, bk_fl):
     return Plan(sectors, bytes(want_ee), bytes(want_fl), total, rng["raw_start"])
 
 
-def _mask_quickkeys(ee):
+def _mask_unstable(ee):
+    """EEPROM-образ з обнуленими ділянками, які не звіряються (UNSTABLE_EEPROM)."""
     b = bytearray(ee)
-    b[QUICKKEYS_START:QUICKKEYS_START + QUICKKEYS_LEN] = b"\0" * QUICKKEYS_LEN
+    for start, end, _why in UNSTABLE_EEPROM:
+        b[start:end] = b"\0" * (end - start)
     return bytes(b)
 
 
-def confirm_text(manifest, bk_ee, bk_fl, info, plan, safety_path, zip_path):
-    """W1.6: конкретний текст підтвердження."""
+def confirm_text(manifest, bk_ee, bk_fl, info, plan, safety_path, zip_path, title=None, extra_lines=None):
+    """W1.6: конкретний текст підтвердження. title/extra_lines -- для імпорту CSV (R26): інший заголовок і перелік змін."""
     cp = cv.Codeplug(manifest, bk_ee, bk_fl)
     mr = manifest["radio"]
     rng = cl.flash_backup_range()
     lines = [
-        "ВІДНОВЛЕННЯ КОДПЛУГА -- рація буде ПЕРЕЗАПИСАНА.",
+        title or "ВІДНОВЛЕННЯ КОДПЛУГА -- рація буде ПЕРЕЗАПИСАНА.",
         "",
         "Файл: %s" % os.path.basename(zip_path),
         "Бекап створено: %s UTC" % manifest.get("createdUtc", "?"),
@@ -222,6 +240,7 @@ def confirm_text(manifest, bk_ee, bk_fl, info, plan, safety_path, zip_path):
         "  - Флеш-кодплуг: сирі адреси 0x%X .. 0x%X (%d КБ); секторів, що відрізняються: %d з %d."
         % (rng["raw_start"], rng["raw_end"], rng["length"] // 1024, plan.count("флеш"), rng["length"] // SECTOR),
         "Не чіпаються: голосові підказки, ключі AES, база DMR ID, прошивка.",
+        "Після запису не звіряється (рація міняє саме): %s." % UNVERIFIED_TEXT,
         "",
         "Страхова копія ПОТОЧНОГО стану рації вже збережена:",
         "  %s" % safety_path,
@@ -229,6 +248,8 @@ def confirm_text(manifest, bk_ee, bk_fl, info, plan, safety_path, zip_path):
         "Не вимикай рацію і не виймай кабель, доки не з'явиться підсумок. Після запису рація перезавантажиться.",
         "Відновити?",
     ]
+    if extra_lines:
+        lines[2:2] = list(extra_lines) + [""]
     return "\n".join(lines)
 
 
@@ -321,7 +342,8 @@ def safety_backup_path(zip_path, now=None):
     return cl.unique_path(d, cl.timestamp_name("codeplug_pre-restore", ".zip", now))
 
 
-def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=time.time, now=None, post_reset=True):
+def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=time.time, now=None, post_reset=True,
+                     title=None, extra_lines=None):
     """Відновити кодплуг рації з бекапу `zip_path`.
 
     confirm(text, plan) -> bool викликається ПІСЛЯ всіх перевірок і страхового бекапу, ПЕРЕД першим записом.
@@ -382,7 +404,7 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
         log("Усі сектори збігаються з бекапом (крім калібрування й квіккеїв) -- записувати нічого.")
         return {"cancelled": False, "nothingToDo": True, "sectorsWritten": 0, "sectorsTotal": plan.total_sectors,
                 "safetyCopy": safety, "seconds": round(clock() - t0, 1)}
-    text = confirm_text(manifest, bk_ee, bk_fl, info, plan, safety, zip_path)
+    text = confirm_text(manifest, bk_ee, bk_fl, info, plan, safety, zip_path, title, extra_lines)
     if not confirm(text, plan):
         log("Скасовано користувачем; рація не змінена. Страхова копія лишилась: %s" % safety)
         return {"cancelled": True, "safetyCopy": safety, "seconds": round(clock() - t0, 1)}
@@ -419,8 +441,8 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
             "ЗАПИС ЗАВЕРШЕНО, але перечитати рацію для перевірки не вдалося: %s.\n"
             "Стан кодплуга не підтверджено. Страхова копія стану ДО відновлення: %s\n"
             "Що робити: перепідключи рацію й повтори відновлення з тим самим файлом %s." % (e, safety, os.path.basename(zip_path)))
-    sha_ee_got = cl.sha256(_mask_quickkeys(rb_ee))
-    sha_ee_want = cl.sha256(_mask_quickkeys(plan.want_ee))
+    sha_ee_got = cl.sha256(_mask_unstable(rb_ee))
+    sha_ee_want = cl.sha256(_mask_unstable(plan.want_ee))
     sha_fl_got = cl.sha256(rb_fl)
     sha_fl_want = cl.sha256(plan.want_fl)
     if sha_ee_got != sha_ee_want or sha_fl_got != sha_fl_want:
@@ -431,17 +453,18 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
             bad.append("флеш-кодплуг")
         raise RestoreVerifyFailed(
             "ПЕРЕВІРКА НЕ ПРОЙШЛА: після запису %s не збігається з бекапом (SHA-256 різні).\n"
+            "Не звірялось (рація міняє саме): %s.\n"
             "Відновлення НЕ можна вважати успішним. Страхова копія стану ДО відновлення: %s\n"
             "Що робити: повтори відновлення з тим самим файлом %s. Якщо знову розбіжність -- не користуйся рацією для важливого, "
-            "пришли лог." % (" і ".join(bad), safety, os.path.basename(zip_path)))
-    log("Перевірка пройшла: SHA-256 EEPROM (без квіккеїв) %s, флеш %s." % (sha_ee_got[:16], sha_fl_got[:16]))
+            "пришли лог." % (" і ".join(bad), UNVERIFIED_TEXT, safety, os.path.basename(zip_path)))
+    log("Перевірка пройшла: SHA-256 EEPROM %s, флеш %s. Не звірялось (рація міняє саме): %s." % (sha_ee_got[:16], sha_fl_got[:16], UNVERIFIED_TEXT))
 
     prog(99, "Перезавантажую рацію...")
     if post_reset:
         _send_c(link, 6, POST_RESTORE_SUB)
     prog(100, "Готово")
     return {"cancelled": False, "nothingToDo": False, "sectorsWritten": n, "sectorsTotal": plan.total_sectors, "safetyCopy": safety,
-            "sha256Eeprom": sha_ee_got, "sha256Flash": sha_fl_got, "flashMatchesManifest": sha_fl_got == manifest["parts"]["flash"]["sha256"],
+            "sha256Eeprom": sha_ee_got, "sha256Flash": sha_fl_got, "unverified": UNVERIFIED_TEXT, "flashMatchesManifest": sha_fl_got == manifest["parts"]["flash"]["sha256"],
             "writeSeconds": round(clock() - t_write, 1), "seconds": round(clock() - t0, 1)}
 
 

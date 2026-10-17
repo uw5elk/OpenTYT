@@ -50,7 +50,11 @@ import rctl_config as rctl      # формат блоку "RCTL" (allowlist ві
 import cps_link as cps          # R24: знімок екрана і бекап кодплуга (лише читання, без залежностей крім pyserial)
 import cps_restore as cps_rest  # R25: відновлення кодплуга (ЗАПИС; заблоковано константою RESTORE_UNLOCKED)
 import codeplug_view as cpview  # R25: розбір вмісту кодплуга (спільне декодування назв)
-import codeplug_viewer_gui      # R25: вікно перегляду (лише читання)
+import codeplug_viewer_gui      # R25: вікно перегляду (R26 V2: редактор контактів на вкладці «Контакти»)
+import contact_edit             # R26 V2: операції над контактами -> запис шляхом відновлення з бекапу
+import cps_csv                  # R26: експорт/імпорт CSV (формат OpenGD77 CPS); імпорт іде шляхом відновлення з бекапу
+import gui_theme as gt          # R26 V3: темна тема (одна палітра)
+import gui_dialogs as gd        # R26 V3: темні діалоги підтвердження й довгих повідомлень
 
 try:
     import serial  # той самий пакет, яким уже користується dmr_reboot_dfu.py
@@ -137,6 +141,7 @@ def enable_entry_clipboard(entry):
     """
     # --- 1) контекстне меню правої кнопки миші --------------------------------
     menu = tk.Menu(entry, tearoff=0)
+    gt.style_menu(menu)
     menu.add_command(label="Вирізати", command=lambda: entry.event_generate("<<Cut>>"))
     menu.add_command(label="Копіювати", command=lambda: entry.event_generate("<<Copy>>"))
     menu.add_command(label="Вставити", command=lambda: entry.event_generate("<<Paste>>"))
@@ -204,6 +209,7 @@ class QueueWriter:
 class FlasherApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        gt.apply(self)            # R26 V3: темна тема -- до створення будь-яких віджетів
         self.title("TYT MD-UV390UKR")
         self.geometry("760x560")
         self.minsize(700, 520)
@@ -212,7 +218,8 @@ class FlasherApp(tk.Tk):
         self.queue = queue.Queue()
         self.backend = load_usb_backend()
         self.flashing = False
-        self.cps_busy = False   # R24: іде знімок екрана, бекап, перегляд або відновлення
+        self.cps_busy = False   # R24: іде знімок екрана, бекап, перегляд, відновлення або CSV
+        self.csv_session = cps_csv.Session()   # R26: «про cp1251 вже попередили» -- один раз за сеанс
         self._cps_on_done = None
         self._cps_fail_suffix = "\n\nФайл не збережено."
 
@@ -252,10 +259,10 @@ class FlasherApp(tk.Tk):
                             font=("Segoe UI", 13, "bold"))
         header.pack(anchor="w", **pad)
 
-        info = ttk.Label(self, text=self.build_info, foreground="#555555")
+        info = ttk.Label(self, text=self.build_info, foreground=gt.P["muted"])
         info.pack(anchor="w", padx=12)
 
-        author = ttk.Label(self, text="Автор: UW5ELK", foreground="#555555")
+        author = ttk.Label(self, text="Автор: UW5ELK", foreground=gt.P["muted"])
         author.pack(anchor="w", padx=12)
 
         # --- Крок 1: донор кодека ---
@@ -343,14 +350,33 @@ class FlasherApp(tk.Tk):
         self.restore_button = ttk.Button(view_frame, text="Відновити кодплуг...", command=self._on_restore_clicked)
         self.restore_button.pack(side="left", padx=8)
         self.restore_note = ttk.Label(view_frame, text="" if cps_rest.RESTORE_UNLOCKED else cps_rest.LOCKED_CAPTION,
-                                      foreground="#8a5a00")
+                                      foreground=gt.P["warn"])
         self.restore_note.pack(side="left")
-        self._refresh_restore_button(True)
+
+        # R26: обмін кодплуга з CSV (формат OpenGD77 CPS). Експорт ЛИШЕ читає; імпорт іде ТІЄЮ САМОЮ дорогою, що й «Відновити кодплуг»
+        # (страхова копія -> діалог зі списком змін -> лише відмінні сектори -> перечитування -> SHA-256) і блокується тією ж константою.
+        csv_frame = ttk.Frame(self)
+        csv_frame.pack(fill="x", padx=12, pady=(0, 6))
+
+        self.csv_export_radio_button = ttk.Button(csv_frame, text="CSV з рації...", command=self._on_csv_export_radio_clicked)
+        self.csv_export_radio_button.pack(side="left")
+
+        self.csv_export_file_button = ttk.Button(csv_frame, text="CSV з бекапу...", command=self._on_csv_export_file_clicked)
+        self.csv_export_file_button.pack(side="left", padx=8)
+
+        self.csv_import_button = ttk.Button(csv_frame, text="Імпорт CSV у рацію...", command=self._on_csv_import_clicked)
+        self.csv_import_button.pack(side="left", padx=8)
+
+        ttk.Label(csv_frame, text="десятковий знак:").pack(side="left", padx=(12, 4))
+        self.csv_decimal_var = tk.StringVar(value=self.CSV_DECIMAL_CHOICES[0])
+        self.csv_decimal_box = ttk.Combobox(csv_frame, textvariable=self.csv_decimal_var, values=self.CSV_DECIMAL_CHOICES, state="readonly", width=14)
+        self.csv_decimal_box.pack(side="left")
+        self._refresh_restore_button(True)      # кнопки відновлення й імпорту CSV: вимкнені, доки RESTORE_UNLOCKED == False
 
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=12, pady=(0, 6))
 
-        self.status_label = ttk.Label(self, text="Готово до роботи.", foreground="#0a6b2a")
+        self.status_label = ttk.Label(self, text="Готово до роботи.", foreground=gt.P["ok"])
         self.status_label.pack(anchor="w", padx=12)
 
         # --- журнал ---
@@ -359,6 +385,7 @@ class FlasherApp(tk.Tk):
 
         self.log_text = scrolledtext.ScrolledText(log_frame, height=10, state="disabled",
                                                     font=("Consolas", 9))
+        gt.style_text(self.log_text)
         self.log_text.pack(fill="both", expand=True, padx=6, pady=6)
 
     # --- донор -------------------------------------------------------------
@@ -412,12 +439,12 @@ class FlasherApp(tk.Tk):
     def _refresh_donor_label(self):
         if self.donor_path:
             self.donor_label.config(
-                text="Донор перевірено: " + self.donor_path, foreground="#0a6b2a"
+                text="Донор перевірено: " + self.donor_path, foreground=gt.P["ok"]
             )
         else:
             self.donor_label.config(
                 text="Донор не обрано -- прошивка піде тільки в режимі FM, без DMR.",
-                foreground="#8a5300",
+                foreground=gt.P["warn"],
             )
 
     # --- прошивка (файл) ----------------------------------------------------
@@ -437,11 +464,11 @@ class FlasherApp(tk.Tk):
             name = os.path.basename(self.firmware_path)
             bundled = " (вбудована)" if self.firmware_path == find_bundled_firmware() else ""
             self.firmware_label.config(
-                text="Прошивка: " + name + bundled, foreground="#0a6b2a"
+                text="Прошивка: " + name + bundled, foreground=gt.P["ok"]
             )
         else:
             self.firmware_label.config(
-                text="Файл прошивки не знайдено -- обери вручну.", foreground="#b00000"
+                text="Файл прошивки не знайдено -- обери вручну.", foreground=gt.P["err"]
             )
 
     # --- лог/прогрес ---------------------------------------------------------
@@ -467,7 +494,7 @@ class FlasherApp(tk.Tk):
                 elif kind == "confirm":
                     self._on_confirm_request(*payload)
                 elif kind == "status":
-                    self.status_label.config(text=payload, foreground="#14506b")
+                    self.status_label.config(text=payload, foreground=gt.P["info"])
         except queue.Empty:
             pass
         self.after(50, self._poll_queue)
@@ -501,7 +528,7 @@ class FlasherApp(tk.Tk):
         self.flashing = True
         self.flash_button.config(state="disabled")
         self.progress["value"] = 0
-        self.status_label.config(text="Прошиваю...", foreground="#14506b")
+        self.status_label.config(text="Прошиваю...", foreground=gt.P["info"])
         self._log("=" * 40)
         self._log("Починаю прошивку: " + os.path.basename(self.firmware_path))
 
@@ -586,13 +613,15 @@ class FlasherApp(tk.Tk):
 
     def _set_cps_buttons(self, enabled):
         state = "normal" if enabled else "disabled"
-        for b in (self.shot_button, self.backup_button, self.flash_button, self.view_file_button, self.view_radio_button):
+        for b in (self.shot_button, self.backup_button, self.flash_button, self.view_file_button, self.view_radio_button,
+                  self.csv_export_radio_button, self.csv_export_file_button):
             b.config(state=state)
         self._refresh_restore_button(enabled)
 
     def _refresh_restore_button(self, enabled):
         """W1.11: кнопка відновлення НІКОЛИ не вмикається, доки cps_restore.RESTORE_UNLOCKED == False."""
         self.restore_button.config(state="normal" if (enabled and cps_rest.RESTORE_UNLOCKED) else "disabled")
+        self.csv_import_button.config(state="normal" if (enabled and cps_rest.RESTORE_UNLOCKED) else "disabled")      # імпорт = запис = те саме блокування
 
     def _on_screenshot_clicked(self):
         diag = bool(self.shot_diag_var.get())
@@ -631,7 +660,114 @@ class FlasherApp(tk.Tk):
         return cp
 
     def _show_viewer_from_radio(self, cp):
-        codeplug_viewer_gui.CodeplugViewerWindow(self, cp, "прямо з рації", self._cps_output_dir())
+        codeplug_viewer_gui.CodeplugViewerWindow(self, cp, "прямо з рації", self._cps_output_dir(), write_contacts=self._write_contacts)
+
+    # --- R26 V2: запис змін контактів із вікна перегляду ---
+
+    def _write_contacts(self, ops, viewer):
+        if self.flashing or self.cps_busy:
+            return
+        self._edit_viewer = viewer
+        self._run_cps_task(lambda: self._write_contacts_worker(ops), "Записую зміни контактів...", on_done=self._contacts_written,
+                           fail_suffix="\n\nЯкщо про відмову сказано «Нічого не записано» -- рація не змінена.")
+
+    def _write_contacts_worker(self, ops):
+        ser = cps.open_radio()
+        try:
+            return contact_edit.apply_to_radio(cps.CpsLink(ser), ops, self._confirm_from_worker, self._cps_progress, log=print,
+                                               out_dir=self._cps_output_dir())
+        finally:
+            try:
+                ser.close()
+            except Exception:  # noqa: BLE001 -- після C 6 1 порт може зникнути
+                pass
+
+    def _contacts_written(self, res):
+        if res.get("nothingToDo") and not res.get("safetyCopy"):
+            messagebox.showinfo("Нічого записувати", "Зміни не відрізняються від того, що вже є в рації.")
+            return
+        self._restore_done(res)
+        if not res.get("cancelled") and getattr(self, "_edit_viewer", None) is not None:
+            try:
+                self._edit_viewer.destroy()      # знімок застарів: відкрий перегляд ще раз
+            except tk.TclError:
+                pass
+            self._edit_viewer = None
+
+    # --- R26: CSV ---
+
+    CSV_DECIMAL_CHOICES = ("за системою", "кома", "крапка")
+
+    def _csv_decimal(self):
+        return {"кома": ",", "крапка": ".", "за системою": None}.get(self.csv_decimal_var.get())
+
+    def _csv_new_export_dir(self, parent_dir):
+        name = cps.timestamp_name("codeplug_csv", "")
+        return cps.unique_path(parent_dir, name)
+
+    def _on_csv_export_radio_clicked(self):
+        if self.flashing or self.cps_busy:
+            return
+        parent_dir = filedialog.askdirectory(title="Куди покласти теку з CSV", initialdir=self._cps_output_dir())
+        if not parent_dir:
+            return
+        out = self._csv_new_export_dir(parent_dir)
+        dp = self._csv_decimal()
+        self._run_cps_task(lambda: self._csv_export_radio_worker(out, dp), "Читаю кодплуг з рації для CSV...",
+                           on_done=self._csv_export_done, fail_suffix="\n\nФайли CSV не створено.")
+
+    def _csv_export_radio_worker(self, out, dp):
+        ser = cps.open_radio()
+        try:
+            return cps_csv.export_from_radio(cps.CpsLink(ser), out, dp, progress=self._cps_progress, log=print)
+        finally:
+            ser.close()
+
+    def _on_csv_export_file_clicked(self):
+        if self.flashing or self.cps_busy:
+            return
+        path = filedialog.askopenfilename(title="Бекап кодплуга", initialdir=self._cps_output_dir(),
+                                          filetypes=[("Бекап кодплуга (.zip)", "*.zip"), ("Усі файли", "*.*")])
+        if not path:
+            return
+        parent_dir = filedialog.askdirectory(title="Куди покласти теку з CSV", initialdir=os.path.dirname(path))
+        if not parent_dir:
+            return
+        out = self._csv_new_export_dir(parent_dir)
+        dp = self._csv_decimal()
+        self._run_cps_task(lambda: cps_csv.export_from_backup(path, out, dp, log=print), "Експортую бекап у CSV...",
+                           on_done=self._csv_export_done, fail_suffix="\n\nФайли CSV не створено.")
+
+    def _csv_export_done(self, paths):
+        folder = os.path.dirname(paths[0]) if paths else "?"
+        messagebox.showinfo("CSV створено", "Шість файлів CSV (формат OpenGD77 CPS + додаткова колонка «Name (readable)»):\n{}".format(folder))
+
+    def _on_csv_import_clicked(self):
+        if self.flashing or self.cps_busy or not cps_rest.RESTORE_UNLOCKED:
+            return
+        folder = filedialog.askdirectory(title="Тека з CSV (Channels.csv, Contacts.csv, ...)", initialdir=self._cps_output_dir())
+        if not folder:
+            return
+        dp = self._csv_decimal()
+        self._run_cps_task(lambda: self._csv_import_worker(folder, dp), "Імпортую CSV у рацію...", on_done=self._csv_import_done,
+                           fail_suffix="\n\nЯкщо про відмову сказано «Нічого не записано» -- рація не змінена.")
+
+    def _csv_import_worker(self, folder, dp):
+        ser = cps.open_radio()
+        try:
+            return cps_csv.import_to_radio(cps.CpsLink(ser), folder, self._confirm_from_worker, self._cps_progress, log=print,
+                                           session=self.csv_session, dp=dp, out_dir=self._cps_output_dir())
+        finally:
+            try:
+                ser.close()
+            except Exception:  # noqa: BLE001 -- після C 6 1 порт може зникнути
+                pass
+
+    def _csv_import_done(self, res):
+        if res.get("nothingToDo") and not res.get("safetyCopy"):
+            messagebox.showinfo("Нічого імпортувати", "CSV не відрізняється від кодплуга рації. Записувати нічого.")
+            return
+        self._restore_done(res)
 
     # --- R25: відновлення (ЗАПИС у рацію) ---
 
@@ -664,7 +800,7 @@ class FlasherApp(tk.Tk):
         return answer["yes"]
 
     def _on_confirm_request(self, text, done, answer):
-        answer["yes"] = bool(messagebox.askyesno("Відновлення кодплуга", text, icon="warning", default="no"))
+        answer["yes"] = bool(gd.confirm_dialog(self, "Підтвердження запису в рацію", text, yes="Записати в рацію", no="Скасувати"))
         done.set()
 
     def _restore_done(self, res):
@@ -674,9 +810,10 @@ class FlasherApp(tk.Tk):
             messagebox.showinfo("Нічого відновлювати", "Рація вже містить цей кодплуг (крім калібрування й квіккеїв).\n"
                                                        "Страхова копія:\n{}".format(res["safetyCopy"]))
         else:
-            messagebox.showinfo("Відновлено", "Кодплуг відновлено й перевірено (записано секторів: {} з {}, {} с).\n"
-                                               "Рація перезавантажується.\n\nСтрахова копія стану ДО відновлення:\n{}".format(
-                                                   res["sectorsWritten"], res["sectorsTotal"], res["seconds"], res["safetyCopy"]))
+            what = "Зміни записано й перевірено" if res.get("report") is not None else "Кодплуг відновлено й перевірено"
+            messagebox.showinfo("Готово", "{} (записано секторів: {} з {}, {} с).\n"
+                                          "Рація перезавантажується.\n\nСтрахова копія стану ДО запису:\n{}".format(
+                                              what, res["sectorsWritten"], res["sectorsTotal"], res["seconds"], res["safetyCopy"]))
 
     def _run_cps_task(self, fn, status_text, on_done=None, fail_suffix="\n\nФайл не збережено."):
         if self.flashing or self.cps_busy:
@@ -686,7 +823,7 @@ class FlasherApp(tk.Tk):
         self.cps_busy = True
         self._set_cps_buttons(False)
         self.progress["value"] = 0
-        self.status_label.config(text=status_text, foreground="#14506b")
+        self.status_label.config(text=status_text, foreground=gt.P["info"])
         self._log("=" * 30)
         self._log(status_text)
 
@@ -747,15 +884,19 @@ class FlasherApp(tk.Tk):
         on_done, self._cps_on_done = self._cps_on_done, None
         if ok:
             self.progress["value"] = 100
-            self.status_label.config(text="Готово.", foreground="#0a6b2a")
+            self.status_label.config(text="Готово.", foreground=gt.P["ok"])
             if on_done is not None:
                 on_done(result)
             else:
                 messagebox.showinfo("Готово", "Збережено:\n" + "\n".join(result or []))
         else:
-            self.status_label.config(text="Не вдалося.", foreground="#b00000")
+            self.status_label.config(text="Не вдалося.", foreground=gt.P["err"])
             self._log("!!! Помилка: {}".format(reason))
-            messagebox.showerror("Помилка", "{}{}".format(reason, self._cps_fail_suffix))
+            full = "{}{}".format(reason, self._cps_fail_suffix)
+            if full.count("\n") > 8 or len(full) > 700:          # довгий перелік проблем імпорту -- у темному вікні з прокруткою
+                gd.text_dialog(self, "Помилка", full)
+            else:
+                messagebox.showerror("Помилка", full)
 
     # --- AES-ключі (окреме вікно -- інший стан USB, рація НЕ в DFU) -----------
 
@@ -771,13 +912,13 @@ class FlasherApp(tk.Tk):
 
         if ok:
             self.progress["value"] = 100
-            self.status_label.config(text="Готово! Можна від'єднати USB.", foreground="#0a6b2a")
+            self.status_label.config(text="Готово! Можна від'єднати USB.", foreground=gt.P["ok"])
             self._log("*** Готово.")
             messagebox.showinfo("Готово", "Прошивку завершено. Можна від'єднати USB і "
                                            "увімкнути рацію звичайним способом.")
             return
 
-        self.status_label.config(text="Не вдалося прошити.", foreground="#b00000")
+        self.status_label.config(text="Не вдалося прошити.", foreground=gt.P["err"])
 
         if reason == "no_dfu":
             self._log("!!! Рацію не знайдено в режимі DFU.")
@@ -817,6 +958,7 @@ class AesKeyManagerWindow(tk.Toplevel):
 
     def __init__(self, parent):
         super().__init__(parent)
+        gt.style_window(self)
         self.title("TYT MD-UV390UKR -- AES-ключі шифрування")
         self.geometry("480x520")
         self.minsize(440, 460)
@@ -837,7 +979,7 @@ class AesKeyManagerWindow(tk.Toplevel):
             text=("Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU!). "
                   "Матеріал ключа ніде на екрані не показується -- лише факт "
                   "\"зайнято/порожньо\"."),
-            wraplength=440, justify="left", foreground="#8a5300",
+            wraplength=440, justify="left", foreground=gt.P["warn"],
         )
         note.pack(anchor="w", **pad)
 
@@ -882,7 +1024,7 @@ class AesKeyManagerWindow(tk.Toplevel):
         ttk.Button(self, text="Оновити список зайнятих слотів",
                   command=self._on_refresh_slots).pack(anchor="w", padx=12)
 
-        self.status_label = ttk.Label(self, text="Готово.", foreground="#0a6b2a")
+        self.status_label = ttk.Label(self, text="Готово.", foreground=gt.P["ok"])
         self.status_label.pack(anchor="w", padx=12, pady=(4, 0))
 
         log_frame = ttk.LabelFrame(self, text="Журнал")
@@ -1036,7 +1178,7 @@ class AesKeyManagerWindow(tk.Toplevel):
 
     def _run_worker(self, fn, status_text):
         self.busy = True
-        self.status_label.config(text=status_text, foreground="#14506b")
+        self.status_label.config(text=status_text, foreground=gt.P["info"])
         self._log("=" * 30)
         self._log(status_text)
 
@@ -1058,9 +1200,9 @@ class AesKeyManagerWindow(tk.Toplevel):
     def _on_worker_finished(self, ok, reason):
         self.busy = False
         if ok:
-            self.status_label.config(text="Готово.", foreground="#0a6b2a")
+            self.status_label.config(text="Готово.", foreground=gt.P["ok"])
         else:
-            self.status_label.config(text="Помилка.", foreground="#b00000")
+            self.status_label.config(text="Помилка.", foreground=gt.P["err"])
             self._log("!!! Помилка: {}".format(reason))
             messagebox.showerror("Помилка", "Щось пішло не так: {}".format(reason))
 
@@ -1088,6 +1230,7 @@ class RctlConfigWindow(tk.Toplevel):
 
     def __init__(self, parent):
         super().__init__(parent)
+        gt.style_window(self)
         self.title("TYT MD-UV390UKR -- Віддалене керування (RCTL)")
         self.geometry("480x500")
         self.minsize(440, 460)
@@ -1108,7 +1251,7 @@ class RctlConfigWindow(tk.Toplevel):
                   "немає). Жодної позначки = RCTL вимкнено (рація не приймає нічого). "
                   "Окремого перемикача «увімкнено» більше немає: увімкнено = дозволена "
                   "хоч одна команда. Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU)."),
-            wraplength=440, justify="left", foreground="#8a5300",
+            wraplength=440, justify="left", foreground=gt.P["warn"],
         )
         note.pack(anchor="w", **pad)
 
@@ -1139,7 +1282,7 @@ class RctlConfigWindow(tk.Toplevel):
             text=("Лише вигляд: сховати пункт можна, щоб боєць не міг сам собі вимкнути "
                   "приймання команд у полі. Дозволи (checkbox вище) працюють незалежно "
                   "від видимості пункту."),
-            wraplength=440, justify="left", foreground="#666666",
+            wraplength=440, justify="left", foreground=gt.P["muted"],
         ).pack(anchor="w", padx=12, pady=(0, 0))
 
         btn_row = ttk.Frame(self)
@@ -1147,7 +1290,7 @@ class RctlConfigWindow(tk.Toplevel):
         ttk.Button(btn_row, text="Прочитати поточний стан", command=self._on_read).pack(side="left")
         ttk.Button(btn_row, text="Записати на рацію", command=self._on_write).pack(side="left", padx=8)
 
-        self.status_label = ttk.Label(self, text="Натисни «Прочитати поточний стан».", foreground="#14506b")
+        self.status_label = ttk.Label(self, text="Натисни «Прочитати поточний стан».", foreground=gt.P["info"])
         self.status_label.pack(anchor="w", padx=12, pady=(4, 0))
 
         log_frame = ttk.LabelFrame(self, text="Журнал")
@@ -1274,7 +1417,7 @@ class RctlConfigWindow(tk.Toplevel):
 
     def _run_worker(self, fn, status_text):
         self.busy = True
-        self.status_label.config(text=status_text, foreground="#14506b")
+        self.status_label.config(text=status_text, foreground=gt.P["info"])
         self._log("=" * 30)
         self._log(status_text)
 
@@ -1296,9 +1439,9 @@ class RctlConfigWindow(tk.Toplevel):
     def _on_worker_finished(self, ok, reason):
         self.busy = False
         if ok:
-            self.status_label.config(text="Готово.", foreground="#0a6b2a")
+            self.status_label.config(text="Готово.", foreground=gt.P["ok"])
         else:
-            self.status_label.config(text="Помилка.", foreground="#b00000")
+            self.status_label.config(text="Помилка.", foreground=gt.P["err"])
             self._log("!!! Помилка: {}".format(reason))
             messagebox.showerror("Помилка", "Щось пішло не так: {}".format(reason))
 
