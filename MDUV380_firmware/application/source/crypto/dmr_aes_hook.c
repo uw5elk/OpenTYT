@@ -76,9 +76,16 @@ static uint32_t      s_rxNextMi DMR_AES_CCM;     /* LFSR-advanced MI for the nex
 static uint32_t      s_rxInitMi DMR_AES_CCM;     /* the current call's CONSTANT initial MI (from its PI) */
 static uint8_t       s_rxFrag[7][3] DMR_AES_CCM; /* Late-Entry MI fragment nibbles read from the AMBE bits */
 static uint8_t       s_rxKeyId DMR_AES_CCM;      /* keyId of the last successful seed (late-entry bootstrap fallback) */
-static int           s_rxPiSeeded DMR_AES_CCM;   /* 1 = call seeded from the chip PI-LC (use pure self-advance,
-                                                  * stable & RF-independent); 0 = late-entry-bootstrapped rapid call
-                                                  * (adopt diverging late entries so a wrong bootstrap self-corrects) */
+/* AES-fix1: прапорці стану MI на прийомі в ОДНОМУ слові (нових змінних у CCM немає -- запас там малий):
+ *   RXMI_PISEEDED -- виклик засіяно з PI-LC чипа (є якір MI); 0 = швидкий виклик, піднятий із late entry;
+ *   RXMI_LECUR    -- вивчена конвенція late entry: передавач шле MI ПОТОЧНОГО суперфрейму (а не наступного).
+ *                    Живе МІЖ викликами (стокова поводиться однаково), скидається лише dmrAesInit;
+ *   RXMI_LELOCK   -- конвенцію підтверджено в цьому виклику (збіг із якорем) або вже було перебирання MI:
+ *                    далі не вчимося, бо зсунутий на крок приймач виглядає як «інша конвенція». */
+#define RXMI_PISEEDED 0x01
+#define RXMI_LECUR    0x02
+#define RXMI_LELOCK   0x04
+static int           s_rxMiFlags DMR_AES_CCM;
 static uint32_t      s_rxPendMi DMR_AES_CCM;     /* непідтверджений кандидат PI, побачений у режимі очікування (див. dmrAesRxPI) */
 static uint8_t       s_rxPendKeyId DMR_AES_CCM;
 /* Останній зашифрований виклик, який ми НЕ змогли розшифрувати -- щоб інтерфейс міг
@@ -159,6 +166,7 @@ static rxd_evt_t s_rxd[RXD_RING] DMR_AES_CCM;
 static uint16_t  s_rxdW DMR_AES_CCM;        /* ring write index (free-running) */
 static uint16_t  s_rxdCnt[9] DMR_AES_CCM;   /* per-type aggregate counters (survive ring wrap); [8]=LATEENTRY */
 static uint16_t  s_rxdLe[2] DMR_AES_CCM;    /* [0]=late-entry decode OK, [1]=fail */
+static uint16_t  s_rxdAdopt[3] DMR_AES_CCM; /* AES-fix1: [0]=прийнято «двічі поспіль», [1]=«пропущено один суперфрейм», [2]=розбіжне MI відхилено (лише запам'ятано) */
 static uint16_t  s_rxdMisc[3] DMR_AES_CCM;  /* [0]=LC reads, [1]=valid PI parses, [2]=RxBurst calls */
 static uint32_t  s_rxdLastPiMi DMR_AES_CCM; /* PI dedup: last logged PI MI */
 /* Raw-burst capture state (crack the RX late-entry bit layout — see dmrAesGetCapData). */
@@ -199,6 +207,7 @@ void dmrAesResetRxDiag(void)
     memset(s_rxdCnt, 0, sizeof s_rxdCnt);
     memset(s_rxdLe, 0, sizeof s_rxdLe);
     memset(s_rxdMisc, 0, sizeof s_rxdMisc);
+    memset(s_rxdAdopt, 0, sizeof s_rxdAdopt);
     s_capState = 0; s_capN = 0;
     memset(s_capBuf, 0, sizeof s_capBuf);   /* R12: CCM при старті сміття -- знімок читає dmrAesGetCapData() */
     memset(s_capSeq, 0, sizeof s_capSeq);
@@ -209,13 +218,15 @@ void dmrAesResetRxDiag(void)
  *  [0]=0xA5 magic, [1]=ring size, [2]=record size, [3]=0, [4..5]=write index,
  *  [6..19]=cnt[1..7] (u16 each), [20..21]=leOk, [22..23]=leFail, [24..25]=LC reads,
  *  [26..27]=valid PI parses, [28..29]=RxBurst calls, [30..31]=LATEENTRY count, then the
- *  raw ring (RXD_RING * 16 bytes, ring order; the host reorders chronologically). */
+ *  raw ring (RXD_RING * 16 bytes, ring order; the host reorders chronologically),
+ *  потім хвіст out[3] байт (AES-fix1, див. нижче). */
 int dmrAesGetRxDiag(uint8_t *out, int max)
 {
-    int hdr = 32, body = (int)sizeof s_rxd, n = hdr + body;
+    int hdr = 32, body = (int)sizeof s_rxd, trl = 8, n = hdr + body + trl;
     if (n > max) { return 0; }
     memset(out, 0, hdr);
     out[0] = 0xA5; out[1] = RXD_RING; out[2] = (uint8_t)sizeof(rxd_evt_t);
+    out[3] = (uint8_t)trl;   /* AES-fix1: довжина хвоста ПІСЛЯ кільця (старі читачі його не бачать і не ламаються) */
     out[4] = (uint8_t)(s_rxdW & 0xFF); out[5] = (uint8_t)((s_rxdW >> 8) & 0xFF);
     for (int i = 1; i <= 7; i++) { out[6 + (i - 1) * 2] = (uint8_t)(s_rxdCnt[i] & 0xFF); out[7 + (i - 1) * 2] = (uint8_t)((s_rxdCnt[i] >> 8) & 0xFF); }
     out[20] = (uint8_t)(s_rxdLe[0] & 0xFF); out[21] = (uint8_t)((s_rxdLe[0] >> 8) & 0xFF);
@@ -223,6 +234,11 @@ int dmrAesGetRxDiag(uint8_t *out, int max)
     for (int i = 0; i < 3; i++) { out[24 + i * 2] = (uint8_t)(s_rxdMisc[i] & 0xFF); out[25 + i * 2] = (uint8_t)((s_rxdMisc[i] >> 8) & 0xFF); }
     out[30] = (uint8_t)(s_rxdCnt[8] & 0xFF); out[31] = (uint8_t)((s_rxdCnt[8] >> 8) & 0xFF); /* LATEENTRY count */
     memcpy(out + hdr, s_rxd, body);
+    /* хвіст: [0..1] прийнято «двічі поспіль», [2..3] «пропущено один суперфрейм», [4..5] відхилено,
+     * [6] s_rxMiFlags (bit0 PI-якір, bit1 конвенція «поточний MI», bit2 конвенцію підтверджено), [7]=0 */
+    for (int i = 0; i < 3; i++) { out[hdr + body + i * 2] = (uint8_t)(s_rxdAdopt[i] & 0xFF); out[hdr + body + i * 2 + 1] = (uint8_t)(s_rxdAdopt[i] >> 8); }
+    out[hdr + body + 6] = (uint8_t)s_rxMiFlags;
+    out[hdr + body + 7] = 0;
     return n;
 }
 
@@ -267,7 +283,13 @@ void dmrAesInit(void)
     s_rxInitMi = 0;
     memset(s_rxFrag, 0, sizeof s_rxFrag);
     s_rxKeyId = 0;
-    s_rxPiSeeded = 0;
+    /* типова конвенція late entry на прийомі збігається з тим, що передає ЦЯ збірка (так наша <-> наша
+     * працює навіть у швидкому виклику без PI, де вчитись нема з чого); PI-якір її перевчить */
+#ifdef AES_TX_MI_CURRENT
+    s_rxMiFlags = RXMI_LECUR;
+#else
+    s_rxMiFlags = 0;
+#endif
     s_rxPendMi = 0;
     s_rxPendKeyId = 0;
     s_rxDeniedKeyId = 0;
@@ -578,7 +600,8 @@ void dmrAesRxPI(const uint8_t *pi, int len)
                 {
                     s_rxInitMi = p.mi;
                     s_rxKeyId = p.key_id;  /* remember for late-entry bootstrap of a later rapid call */
-                    s_rxPiSeeded = 1;      /* chip PI-LC seed: a normal call -> pure self-advance, stable */
+                    /* chip PI-LC seed: є якір MI. Конвенцію late entry (RXMI_LECUR) зберігаємо, LELOCK скидаємо */
+                    s_rxMiFlags = (s_rxMiFlags & RXMI_LECUR) | RXMI_PISEEDED;
                     s_rxIvReady = 0;     /* generate IV from the seeded MI on the next burst */
                     s_rxLastSeq = -1;
 #ifdef DMR_AES_DIAG_RX
@@ -637,17 +660,12 @@ void dmrAesRxBurst(int seq)
     {
         /* Superframe boundary. Decode the Late-Entry MI assembled from the AMBE bits of the
          * just-completed superframe (Golay(24,12)+CRC4 over ambe_fr[3][0..3], like dsd-fme).
-         * It conveys the NEXT superframe's MI (look-ahead) == the MI we are entering now, and
-         * == the LFSR self-advance prediction (s_rxNextMi) on a continuing call. ADOPT a
-         * crc-valid late entry that DIVERGES from the prediction IMMEDIATELY (single-trust,
-         * like dsd-fme / a stock TYT): that is a genuinely new MI stream — a rapid re-PTT call
-         * the chip never surfaced a PI-LC for, or a mid-call resync. A wrong adopt (rare crc4
-         * fluke) self-corrects on the very next crc-valid late entry, so there is NO multi-
-         * superframe "confirm" wait (the previous design's wait is what stalled rapid calls,
-         * and it chained the OLD call's stale late entry into a wrong bootstrap). When the late
-         * entry agrees with the prediction or fails to decode, keep the proven self-advance —
-         * so PI-seeded normal calls are unaffected. The prediction advances every superframe
-         * even while idle, so a new call's MI stands out the instant its late entry decodes. */
+         * Стандартно воно несе MI НАСТУПНОГО суперфрейму (look-ahead) == MI, у який ми входимо
+         * зараз, == передбачення самопросування LFSR (s_rxNextMi) на тривалому виклику. Нижче
+         * leNext -- те саме значення незалежно від конвенції передавача (див. RXMI_LECUR).
+         * Виклик, піднятий late entry (чип PI-LC не віддав), приймає розбіжне MI одразу; виклик,
+         * засіяний PI, -- за правилами підтвердження в гілці «активний» нижче. Прогноз просувається
+         * кожен суперфрейм навіть у простої, тож MI нового виклику видно, щойно він декодується. */
 #ifdef DMR_AES_DIAG_RX
         /* Raw-burst capture state machine: arm -> (next wrap, if active) start capturing this
          * superframe -> (following wrap) the now-complete superframe's late entry encodes the
@@ -656,9 +674,23 @@ void dmrAesRxBurst(int seq)
         else if (s_capState == 2 && s_capN >= CAP_BURSTS) { s_capMi = s_rxNextMi; dmr_le_mi_build(s_capMi, s_capExp); s_capState = 3; }
 #endif
         uint32_t leMi;
+        uint8_t  ivTmp[16];   /* лише приймач результату dmr_lfsr128d: тут потрібен next_mi, а не IV */
         int leok = dmr_le_mi_decode(s_rxFrag, &leMi);
-        int diverge = (leok && (leMi != s_rxNextMi));
-        uint32_t mi = diverge ? leMi : s_rxNextMi;
+        /* AES-fix1: конвенція late entry. Стандартна (look-ahead): слова передавача кажуть MI НАСТУПНОГО
+         * суперфрейму == s_rxNextMi. Альтернативна («поточний», збірка AES_TX_MI_CURRENT або, можливо,
+         * стокова): слова кажуть MI суперфрейму, що ЩОЙНО скінчився == s_rx.mi. Вчимося лише з виклику,
+         * засіяного PI (там s_rx.mi/s_rxNextMi прив'язані до MI з заголовка), і лише до першого збігу:
+         * збіг 32-бітного MI з одним із двох передбачень випадковим бути не може. */
+        if (leok && s_rxActive && (s_rxMiFlags & RXMI_PISEEDED) && !(s_rxMiFlags & RXMI_LELOCK))
+        {
+            if (leMi == s_rxNextMi)      { s_rxMiFlags = (s_rxMiFlags & ~RXMI_LECUR) | RXMI_LELOCK; }
+            else if (leMi == s_rx.mi)    { s_rxMiFlags |= (RXMI_LECUR | RXMI_LELOCK); }
+        }
+        /* leNext -- MI наступного суперфрейму за словами передавача, незалежно від конвенції */
+        uint32_t leNext = leMi;
+        if (leok && (s_rxMiFlags & RXMI_LECUR)) { dmr_lfsr128d(leMi, ivTmp, &leNext); }
+        int diverge = (leok && (leNext != s_rxNextMi));
+        uint32_t mi = diverge ? leNext : s_rxNextMi;
 #ifdef DMR_AES_DIAG_RX
         s_rxdLe[leok ? 0 : 1]++;
 #endif
@@ -680,34 +712,104 @@ void dmrAesRxBurst(int seq)
                 p.alg_id = DMR_ALG_AES256; p.mfid = DMR_MFID_DMRA;
                 uint8_t onlyKeyId = rxChannelKeyFilter();
 
-                p.key_id = (onlyKeyId != 0) ? onlyKeyId : s_rxKeyId; p.mi = leMi; p.valid = 1;
-                act = (dmr_aes_rx_init(&s_rx, &p) == 0);   /* sets s_rx.mi = leMi + loads key */
+                p.key_id = (onlyKeyId != 0) ? onlyKeyId : s_rxKeyId; p.mi = leNext; p.valid = 1;
+                act = (dmr_aes_rx_init(&s_rx, &p) == 0);   /* sets s_rx.mi = leNext + loads key */
                 /* Здогадка "візьмемо перший завантажений ключ" лишається тільки для каналів
                  * без заданого слота. Там, де слот заданий, вгадувати нічого: або наш ключ,
                  * або взагалі не розшифровуємо. */
                 if (!act && (onlyKeyId == 0)) { int fk = dmr_aes_first_keyid(); if (fk >= 0) { p.key_id = (uint8_t)fk; act = (dmr_aes_rx_init(&s_rx, &p) == 0); } }
-                if (act) { s_rxActive = 1; s_rxInitMi = leMi; s_rxKeyId = s_rx.key_id; s_rxPiSeeded = 0; }
+                if (act)
+                {
+                    s_rxActive = 1; s_rxInitMi = leNext; s_rxKeyId = s_rx.key_id;
+                    /* без якоря PI: PISEEDED=0, LELOCK=1 (навчання з нього було б хибним), LECUR зберігаємо */
+                    s_rxMiFlags = (s_rxMiFlags & RXMI_LECUR) | RXMI_LELOCK;
+                    s_rxPendValid = 0;   /* поле кандидата PI тут не мусить містити сміття: далі його читає гілка «активний» */
+                }
             }
-            if (!act) { s_rx.mi = mi; }   /* rx_init already set s_rx.mi = leMi when act; else keep predicting */
+            if (!act) { s_rx.mi = mi; }   /* rx_init already set s_rx.mi = leNext when act; else keep predicting */
             dmr_lfsr128d(s_rx.mi, s_rx.iv, &s_rxNextMi);  /* IV for the entering superframe (used once active) */
             s_rxIvReady = 1;
 #ifdef DMR_AES_DIAG_RX
             rxd_log(6, (uint8_t)((leok ? 0x01 : 0) | (diverge ? 0x08 : 0) | (act ? 0x10 : 0)),
-                    seq, s_rxLastSeq, s_rx.mi, leMi);
+                    seq, s_rxLastSeq, s_rx.mi, leNext);
 #endif
         }
         else
         {
-            /* PI-seeded normal calls use the PROVEN, RF-independent self-advance and IGNORE the
-             * late entry entirely (its FEC-unprotected bits are noisy; a rare crc4 false-accept
-             * must never corrupt a clean call). Only a late-entry-BOOTSTRAPPED rapid call adopts a
-             * diverging late entry, so a wrong bootstrap self-corrects on the next valid one. */
-            int adopt = (diverge && !s_rxPiSeeded);
-            if (adopt) { s_rxInitMi = leMi; }
-            s_rx.mi = adopt ? leMi : s_rxNextMi;
+            /* AES-fix1: РЕСИНХРОНІЗАЦІЯ ПО MI. Стокова шле MI у кожному суперфреймі, і біти захищені
+             * (Golay(24,12) по трьох кодових словах + CRC4), тому слово, що пройшло перевірку, надійне,
+             * а ось ІГНОРУВАТИ його -- значить розійтися назавжди після першого ж пропущеного суперфрейму
+             * (самопросування LFSR не знає, що суперфрейм пропущено; саме так звук пропадав на 5-35 с).
+             * Правила прийняття розбіжного MI (leNext != очікуваного):
+             *   - виклик підняло late entry (без якоря PI): приймаємо одразу, як і раніше -- самокоригується;
+             *   - виклик засіяно PI: приймаємо, лише коли
+             *       (1) leNext == dmr_lfsr128d(s_rxNextMi) -- пропущено рівно ОДИН суперфрейм
+             *           (випадковий збіг 32 біт після Golay+CRC4 практично неможливий), або
+             *       (2) leNext збігається з s_rxPendMi -- кандидатом, що його ми запам'ятали на
+             *           попередньому суперфреймі (як MI, який ТРЕБА побачити, якщо потік справді інший).
+             *           Це «двічі поспіль» у сенсі «два узгоджені між собою суперфрейми, що не
+             *           узгоджуються з нами»: буквально однакового MI двічі бути не може, бо LFSR
+             *           рухає його щосуперфрейму. Випадкове спрацювання CRC4 двічі поспіль ще й
+             *           у правильній послідовності нереальне.
+             *     Поодинокий розбіжний MI лише запам'ятовується (s_rxPendMi) і НЕ застосовується. */
+            int adopt = 0;
+#ifdef DMR_AES_DIAG_RX
+            uint8_t how = 0;   /* 0 нічого, 1 «двічі поспіль», 2 «пропущено один», 3 відхилено */
+#endif
+            if (diverge)
+            {
+                if (!(s_rxMiFlags & RXMI_PISEEDED))
+                {
+                    adopt = 1;
+                }
+                else
+                {
+                    uint32_t ahead;
+                    dmr_lfsr128d(s_rxNextMi, ivTmp, &ahead);
+                    if (leNext == ahead)
+                    {
+                        adopt = 1;
+#ifdef DMR_AES_DIAG_RX
+                        how = 2;
+#endif
+                    }
+                    else if (s_rxPendValid && (leNext == s_rxPendMi))
+                    {
+                        adopt = 1;
+#ifdef DMR_AES_DIAG_RX
+                        how = 1;
+#endif
+                    }
+                    else
+                    {
+                        /* кандидат: якщо потік справді інший, на наступному суперфреймі ми побачимо саме це */
+                        uint32_t cand;
+                        dmr_lfsr128d(leNext, ivTmp, &cand);
+                        s_rxPendMi = cand; s_rxPendValid = 1;
+#ifdef DMR_AES_DIAG_RX
+                        how = 3;
+#endif
+                    }
+                }
+            }
+            else if (s_rxPendValid)
+            {
+                /* збіг із власним передбаченням (або late entry не прочитано): кандидат або марний,
+                 * або лишається чинним -- у другому разі просуваємо його разом із потоком */
+                if (leok) { s_rxPendValid = 0; }
+                else { uint32_t nx; dmr_lfsr128d(s_rxPendMi, ivTmp, &nx); s_rxPendMi = nx; }
+            }
+            if (adopt)
+            {
+                s_rxInitMi = leNext;
+                s_rxPendValid = 0;
+                s_rxMiFlags |= RXMI_LELOCK;   /* після перебирання MI конвенцію вже не вчимо */
+            }
+            s_rx.mi = adopt ? leNext : s_rxNextMi;
             dmr_lfsr128d(s_rx.mi, s_rx.iv, &s_rxNextMi);
 #ifdef DMR_AES_DIAG_RX
-            rxd_log(adopt ? 7 : 2, (uint8_t)((leok ? 0x01 : 0) | (diverge ? 0x08 : 0)), seq, s_rxLastSeq, s_rx.mi, leMi);
+            if (how == 1) { s_rxdAdopt[0]++; } else if (how == 2) { s_rxdAdopt[1]++; } else if (how == 3) { s_rxdAdopt[2]++; }
+            rxd_log(adopt ? 7 : 2, (uint8_t)((leok ? 0x01 : 0) | (diverge ? 0x08 : 0) | (how << 5)), seq, s_rxLastSeq, s_rx.mi, leNext);
 #endif
         }
     }
@@ -779,6 +881,15 @@ int dmrAesTxBuildPI(uint8_t *piOut7)   /* build PI header LC to emit at call sta
     dmr_pi_build(DMR_ALG_AES256, s_tx.key_id, s_txPiMi, piOut7);
     return 7;
 }
+/* AES-fix1 A2: який MI передавати у late entry. Типово (як було) -- MI НАСТУПНОГО суперфрейму
+ * (look-ahead, s_txNextMi). З -DAES_TX_MI_CURRENT -- MI ПОТОЧНОГО суперфрейму (s_tx.mi): збірка-кандидат
+ * для польової звірки зі стоковою (невідомо, яку конвенцію чекає стокова). Шифрування від вибору не
+ * залежить -- міняється лише те, що йде у біти ambe_fr[3][0..3]. Наш приймач розуміє обидві (RXMI_LECUR). */
+#ifdef AES_TX_MI_CURRENT
+#define TX_CONVEY_MI (s_tx.mi)
+#else
+#define TX_CONVEY_MI (s_txNextMi)
+#endif
 /* Encrypt one encoded voice frame's 49 AMBE params in place, during codecEncodeBlock
  * (after AMBE_ENCODE, before AMBE_ENCODE_ECC). The encode order equals the transmit
  * order, so a free-running frame counter gives the superframe position: IV=lfsr(MI),
@@ -798,14 +909,14 @@ void dmrAesTxCodecFrame(uint16_t *b49)
          * next superframe == our encryption IV for the next superframe. (Conveying s_tx.mi here
          * decodes one superframe early -> garble; confirmed on-air via the constant-plaintext
          * diagnostic = encryption ran one LFSR step ahead of the conveyed MI.) */
-        dmr_le_mi_build(s_txNextMi, s_txFrag);
+        dmr_le_mi_build(TX_CONVEY_MI, s_txFrag);
         s_txIvReady = 1;
     }
     else if ((s_txFrameCnt % 18) == 0)
     {
         s_tx.mi = s_txNextMi;
         dmr_lfsr128d(s_tx.mi, s_tx.iv, &s_txNextMi);
-        dmr_le_mi_build(s_txNextMi, s_txFrag);   /* convey the NEXT superframe's MI (look-ahead, see above) */
+        dmr_le_mi_build(TX_CONVEY_MI, s_txFrag);   /* look-ahead: MI наступного суперфрейму; AES_TX_MI_CURRENT: поточного */
     }
     dmr_aes_voice_frame(&s_tx, b49, (size_t)(s_txFrameCnt % 18) * 56);
     s_txFrameCnt++;

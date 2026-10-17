@@ -36,6 +36,12 @@ ifeq ($(ENABLE_SMS_DIAG),1)
 DEFS += -DENABLE_SMS_DIAG
 endif
 
+# AES-fix1 A2: у late entry передавати MI ПОТОЧНОГО суперфрейму (типово -- наступного, look-ahead).
+# Збірка-кандидат для польової звірки зі стоковою; потребує ENABLE_AES=1 (поза ним нічого не змінює).
+ifeq ($(AES_TX_MI_CURRENT),1)
+DEFS += -DAES_TX_MI_CURRENT
+endif
+
 ifeq ($(DMR_AES_DIAG_PATTERN),1)
 DEFS += -DDMR_AES_DIAG_PATTERN
 endif
