@@ -19,13 +19,17 @@ Usage (Windows, the CDC enumerates as COM4):
 
 AES-fix2: той самий дамп містить і ФАЗУ ПЕРЕДАЧІ (збірка DMR_AES_DIAG_RX=1): передай ~10 с, після передачі (CPS-режим
 не потрібен) запусти `python rxdiag.py` -- рядки «TX-фаза» і «TX-зсув k». Скинути перед передачею: `python rxdiag.py --reset`.
+
+AES-fix3: внизу того ж дампу -- блок «СИРІ LC/EMB»: сирі байти LC / EMB-кандидата, які віддав чип, і «наші» байти (PI, Voice LC, EMB SB).
+Лише hex, без інтерпретації. Порівняти зі стоковою передачею -- TESTING.md, блок BP.
 """
 import argparse, struct, sys, time
 try:
     import serial
     from serial.tools import list_ports
-except ImportError:
-    sys.exit("pyserial required: pip install pyserial")
+except ImportError:   # розбір дампу (print_dump) працює і без pyserial -- на це спирається тест
+    serial = None
+    list_ports = None
 
 AES_VID, AES_PID = 0x1FC9, 0x0094
 TYPE = {1: "PI    ", 2: "WRAP  ", 3: "LCRSET", 4: "RXEND ", 5: "IVGEN ", 6: "BOOT  ", 7: "RESEED", 8: "LATENT"}
@@ -34,6 +38,8 @@ SLOTSTATE = {0: "IDLE", 1: "RX_1", 2: "RX_2", 3: "RX_END",
 
 
 def find_port():
+    if list_ports is None:
+        sys.exit("pyserial required: pip install pyserial")
     for p in list_ports.comports():
         if (p.vid == AES_VID) and (p.pid == AES_PID):
             return p.device
@@ -46,6 +52,8 @@ def main():
     ap.add_argument("--reset", action="store_true", help="clear/arm the ring, then exit")
     args = ap.parse_args()
 
+    if serial is None:
+        sys.exit("pyserial required: pip install pyserial")
     port = args.port or find_port()
     if not port:
         sys.exit("no OpenGD77 CDC port found (1fc9:0094). Pass --port COMx")
@@ -59,14 +67,74 @@ def main():
 
     ser.reset_input_buffer()
     ser.write(bytes([ord("C"), 0x84])); ser.flush(); time.sleep(0.25)
-    r = ser.read(2048)
+    r = ser.read(4096)
     if len(r) < 3 or r[0] != ord("C"):
         sys.exit("bad reply: %r" % r[:16])
     n = (r[1] << 8) | r[2]
     data = r[3:3 + n]
     if len(data) < 24 or data[0] != 0xA5:
         sys.exit("bad diag header (len=%d): %r" % (len(data), data[:8]))
+    print_dump(data, port)
 
+
+def hx(b):
+    """Сирий hex через пробіл -- без жодної інтерпретації."""
+    return " ".join("%02X" % x for x in b)
+
+
+def print_fix3(data, start):
+    """AES-fix3: сирі байти LC/EMB від чипа + «наші» байти. Лише hex, інтерпретації нема. Повертає False, якщо блоку нема."""
+    f = data[start:]
+    if len(f) < 48 or f[0] != 0xF3:
+        print("AES-fix3: у дампі нема блоку сирих LC/EMB (стара збірка?)")
+        return False
+    rlcN, rlcSz, embN, embSz = f[1], f[2], f[3], f[4]
+    total, = struct.unpack_from("<H", f, 5)
+    rlcW, embW = f[7], f[8]
+    lcSeen, lcDup, embReads, embDup = struct.unpack_from("<4H", f, 9)
+    key, src, flg = f[17], f[18], f[19]
+    mi, = struct.unpack_from("<I", f, 20)
+    srcName = {1: "вибір TX-ключа", 2: "останній RX-ключ", 3: "за замовчуванням 1"}.get(src, "?")
+    print("=" * 90)
+    print(f"СИРІ LC/EMB (hex, без інтерпретації)   LC від чипа: усього CRC-валідних={lcSeen}, повторів не внесено={lcDup}   "
+          f"EMB: читань={embReads}, повторів не внесено={embDup}")
+    off = 48
+    print(f"-- LC, який віддав чип (page 0x02:0x00..0x0B), від найстарішого; dT = rxDataType, sc = syncClass(0 hdr/EMB,1 voice,2 data,3 RC), PI = reg0x51 bit3, hits = повторів --")
+    n = min(rlcW, rlcN)
+    first = (rlcW - n) % rlcN if rlcW >= n else 0
+    ring = f[off:off + rlcN * rlcSz]
+    off += rlcN * rlcSz
+    if n == 0:
+        print("   (порожньо: CRC-валідного LC за цей час чип не віддавав)")
+    for i in range(n):
+        o = ((first + i) % rlcN) * rlcSz
+        if o + rlcSz > len(ring):
+            break
+        dt, fl, hits = ring[o], ring[o + 1], ring[o + 2]
+        ts, tsl = struct.unpack_from("<HH", ring, o + 4)
+        print(f"   LC{i}: dT={dt:2d} sc={fl & 3} PI={(fl >> 2) & 1} hits={hits:3d} ts={ts:5d}..{tsl:5d}   {hx(ring[o + 8:o + 20])}")
+    print("-- EMB-кандидат (page 0x02:0x29..0x2C як прочитано на прийомі; лише EMB-переривання і voice burst F) --")
+    n = min(embW, embN)
+    first = (embW - n) % embN if embW >= n else 0
+    ering = f[off:off + embN * embSz]
+    if n == 0:
+        print("   (порожньо: за цей час EMB-кандидат не читався -- або чип на RX не віддає ці регістри)")
+    for i in range(n):
+        o = ((first + i) % embN) * embSz
+        if o + embSz > len(ering):
+            break
+        dt, fl = ering[o], ering[o + 1]
+        ts, = struct.unpack_from("<H", ering, o + 2)
+        print(f"   EMB{i}: dT={dt:2d} sc={fl & 3} ts={ts:5d}   {hx(ering[o + 4:o + 8])}")
+    print(f"-- НАШІ байти (побудовані тими самими функціями, що й TX; ключ={key} [{srcName}], MI={mi:08X} довільний, прапорці={flg}) --")
+    print(f"   PI  (dmr_pi_build)         : {hx(f[24:31])}")
+    print(f"   Voice LC (клон TX)         : {hx(f[31:43])}")
+    print(f"   EMB SB  (dmr_emb_sb_build) : {hx(f[43:47])}")
+    print("=" * 90)
+    return True
+
+
+def print_dump(data, port=""):
     ring = data[1]; rec = data[2]
     w = data[4] | (data[5] << 8)
     cnt = struct.unpack_from("<7H", data, 6)   # PI WRAP LCRESET RXEND IVGEN BOOTSTRAP RESEED
@@ -96,9 +164,9 @@ def main():
               + f"  голосових burst-ів усього={bursts}  закодовано кадрів={encN}  пішло в ефір кадрів={consumed}")
         pairs = []
         for i in range((len(tail) - 18) // 2):
-            w, = struct.unpack_from("<H", tail, 18 + 2 * i)
-            if w & 0x8000:
-                pairs.append((i, (w >> 8) & 0x7F, w & 0xFF))
+            pw, = struct.unpack_from("<H", tail, 18 + 2 * i)   # не `w`: це індекс запису кільця, його нижче читає цикл виводу
+            if pw & 0x8000:
+                pairs.append((i, (pw >> 8) & 0x7F, pw & 0xFF))
         if pairs:
             ks = [(pos - cnt) % 18 for _, cnt, pos in pairs]
             print("TX-фаза, кадр: (фаза шифрування -> позиція в ефірі, зсув k):  "
@@ -147,6 +215,7 @@ def main():
         else:
             fs = ""
         print(f"{i:2d} | {ts:5d} {dt:>5} | {name} | {seq:3d} {ls:4d} | {mi:08X}  {aux:08X} | {fs}")
+    print_fix3(data, 32 + ring * rec + trl)
 
 
 if __name__ == "__main__":

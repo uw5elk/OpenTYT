@@ -255,6 +255,76 @@ void dmrAesDiagTxBurst(int txSequence, int silent)
     }
     s_txdBursts++;
 }
+/* ---- AES-fix3 C1: СИРІ байти LC/EMB, які реально віддає чип (лише вимірювання, без зміни поведінки) -------------------------
+ * Мета -- порівняти з ефіром стокової рації те, що її TX (FID/SO у Voice LC, PI-заголовок, EMB Single Block burst F) НЕСЕ насправді,
+ * з тим, що надсилаємо ми. Тут -- сторона прийому: кільце останніх відмінних CRC-валідних LC (12 байтів page 0x02:0x00..0x0B) і
+ * кільце «кандидатів у EMB» (page 0x02:0x29..0x2C, прочитаних на тому самому проході). Без інтерпретації: сирий hex.
+ * Дедуп проти ВСІХ записів кільця: чип повторно віддає той самий LC на кожен burst, без дедупу кільце за секунду заповнилось би одним LC. */
+#define RLC_N 8
+#define EMBR_N 8
+typedef struct {            /* 20 байтів */
+    uint8_t  dt;            /* rxDataType (reg 0x51 bits 7..4) на момент читання */
+    uint8_t  flags;         /* bits1..0 = syncClass, bit2 = reg0x51 bit3 (privacy indicator), bit3 = CRC OK (завжди 1 у цьому кільці) */
+    uint8_t  hits;          /* скільки разів той самий LC повторно віддано (насичення 255) */
+    uint8_t  pad;
+    uint16_t ts;            /* ticksGetMillis() & 0xFFFF першого появлення */
+    uint16_t tsLast;        /* останнього повтору */
+    uint8_t  lc[12];
+} rlc_t;
+typedef struct {            /* 8 байтів */
+    uint8_t  dt;
+    uint8_t  flags;         /* bits1..0 = syncClass */
+    uint16_t ts;
+    uint8_t  emb[4];        /* page 0x02 регістри 0x29..0x2C як їх прочитано */
+} embr_t;
+static rlc_t     s_rlc[RLC_N] DMR_AES_CCM;
+static embr_t    s_embr[EMBR_N] DMR_AES_CCM;
+static uint8_t   s_rlcW DMR_AES_CCM, s_embrW DMR_AES_CCM;     /* вільнобіжні, RLC_N/EMBR_N = 8 ділить 256 */
+static uint16_t  s_rlcSeen DMR_AES_CCM, s_rlcDup DMR_AES_CCM; /* усього CRC-валідних LC / з них повторів (не внесених) */
+static uint16_t  s_embrReads DMR_AES_CCM, s_embrDup DMR_AES_CCM;
+static uint8_t   s_rawDt DMR_AES_CCM, s_rawSc DMR_AES_CCM, s_rawPi DMR_AES_CCM; /* контекст читання: HR-C6000.c ставить перед hrc6000HandleLCData() */
+#define DIAG3_HDR 48                                       /* заголовок другого хвоста (див. dmrAesGetRxDiag) */
+#define DIAG3_LEN (DIAG3_HDR + RLC_N * 20 + EMBR_N * 8)    /* 272; 20 = sizeof(rlc_t), 8 = sizeof(embr_t) (перевіряє _Static_assert нижче) */
+#define DIAG3_DEMO_MI 0x11223344u                          /* довільний MI для «наших» байтів (PI несе MI) */
+_Static_assert(sizeof(rlc_t) == 20 && sizeof(embr_t) == 8, "AES-fix3: ring record size");
+
+void dmrAesDiagRawCtx(uint8_t dt, uint8_t syncClass, uint8_t pi) { s_rawDt = dt; s_rawSc = syncClass; s_rawPi = pi; }
+void dmrAesDiagRawLC(const uint8_t *lc12)
+{
+    uint16_t ts = (uint16_t)(ticksGetMillis() & 0xFFFF);
+    s_rlcSeen++;
+    uint8_t n = (s_rlcW < RLC_N) ? s_rlcW : RLC_N;
+    for (uint8_t i = 0; i < n; i++)
+    {
+        if (memcmp(s_rlc[i].lc, lc12, 12) == 0)
+        {
+            if (s_rlc[i].hits < 255) { s_rlc[i].hits++; }
+            s_rlc[i].tsLast = ts;
+            s_rlcDup++;
+            return;
+        }
+    }
+    rlc_t *e = &s_rlc[s_rlcW % RLC_N];
+    e->dt = s_rawDt;
+    e->flags = (uint8_t)((s_rawSc & 3) | ((s_rawPi & 1) << 2) | 8);
+    e->hits = 0; e->pad = 0; e->ts = ts; e->tsLast = ts;
+    memcpy(e->lc, lc12, 12);
+    s_rlcW++;
+}
+void dmrAesDiagEmb(const uint8_t *emb4)
+{
+    uint16_t ts = (uint16_t)(ticksGetMillis() & 0xFFFF);
+    s_embrReads++;
+    uint8_t n = (s_embrW < EMBR_N) ? s_embrW : EMBR_N;
+    for (uint8_t i = 0; i < n; i++)
+    {
+        if (memcmp(s_embr[i].emb, emb4, 4) == 0) { s_embrDup++; return; }
+    }
+    embr_t *e = &s_embr[s_embrW % EMBR_N];
+    e->dt = s_rawDt; e->flags = (uint8_t)(s_rawSc & 3); e->ts = ts;
+    memcpy(e->emb, emb4, 4);
+    s_embrW++;
+}
 void dmrAesResetRxDiag(void)
 {
     memset(s_rxd, 0, sizeof s_rxd);
@@ -264,6 +334,9 @@ void dmrAesResetRxDiag(void)
     memset(s_rxdMisc, 0, sizeof s_rxdMisc);
     memset(s_rxdAdopt, 0, sizeof s_rxdAdopt);
     txdReset();
+    memset(s_rlc, 0, sizeof s_rlc); memset(s_embr, 0, sizeof s_embr);
+    s_rlcW = 0; s_embrW = 0; s_rlcSeen = 0; s_rlcDup = 0; s_embrReads = 0; s_embrDup = 0;
+    s_rawDt = 0; s_rawSc = 0; s_rawPi = 0;
     s_capState = 0; s_capN = 0;
     memset(s_capBuf, 0, sizeof s_capBuf);   /* R12: CCM при старті сміття -- знімок читає dmrAesGetCapData() */
     memset(s_capSeq, 0, sizeof s_capSeq);
@@ -278,7 +351,7 @@ void dmrAesResetRxDiag(void)
  *  потім хвіст out[3] байт (AES-fix1, див. нижче). */
 int dmrAesGetRxDiag(uint8_t *out, int max)
 {
-    int hdr = 32, body = (int)sizeof s_rxd, trl = 8 + 10 + 2 * TXD_FR, n = hdr + body + trl;
+    int hdr = 32, body = (int)sizeof s_rxd, trl = 8 + 10 + 2 * TXD_FR, n = hdr + body + trl + DIAG3_LEN;
     if (n > max) { return 0; }
     memset(out, 0, hdr);
     out[0] = 0xA5; out[1] = RXD_RING; out[2] = (uint8_t)sizeof(rxd_evt_t);
@@ -306,6 +379,36 @@ int dmrAesGetRxDiag(uint8_t *out, int max)
     t[6] = (uint8_t)(s_txdEncN & 0xFF);     t[7] = (uint8_t)(s_txdEncN >> 8);
     t[8] = (uint8_t)(s_txdConsumed & 0xFF); t[9] = (uint8_t)(s_txdConsumed >> 8);
     for (int i = 0; i < TXD_FR; i++) { t[10 + i * 2] = (uint8_t)(s_txdPair[i] & 0xFF); t[11 + i * 2] = (uint8_t)(s_txdPair[i] >> 8); }
+    /* AES-fix3: ДРУГИЙ хвіст (out[3] -- один байт і вже 66, тож новий блок має власний заголовок з довжиною; старі читачі його не бачать).
+     * Розкладка від зсуву f = hdr + body + trl:
+     *  [0]=0xF3 [1]=RLC_N [2]=sizeof(rlc_t) [3]=EMBR_N [4]=sizeof(embr_t) [5..6]=довжина всього блоку (LE)
+     *  [7]=s_rlcW [8]=s_embrW (вільнобіжні u8)  [9..10]=LC усього  [11..12]=LC повторів  [13..14]=читань EMB  [15..16]=повторів EMB
+     *  [17]=ключ «наших» байтів [18]=джерело (1 = вибір TX-ключа, 2 = останній RX-ключ, 3 = за замовчуванням 1) [19]=прапорці (bit0 = блок заповнено)
+     *  [20..23]=MI «наших» (LE) [24..30]=PI (7) [31..42]=Voice LC (12) [43..46]=EMB SB (4) [47]=0
+     *  далі RLC_N * rlc_t, потім EMBR_N * embr_t (порядок кільця, хост перевпорядковує за s_*W). */
+    uint8_t *f = out + hdr + body + trl;
+    f[0] = 0xF3; f[1] = RLC_N; f[2] = (uint8_t)sizeof(rlc_t); f[3] = EMBR_N; f[4] = (uint8_t)sizeof(embr_t);
+    f[5] = (uint8_t)(DIAG3_LEN & 0xFF); f[6] = (uint8_t)(DIAG3_LEN >> 8);
+    f[7] = s_rlcW; f[8] = s_embrW;
+    f[9] = (uint8_t)(s_rlcSeen & 0xFF);   f[10] = (uint8_t)(s_rlcSeen >> 8);
+    f[11] = (uint8_t)(s_rlcDup & 0xFF);   f[12] = (uint8_t)(s_rlcDup >> 8);
+    f[13] = (uint8_t)(s_embrReads & 0xFF); f[14] = (uint8_t)(s_embrReads >> 8);
+    f[15] = (uint8_t)(s_embrDup & 0xFF);  f[16] = (uint8_t)(s_embrDup >> 8);
+    {   /* «наші» байти: чиста копія TX-побудови з тими самими функціями (dmr_pi_build / dmr_emb_sb_build) і клоном Voice LC з HR-C6000.c */
+        uint8_t key = 0, src = 0;
+        if (s_txKeyId != 0)       { key = s_txKeyId; src = 1; }
+        else if (s_rxKeyId != 0)  { key = s_rxKeyId; src = 2; }
+        else                      { key = 1; src = 3; }
+        f[17] = key; f[18] = src; f[19] = 1;
+        f[20] = (uint8_t)(DIAG3_DEMO_MI & 0xFF);         f[21] = (uint8_t)((DIAG3_DEMO_MI >> 8) & 0xFF);
+        f[22] = (uint8_t)((DIAG3_DEMO_MI >> 16) & 0xFF); f[23] = (uint8_t)(DIAG3_DEMO_MI >> 24);
+        dmr_pi_build(DMR_ALG_AES256, key, DIAG3_DEMO_MI, f + 24);
+        hrc6000DiagOursLC(f + 31);
+        dmr_emb_sb_build(key, (uint8_t)(DMR_ALG_AES256 & 0x07), f + 43);
+        f[47] = 0;
+    }
+    memcpy(f + DIAG3_HDR, s_rlc, sizeof s_rlc);
+    memcpy(f + DIAG3_HDR + sizeof s_rlc, s_embr, sizeof s_embr);
     return n;
 }
 
