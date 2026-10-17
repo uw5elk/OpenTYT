@@ -199,14 +199,17 @@ static void txdReset(void)
 }
 static uint16_t  s_rxdMisc[3] DMR_AES_CCM;  /* [0]=LC reads, [1]=valid PI parses, [2]=RxBurst calls */
 static uint32_t  s_rxdLastPiMi DMR_AES_CCM; /* PI dedup: last logged PI MI */
-/* Raw-burst capture state (crack the RX late-entry bit layout — see dmrAesGetCapData). */
-#define CAP_BURSTS 6
+/* Захоплення сирих burst-ів (AES-fix4 D1; знайти справжні позиції бітів late-entry MI -- tools/le_bitsearch.py).
+ * CAP_BURSTS = 12: два повні суперфрейми ПОСПІЛЬ (seq 1..6, 1..6). Захоплення не залежить від s_rxActive: на виклику стокової PI
+ * не приходить, розшифровка не піднімається, але burst-и йдуть. Старт -- на першому burst із seq 1 після озброєння; будь-який розрив
+ * послідовності (втрачений burst) скидає захоплення на початок (лічильник s_capRestart). Поля «істинного MI» (s_capMi/s_capExp) прибрано:
+ * на чужій передачі істини нема, а CCM потрібен під 12 буферів. */
+#define CAP_BURSTS 12
 static uint8_t   s_capState DMR_AES_CCM;     /* 0 idle, 1 armed, 2 capturing, 3 done */
 static uint8_t   s_capN DMR_AES_CCM;
+static uint8_t   s_capRestart DMR_AES_CCM;   /* скільки разів захоплення скидалось через розрив seq (насичення 255) */
 static uint8_t   s_capBuf[CAP_BURSTS][27] DMR_AES_CCM;
 static uint8_t   s_capSeq[CAP_BURSTS] DMR_AES_CCM;
-static uint8_t   s_capExp[7][3] DMR_AES_CCM;  /* expected frag (dmr_le_mi_build of the true MI) */
-static uint32_t  s_capMi DMR_AES_CCM;         /* the true MI the captured superframe conveys */
 
 static void rxd_log(uint8_t type, uint8_t flags, int seq, int lastSeq, uint32_t mi, uint32_t aux)
 {
@@ -260,8 +263,8 @@ void dmrAesDiagTxBurst(int txSequence, int silent)
  * з тим, що надсилаємо ми. Тут -- сторона прийому: кільце останніх відмінних CRC-валідних LC (12 байтів page 0x02:0x00..0x0B) і
  * кільце «кандидатів у EMB» (page 0x02:0x29..0x2C, прочитаних на тому самому проході). Без інтерпретації: сирий hex.
  * Дедуп проти ВСІХ записів кільця: чип повторно віддає той самий LC на кожен burst, без дедупу кільце за секунду заповнилось би одним LC. */
-#define RLC_N 8
-#define EMBR_N 8
+#define RLC_N 4     /* AES-fix4: було 8; CCM віддано під 12 буферів захоплення (виміряно: за 3 хв шифрованого виклику стокової було лише 3 різні LC) */
+#define EMBR_N 2    /* AES-fix4: було 8; EMB-кандидат на RX виміряно як сміття -- канал закрито */
 typedef struct {            /* 20 байтів */
     uint8_t  dt;            /* rxDataType (reg 0x51 bits 7..4) на момент читання */
     uint8_t  flags;         /* bits1..0 = syncClass, bit2 = reg0x51 bit3 (privacy indicator), bit3 = CRC OK (завжди 1 у цьому кільці) */
@@ -284,7 +287,7 @@ static uint16_t  s_rlcSeen DMR_AES_CCM, s_rlcDup DMR_AES_CCM; /* усього CR
 static uint16_t  s_embrReads DMR_AES_CCM, s_embrDup DMR_AES_CCM;
 static uint8_t   s_rawDt DMR_AES_CCM, s_rawSc DMR_AES_CCM, s_rawPi DMR_AES_CCM; /* контекст читання: HR-C6000.c ставить перед hrc6000HandleLCData() */
 #define DIAG3_HDR 48                                       /* заголовок другого хвоста (див. dmrAesGetRxDiag) */
-#define DIAG3_LEN (DIAG3_HDR + RLC_N * 20 + EMBR_N * 8)    /* 272; 20 = sizeof(rlc_t), 8 = sizeof(embr_t) (перевіряє _Static_assert нижче) */
+#define DIAG3_LEN (DIAG3_HDR + RLC_N * 20 + EMBR_N * 8)    /* 144 при RLC_N=4, EMBR_N=2; 20 = sizeof(rlc_t), 8 = sizeof(embr_t) (перевіряє _Static_assert нижче) */
 #define DIAG3_DEMO_MI 0x11223344u                          /* довільний MI для «наших» байтів (PI несе MI) */
 _Static_assert(sizeof(rlc_t) == 20 && sizeof(embr_t) == 8, "AES-fix3: ring record size");
 
@@ -337,11 +340,9 @@ void dmrAesResetRxDiag(void)
     memset(s_rlc, 0, sizeof s_rlc); memset(s_embr, 0, sizeof s_embr);
     s_rlcW = 0; s_embrW = 0; s_rlcSeen = 0; s_rlcDup = 0; s_embrReads = 0; s_embrDup = 0;
     s_rawDt = 0; s_rawSc = 0; s_rawPi = 0;
-    s_capState = 0; s_capN = 0;
+    s_capState = 0; s_capN = 0; s_capRestart = 0;
     memset(s_capBuf, 0, sizeof s_capBuf);   /* R12: CCM при старті сміття -- знімок читає dmrAesGetCapData() */
     memset(s_capSeq, 0, sizeof s_capSeq);
-    memset(s_capExp, 0, sizeof s_capExp);
-    s_capMi = 0;
 }
 /* Copy a self-describing snapshot into out (<= max). Header (32 bytes, LE):
  *  [0]=0xA5 magic, [1]=ring size, [2]=record size, [3]=0, [4..5]=write index,
@@ -418,17 +419,16 @@ int dmrAesGetRxDiag(uint8_t *out, int max)
  * superframe's six raw bursts + the MI its late-entry should encode (the LFSR
  * self-advance truth on a clear call) + the firmware-built expected fragment, and
  * solve the actual bit mapping offline. */
-void dmrAesDiagCapArm(void) { s_capState = 1; s_capN = 0; }
+void dmrAesDiagCapArm(void) { s_capState = 1; s_capN = 0; s_capRestart = 0; }
+/* Дамп захоплення (USB 0x89), самоописовий: [0]=стан (0 нічого, 1 озброєно, 2 іде, 3 готово), [1]=захоплено burst-ів, [2]=CAP_BURSTS,
+ * [3]=скидань через розрив seq, далі CAP_BURSTS байтів seq і CAP_BURSTS x 27 сирих байтів (рівно те, що віддав чип, без жодної обробки). */
 int dmrAesGetCapData(uint8_t *out, int max)
 {
-    int o = 0, v, c, i;
-    int n = 2 + 4 + CAP_BURSTS + 18 + CAP_BURSTS * 27;
+    int o = 0, i;
+    int n = 4 + CAP_BURSTS + CAP_BURSTS * 27;
     if (n > max) { return 0; }
-    out[o++] = s_capState; out[o++] = s_capN;
-    out[o++] = (uint8_t)s_capMi; out[o++] = (uint8_t)(s_capMi >> 8);
-    out[o++] = (uint8_t)(s_capMi >> 16); out[o++] = (uint8_t)(s_capMi >> 24);
+    out[o++] = s_capState; out[o++] = s_capN; out[o++] = CAP_BURSTS; out[o++] = s_capRestart;
     for (i = 0; i < CAP_BURSTS; i++) { out[o++] = s_capSeq[i]; }
-    for (v = 1; v <= 6; v++) { for (c = 0; c < 3; c++) { out[o++] = s_capExp[v][c]; } }
     for (i = 0; i < CAP_BURSTS; i++) { memcpy(out + o, s_capBuf[i], 27); o += 27; }
     return o;
 }
@@ -840,11 +840,6 @@ void dmrAesRxBurst(int seq)
          * засіяний PI, -- за правилами підтвердження в гілці «активний» нижче. Прогноз просувається
          * кожен суперфрейм навіть у простої, тож MI нового виклику видно, щойно він декодується. */
 #ifdef DMR_AES_DIAG_RX
-        /* Raw-burst capture state machine: arm -> (next wrap, if active) start capturing this
-         * superframe -> (following wrap) the now-complete superframe's late entry encodes the
-         * pre-wrap s_rxNextMi (look-ahead), so snapshot it + the expected frag. */
-        if (s_capState == 1 && s_rxActive) { s_capState = 2; s_capN = 0; }
-        else if (s_capState == 2 && s_capN >= CAP_BURSTS) { s_capMi = s_rxNextMi; dmr_le_mi_build(s_capMi, s_capExp); s_capState = 3; }
 #endif
         uint32_t leMi;
         uint8_t  ivTmp[16];   /* лише приймач результату dmr_lfsr128d: тут потрібен next_mi, а не IV */
@@ -1010,7 +1005,22 @@ void dmrAesRxLateEntry(int seq, const uint8_t *ambe27)
         s_rxFrag[seq][cw] = nib;
     }
 #ifdef DMR_AES_DIAG_RX
-    if (s_capState == 2 && s_capN < CAP_BURSTS) { memcpy(s_capBuf[s_capN], ambe27, 27); s_capSeq[s_capN] = (uint8_t)seq; s_capN++; }
+    if (s_capState == 1 || s_capState == 2)
+    {
+        /* AES-fix4 D1: стан 1 (озброєно) чекає seq 1; стан 2 вимагає строго наступного seq (1..6, знову 1..6); розрив -> з початку */
+        int expect = (s_capN == 0) ? 1 : (int)(s_capSeq[s_capN - 1] % 6) + 1;
+        if (seq != expect)
+        {
+            if (s_capN > 0 && s_capRestart < 255) { s_capRestart++; }
+            s_capN = 0; s_capState = 1;
+            expect = 1;
+        }
+        if (seq == expect)
+        {
+            memcpy(s_capBuf[s_capN], ambe27, 27); s_capSeq[s_capN] = (uint8_t)seq; s_capN++;
+            s_capState = (s_capN >= CAP_BURSTS) ? 3 : 2;
+        }
+    }
 #endif
 }
 /* Called per decoded AMBE frame from codecDecode (idxInBurst 0..2). Applies the
