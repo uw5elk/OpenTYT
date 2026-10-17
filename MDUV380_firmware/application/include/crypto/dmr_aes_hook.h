@@ -51,6 +51,10 @@ int  dmrAesDiagConstPattern(uint16_t *b49);        /* DIAGNOSTIC: constant known
 void dmrAesDiagRxMark(uint8_t type);               /* DIAGNOSTIC: log an RX event (3=LCRESET 4=RXEND) */
 void dmrAesDiagLateEntry(uint8_t slotState, uint8_t gatePassed); /* DIAGNOSTIC: chip late-entry int (reg0x82 b4) fired */
 void dmrAesDiagTxBurst(int txSequence, int silent); /* DIAGNOSTIC (AES-fix2): голосовий burst передачі; silent=1 -- пішов SILENCE_AUDIO */
+void dmrAesDiagRawCtx(uint8_t dt, uint8_t syncClass, uint8_t pi); /* DIAGNOSTIC (AES-fix3): контекст наступного читання LC (reg 0x51) */
+void dmrAesDiagRawLC(const uint8_t *lc12);         /* DIAGNOSTIC (AES-fix3): сирі 12 байтів CRC-валідного LC, який віддав чип */
+void dmrAesDiagEmb(const uint8_t *emb4);           /* DIAGNOSTIC (AES-fix3): кандидат EMB (page 0x02:0x29..0x2C) як прочитано */
+void hrc6000DiagOursLC(uint8_t lc12[12]);          /* DIAGNOSTIC (AES-fix3): реалізація в HR-C6000.c -- «наш» Voice LC для шифрованого виклику (клон, без побічних ефектів) */
 void dmrAesResetRxDiag(void);                      /* DIAGNOSTIC: clear the RX event ring */
 int  dmrAesGetRxDiag(uint8_t *out, int max);       /* DIAGNOSTIC: snapshot the RX event ring */
 void dmrAesDiagCapArm(void);                       /* DIAGNOSTIC: arm one-superframe raw-burst capture */

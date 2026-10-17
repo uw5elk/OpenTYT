@@ -682,6 +682,10 @@ static void hrc6000TransmitTalkerAlias(void)
 	hrc.TAPhase = ((hrc.TAPhase + 1) % loopSize);
 }
 
+#if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
+static uint8_t diagRawDt, diagRawSc;   // AES-fix3: контекст останнього reg 0x51 для hrc6000HandleLCData (лише RAM діагностичної збірки)
+#endif
+
 static void hrc6000HandleLCData(void)
 {
 	uint8_t LCBuf[LC_DATA_LENGTH];
@@ -692,6 +696,23 @@ static void hrc6000HandleLCData(void)
 	// zeroing the IV for frames 2..6 of each superframe.
 	if (lcResult && hrc6000CrcIsValid())
 	{
+#ifdef DMR_AES_DIAG_RX
+		// AES-fix3 C1 (лише вимірювання): сирі 12 байтів LC, які віддав чип, ДО будь-якого розбору.
+		dmrAesDiagRawLC(LCBuf);
+		{
+			// Кандидат у EMB Single Block: чип на TX бере його з page 0x02:0x29..0x2C. Чи віддає він ті самі регістри на RX --
+			// ГІПОТЕЗА, перевіряється цим дампом (нульові/незмінні байти = не віддає). Читаємо лише на EMB-перериванні
+			// (syncClass 0, див. коментар до hrc6000SysReceivedDataInt) і на voice burst F (seq 6) -- інакше кільце забивається.
+			if ((diagRawSc == 0) || ((diagRawSc == SYNC_CLASS_VOICE) && ((diagRawDt & 0x07) == 6)))
+			{
+				uint8_t embRaw[4];
+				if (SPI0ReadPageRegByteArray(0x02, 0x29, embRaw, 4) == kStatus_Success)
+				{
+					dmrAesDiagEmb(embRaw);
+				}
+			}
+		}
+#endif
 		dmrAesRxPI(LCBuf, LC_DATA_LENGTH);
 	}
 #endif
@@ -1399,6 +1420,10 @@ static inline void hrc6000SysReceivedDataInt(void)
 
 	if (hrc.transmissionEnabled == false) // ignore the LC data when we are transmitting
 	{
+#if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
+		diagRawDt = (uint8_t)rxDataType; diagRawSc = (uint8_t)rxSyncClass;
+		dmrAesDiagRawCtx((uint8_t)rxDataType, (uint8_t)rxSyncClass, (uint8_t)(rxPrivacyIndicator & 1));
+#endif
 		hrc6000HandleLCData();
 	}
 
@@ -2498,6 +2523,27 @@ static void hrc6000TriggerPrivateCallQSODataDisplay(void)
 
 	hrc.qsoDataTimeout = QSODATA_TIMER_TIMEOUT;
 }
+
+#if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
+/* AES-fix3 C2: «чиста копія» hrc6000SendPcOrTgLCHeader для зрізу в дампі (0x84): ті самі 12 байтів, що пішли б на page 0x02:0x00 у шифрованому
+ * виклику, але БЕЗ запису в SPI і без залежності від dmrAesTxActive() (у момент дампу передачі нема). Це ДУБЛЬ, а не рефакторинг: спільну
+ * функцію не чіпаємо, щоб типова збірка лишалась байт-у-байт стоковою. Змінюєш hrc6000SendPcOrTgLCHeader -- міняй і тут. */
+void hrc6000DiagOursLC(uint8_t lc12[12])
+{
+	lc12[0] = (trxTalkGroupOrPcId >> 24) & 0xFF;
+	lc12[1] = 0x10;            // FID: DMRA / Motorola feature set (як у hrc6000SendPcOrTgLCHeader при dmrAesTxActive())
+	lc12[2] = 0x40;            // SO: encryption
+	lc12[3] = (trxTalkGroupOrPcId >> 16) & 0xFF;
+	lc12[4] = (trxTalkGroupOrPcId >> 8) & 0xFF;
+	lc12[5] = (trxTalkGroupOrPcId >> 0) & 0xFF;
+	lc12[6] = (trxDMRID >> 16) & 0xFF;
+	lc12[7] = (trxDMRID >> 8) & 0xFF;
+	lc12[8] = (trxDMRID >> 0) & 0xFF;
+	lc12[9] = 0x00;
+	lc12[10] = 0x00;
+	lc12[11] = 0x00;
+}
+#endif
 
 static void hrc6000SendPcOrTgLCHeader(void)
 {

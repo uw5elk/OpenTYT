@@ -26,6 +26,7 @@ bool codeplugGetOpenGD77CustomDataBounded(CodeplugCustomDataType_t t, uint8_t *d
 bool codeplugSetOpenGD77CustomData(CodeplugCustomDataType_t t, uint8_t *d, int l) { (void)t; (void)d; (void)l; return false; }
 #ifdef DMR_AES_DIAG_RX
 uint32_t ticksGetMillis(void) { return 0; }
+void hrc6000DiagOursLC(uint8_t lc12[12]) { memset(lc12, 0, 12); }   /* AES-fix3: справжня -- у HR-C6000.c */
 #endif
 
 #define NSF   40                 /* суперфреймів у виклику */
