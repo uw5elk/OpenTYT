@@ -38,6 +38,9 @@ void dmrAesTxStuffMI(uint16_t *b72);               /* stuff Late-Entry MI into p
 int  dmrAesTxActive(void);
 void dmrAesTxEnd(void);
 int  dmrAesTxEmbSb(uint8_t out4[4]);               /* burst-F EMB Late-Entry Single Block (alg/key) */
+void dmrAesTxSkipBurst(void);                      /* AES-fix2: в ефір пішов burst тиші (SILENCE_AUDIO) -- просунути фазу шифрування (з ISR) */
+int  dmrAesRxIsSilence(const uint8_t *blk27, const uint8_t *silence27); /* AES-fix2 B3: блок = канонічна тиша (з маскою біт late entry)? */
+void dmrAesRxSilentBlock(int silent);              /* AES-fix2 B3: codecDecode далі обробляє блок тиші -- не розшифровувати */
 #ifdef DMR_AES_DIAG_PATTERN
 int  dmrAesDiagPattern(uint16_t *b49);             /* DIAGNOSTIC: inject known params, returns 1 */
 #endif
@@ -47,6 +50,7 @@ int  dmrAesDiagConstPattern(uint16_t *b49);        /* DIAGNOSTIC: constant known
 #ifdef DMR_AES_DIAG_RX
 void dmrAesDiagRxMark(uint8_t type);               /* DIAGNOSTIC: log an RX event (3=LCRESET 4=RXEND) */
 void dmrAesDiagLateEntry(uint8_t slotState, uint8_t gatePassed); /* DIAGNOSTIC: chip late-entry int (reg0x82 b4) fired */
+void dmrAesDiagTxBurst(int txSequence, int silent); /* DIAGNOSTIC (AES-fix2): голосовий burst передачі; silent=1 -- пішов SILENCE_AUDIO */
 void dmrAesResetRxDiag(void);                      /* DIAGNOSTIC: clear the RX event ring */
 int  dmrAesGetRxDiag(uint8_t *out, int max);       /* DIAGNOSTIC: snapshot the RX event ring */
 void dmrAesDiagCapArm(void);                       /* DIAGNOSTIC: arm one-superframe raw-burst capture */
@@ -77,5 +81,8 @@ static inline void dmrAesTxStuffMI(uint16_t *b){ (void)b; }
 static inline int  dmrAesTxActive(void){ return 0; }
 static inline void dmrAesTxEnd(void){ }
 static inline int  dmrAesTxEmbSb(uint8_t *o){ (void)o; return 0; }
+static inline void dmrAesTxSkipBurst(void){ }
+static inline int  dmrAesRxIsSilence(const uint8_t *b, const uint8_t *s){ (void)b; (void)s; return 0; }
+static inline void dmrAesRxSilentBlock(int s){ (void)s; }
 #endif
 #endif

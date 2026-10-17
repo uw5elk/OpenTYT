@@ -168,6 +168,46 @@ jobs:
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
 
+  # AES-fix2 (BO1-BO3): ДІАГНОСТИЧНІ збірки на базі aes з діагностикою AES (DMR_AES_DIAG_RX: кільце подій + фаза передачі),
+  # для вимірювання на одній рації в еквівалент (tools/rxdiag.py, рядки «TX-фаза»):
+  #   openuv380-10w-aes-diag-nofix -- AES_TX_PHASE_FIX=0: «ДО фіксу» (зсув фази має показати k=3);
+  #   openuv380-10w-aes-diag-fix   -- фікс увімкнено: «ПІСЛЯ» (k=0).
+  # Діагностика коштує CCM (кільця) -- ці збірки НЕ для користування. continue-on-error: переповнення CCMRAM тут не має
+  # червонити коміт; звіт про пам'ять (крок нижче) покаже, скільки не вистачило.
+  build-aes-diag:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      matrix:
+        variant: ["nofix", "fix"]
+    name: build (aes-diag-${{ matrix.variant }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM GNU toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "14.2.Rel1"
+      - name: Build
+        working-directory: MDUV380_firmware
+        run: |
+          if [ "${{ matrix.variant }}" = "nofix" ]; then FIX=0; else FIX=1; fi
+          make -j$(nproc) ENABLE_AES=1 DMR_AES_DIAG_RX=1 AES_TX_PHASE_FIX=$FIX
+      - name: Report size
+        working-directory: MDUV380_firmware
+        run: arm-none-eabi-size build/openuv380-10w.elf
+      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+        working-directory: MDUV380_firmware
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: openuv380-10w-aes-diag-${{ matrix.variant }}
+          retention-days: 2
+          compression-level: 9
+          path: |
+            MDUV380_firmware/build/*.bin
+            MDUV380_firmware/build/*.hex
+
   # Українська збірка: окрема робота, а не ще один пункт матриці вище, щоб не чіпати
   # наявні перевірки. Дає готовий .bin, який можна прошити з будь-якої ОС -- локальний
   # тулчейн для цього не потрібен (а на Windows/macOS збірка й неможлива: Makefile

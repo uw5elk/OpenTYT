@@ -42,6 +42,13 @@ ifeq ($(AES_TX_MI_CURRENT),1)
 DEFS += -DAES_TX_MI_CURRENT
 endif
 
+# AES-fix2: фаза шифрування TX за ефіром (dmrAesTxSkipBurst). AES_TX_PHASE_FIX=0 ВИМИКАЄ її -- лише для вимірювання
+# «до фіксу» (BO2) в діагностичній збірці; у збірках для користування лишати типове значення 1.
+AES_TX_PHASE_FIX ?= 1
+ifeq ($(AES_TX_PHASE_FIX),0)
+DEFS += -DAES_TX_PHASE_FIX_OFF
+endif
+
 ifeq ($(DMR_AES_DIAG_PATTERN),1)
 DEFS += -DDMR_AES_DIAG_PATTERN
 endif

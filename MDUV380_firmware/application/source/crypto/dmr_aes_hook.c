@@ -104,6 +104,14 @@ static uint32_t      s_txFrameCnt DMR_AES_CCM; /* free-running encoded voice fra
 static int           s_txIvReady DMR_AES_CCM;  /* 0 = generate IV from s_tx.mi on the next encoded frame */
 static uint32_t      s_txNextMi DMR_AES_CCM;   /* LFSR-advanced MI for the next TX superframe */
 static uint8_t       s_txFrag[7][3] DMR_AES_CCM; /* Late-Entry MI fragment nibbles for the call (vc 1..6, cw 0..2) */
+/* AES-fix2: фаза шифрування TX = позиція burst в ЕФІРІ, а не порядок кодування. Коли черга кодувальника порожня (<3 кадрів),
+ * HR-C6000.c шле в ефір SILENCE_AUDIO, який НЕ проходив через dmrAesTxCodecFrame, -- ефірна позиція просунулась на 3 кадри,
+ * лічильник кодувальника ні. dmrAesTxSkipBurst() (ISR) лише рахує такі burst-и; застосовує їх кодувальник на початку наступного
+ * dmrAesTxCodecFrame (див. txApplySkipped). Два лічильники з ОДНИМ записувачем кожен -- гонки немає й без вимкнення переривань:
+ * s_txSkipIsr пише лише ISR, s_txSkipSeen -- лише кодувальник; різниця (mod 256) = ще не врахованих тихих burst-ів. */
+static volatile uint8_t s_txSkipIsr  DMR_AES_CCM;
+static volatile uint8_t s_txSkipSeen DMR_AES_CCM;
+static uint8_t       s_rxSilentBlk DMR_AES_CCM;  /* AES-fix2 B3: 1, поки codecDecode обробляє блок канонічної тиші (розшифровку пропускаємо) */
 
 #ifdef DMR_AES_DIAG_PATTERN
 /* ---- DIAGNOSTIC (compile-time): inject a known bit pattern as the voice params,
@@ -167,6 +175,28 @@ static uint16_t  s_rxdW DMR_AES_CCM;        /* ring write index (free-running) *
 static uint16_t  s_rxdCnt[9] DMR_AES_CCM;   /* per-type aggregate counters (survive ring wrap); [8]=LATEENTRY */
 static uint16_t  s_rxdLe[2] DMR_AES_CCM;    /* [0]=late-entry decode OK, [1]=fail */
 static uint16_t  s_rxdAdopt[3] DMR_AES_CCM; /* AES-fix1: [0]=прийнято «двічі поспіль», [1]=«пропущено один суперфрейм», [2]=розбіжне MI відхилено (лише запам'ятано) */
+/* AES-fix2 B0/B2: діагностика ФАЗИ ПЕРЕДАЧІ. Те, що дає зняти вимірювання на одній рації в еквівалент:
+ *   - скільки burst-ів за передачу пішло SILENCE_AUDIO-гілкою (черга кодувальника < 3 кадрів) при активній шифрованій TX і
+ *     на якому txSequence (і абсолютному номері burst від початку голосу) це трапилось уперше;
+ *   - для перших TXD_FR кадрів: пара «фаза шифрування кадру» (s_txFrameCnt%18 у мить кодування) <-> «позиція кадру в ефірі»
+ *     ((txSequence*3 + індекс кадру в burst)%18). Різниця pos-cnt (mod 18) = зсув k; має бути 0.
+ * Пара пишеться у мить, коли кадр реально йде в ефір (dmrAesDiagTxBurst з HR-C6000.c). */
+#define TXD_FR 24
+static uint16_t  s_txdSilent DMR_AES_CCM;      /* тихих burst-ів (underrun) при dmrAesTxActive() */
+static uint8_t   s_txdFirstSeq DMR_AES_CCM;    /* txSequence першого тихого burst (0xFF = не було) */
+static uint8_t   s_txdFirstBurst DMR_AES_CCM;  /* його абсолютний номер від першого голосового burst (з нуля, насичення 255) */
+static uint16_t  s_txdBursts DMR_AES_CCM;      /* усього голосових burst-ів (тихих і з голосом) */
+static uint16_t  s_txdEncN DMR_AES_CCM;        /* закодовано кадрів */
+static uint16_t  s_txdConsumed DMR_AES_CCM;    /* кадрів, що пішли в ефір (по 3 на burst з голосом) */
+static uint8_t   s_txdEnc[TXD_FR] DMR_AES_CCM; /* (s_txFrameCnt%18) у мить кодування кадру з порядковим номером i */
+static uint16_t  s_txdPair[TXD_FR] DMR_AES_CCM;/* bit15 = є; bits14..8 = фаза шифрування; bits7..0 = позиція в ефірі (%18) */
+static void txdReset(void)
+{
+    s_txdSilent = 0; s_txdFirstSeq = 0xFF; s_txdFirstBurst = 0; s_txdBursts = 0;
+    s_txdEncN = 0; s_txdConsumed = 0;
+    memset(s_txdEnc, 0, sizeof s_txdEnc);
+    memset(s_txdPair, 0, sizeof s_txdPair);
+}
 static uint16_t  s_rxdMisc[3] DMR_AES_CCM;  /* [0]=LC reads, [1]=valid PI parses, [2]=RxBurst calls */
 static uint32_t  s_rxdLastPiMi DMR_AES_CCM; /* PI dedup: last logged PI MI */
 /* Raw-burst capture state (crack the RX late-entry bit layout — see dmrAesGetCapData). */
@@ -200,6 +230,31 @@ void dmrAesDiagLateEntry(uint8_t slotState, uint8_t gatePassed)
     rxd_log(8 /*LATEENTRY*/, (uint8_t)((gatePassed ? 1 : 0) | (s_rxActive ? 2 : 0)),
             (int)slotState, s_rxLastSeq, s_rx.mi, s_rxInitMi);
 }
+/* Викликається з ISR (HR-C6000.c, DMR_STATE_TX_2) на КОЖЕН голосовий burst передачі: silent=1 -- в ефір пішов SILENCE_AUDIO
+ * (черга кодувальника < 3 кадрів), silent=0 -- пішли 3 закодовані кадри. Лише читає s_txdEnc[] (його пише кодувальник
+ * раніше, ніж кадр потрапляє в чергу), тож гонки нема. */
+void dmrAesDiagTxBurst(int txSequence, int silent)
+{
+    if (!s_txActive) { return; }
+    if (silent)
+    {
+        s_txdSilent++;
+        if (s_txdFirstSeq == 0xFF) { s_txdFirstSeq = (uint8_t)txSequence; s_txdFirstBurst = (s_txdBursts > 255) ? 255 : (uint8_t)s_txdBursts; }
+    }
+    else
+    {
+        for (int j = 0; j < 3; j++)
+        {
+            uint32_t e = (uint32_t)s_txdConsumed + (uint32_t)j;
+            if (e < TXD_FR && e < s_txdEncN)
+            {
+                s_txdPair[e] = (uint16_t)(0x8000u | ((uint16_t)s_txdEnc[e] << 8) | (uint16_t)((txSequence * 3 + j) % 18));
+            }
+        }
+        s_txdConsumed = (uint16_t)(s_txdConsumed + 3);
+    }
+    s_txdBursts++;
+}
 void dmrAesResetRxDiag(void)
 {
     memset(s_rxd, 0, sizeof s_rxd);
@@ -208,6 +263,7 @@ void dmrAesResetRxDiag(void)
     memset(s_rxdLe, 0, sizeof s_rxdLe);
     memset(s_rxdMisc, 0, sizeof s_rxdMisc);
     memset(s_rxdAdopt, 0, sizeof s_rxdAdopt);
+    txdReset();
     s_capState = 0; s_capN = 0;
     memset(s_capBuf, 0, sizeof s_capBuf);   /* R12: CCM при старті сміття -- знімок читає dmrAesGetCapData() */
     memset(s_capSeq, 0, sizeof s_capSeq);
@@ -222,7 +278,7 @@ void dmrAesResetRxDiag(void)
  *  потім хвіст out[3] байт (AES-fix1, див. нижче). */
 int dmrAesGetRxDiag(uint8_t *out, int max)
 {
-    int hdr = 32, body = (int)sizeof s_rxd, trl = 8, n = hdr + body + trl;
+    int hdr = 32, body = (int)sizeof s_rxd, trl = 8 + 10 + 2 * TXD_FR, n = hdr + body + trl;
     if (n > max) { return 0; }
     memset(out, 0, hdr);
     out[0] = 0xA5; out[1] = RXD_RING; out[2] = (uint8_t)sizeof(rxd_evt_t);
@@ -239,6 +295,17 @@ int dmrAesGetRxDiag(uint8_t *out, int max)
     for (int i = 0; i < 3; i++) { out[hdr + body + i * 2] = (uint8_t)(s_rxdAdopt[i] & 0xFF); out[hdr + body + i * 2 + 1] = (uint8_t)(s_rxdAdopt[i] >> 8); }
     out[hdr + body + 6] = (uint8_t)s_rxMiFlags;
     out[hdr + body + 7] = 0;
+    /* AES-fix2: TX-фаза (хвіст довшає; старі читачі беруть лише перші 8 байтів). Далі, з зсуву 8 хвоста:
+     * [8..9] тихих burst-ів, [10] txSequence першого тихого (0xFF = нема), [11] його абсолютний № burst,
+     * [12..13] усього голосових burst-ів, [14..15] закодовано кадрів, [16..17] кадрів, що пішли в ефір,
+     * далі TXD_FR слів (LE): bit15 = є, bits14..8 = фаза шифрування, bits7..0 = позиція в ефірі (%18) */
+    uint8_t *t = out + hdr + body + 8;
+    t[0] = (uint8_t)(s_txdSilent & 0xFF);   t[1] = (uint8_t)(s_txdSilent >> 8);
+    t[2] = s_txdFirstSeq;                   t[3] = s_txdFirstBurst;
+    t[4] = (uint8_t)(s_txdBursts & 0xFF);   t[5] = (uint8_t)(s_txdBursts >> 8);
+    t[6] = (uint8_t)(s_txdEncN & 0xFF);     t[7] = (uint8_t)(s_txdEncN >> 8);
+    t[8] = (uint8_t)(s_txdConsumed & 0xFF); t[9] = (uint8_t)(s_txdConsumed >> 8);
+    for (int i = 0; i < TXD_FR; i++) { t[10 + i * 2] = (uint8_t)(s_txdPair[i] & 0xFF); t[11 + i * 2] = (uint8_t)(s_txdPair[i] >> 8); }
     return n;
 }
 
@@ -301,6 +368,9 @@ void dmrAesInit(void)
     s_txIvReady = 0;
     s_txNextMi = 0;
     memset(s_txFrag, 0, sizeof s_txFrag);
+    s_txSkipIsr = 0;
+    s_txSkipSeen = 0;
+    s_rxSilentBlk = 0;
 #ifdef DMR_AES_DIAG_PATTERN
     s_diagCtr = 0;
 #endif
@@ -845,8 +915,23 @@ void dmrAesRxLateEntry(int seq, const uint8_t *ambe27)
 void dmrAesRxCodecFrame(uint16_t *b49, int idxInBurst)
 {
     if (!s_rxActive || !s_rxBurstEnc) { return; }
+    if (s_rxSilentBlk) { return; }   /* AES-fix2 B3: канонічна тиша йде незашифрованою; фаза RX прив'язана до seq, а не до лічильника, тож нічого не збивається */
     dmr_aes_voice_frame(&s_rx, b49, s_rxBurstBase + (size_t)idxInBurst * 56);
 }
+/* AES-fix2 B3: чи є 27-байтний блок прийнятого AMBE канонічною тишею (silence27 -- той самий SILENCE_AUDIO, що його шле
+ * HR-C6000.c; своєї копії тут нема). Порівняння з маскою на 4 біти late entry кожного кодового слова (OTA-біти 71/67/63/59 =
+ * c[8]&0x11 та c[7]&0x11): стокова може класти туди шматки MI навіть у тихий кадр, і тоді точний збіг байтів не спрацював би. */
+int dmrAesRxIsSilence(const uint8_t *blk27, const uint8_t *silence27)
+{
+    for (int i = 0; i < DMR_AMBE_BURST; i++)
+    {
+        uint8_t m = ((i % 9) == 7 || (i % 9) == 8) ? 0xEEu : 0xFFu;
+        if ((blk27[i] & m) != (silence27[i] & m)) { return 0; }
+    }
+    return 1;
+}
+/* Виставляється HR-C6000.c перед codecDecode блоку й знімається одразу після нього (той самий потік, ISR сюди не пише). */
+void dmrAesRxSilentBlock(int silent) { s_rxSilentBlk = silent ? 1 : 0; }
 void dmrAesRxEnd(void) { s_rxActive = 0; s_rxBurstEnc = 0; s_rxPendValid = 0; }
 /* 1, поки триває розшифрування поточного виклику (дзеркально до s_txActive/dmrAesTxActive).
  * Лише для UI: menuAESKeys/uiUtilities опитують це, щоб показати живу позначку "виклик зашифровано". */
@@ -874,12 +959,10 @@ void dmrAesTxStart(uint8_t keyId, uint32_t miSeed)
     s_txFrameCnt = 0;
     s_txIvReady = 0;
     memset(s_txFrag, 0, sizeof s_txFrag);  /* built per-superframe in dmrAesTxCodecFrame (conveys the NEXT MI) */
-}
-int dmrAesTxBuildPI(uint8_t *piOut7)   /* build PI header LC to emit at call start / late entry */
-{
-    if (!s_txActive) { return 0; }
-    dmr_pi_build(DMR_ALG_AES256, s_tx.key_id, s_txPiMi, piOut7);
-    return 7;
+    s_txSkipSeen = s_txSkipIsr;            /* AES-fix2: тихі burst-и до цього виклику не рахуються */
+#ifdef DMR_AES_DIAG_RX
+    txdReset();
+#endif
 }
 /* AES-fix1 A2: який MI передавати у late entry. Типово (як було) -- MI НАСТУПНОГО суперфрейму
  * (look-ahead, s_txNextMi). З -DAES_TX_MI_CURRENT -- MI ПОТОЧНОГО суперфрейму (s_tx.mi): збірка-кандидат
@@ -890,6 +973,61 @@ int dmrAesTxBuildPI(uint8_t *piOut7)   /* build PI header LC to emit at call sta
 #else
 #define TX_CONVEY_MI (s_txNextMi)
 #endif
+/* AES-fix2 B1: у ефір пішов burst тиші (SILENCE_AUDIO), якого кодувальник не шифрував, -- ефірна позиція просунулась на 3 кадри
+ * ключового потоку, а s_txFrameCnt ні. Викликається З ISR (HR-C6000.c, DMR_STATE_TX_2, гілка «черга < 3 кадрів») лише при
+ * активній шифрованій передачі. Тут тільки лічильник: самі s_txFrameCnt/MI/s_txFrag належать кодувальнику (інша задача), і
+ * зміна їх з ISR посеред dmrAesTxCodecFrame..dmrAesTxStuffMI зіпсувала б (vc,cw) кадру, що саме кодується. Застосовує
+ * зібране txApplySkipped() на початку наступного dmrAesTxCodecFrame.
+ *
+ * ЧОМУ це безпечно для наступних кадрів, а не для всіх: «<3 кадрів у черзі» -- не те саме, що «черга порожня». Якщо там лишилось
+ * 1-2 вже зашифровані кадри, вони за правилом черги підуть у НАСТУПНИЙ burst, тобто на 3 кадри пізніше, ніж їхня фаза шифрування
+ * (їх уже не перешифрувати: відкритого тексту нема) -- це до двох кадрів (<= 40 мс) на кожен underrun. Усі кадри, що кодуються
+ * ПІСЛЯ цього виклику, дістають фазу з урахуванням тихого burst-а й лягають в ефір правильно. Нічого тут «не спрощувати»:
+ * прибрати цей виклик -- це повернути зсув на 3 кадри на КОЖЕН PTT (перший голосовий burst майже завжди тиша). */
+void dmrAesTxSkipBurst(void)
+{
+#ifndef AES_TX_PHASE_FIX_OFF   /* лише для вимірювання «до фіксу» (BO2): збірка з -DAES_TX_PHASE_FIX_OFF поводиться як раніше */
+    if (!s_txActive) { return; }
+    s_txSkipIsr = (uint8_t)(s_txSkipIsr + 1u);
+#endif
+}
+/* Застосувати накопичені тихі burst-и (по 3 кадри кожен): s_txFrameCnt += 3*k, і якщо при цьому пройдено межу(і) 18 кадрів --
+ * просунути MI рівно стільки разів, скільки меж пропущено (рівно те, що dmrAesTxCodecFrame робить на межі). Викликається лише
+ * з dmrAesTxCodecFrame, тобто з контексту кодувальника. */
+static void txApplySkipped(uint32_t frames)
+{
+    uint32_t old = s_txFrameCnt, nw = old + frames;
+    s_txFrameCnt = nw;
+    if (!s_txIvReady || old == 0)
+    {
+        /* жоден кадр ще не кодувався: перший dmrAesTxCodecFrame візьме IV від s_tx.mi -- тож це має бути MI суперфрейму
+         * нового кадру. s_tx.mi зараз = MI суперфрейму old/18 (на старті old=0 -> початковий MI з PI), тому кроків
+         * рівно nw/18 - old/18 (кілька викликів поспіль не задвоюють кроки) */
+        for (uint32_t n = nw / 18 - old / 18; n > 0; n--)
+        {
+            uint8_t iv[16]; uint32_t nx;
+            dmr_lfsr128d(s_tx.mi, iv, &nx);
+            s_tx.mi = nx;
+        }
+        return;
+    }
+    /* s_tx.mi -- MI суперфрейму останнього закодованого кадру (old-1). Перед кодуванням кадру nw потрібен MI суперфрейму кадру
+     * nw-1: кадр nw, якщо nw%18==0, сам зробить крок на межі. Кадр на межі, який ми перестрибнули, самого кроку не зробить. */
+    uint32_t steps = (nw - 1) / 18 - (old - 1) / 18;
+    if (steps == 0) { return; }
+    for (; steps > 0; steps--)
+    {
+        s_tx.mi = s_txNextMi;
+        dmr_lfsr128d(s_tx.mi, s_tx.iv, &s_txNextMi);
+    }
+    dmr_le_mi_build(TX_CONVEY_MI, s_txFrag);
+}
+int dmrAesTxBuildPI(uint8_t *piOut7)   /* build PI header LC to emit at call start / late entry */
+{
+    if (!s_txActive) { return 0; }
+    dmr_pi_build(DMR_ALG_AES256, s_tx.key_id, s_txPiMi, piOut7);
+    return 7;
+}
 /* Encrypt one encoded voice frame's 49 AMBE params in place, during codecEncodeBlock
  * (after AMBE_ENCODE, before AMBE_ENCODE_ECC). The encode order equals the transmit
  * order, so a free-running frame counter gives the superframe position: IV=lfsr(MI),
@@ -898,6 +1036,11 @@ int dmrAesTxBuildPI(uint8_t *piOut7)   /* build PI header LC to emit at call sta
 void dmrAesTxCodecFrame(uint16_t *b49)
 {
     if (!s_txActive) { return; }
+    {   /* AES-fix2: врахувати тихі burst-и, що пішли в ефір, поки ми кодували (див. dmrAesTxSkipBurst) */
+        uint8_t isr = s_txSkipIsr;
+        uint8_t d = (uint8_t)(isr - s_txSkipSeen);
+        if (d != 0) { s_txSkipSeen = isr; txApplySkipped(3u * (uint32_t)d); }
+    }
     if (!s_txIvReady)
     {
         dmr_lfsr128d(s_tx.mi, s_tx.iv, &s_txNextMi);
@@ -918,6 +1061,10 @@ void dmrAesTxCodecFrame(uint16_t *b49)
         dmr_lfsr128d(s_tx.mi, s_tx.iv, &s_txNextMi);
         dmr_le_mi_build(TX_CONVEY_MI, s_txFrag);   /* look-ahead: MI наступного суперфрейму; AES_TX_MI_CURRENT: поточного */
     }
+#ifdef DMR_AES_DIAG_RX
+    if (s_txdEncN < TXD_FR) { s_txdEnc[s_txdEncN] = (uint8_t)(s_txFrameCnt % 18); }
+    s_txdEncN++;
+#endif
     dmr_aes_voice_frame(&s_tx, b49, (size_t)(s_txFrameCnt % 18) * 56);
     s_txFrameCnt++;
 }

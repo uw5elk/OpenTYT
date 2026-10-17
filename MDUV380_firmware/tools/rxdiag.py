@@ -16,6 +16,9 @@ Usage (Windows, the CDC enumerates as COM4):
   python rxdiag.py --reset            # clear the ring before a test run
   python rxdiag.py                    # dump + decode the ring
   python rxdiag.py --port COM4
+
+AES-fix2: той самий дамп містить і ФАЗУ ПЕРЕДАЧІ (збірка DMR_AES_DIAG_RX=1): передай ~10 с, після передачі (CPS-режим
+не потрібен) запусти `python rxdiag.py` -- рядки «TX-фаза» і «TX-зсув k». Скинути перед передачею: `python rxdiag.py --reset`.
 """
 import argparse, struct, sys, time
 try:
@@ -84,6 +87,25 @@ def main():
         fl = tail[6]
         print(f"resync MI: прийнято «двічі поспіль»={tw}  «пропущено один суперфрейм»={tm}  відхилено={tr}   "
               f"прапорці: PI-якір={fl & 1} конвенція={'ПОТОЧНИЙ' if fl & 2 else 'наступний'} підтверджена={(fl >> 2) & 1}")
+    if trl >= 18 and len(tail) >= 18:   # AES-fix2: фаза ПЕРЕДАЧІ (B0/B2)
+        silent, = struct.unpack_from("<H", tail, 8)
+        firstSeq, firstBurst = tail[10], tail[11]
+        bursts, encN, consumed = struct.unpack_from("<3H", tail, 12)
+        print(f"TX-фаза: тихих burst-ів (SILENCE_AUDIO при активній шифрованій передачі)={silent}  "
+              + ("перший: ЖОДНОГО" if firstSeq == 0xFF else f"перший на txSequence={firstSeq} (burst №{firstBurst} від початку голосу)")
+              + f"  голосових burst-ів усього={bursts}  закодовано кадрів={encN}  пішло в ефір кадрів={consumed}")
+        pairs = []
+        for i in range((len(tail) - 18) // 2):
+            w, = struct.unpack_from("<H", tail, 18 + 2 * i)
+            if w & 0x8000:
+                pairs.append((i, (w >> 8) & 0x7F, w & 0xFF))
+        if pairs:
+            ks = [(pos - cnt) % 18 for _, cnt, pos in pairs]
+            print("TX-фаза, кадр: (фаза шифрування -> позиція в ефірі, зсув k):  "
+                  + "  ".join(f"{i}:{cnt}->{pos} k={(pos - cnt) % 18}" for i, cnt, pos in pairs))
+            print("TX-зсув k: " + ", ".join(f"k={k}: {ks.count(k)} кадрів" for k in sorted(set(ks))) + "   (після фіксу всі k=0, крім <=2 кадрів у черзі на момент тихого burst)")
+        else:
+            print("TX-фаза: пар кадрів ще нема (передачі не було, або дамп знято до першого голосового burst)")
     print("-" * 90)
     print(" # |   ts   dT | type   | seq last | mi        leMi      | flags")
     print("-" * 90)

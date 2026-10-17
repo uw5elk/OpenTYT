@@ -2111,6 +2111,9 @@ void hrc6000TimeslotInterruptHandler(void)
 					if (hrc.ambeBufferCount >= NUM_AMBE_BLOCK_PER_DMR_FRAME)
 					{
 						dmrAesTxVoice((uint8_t *)hrc.deferredUpdateBufferOutPtr, hrc.txSequence); // AES TX encrypt
+#if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
+						dmrAesDiagTxBurst(hrc.txSequence, 0); // AES-fix2: діагностика фази передачі -- burst із голосом
+#endif
 						SPI1WritePageRegByteArray(0x03, 0x00, (uint8_t*)hrc.deferredUpdateBufferOutPtr, AMBE_AUDIO_LENGTH);// send the audio bytes to the hardware
 						hrc.deferredUpdateBufferOutPtr += AMBE_AUDIO_LENGTH;
 
@@ -2123,6 +2126,17 @@ void hrc6000TimeslotInterruptHandler(void)
 					else
 					{
 						SPI1WritePageRegByteArray(0x03, 0x00, SILENCE_AUDIO, AMBE_AUDIO_LENGTH); // send the audio bytes to the hardware
+#ifdef ENABLE_AES
+						// AES-fix2: черга кодувальника < 3 кадрів -- в ефір пішла тиша, яку dmrAesTxCodecFrame() не шифрував.
+						// Ефірна позиція просунулась на 3 кадри, лічильник шифрування -- ні: кажемо йому (див. dmr_aes_hook.c).
+						if (dmrAesTxActive())
+						{
+#ifdef DMR_AES_DIAG_RX
+							dmrAesDiagTxBurst(hrc.txSequence, 1);
+#endif
+							dmrAesTxSkipBurst();
+						}
+#endif
 					}
 				}
 			}
@@ -3020,7 +3034,17 @@ static void hrc6000Tick(void)
 									(dmrAesRxActive() != 0), ticksGetMillis());
 						}
 #endif
+#ifdef ENABLE_AES
+						{
+							// AES-fix2 B3: канонічну тишу (в т.ч. вставлену нами самими при збої) не розшифровувати -- інакше на паузі шум.
+							const uint8_t *aesBlk = (const uint8_t *)((hrc.hasAbnormalExit || hrc.insertSilenceFrame) ? SILENCE_AUDIO : (DMR_frame_buffer + LC_DATA_LENGTH));
+							dmrAesRxSilentBlock(dmrAesRxActive() && dmrAesRxIsSilence(aesBlk, SILENCE_AUDIO));
+							codecDecode((uint8_t *)aesBlk, 3);
+							dmrAesRxSilentBlock(0);
+						}
+#else
 						codecDecode((uint8_t *)((hrc.hasAbnormalExit || hrc.insertSilenceFrame) ? SILENCE_AUDIO : (DMR_frame_buffer + LC_DATA_LENGTH)), 3);
+#endif
 					}
 				}
 
