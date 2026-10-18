@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Залежності python (Pillow для рендерера екрана + tools/requirements.txt)
-        run: pip install pillow -r MDUV380_firmware/tools/requirements.txt
+        run: pip install pillow numpy -r MDUV380_firmware/tools/requirements.txt
       - name: Синтаксична перевірка хостовим gcc
         run: ./MDUV380_firmware/tools/syntax_check.sh
       - name: Ширина підписів меню
