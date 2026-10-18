@@ -1780,6 +1780,22 @@ static void cpsHandleCommand(void)
 				replyLength = n + 3;
 				return;
 			}
+		case 0x87: // DIAGNOSTIC (AES-fix6): дамп лічильників і кілець PI-burst-ів -> [cmd, len_hi, len_lo, data...]
+			{
+				int n = dmrAesGetPiDiag((uint8_t *)&usbComSendBuf[3], COM_BUFFER_SIZE - 3);
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = (n >> 8) & 0xFF;
+				usbComSendBuf[2] = n & 0xFF;
+				hasToReply = true;
+				replyLength = n + 3;
+				return;
+			}
+		case 0xB6: // DIAGNOSTIC (AES-fix6): режим G2 (0 вимкнено, 1 PI-гілка, 2 + dataType 0 з невалідним CRC), [2]=режим
+			dmrAesDiagPiSetMode((uint8_t)com_requestbuffer[2]);
+			usbComSendBuf[0] = com_requestbuffer[0];
+			hasToReply = true;
+			replyLength = 1;
+			return;
 #endif
 #endif
 #if defined(ENABLE_DMR_DATA)

@@ -56,6 +56,10 @@ def main():
     ap.add_argument("--port", default=None)
     ap.add_argument("--reset", action="store_true", help="clear/arm the ring, then exit")
     ap.add_argument("--arm", action="store_true", help="AES-fix4: озброїти захоплення сирих burst-ів (AES-fix5: 24 = чотири суперфрейми) (старт на наступному seq 1), вийти")
+    ap.add_argument("--pi", action="store_true", help="AES-fix6 G1: лише розділ «PI-burst-и і стоковий фільтр» (USB 0x87), вийти")
+    ap.add_argument("--pi-early", type=int, choices=(0, 1, 2), default=None, metavar="РЕЖИМ",
+                    help="AES-fix6 G2: 0 вимкнено (типово після перезавантаження), 1 віддавати LC burst-ів, відкинутих гілкою PI, у dmrAesRxPI, "
+                         "2 = 1 + dataType 0 з невалідним апаратним CRC (додаткова гіпотеза), вийти")
     ap.add_argument("--cap", action="store_true", help="AES-fix4: надрукувати захоплення: рядок `seq=<n> <27 байтів hex>` на burst (для le_bitsearch.py)")
     args = ap.parse_args()
 
@@ -78,6 +82,16 @@ def main():
         print("захоплення озброєно:", ser.read(8), "-- тепер прийми шифровану передачу ~10 с, потім `rxdiag.py --cap`")
         return
 
+    if args.pi_early is not None:
+        ser.reset_input_buffer()
+        ser.write(bytes([ord("C"), 0xB6, args.pi_early])); ser.flush(); time.sleep(0.15)
+        print("режим G2 встановлено: %d (%r) -- скидається в 0 після перезавантаження" % (args.pi_early, ser.read(8)))
+        return
+
+    if args.pi:
+        sys.stdout.write(read_pi(ser))
+        return
+
     if args.cap:
         ser.reset_input_buffer()
         ser.write(bytes([ord("C"), 0x89])); ser.flush(); time.sleep(0.25)
@@ -98,6 +112,60 @@ def main():
     if len(data) < 24 or data[0] != 0xA5:
         sys.exit("bad diag header (len=%d): %r" % (len(data), data[:8]))
     print_dump(data, port)
+    print(read_pi(ser), end="")
+
+
+def read_pi(ser):
+    """AES-fix6 G1.3: запитати USB 0x87 і оформити окремим розділом. Стара збірка (без 0x87) -> одне пояснювальне речення."""
+    ser.reset_input_buffer()
+    ser.write(bytes([ord("C"), 0x87])); ser.flush(); time.sleep(0.25)
+    r = ser.read(4096)
+    if len(r) < 3 or r[0] != ord("C"):
+        return "\n== PI-burst-и і стоковий фільтр (AES-fix6) ==\nпрошивка не відповіла на 0x87 (стара збірка без AES-fix6?): %r\n" % r[:8]
+    n = (r[1] << 8) | r[2]
+    return format_pi(r[3:3 + n])
+
+
+PIC_NAMES = ["усього data-переривань (не TX)", "сирий privacy-біт reg 0x51 bit3 = 1", "  з них обнулено перекриттям «ключ завантажено»",
+             "фільтр відкинув (у RX_1/RX_2)", "  G1.2: гілка PI спрацювала (будь-яка причина)", "  G1.2: ...причина ЛИШЕ PI (CRC і колір-код ок)",
+             "  невалідний апаратний CRC", "  колір-код не збігся", "data-sync dataType 0 (кандидат PI Header) побачено",
+             "  з них відкинуто фільтром", "G2 режим 1: віддано в dmrAesRxPI", "G2 режим 2: dataType 0 з невалідним CRC віддано в dmrAesRxPI"]
+
+
+def format_pi(data):
+    """AES-fix6 G1.3: дамп USB 0x87 -> текст. [0]=0xB6 [1]=версія [2]=режим G2 [3]=ключ завантажено [4]=PIF_N [5]=sizeof(pif_t)=18 [6],[7]=W кілець,
+    далі 12 x u16 LE лічильників, далі 2 x PIF_N x 18 байтів (порядок кільця). Лише факти -- висновок про гіпотезу тут НЕ робиться."""
+    out = ["\n== PI-burst-и і стоковий фільтр (AES-fix6) ==\n"]
+    if len(data) < 8 or data[0] != 0xB6:
+        return out[0] + "дамп не розпізнано (довжина %d)\n" % len(data)
+    mode, key, pn, rec, w0, w1 = data[2], data[3], data[4], data[5], data[6], data[7]
+    ncnt = 12
+    need = 8 + ncnt * 2 + 2 * pn * rec
+    if rec != 18 or len(data) < need:
+        return out[0] + "дамп обірвано або інший формат (rec=%d, довжина %d, треба %d)\n" % (rec, len(data), need)
+    cnt = struct.unpack_from("<%dH" % ncnt, data, 8)
+    out.append("ключ завантажено: %s   режим G2: %d (%s)\n" % ("ТАК (rxPrivacyIndicator у стокового фільтра примусово 0)" if key else "ні",
+               mode, ["вимкнено, чистий замір", "PI-гілка -> dmrAesRxPI", "PI-гілка + dataType 0 з невалідним CRC -> dmrAesRxPI"][mode]))
+    for i in range(ncnt):
+        out.append("  %-62s %6d\n" % (PIC_NAMES[i], cnt[i]))
+    base = 8 + ncnt * 2
+    for ring, name, w in ((0, "кільце 0: burst-и з СИРИМ privacy-бітом", w0), (1, "кільце 1: data-sync dataType 0", w1)):
+        out.append("%s (усього записано %d, у кільці %d)\n" % (name, w, min(w, pn)))
+        if w == 0:
+            out.append("  порожньо\n")
+            continue
+        ents = []
+        for i in range(pn):
+            ents.append(data[base + (ring * pn + i) * rec: base + (ring * pn + i + 1) * rec])
+        order = list(range(w % pn, pn)) + list(range(0, w % pn)) if w >= pn else list(range(0, w))
+        for i in order:
+            e = ents[i]
+            dt, fl, slot = e[0], e[1], e[2]
+            ts = e[4] | (e[5] << 8)
+            out.append("  dT=%2d sc=%d slot=%s rawPI=%d eff=%d CRC=%s CC=%s drop=%d fed=%d t=%5d  %s\n" % (
+                dt, fl & 3, SLOTSTATE.get(slot, slot), (fl >> 2) & 1, (fl >> 6) & 1, "ok" if fl & 8 else "BAD", "ok" if fl & 16 else "BAD",
+                (fl >> 5) & 1, (fl >> 7) & 1, ts, hx(e[6:18])))
+    return "".join(out)
 
 
 CAP_STATE = {0: "не озброєно", 1: "озброєно, чекає seq 1", 2: "іде", 3: "ГОТОВО"}

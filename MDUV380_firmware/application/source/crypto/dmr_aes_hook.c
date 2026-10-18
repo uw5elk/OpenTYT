@@ -258,6 +258,35 @@ void dmrAesDiagTxBurst(int txSequence, int silent)
     }
     s_txdBursts++;
 }
+/* ---- AES-fix6 G1/G2: оголошення (логіка й опис -- нижче, у блоці після dmrAesGetCapData) ---- */
+#define PIFC_INTS 0          /* усього data-переривань (не TX), що дійшли до фільтра */
+#define PIFC_RAWPI 1         /* сирий reg 0x51 bit3 = 1 (ДО перекриття ключем) */
+#define PIFC_CLEARED 2       /* з них обнулено перекриттям «ключ завантажено» */
+#define PIFC_DROP 3          /* фільтр відкинув (RX_1/RX_2 і PI або !CRC або !колір-код) */
+#define PIFC_DROP_PI 4       /* G1.2: з них гілка PI спрацювала (незалежно від CRC/колір-коду) */
+#define PIFC_DROP_PI_ONLY 5  /* G1.2: ...а CRC і колір-код були в нормі, тобто причина ЛИШЕ PI */
+#define PIFC_DROP_CRC 6      /* апаратний CRC невалідний (у RX_1/RX_2) */
+#define PIFC_DROP_CC 7       /* колір-код не збігся (у RX_1/RX_2) */
+#define PIFC_DT0 8           /* data-sync dataType 0 (кандидат PI Header) побачено */
+#define PIFC_DT0_DROP 9      /* ...з них відкинуто фільтром */
+#define PIFC_FED_PI 10       /* G2 режим 1: віддано в dmrAesRxPI() */
+#define PIFC_FED_DT0 11      /* G2 режим 2: dataType 0 з невалідним CRC віддано в dmrAesRxPI() */
+#define PIF_CNT_N 12
+#define PIF_N 4
+typedef struct {            /* 18 байтів */
+    uint8_t  dt;
+    uint8_t  flags;         /* PIF_F_* */
+    uint8_t  slot;          /* slotState на момент burst-а */
+    uint8_t  pad;
+    uint16_t ts;            /* ticksGetMillis() & 0xFFFF */
+    uint8_t  lc[12];
+} pif_t;
+_Static_assert(sizeof(pif_t) == 18, "AES-fix6: pif_t size");
+static pif_t    s_pif[2][PIF_N] DMR_AES_CCM;
+static uint8_t  s_pifW[2] DMR_AES_CCM;
+static uint16_t s_pifCnt[PIF_CNT_N] DMR_AES_CCM;
+static uint8_t  s_pifMode DMR_AES_CCM;     /* CCM-INIT(dmrAesInit): 0 лише замір, 1 / 2 -- G2 */
+
 /* ---- AES-fix3 C1: СИРІ байти LC/EMB, які реально віддає чип (лише вимірювання, без зміни поведінки) -------------------------
  * Мета -- порівняти з ефіром стокової рації те, що її TX (FID/SO у Voice LC, PI-заголовок, EMB Single Block burst F) НЕСЕ насправді,
  * з тим, що надсилаємо ми. Тут -- сторона прийому: кільце останніх відмінних CRC-валідних LC (12 байтів page 0x02:0x00..0x0B) і
@@ -340,6 +369,7 @@ void dmrAesResetRxDiag(void)
     memset(s_rlc, 0, sizeof s_rlc); memset(s_embr, 0, sizeof s_embr);
     s_rlcW = 0; s_embrW = 0; s_rlcSeen = 0; s_rlcDup = 0; s_embrReads = 0; s_embrDup = 0;
     s_rawDt = 0; s_rawSc = 0; s_rawPi = 0;
+    memset(s_pif, 0, sizeof s_pif); memset(s_pifW, 0, sizeof s_pifW); memset(s_pifCnt, 0, sizeof s_pifCnt);   /* AES-fix6: режим G2 (s_pifMode) цим НЕ скидається */
     s_capState = 0; s_capN = 0; s_capRestart = 0;
     memset(s_capBuf, 0, sizeof s_capBuf);   /* R12: CCM при старті сміття -- знімок читає dmrAesGetCapData() */
     memset(s_capSeq, 0, sizeof s_capSeq);
@@ -432,6 +462,74 @@ int dmrAesGetCapData(uint8_t *out, int max)
     for (i = 0; i < CAP_BURSTS; i++) { memcpy(out + o, s_capBuf[i], 27); o += 27; }
     return o;
 }
+
+/* ---- AES-fix6 G1/G2: чи відкидаємо ми заголовок PI власним фільтром (HR-C6000.c, hrc6000SysReceivedDataInt) ------------------
+ * ГІПОТЕЗА (прочитано з коду, не виміряно): при slotState RX_1/RX_2 фільтр `rxPrivacyIndicator || !CRC || !колір-код` робить return ДО
+ * hrc6000HandleLCData(), звідки dmrAesRxPI() отримує MI. УВАГА: у збірці із завантаженим ключем (dmr_aes_first_keyid() >= 0) HR-C6000.c
+ * ОБНУЛЯЄ rxPrivacyIndicator ще до фільтра -- тож гілка «PI» тоді не спрацьовує взагалі, а колишній замір «PI=0 на всіх LC» був знятий ПІСЛЯ
+ * обнулення і про сирий біт нічого не казав. Тому тут рахується і сирий біт (reg 0x51 bit3), і реальна причина відкидання (PI/CRC/колір-код).
+ * G1 -- лише вимірювання: лічильники + два кільця по PIF_N burst-ів із сирими 12 байтами page 0x02:
+ *   кільце 0 -- burst-и з СИРИМ privacy-бітом (будь-який тип), кільце 1 -- burst-и data-sync з dataType 0 (кандидати в PI Header) незалежно від біта.
+ * G2 -- ЛИШЕ за явним режимом (USB 0xB6, типово 0 = вимкнено; після перезавантаження знову 0), щоб один і той самий прошитий файл давав і чистий замір, і фікс:
+ *   режим 1: burst, відкинутий гілкою PI (CRC і колір-код у нормі) -> LC у dmrAesRxPI();
+ *   режим 2: те саме + data-sync dataType 0, відкинутий через НЕВАЛІДНИЙ апаратний CRC (колір-код у нормі) -- ДОДАТКОВА гіпотеза, поза початковим брифом.
+ * Фільтр і все інше (QSO-дані, SMS, індикація) не змінюються: з відкинутого burst-а береться лише LC для розбору PI. */
+
+int dmrAesDiagPiClassify(uint8_t dt, uint8_t sc, uint8_t rx, uint8_t piRaw, uint8_t piEff, uint8_t crcOk, uint8_t ccOk)
+{
+    int fl;
+    uint8_t dt0 = (uint8_t)((sc == 2) && (dt == 0));   /* data-sync, dataType 0 = PI Header */
+    uint8_t drop = (uint8_t)(rx && (piEff || !crcOk || !ccOk));
+    s_pifCnt[PIFC_INTS]++;
+    if (piRaw)                { s_pifCnt[PIFC_RAWPI]++; }
+    if (piRaw && !piEff)      { s_pifCnt[PIFC_CLEARED]++; }
+    if (drop)                 { s_pifCnt[PIFC_DROP]++; }
+    if (rx && piEff)          { s_pifCnt[PIFC_DROP_PI]++; if (crcOk && ccOk) { s_pifCnt[PIFC_DROP_PI_ONLY]++; } }
+    if (rx && !crcOk)         { s_pifCnt[PIFC_DROP_CRC]++; }
+    if (rx && !ccOk)          { s_pifCnt[PIFC_DROP_CC]++; }
+    if (dt0)                  { s_pifCnt[PIFC_DT0]++; if (drop) { s_pifCnt[PIFC_DT0_DROP]++; } }
+    /* прапорці запису (pif_t.flags): 0..1 syncClass, 2 сирий privacy-біт, 3 CRC OK, 4 колір-код OK, 5 фільтр відкинув, 6 PI після перекриття ключем, 7 віддано в dmrAesRxPI */
+    fl = (sc & 3) | (piRaw ? 0x04 : 0) | (crcOk ? 0x08 : 0) | (ccOk ? 0x10 : 0) | (drop ? 0x20 : 0) | (piEff ? 0x40 : 0);
+    if (piRaw || dt0)
+    {
+        fl |= PIF_LOG;
+        if ((s_pifMode >= 1) && rx && piEff && crcOk && ccOk) { fl |= PIF_FEED_PI; }
+        else if ((s_pifMode >= 2) && rx && dt0 && !crcOk && ccOk) { fl |= PIF_FEED_DT0; }
+    }
+    return fl;
+}
+/* fl -- результат dmrAesDiagPiClassify; викликати лише коли PIF_LOG, після вдалого читання LC. */
+void dmrAesDiagPiLog(int fl, uint8_t dt, uint8_t slot, const uint8_t *lc12)
+{
+    uint16_t ts = (uint16_t)(ticksGetMillis() & 0xFFFF);
+    uint8_t flags = (uint8_t)(fl & 0x7F);
+    if (fl & PIF_FEED_PI)  { s_pifCnt[PIFC_FED_PI]++;  flags |= 0x80; }
+    if (fl & PIF_FEED_DT0) { s_pifCnt[PIFC_FED_DT0]++; flags |= 0x80; }
+    for (int r = 0; r < 2; r++)
+    {
+        /* кільце 0 -- сирий privacy-біт; кільце 1 -- data-sync (syncClass 2) з dataType 0 */
+        if ((r == 0) ? ((fl & 0x04) != 0) : (((fl & 3) == 2) && (dt == 0)))
+        {
+            pif_t *e = &s_pif[r][s_pifW[r] % PIF_N];
+            e->dt = dt; e->flags = flags; e->slot = slot; e->pad = 0; e->ts = ts;
+            memcpy(e->lc, lc12, 12);
+            s_pifW[r]++;
+        }
+    }
+}
+void dmrAesDiagPiSetMode(uint8_t m) { s_pifMode = (m > 2) ? 2 : m; }
+/* Дамп (USB 0x87), самоописовий: [0]=0xB6 магія, [1]=версія 1, [2]=режим G2, [3]=ключ завантажено (1/0), [4]=PIF_N, [5]=sizeof(pif_t),
+ * [6]=W кільця 0, [7]=W кільця 1, далі PIFC_N x u16 LE лічильники, далі 2 x PIF_N x 18 байтів (порядок кільця, хост перевпорядковує за W). */
+int dmrAesGetPiDiag(uint8_t *out, int max)
+{
+    int o = 0, i, n = 8 + PIF_CNT_N * 2 + 2 * PIF_N * (int)sizeof(pif_t);
+    if (n > max) { return 0; }
+    out[o++] = 0xB6; out[o++] = 1; out[o++] = s_pifMode; out[o++] = (uint8_t)(dmr_aes_first_keyid() >= 0 ? 1 : 0);
+    out[o++] = PIF_N; out[o++] = (uint8_t)sizeof(pif_t); out[o++] = s_pifW[0]; out[o++] = s_pifW[1];
+    for (i = 0; i < PIF_CNT_N; i++) { out[o++] = (uint8_t)(s_pifCnt[i] & 0xFF); out[o++] = (uint8_t)(s_pifCnt[i] >> 8); }
+    memcpy(out + o, s_pif, sizeof s_pif); o += (int)sizeof s_pif;
+    return o;
+}
 #endif
 
 /* Zero the AES state at boot. REQUIRED: this state lives in .ccmram, which the
@@ -479,6 +577,7 @@ void dmrAesInit(void)
 #endif
 #ifdef DMR_AES_DIAG_RX
     dmrAesResetRxDiag();
+    s_pifMode = 0;   /* AES-fix6: після перезавантаження G2 завжди вимкнено (вмикається лише USB 0xB6) */
 #endif
     dmr_aes_clear_keys();   /* zeroes the s_keys/s_have store in dmr_aes.c */
 }

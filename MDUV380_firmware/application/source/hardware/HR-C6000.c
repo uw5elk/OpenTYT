@@ -686,6 +686,31 @@ static void hrc6000TransmitTalkerAlias(void)
 static uint8_t diagRawDt, diagRawSc;   // AES-fix3: контекст останнього reg 0x51 для hrc6000HandleLCData (лише RAM діагностичної збірки)
 #endif
 
+#if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
+// AES-fix6 G1/G2: PI-burst-и ДО стокового фільтра у hrc6000SysReceivedDataInt. Лічильники й кільця -- у dmr_aes_hook.c.
+// G2 (лише за режимом USB 0xB6 > 0): LC відкинутого burst-а -> dmrAesRxPI(); з нього більше нічого не береться.
+static void hrc6000AesPiPreFilter(int dt, int sc, int piRaw, int piEff)
+{
+	uint8_t rx = ((slotState == DMR_STATE_RX_1) || (slotState == DMR_STATE_RX_2)) ? 1 : 0;
+	int fl = dmrAesDiagPiClassify((uint8_t)dt, (uint8_t)sc, rx, (uint8_t)(piRaw ? 1 : 0), (uint8_t)(piEff ? 1 : 0),
+			hrc6000CrcIsValid() ? 1 : 0, hrc6000CheckColourCodeFilter() ? 1 : 0);
+
+	if (fl & PIF_LOG)
+	{
+		uint8_t lc[LC_DATA_LENGTH];
+
+		if (SPI0ReadPageRegByteArray(0x02, 0x00, lc, LC_DATA_LENGTH) == kStatus_Success)
+		{
+			dmrAesDiagPiLog(fl, (uint8_t)dt, (uint8_t)slotState, lc);
+			if (fl & (PIF_FEED_PI | PIF_FEED_DT0))
+			{
+				dmrAesRxPI(lc, LC_DATA_LENGTH);
+			}
+		}
+	}
+}
+#endif
+
 static void hrc6000HandleLCData(void)
 {
 	uint8_t LCBuf[LC_DATA_LENGTH];
@@ -1090,6 +1115,9 @@ static inline void hrc6000SysReceivedDataInt(void)
 	rxSyncClass = (reg_0x51 >> 0) & 0x03;//Received Sync Class  0=Sync Header 1=Voice 2=data 3=RC
 	hrc.rxCRCisValid = (((reg_0x51 >> 2) & 0x01) == 0);// CRC is OK if its 0
 	rxPrivacyIndicator = (reg_0x51 >> 3) & 0x01;
+#if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
+	const int rxPrivacyRaw = rxPrivacyIndicator; // AES-fix6: СИРИЙ біт ДО перекриття нижче (при завантаженому ключі rxPrivacyIndicator стає 0)
+#endif
 	#ifdef ENABLE_AES
 	if (dmr_aes_first_keyid() >= 0)
 	{
@@ -1150,6 +1178,14 @@ static inline void hrc6000SysReceivedDataInt(void)
 			hrc6000SmsDataHook(rxDataType);
 			smsEarlyDone = true;
 		}
+	}
+#endif
+
+#if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
+	// AES-fix6 G1/G2: усе, що робить фільтр нижче з PI-burst-ами, видно тут ДО нього; жодних побічних ефектів на сам фільтр.
+	if (hrc.transmissionEnabled == false)
+	{
+		hrc6000AesPiPreFilter(rxDataType, rxSyncClass, rxPrivacyRaw, rxPrivacyIndicator);
 	}
 #endif
 
@@ -1422,7 +1458,7 @@ static inline void hrc6000SysReceivedDataInt(void)
 	{
 #if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
 		diagRawDt = (uint8_t)rxDataType; diagRawSc = (uint8_t)rxSyncClass;
-		dmrAesDiagRawCtx((uint8_t)rxDataType, (uint8_t)rxSyncClass, (uint8_t)(rxPrivacyIndicator & 1));
+		dmrAesDiagRawCtx((uint8_t)rxDataType, (uint8_t)rxSyncClass, (uint8_t)(rxPrivacyRaw & 1)); // AES-fix6: був rxPrivacyIndicator (після перекриття -- завжди 0 при ключі)
 #endif
 		hrc6000HandleLCData();
 	}
