@@ -6,7 +6,7 @@
 Перевіряється: сирий hex LC/EMB виводиться дослівно, «наші» байти теж, порожні кільця й дамп без fix3-блоку не падають,
 а старі рядки (resync, TX-фаза) і таблиця подій досі друкуються (регресія: змінна `w` більше не затирається).
 """
-import io, os, struct, sys, contextlib
+import struct, io, os, struct, sys, contextlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True
@@ -108,6 +108,36 @@ check(lines and lines[0].rstrip().endswith("02 02 02 02 02 02 02 02 02 02 02 02"
 # старий дамп без fix3-блоку
 out = run(old_part())
 check("нема блоку сирих LC/EMB" in out, "дамп без fix3")
+
+
+# ---- AES-fix6 G1.3: розділ «PI-burst-и і стоковий фільтр» (формат USB 0x87) ----
+def pi_dump(mode=0, key=1, w0=0, w1=0, cnts=None, ents0=(), ents1=()):
+    d = bytearray([0xB6, 1, mode, key, 4, 18, w0, w1])
+    cnts = list(cnts or [0] * 12)
+    for c in cnts:
+        d += struct.pack("<H", c)
+    for ents in (ents0, ents1):
+        ents = list(ents) + [(0, 0, 0, 0, bytes(12))] * (4 - len(ents))
+        for dt, fl, slot, ts, lc in ents:
+            d += bytes([dt, fl, slot, 0]) + struct.pack("<H", ts) + lc
+    return bytes(d)
+
+out = rxdiag.format_pi(pi_dump(cnts=[1049, 1020, 1020, 0, 0, 0, 3, 0, 5, 2, 0, 0]))
+check("ключ завантажено: ТАК" in out and "режим G2: 0" in out, "шапка: " + out[:300])
+check("1049" in out and "1020" in out and "обнулено перекриттям" in out, "лічильники")
+check(out.count("порожньо") == 2, "порожні кільця")
+lc = bytes(range(0x20, 0x2C))
+# кільце 0: два записи; кільце 1: wrap (w1=5 при кільці 4 -> найстарший у слоті 1)
+e0 = [(1, 0x04 | 0x08 | 0x10 | 1, 1, 1234, lc), (6, 0x04 | 0x28 | 0x40 | 2 | 0x80, 2, 1300, lc)]
+e1 = [(0, 0x02, 1, 100 + i, bytes([i] * 12)) for i in range(4)]
+out = rxdiag.format_pi(pi_dump(key=0, mode=1, w0=2, w1=5, ents0=e0, ents1=e1))
+check("ключ завантажено: ні" in out and "режим G2: 1" in out, "режим 1 / ключ ні")
+check("t= 1234" in out and "20 21 22 23 24 25 26 27 28 29 2A 2B" in out, "запис кільця 0")
+check("rawPI=1 eff=1" in out and "fed=1" in out and "CRC=BAD" in out, "прапорці запису: " + out)
+ln = [l for l in out.splitlines() if l.startswith("  dT= 0")]
+check(len(ln) == 4 and "t=  101" in ln[0] and "t=  100" in ln[3], "обгортання кільця 1: найстаріший перший (слот 1): " + "|".join(ln))
+check(rxdiag.format_pi(b"\x00\x01").count("не розпізнано") == 1, "сміття")
+check("обірвано" in rxdiag.format_pi(pi_dump()[:40]), "обірваний дамп")
 
 if fails:
     print("ПРОВАЛ test_rxdiag:")

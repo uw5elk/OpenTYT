@@ -67,6 +67,7 @@ declare -A SRCS=(
 	[test_aes_resync]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix1: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- ресинхронізація MI, захист від хибного CRC4, обидві конвенції late entry; залізо -- заглушки в тесті
 	[test_aes_txphase]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix2: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- фаза шифрування TX за ефіром при тихих burst-ах (SILENCE_AUDIO), межа 18 кадрів, B3 тиша на RX; черга кодувальника й залізо -- модель у тесті
 	[test_aes_rawdiag]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix3: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- розкладка дампу сирих LC/EMB, дедуп, блок «наші байти»
+	[test_aes_pifilter]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix6: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- класифікація PI-burst-ів до стокового фільтра, кільця, режими G2
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 
@@ -99,6 +100,7 @@ declare -A XFLAGS=(
 	[test_aes_resync]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix1
 	[test_aes_txphase]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix2
 	[test_aes_rawdiag]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix3
+	[test_aes_pifilter]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix6
 	[test_dmr_sms_store]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 )
 
@@ -111,7 +113,7 @@ UA_TOO=(test_sms_multitap)
 # AES-fix1: тест ресинхронізації збирається ще й зі збіркою-кандидатом AES_TX_MI_CURRENT (бінарник <назва>_cur)
 # та з діагностикою прийому DMR_AES_DIAG_RX (<назва>_diag) -- інакше ні цей режим, ні діагностичний код у CI не компілювалися б.
 MICUR_TOO=(test_aes_resync test_aes_txphase)
-DIAGRX_TOO=(test_aes_resync test_aes_txphase test_aes_rawdiag)
+DIAGRX_TOO=(test_aes_resync test_aes_txphase test_aes_rawdiag test_aes_pifilter)
 # AES-fix2: ІНВЕРТОВАНІ збірки з вимкненим фіксом фази TX (-DAES_TX_PHASE_FIX_OFF): тест має ЗНАЙТИ зсув (ловить дефект);
 # і те саме разом з діагностикою (<назва>_diagnofix) -- дамп фази мусить показати k=3, а не 0.
 NOFIX_TOO=(test_aes_txphase)

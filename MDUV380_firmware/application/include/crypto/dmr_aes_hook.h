@@ -59,6 +59,14 @@ void dmrAesResetRxDiag(void);                      /* DIAGNOSTIC: clear the RX e
 int  dmrAesGetRxDiag(uint8_t *out, int max);       /* DIAGNOSTIC: snapshot the RX event ring */
 void dmrAesDiagCapArm(void);                       /* DIAGNOSTIC: arm one-superframe raw-burst capture */
 int  dmrAesGetCapData(uint8_t *out, int max);      /* DIAGNOSTIC: dump the captured raw bursts */
+/* AES-fix6 G1/G2: що робить фільтр hrc6000SysReceivedDataInt з PI-burst-ами (див. коментар у dmr_aes_hook.c) */
+#define PIF_LOG 0x100
+#define PIF_FEED_PI 0x200
+#define PIF_FEED_DT0 0x400
+int  dmrAesDiagPiClassify(uint8_t dt, uint8_t sc, uint8_t rx, uint8_t piRaw, uint8_t piEff, uint8_t crcOk, uint8_t ccOk); /* лічильники + що робити далі (PIF_*) */
+void dmrAesDiagPiLog(int fl, uint8_t dt, uint8_t slot, const uint8_t *lc12);  /* запис burst-а в кільце (лише коли PIF_LOG) */
+void dmrAesDiagPiSetMode(uint8_t m);                /* G2: 0 вимкнено, 1 PI-гілка, 2 + dataType 0 з невалідним CRC */
+int  dmrAesGetPiDiag(uint8_t *out, int max);        /* дамп (USB 0x87) */
 #endif
 #else
 static inline void dmrAesInit(void){ }
