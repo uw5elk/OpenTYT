@@ -134,15 +134,16 @@ int main(void)
     CHECK(f[7] == 0 && f[8] == 0 && f[9] == 0 && f[13] == 0, "reset чистить кільця й лічильники");
     for (int i = 0; i < RLC_N * 20 + EMBR_N * 8; i++) { if (f[48 + i] != 0) { CHECK(0, "reset: байт кільця %d не нульовий", i); break; } }
 
-    /* 8. AES-fix4 D1: захоплення 12 burst-ів поспіль (два суперфрейми), не залежить від s_rxActive */
+    /* 8. AES-fix4 D1: захоплення CAP_BURSTS burst-ів поспіль (AES-fix5: 24 = чотири суперфрейми), не залежить від s_rxActive */
     {
-        uint8_t cap[512], blk[27];
+        uint8_t cap[1024], blk[27];
         dmrAesResetRxDiag();
         CHECK(s_rxActive == 0, "захоплення мусить працювати без активної розшифровки");
         for (int i = 0; i < 27; i++) { blk[i] = 0; }
         n = dmrAesGetCapData(cap, (int)sizeof cap);
-        CHECK(n == 4 + CAP_BURSTS + CAP_BURSTS * 27 && CAP_BURSTS == 12, "довжина дампу захоплення %d", n);
-        CHECK(cap[0] == 0 && cap[1] == 0 && cap[2] == 12 && cap[3] == 0, "порожнє захоплення");
+        CHECK(n == 4 + CAP_BURSTS + CAP_BURSTS * 27 && CAP_BURSTS == 24, "довжина дампу захоплення %d", n);
+        CHECK(cap[0] == 0 && cap[1] == 0 && cap[2] == CAP_BURSTS && cap[3] == 0, "порожнє захоплення");
+        CHECK(n <= 512 * 3 - 3, "дамп захоплення %d не влазить у COM_BUFFER_SIZE-3", n);
         CHECK(dmrAesGetCapData(cap, n - 1) == 0, "малий буфер -> 0");
         /* без озброєння burst-и не пишуться */
         blk[0] = 0x55; dmrAesRxLateEntry(1, blk); n = dmrAesGetCapData(cap, (int)sizeof cap);
@@ -152,15 +153,15 @@ int main(void)
         for (int q = 3; q <= 6; q++) { blk[0] = (uint8_t)q; dmrAesRxLateEntry(q, blk); }
         n = dmrAesGetCapData(cap, (int)sizeof cap);
         CHECK(cap[0] == 1 && cap[1] == 0 && cap[3] == 0, "чекає seq 1 (state=%d N=%d restarts=%d)", cap[0], cap[1], cap[3]);
-        for (int k = 0; k < 12; k++) { int q = k % 6 + 1; memset(blk, 0, 27); blk[0] = (uint8_t)(0xA0 + k); blk[26] = (uint8_t)q; dmrAesRxLateEntry(q, blk); }
+        for (int k = 0; k < CAP_BURSTS; k++) { int q = k % 6 + 1; memset(blk, 0, 27); blk[0] = (uint8_t)(0xA0 + k); blk[26] = (uint8_t)q; dmrAesRxLateEntry(q, blk); }
         n = dmrAesGetCapData(cap, (int)sizeof cap);
-        CHECK(cap[0] == 3 && cap[1] == 12 && cap[3] == 0, "готово (state=%d N=%d restarts=%d)", cap[0], cap[1], cap[3]);
+        CHECK(cap[0] == 3 && cap[1] == CAP_BURSTS && cap[3] == 0, "готово (state=%d N=%d restarts=%d)", cap[0], cap[1], cap[3]);
         {
             int okseq = 1, okdat = 1;
-            for (int k = 0; k < 12; k++)
+            for (int k = 0; k < CAP_BURSTS; k++)
             {
                 okseq &= (cap[4 + k] == (k % 6 + 1));
-                okdat &= (cap[4 + 12 + k * 27] == 0xA0 + k) && (cap[4 + 12 + k * 27 + 26] == (k % 6 + 1));
+                okdat &= (cap[4 + CAP_BURSTS + k * 27] == (uint8_t)(0xA0 + k)) && (cap[4 + CAP_BURSTS + k * 27 + 26] == (k % 6 + 1));
             }
             CHECK(okseq, "seq у дампі 1..6,1..6");
             CHECK(okdat, "27 байтів кожного burst збережено без змін і по порядку");
@@ -168,7 +169,7 @@ int main(void)
         /* після «готово» нові burst-и стан не чіпають */
         memset(blk, 0xEE, 27); dmrAesRxLateEntry(1, blk);
         n = dmrAesGetCapData(cap, (int)sizeof cap);
-        CHECK(cap[0] == 3 && cap[1] == 12 && cap[4 + 12] == 0xA0, "готове захоплення не перезаписується");
+        CHECK(cap[0] == 3 && cap[1] == CAP_BURSTS && cap[4 + CAP_BURSTS] == 0xA0, "готове захоплення не перезаписується");
         /* розрив: 1,2,3 -> 5 (втрачено 4) -> скидання, потім чисті 12 */
         dmrAesDiagCapArm();
         blk[0] = 1; dmrAesRxLateEntry(1, blk); dmrAesRxLateEntry(2, blk); dmrAesRxLateEntry(3, blk); dmrAesRxLateEntry(5, blk);
@@ -178,11 +179,11 @@ int main(void)
         dmrAesRxLateEntry(1, blk); dmrAesRxLateEntry(2, blk); dmrAesRxLateEntry(1, blk);
         n = dmrAesGetCapData(cap, (int)sizeof cap);
         CHECK(cap[0] == 2 && cap[1] == 1 && cap[3] == 2, "розрив із seq 1: N=%d restarts=%d", cap[1], cap[3]);
-        for (int k = 1; k < 12; k++) { dmrAesRxLateEntry(k % 6 + 1, blk); }
+        for (int k = 1; k < CAP_BURSTS; k++) { dmrAesRxLateEntry(k % 6 + 1, blk); }
         n = dmrAesGetCapData(cap, (int)sizeof cap);
-        CHECK(cap[0] == 3 && cap[1] == 12 && cap[3] == 2, "після розривів готово (state=%d N=%d restarts=%d)", cap[0], cap[1], cap[3]);
+        CHECK(cap[0] == 3 && cap[1] == CAP_BURSTS && cap[3] == 2, "після розривів готово (state=%d N=%d restarts=%d)", cap[0], cap[1], cap[3]);
         dmrAesResetRxDiag(); n = dmrAesGetCapData(cap, (int)sizeof cap);
-        CHECK(cap[0] == 0 && cap[1] == 0 && cap[3] == 0 && cap[4 + 12] == 0, "reset чистить захоплення");
+        CHECK(cap[0] == 0 && cap[1] == 0 && cap[3] == 0 && cap[4 + CAP_BURSTS] == 0, "reset чистить захоплення");
     }
 
     printf(g_fail ? "ПРОВАЛ (%d)\n" : "ok\n", g_fail);

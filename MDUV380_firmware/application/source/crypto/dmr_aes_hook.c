@@ -200,11 +200,11 @@ static void txdReset(void)
 static uint16_t  s_rxdMisc[3] DMR_AES_CCM;  /* [0]=LC reads, [1]=valid PI parses, [2]=RxBurst calls */
 static uint32_t  s_rxdLastPiMi DMR_AES_CCM; /* PI dedup: last logged PI MI */
 /* Захоплення сирих burst-ів (AES-fix4 D1; знайти справжні позиції бітів late-entry MI -- tools/le_bitsearch.py).
- * CAP_BURSTS = 12: два повні суперфрейми ПОСПІЛЬ (seq 1..6, 1..6). Захоплення не залежить від s_rxActive: на виклику стокової PI
+ * CAP_BURSTS = 24 (AES-fix5; у AES-fix4 було 12): чотири повні суперфрейми ПОСПІЛЬ (seq 1..6, 1..6, ...). Захоплення не залежить від s_rxActive: на виклику стокової PI
  * не приходить, розшифровка не піднімається, але burst-и йдуть. Старт -- на першому burst із seq 1 після озброєння; будь-який розрив
  * послідовності (втрачений burst) скидає захоплення на початок (лічильник s_capRestart). Поля «істинного MI» (s_capMi/s_capExp) прибрано:
  * на чужій передачі істини нема, а CCM потрібен під 12 буферів. */
-#define CAP_BURSTS 12
+#define CAP_BURSTS 24   /* AES-fix5 F1: чотири суперфрейми поспіль (було 12). 24x27 = 648 Б; у діагностичній збірці CCM вільно 20144 Б (виміряно mem_report.py) */
 static uint8_t   s_capState DMR_AES_CCM;     /* 0 idle, 1 armed, 2 capturing, 3 done */
 static uint8_t   s_capN DMR_AES_CCM;
 static uint8_t   s_capRestart DMR_AES_CCM;   /* скільки разів захоплення скидалось через розрив seq (насичення 255) */
