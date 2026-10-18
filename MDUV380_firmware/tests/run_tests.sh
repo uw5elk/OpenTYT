@@ -224,6 +224,15 @@ if [ -z "$FILTER" ] || [[ "test_le_bitsearch" == *"$FILTER"* ]]; then
 	fi
 fi
 
+# AES-fix5: перевірка гіпотези «MI у біті ambe_fr[0][0]» (tools/le_bit21.py, потрібен numpy) -- деперемежування на кадрі тиші, синтетичні моделі, шум.
+if [ -z "$FILTER" ] || [[ "test_le_bit21" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/test_le_bit21.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_le_bit21 (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_le_bit21 (python)"; printf '%s\n' "$out" | tail -10
+	fi
+fi
+
 # R25: відновлення кодплуга (tools/cps_restore.py) і перегляд (tools/codeplug_view.py) -- підставна «рація» з X 1/2/3.
 if [ -z "$FILTER" ] || [[ "test_cps_restore" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_restore.py" 2>&1)"; then

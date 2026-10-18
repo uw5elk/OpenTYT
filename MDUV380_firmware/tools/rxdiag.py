@@ -55,7 +55,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default=None)
     ap.add_argument("--reset", action="store_true", help="clear/arm the ring, then exit")
-    ap.add_argument("--arm", action="store_true", help="AES-fix4: озброїти захоплення 12 сирих burst-ів (старт на наступному seq 1), вийти")
+    ap.add_argument("--arm", action="store_true", help="AES-fix4: озброїти захоплення сирих burst-ів (AES-fix5: 24 = чотири суперфрейми) (старт на наступному seq 1), вийти")
     ap.add_argument("--cap", action="store_true", help="AES-fix4: надрукувати захоплення: рядок `seq=<n> <27 байтів hex>` на burst (для le_bitsearch.py)")
     args = ap.parse_args()
 
@@ -113,7 +113,7 @@ def format_cap(data):
         return "# дамп захоплення обірвано: %d байтів, треба %d\n" % (len(data), 4 + cap + cap * 27)
     out = ["# захоплення: стан=%s  burst-ів=%d/%d  скидань через розрив seq=%d\n" % (CAP_STATE.get(state, state), got, cap, restarts)]
     if state != 3:
-        out.append("# УВАГА: захоплення не завершене -- le_bitsearch.py потребує 12 burst-ів (два суперфрейми поспіль)\n")
+        out.append("# УВАГА: захоплення не завершене -- le_bitsearch.py потребує 12 burst-ів, le_bit21.py -- 24 (суперфрейми поспіль)\n")
     for i in range(min(got, cap)):
         out.append("seq=%d %s\n" % (data[4 + i], data[4 + cap + i * 27:4 + cap + i * 27 + 27].hex().upper()))
     return "".join(out)
