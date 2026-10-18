@@ -35,17 +35,17 @@ def old_part(write_idx=2, with_pairs=True):
 
 
 def fix3_part(lcs, embs, ours_key=1, ours_src=3):
-    ring_lc = bytearray(8 * 20)
+    ring_lc = bytearray(4 * 20)
     for i, (dt, fl, hits, ts, tsl, lc) in enumerate(lcs):
         struct.pack_into("<BBBBHH", ring_lc, i * 20, dt, fl, hits, 0, ts, tsl)
         ring_lc[i * 20 + 8:i * 20 + 20] = bytes(lc)
-    ring_emb = bytearray(8 * 8)
+    ring_emb = bytearray(2 * 8)
     for i, (dt, fl, ts, emb) in enumerate(embs):
         struct.pack_into("<BBH", ring_emb, i * 8, dt, fl, ts)
         ring_emb[i * 8 + 4:i * 8 + 8] = bytes(emb)
     f = bytearray(48)
-    f[0] = 0xF3; f[1] = 8; f[2] = 20; f[3] = 8; f[4] = 8
-    struct.pack_into("<H", f, 5, 48 + 160 + 64)
+    f[0] = 0xF3; f[1] = 4; f[2] = 20; f[3] = 2; f[4] = 8
+    struct.pack_into("<H", f, 5, 48 + 80 + 16)
     f[7] = len(lcs); f[8] = len(embs)
     struct.pack_into("<4H", f, 9, 7, 4, 5, 3)
     f[17] = ours_key; f[18] = ours_src; f[19] = 1
@@ -96,13 +96,13 @@ out = run(bytes(old_part()) + fix3_part([], []))
 check("CRC-валідного LC за цей час чип не віддавав" in out, "порожнє LC-кільце")
 check("чип на RX не віддає ці регістри" in out, "порожнє EMB-кільце")
 
-# обгортання: вільнобіжний індекс 10 -> найстаріший у слоті 2
-lcs = [(1, 2, 0, 100 + i, 100 + i, [i] * 12) for i in range(8)]
+# обгортання: вільнобіжний індекс 6 при кільці з 4 -> найстаріший у слоті 2
+lcs = [(1, 2, 0, 100 + i, 100 + i, [i] * 12) for i in range(4)]
 d = bytearray(fix3_part(lcs, []))
-d[7] = 10
+d[7] = 6
 out = run(bytes(old_part()) + bytes(d))
 lines = [ln for ln in out.splitlines() if "LC" in ln and "dT=" in ln]
-check(len(lines) == 8, "обгортання: рядків LC %d" % len(lines))
+check(len(lines) == 4, "обгортання: рядків LC %d" % len(lines))
 check(lines and lines[0].rstrip().endswith("02 02 02 02 02 02 02 02 02 02 02 02"), "обгортання: найстарішим мусить бути слот 2")
 
 # старий дамп без fix3-блоку

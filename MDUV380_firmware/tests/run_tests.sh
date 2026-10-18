@@ -215,6 +215,15 @@ if [ -z "$FILTER" ] || [[ "test_rxdiag" == *"$FILTER"* ]]; then
 	fi
 fi
 
+# AES-fix4: пошук позицій бітів late-entry MI (tools/le_bitsearch.py, потрібен numpy) -- золоті вектори з C, синтетичні захоплення, шум, LFSR-зв'язок.
+if [ -z "$FILTER" ] || [[ "test_le_bitsearch" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/test_le_bitsearch.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_le_bitsearch (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_le_bitsearch (python)"; printf '%s\n' "$out" | tail -10
+	fi
+fi
+
 # R25: відновлення кодплуга (tools/cps_restore.py) і перегляд (tools/codeplug_view.py) -- підставна «рація» з X 1/2/3.
 if [ -z "$FILTER" ] || [[ "test_cps_restore" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_restore.py" 2>&1)"; then

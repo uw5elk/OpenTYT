@@ -12,6 +12,11 @@ Firmware records, in the HR-C6000 ISR, a small CCM ring of decrypt events:
   LATENT  chip Late-Entry interrupt (reg 0x82 bit4) fired: slotState it fired in + whether
           OpenGD77's IDLE gate let it act (gate) and whether stale AES was still active (act)
 
+AES-fix4 (захоплення сирих burst-ів для пошуку позицій бітів late-entry MI, tools/le_bitsearch.py):
+  python rxdiag.py --arm              # озброїти ПЕРЕД передачею стокової; старт на першому burst із seq 1
+  python rxdiag.py --cap > cap.txt    # після передачі: 12 рядків `seq=<n> <27 байтів hex>`
+  python le_bitsearch.py cap.txt
+
 Usage (Windows, the CDC enumerates as COM4):
   python rxdiag.py --reset            # clear the ring before a test run
   python rxdiag.py                    # dump + decode the ring
@@ -50,6 +55,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default=None)
     ap.add_argument("--reset", action="store_true", help="clear/arm the ring, then exit")
+    ap.add_argument("--arm", action="store_true", help="AES-fix4: озброїти захоплення 12 сирих burst-ів (старт на наступному seq 1), вийти")
+    ap.add_argument("--cap", action="store_true", help="AES-fix4: надрукувати захоплення: рядок `seq=<n> <27 байтів hex>` на burst (для le_bitsearch.py)")
     args = ap.parse_args()
 
     if serial is None:
@@ -65,6 +72,22 @@ def main():
         print("ring cleared:", ser.read(8))
         return
 
+    if args.arm:
+        ser.reset_input_buffer()
+        ser.write(bytes([ord("C"), 0x88])); ser.flush(); time.sleep(0.15)
+        print("захоплення озброєно:", ser.read(8), "-- тепер прийми шифровану передачу ~10 с, потім `rxdiag.py --cap`")
+        return
+
+    if args.cap:
+        ser.reset_input_buffer()
+        ser.write(bytes([ord("C"), 0x89])); ser.flush(); time.sleep(0.25)
+        r = ser.read(4096)
+        if len(r) < 3 or r[0] != ord("C"):
+            sys.exit("bad reply: %r" % r[:16])
+        n = (r[1] << 8) | r[2]
+        sys.stdout.write(format_cap(r[3:3 + n]))
+        return
+
     ser.reset_input_buffer()
     ser.write(bytes([ord("C"), 0x84])); ser.flush(); time.sleep(0.25)
     r = ser.read(4096)
@@ -75,6 +98,25 @@ def main():
     if len(data) < 24 or data[0] != 0xA5:
         sys.exit("bad diag header (len=%d): %r" % (len(data), data[:8]))
     print_dump(data, port)
+
+
+CAP_STATE = {0: "не озброєно", 1: "озброєно, чекає seq 1", 2: "іде", 3: "ГОТОВО"}
+
+
+def format_cap(data):
+    """AES-fix4 D1: дамп захоплення (USB 0x89) -> текст. Рядки `#` -- службові (le_bitsearch їх пропускає); решта -- чистий hex без
+    інтерпретації: `seq=<n> <27 байтів hex>`, рівно в тому порядку, в якому чип віддавав burst-и."""
+    if len(data) < 4:
+        return "# порожня відповідь захоплення (стара збірка без AES-fix4?)\n"
+    state, got, cap, restarts = data[0], data[1], data[2], data[3]
+    if len(data) < 4 + cap + cap * 27:
+        return "# дамп захоплення обірвано: %d байтів, треба %d\n" % (len(data), 4 + cap + cap * 27)
+    out = ["# захоплення: стан=%s  burst-ів=%d/%d  скидань через розрив seq=%d\n" % (CAP_STATE.get(state, state), got, cap, restarts)]
+    if state != 3:
+        out.append("# УВАГА: захоплення не завершене -- le_bitsearch.py потребує 12 burst-ів (два суперфрейми поспіль)\n")
+    for i in range(min(got, cap)):
+        out.append("seq=%d %s\n" % (data[4 + i], data[4 + cap + i * 27:4 + cap + i * 27 + 27].hex().upper()))
+    return "".join(out)
 
 
 def hx(b):
