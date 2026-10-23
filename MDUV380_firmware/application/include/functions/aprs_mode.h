@@ -146,6 +146,7 @@ bool aprsModeSetCall(const char *call);          /* позивний -> ім'я 
 void aprsModeSetFlag(uint8_t mask, bool on);     /* прапорці слота: APRSM_RAW_FLAG_300_BAUDS / _QSY / _SILENT / _USE_POSITION */
 void aprsModeSlotName(char out[9]);              /* назва слота конфігу APRS, з яким працюють налаштування */
 void aprsBeaconCfgBoot(bool restoreDefaults);    /* на старті, перед aprsBeaconingInit(): блок налаштувань бікона -> працюючі налаштування (немає -- створити) */
+bool aprsBeaconCfgReload(void);                  /* APRS-fix N2.1: блок -> працюючі налаштування на відкритті сесії налаштувань (false -- блока нема) */
 bool aprsBeaconCfgStore(void);                   /* працюючі налаштування бікона -> блок (лише якщо змінилися) */
 void aprsModeRequestBeacon(void);                /* ручний маяк (GREEN на «Моніторі») */
 uint32_t aprsModeBeaconCount(void);

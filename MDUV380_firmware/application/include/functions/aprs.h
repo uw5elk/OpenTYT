@@ -45,9 +45,17 @@
 #define APRS_BEACON_INITIAL_INTERVAL_DEFAULT  2U
 #define APRS_BEACON_INITIAL_INTERVAL_MAX      9U
 
-/* APRS-ui M1: смуга, в якій рація йде на частоту маяка (QSY стокового бікона, QSY разового маяка, «канал» режиму APRS). Стандарт APRS -- звичайний 25 кГц FM (не вузький 12,5).
- * Лише у збірках форку з приймачем APRS; без нього -- false, тобто код ТОЧНО як у стоковому OpenGD77 (типова збірка байт-у-байт). */
-#if defined(ENABLE_APRS_RX)
+/* APRS-ui M1 / APRS-fix N3: смуга, в якій рація йде на частоту маяка (QSY стокового бікона -- aprs.c, QSY разового маяка -- aprs.c, «канал» і tune() режиму
+ * APRS -- aprs_mode.c): ЧОТИРИ місця, усі через APRS_BEACON_BW_25K. Стандарт APRS -- звичайний 25 кГц FM (не вузький 12,5).
+ *
+ * ВІДКАТ НА 12,5 кГц -- ОДИН ЗАПИС: APRS_TX_BW_25K 0 нижче АБО `make ... APRS_TX_BW_25K=0` (Makefile додає -DAPRS_TX_BW_25K=0). Нічого іншого в тракті передачі
+ * не змінюється (девіація не підганяється -- її задає смуга в radioSetIF()/HRC6000SetFMTx()).
+ *
+ * Лише у збірках форку з приймачем APRS; без нього APRS_BEACON_BW_25K == false, тобто код ТОЧНО як у стоковому OpenGD77 (типова збірка байт-у-байт). */
+#if !defined(APRS_TX_BW_25K)
+#define APRS_TX_BW_25K  1   /* 1 = маяк у 25 кГц (типово), 0 = у 12,5 кГц (шапка тоді «FMN») */
+#endif
+#if defined(ENABLE_APRS_RX) && (APRS_TX_BW_25K != 0)
 #define APRS_BEACON_BW_25K  true
 #else
 #define APRS_BEACON_BW_25K  false

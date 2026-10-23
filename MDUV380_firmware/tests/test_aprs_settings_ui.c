@@ -190,6 +190,7 @@ static void testStock(void)
 	click(KEY_LEFT);
 	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_QSY) == 0U, "QSY вимкнено перед скиданням");
 	click(KEY_UP);
+#if !defined(FORK_NO_GPS_MENU)   /* APRS-fix N1: без GPS групи «Розумний маяк» і пресетів нема (див. testNoGps) */
 	selectRow(AS_G_SMART, 0);
 	click(KEY_RIGHT);
 	CHECK(aprsSettingsCopy.smart.slowRate == APRS_SMART_BEACON_SLOW_RATE_DEFAULT + 1, "повільний +1");
@@ -204,6 +205,7 @@ static void testStock(void)
 	click('1');
 	CHECK(aprsSettingsCopy.smart.slowRate == APRS_SMART_BEACON_SLOW_RATE_DEFAULT, "цифри поза групою «Розумний маяк» пресетів не вмикають");
 	selectRow(AS_G_SMART, 0);
+#endif
 	click(KEY_RED); click(KEY_RED);   /* вихід */
 	CHECK(s_stockSetCalls == 1 && s_stockSettings.mode == APRS_BEACONING_MODE_PTT && s_stockSettings.power == 1, "при виході стокові параметри застосовано (%d)", s_stockSetCalls);
 }
@@ -321,24 +323,134 @@ static void testUnify(void)
 	CHECK(s_bflashValid && s_bflashWrites >= 1, "при закритті записано блок налаштувань бікона");
 }
 
-/* APRS-ui M5: у рації нема GPS -- «Джерело» (канал / GPS) і рядки, що мають сенс лише з рухом, не показуються; джерело безальтернативно «канал/вручну» */
+/* APRS-ui M5 + APRS-fix N1/N2: у рації нема GPS -- «Джерело», розумний маяк (група, пресети, режим у списку) і «Затухання» не показуються й недосяжні; стани з блока
+ * приводяться до єдиного можливого; сесія налаштувань починається з того, що лежить у флеші (ПК міг переписати блок). */
+static void blockSet(uint8_t mode, uint8_t interval, uint8_t stateBits, uint8_t bcnWin)
+{
+	aprsBeaconCfg_t c;
+
+	memset(&c, 0, sizeof(c));
+	c.mode = mode; c.power = 0; c.initialInterval = interval; c.stateBits = stateBits;
+	c.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT; c.fastRate = APRS_SMART_BEACON_FAST_RATE_DEFAULT; c.lowSpeed = APRS_SMART_BEACON_LOW_SPEED_DEFAULT;
+	c.highSpeed = APRS_SMART_BEACON_HIGH_SPEED_DEFAULT; c.turnAngle = APRS_SMART_BEACON_TURN_ANGLE_DEFAULT; c.turnSlope = APRS_SMART_BEACON_TURN_SLOPE_DEFAULT;
+	c.turnTime = APRS_SMART_BEACON_TURN_TIME_DEFAULT; c.bcnWin = bcnWin;
+	aprsBeaconCfgToBytes(&c, s_bflash);
+	s_bflashValid = true;
+}
+
 static void testNoGps(void)
 {
 #if defined(FORK_NO_GPS_MENU)
+	aprsBeaconCfg_t rb;
+
 	resetWorld();
 	memset(&s_stockSettings, 0, sizeof(s_stockSettings)); s_stockSettings.mode = APRS_BEACONING_MODE_OFF; s_stockSettings.initialInterval = APRS_BEACON_INITIAL_INTERVAL_DEFAULT; s_stockSettings.smart.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT; s_stockSetCalls = 0;
-	s_stockSettings.state = (aprsBeaconingStates_t)(APRS_BEACONING_STATE_LOCATION_FROM_GPS | APRS_BEACONING_STATE_COMPRESSED_FORMAT);   /* блок із ПК: джерело «GPS» */
+	s_stockSettings.state = (aprsBeaconingStates_t)(APRS_BEACONING_STATE_LOCATION_FROM_GPS | APRS_BEACONING_STATE_DECAY_ALGO_ENABLED | APRS_BEACONING_STATE_COMPRESSED_FORMAT);   /* блок із ПК: джерело «GPS», затухання */
+	s_stockSettings.mode = APRS_BEACONING_MODE_SMART_BEACONING;   /* стояв «Розумний» */
 	CHECK(menuAprsSettingsEnter(), "налаштування");
+
+	/* що показано */
 	CHECK(rowIndexOf(asRowsPos, AS_N(asRowsPos), AS_S_SOURCE) < 0, "M5: у групі «Позиція» нема рядка «Джерело»");
 	CHECK(rowIndexOf(asRowsPos, AS_N(asRowsPos), APRSM_F_LAT) >= 0 && rowIndexOf(asRowsPos, AS_N(asRowsPos), APRSM_F_LON) >= 0, "M5: координати вручну лишились");
-	CHECK(rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_SLOW) >= 0 && rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_FAST) < 0 &&
-			rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_HISPD) < 0 && rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_ANGLE) < 0, "M5: рядки швидкості/курсу приховані, «Повільний» лишився");
+	CHECK(AS_G_COUNT == 5, "N1.5: груп п'ять (станція, маяк, позиція, приймач, скинути) -- «Розумного маяка» нема (%d)", (int)AS_G_COUNT);
+	for (int g = 0; g < AS_G_COUNT; g++)
+	{
+		CHECK(strcmp(asGroups[g].name, APRSM_G_SMART) != 0, "N1.5: групи «Розумний маяк» у списку нема (група %d)", g);
+	}
+	{
+		int hasSlow = 0, hasDecay = 0, hasFast = 0;
+
+		for (int g = 0; g < AS_G_COUNT; g++)
+		{
+			for (int k = 0; k < asGroups[g].n; k++)
+			{
+				hasSlow += (asGroups[g].rows[k] == AS_S_SLOW);
+				hasDecay += (asGroups[g].rows[k] == AS_S_DECAY);
+				hasFast += (asGroups[g].rows[k] == AS_S_FAST) + (asGroups[g].rows[k] == AS_S_HISPD) + (asGroups[g].rows[k] == AS_S_ANGLE);
+			}
+		}
+		CHECK(hasSlow == 0 && hasDecay == 0 && hasFast == 0, "N1.3/N1.4: «Повільний», «Затухання» і рядки руху ніде не показані (%d %d %d)", hasSlow, hasDecay, hasFast);
+	}
+
+	/* N1.1: цифри пресетів нічого не міняють ні в одній групі */
+	{
+		uint8_t slow0 = aprsSettingsCopy.smart.slowRate;
+
+		selectRow(AS_G_BEACON, 0);
+		click('1');
+		CHECK(aprsSettingsCopy.smart.slowRate == slow0, "N1.1: цифра 1 пресету «Car» не діє");
+	}
+
+	/* N1.2: у списку режимів «Розумного маяка» нема; «Розумний» з блока показано як «Авто» */
+	CHECK(aprsSettingsCopy.mode == APRS_BEACONING_MODE_AUTO, "N1.2: стояв «Розумний» -- у чернетці «Авто» (%d)", (int)aprsSettingsCopy.mode);
+	asStockStep(AS_S_MODE, 1, false);
+	CHECK(aprsSettingsCopy.mode == APRS_BEACONING_MODE_AUTO, "N1.2: далі «Авто» перемкнути нікуди (у списку лише 4 режими)");
+	asStockStep(AS_S_MODE, -1, false);
+	CHECK(aprsSettingsCopy.mode == APRS_BEACONING_MODE_PTT, "N1.2: назад -- PTT");
+	asStockStep(AS_S_MODE, 1, false);
+
+	/* N1.4 і M5.3: затухання вимкнено, джерело -- канал, решта бітів стану не зачеплена */
+	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) == 0U, "N1.4: «Затухання» у чернетці вимкнено");
 	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) == 0U && (aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL) != 0U,
 			"M5: джерело позиції у чернетці зафіксовано «канал/вручну» (state %02X)", (unsigned)aprsSettingsCopy.state);
 	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0U, "M5: решта бітів стану не зачеплена");
 	asStockStep(AS_S_SOURCE, 1, false);
 	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) == 0U, "M5: перемкнути джерело на GPS не можна");
+
+	/* закриття сесії: примусові значення записано в стокові налаштування й у блок; значення енуму «Розумний» у блоці не зникло як можливе (блок лише записано «Авто») */
 	aprsModeMsgSessionClose();
+	CHECK(s_stockSettings.mode == APRS_BEACONING_MODE_AUTO && (s_stockSettings.state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) == 0U &&
+			(s_stockSettings.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) == 0U, "N1.2/N1.4: при закритті записано «Авто», без затухання, без GPS");
+	CHECK(aprsBeaconCfgFromBytes(&rb, s_bflash, APRSB_BLOCK_LEN) && rb.mode == (uint8_t)APRS_BEACONING_MODE_AUTO && (rb.stateBits & 0x04U) == 0U && (rb.stateBits & 0x02U) == 0U &&
+			(rb.stateBits & 0x01U) != 0U, "N1/M5: у блоці бікона «Авто», канал, затухання нема (stateBits %02X)", rb.stateBits);
+
+	/* N1.4: «Скинути» не вмикає затухання назад */
+	CHECK(menuAprsSettingsEnter(), "налаштування вдруге");
+	asResetAll();
+	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) == 0U, "N1.4: після «Скинути» затухання вимкнено");
+	aprsModeMsgSessionClose();
+
+	/* N2.1: блок переписали з ПК, поки рація працює (в пам'яті -- старе); відкрили сесію й закрили, нічого не міняючи -- значення з ПК лишились */
+	resetWorld();
+	memset(&s_stockSettings, 0, sizeof(s_stockSettings));
+	s_stockSettings.mode = APRS_BEACONING_MODE_OFF; s_stockSettings.initialInterval = 2; s_stockSettings.state = (aprsBeaconingStates_t)(APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
+	s_stockSettings.smart.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT;
+	blockSet((uint8_t)APRS_BEACONING_MODE_PTT, 7, 0x09, 2);   /* ПК: PTT, інтервал 20 хв, канал + стиснення, вікно «вимкн.» */
+	s_bflashWrites = 0; s_stockSetCalls = 0;
+	CHECK(menuAprsSettingsEnter(), "N2.1: налаштування після запису з ПК");
+	CHECK(aprsSettingsCopy.mode == APRS_BEACONING_MODE_PTT && aprsSettingsCopy.initialInterval == 7, "N2.1: чернетка взята з флешу, не з пам'яті (режим %d, інтервал %d)", (int)aprsSettingsCopy.mode, aprsSettingsCopy.initialInterval);
+	CHECK(s_stockSettings.mode == APRS_BEACONING_MODE_PTT && s_stockSettings.initialInterval == 7 && s_bcnWin == 2, "N2.1: працюючі налаштування оновлено з блока (вікно %d)", s_bcnWin);
+	aprsModeMsgSessionClose();
+	CHECK(aprsBeaconCfgFromBytes(&rb, s_bflash, APRSB_BLOCK_LEN) && rb.mode == (uint8_t)APRS_BEACONING_MODE_PTT && rb.initialInterval == 7 && rb.bcnWin == 2,
+			"N2.1: після виходу значення з ПК лишились у блоці (режим %d, інтервал %d)", rb.mode, rb.initialInterval);
+
+	/* N2.1: блока нема -- відкриття сесії нічого не ламає (береться пам'ять) */
+	resetWorld();
+	memset(&s_stockSettings, 0, sizeof(s_stockSettings)); s_stockSettings.mode = APRS_BEACONING_MODE_MANUAL; s_stockSettings.initialInterval = 3;
+	s_stockSettings.state = (aprsBeaconingStates_t)(APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL); s_stockSettings.smart.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT;
+	CHECK(menuAprsSettingsEnter() && aprsSettingsCopy.mode == APRS_BEACONING_MODE_MANUAL && aprsSettingsCopy.initialInterval == 3, "N2.1: блока нема -- беремо працюючі налаштування");
+	aprsModeMsgSessionClose();
+
+	/* N2.2: шумодав приймача (блок режиму) і слот конфігу APRS читаються з пам'яті на КОЖНОМУ відкритті */
+	resetWorld();
+	CHECK(menuAprsSettingsEnter(), "N2.2: налаштування");
+	{
+		uint8_t sql1 = aprsModeEff()->sql;
+		uint8_t b[APRSM_BLOCK_LEN];
+		aprsModeCfg_t pc;
+
+		aprsModeMsgSessionClose();
+		memset(b, 0, sizeof(b));
+		aprsModeCfgInit(&pc);
+		pc.sql = (uint8_t)((sql1 == 3U) ? 4U : 3U);
+		aprsModeCfgToBytes(&pc, b);
+		memcpy(s_flash, b, APRSM_BLOCK_LEN); s_flashValid = true;   /* ПК переписав блок режиму */
+		s_apc.comment[0] = 'Z'; s_apcValid = true;                    /* ПК переписав слот */
+		CHECK(menuAprsSettingsEnter(), "N2.2: налаштування вдруге");
+		CHECK(aprsModeEff()->sql == pc.sql, "N2.2: шумодав узято з пам'яті, а не з попередньої сесії (%d -> %d)", sql1, aprsModeEff()->sql);
+		CHECK(aprsModeEff()->comment[0] == 'Z', "N2.2: коментар слота узято з пам'яті (%c)", aprsModeEff()->comment[0]);
+		aprsModeMsgSessionClose();
+	}
 #endif
 }
 

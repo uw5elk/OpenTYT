@@ -521,6 +521,23 @@ static uint8_t clampU8(uint8_t v, uint8_t lo, uint8_t hi)
 	return (v < lo) ? lo : ((v > hi) ? hi : v);
 }
 
+/* Блок -> налаштування `st` (решта полів -- поточні). Спільне для старту й для перечитування при відкритті сесії налаштувань. */
+static void cfgToSettings(const aprsBeaconCfg_t *c, aprsBeaconingSettings_t *st)
+{
+	st->mode = (aprsBeaconingMode_t)c->mode;
+	st->power = c->power;
+	st->initialInterval = clampU8(c->initialInterval, APRS_BEACON_INITIAL_INTERVAL_MIN, APRS_BEACON_INITIAL_INTERVAL_MAX);
+	/* стан: лише 4 збережувані біти (канал / GPS / затухання / стиснення); решта (HAS_*, ENABLED) -- поточні, змінні */
+	st->state = (aprsBeaconingStates_t)(((uint8_t)st->state & 0xE1U) | (uint8_t)((c->stateBits & 0x0FU) << 1));
+	st->smart.slowRate = clampU8(c->slowRate, APRS_SMART_BEACON_SLOW_RATE_MIN, APRS_SMART_BEACON_SLOW_RATE_MAX);
+	st->smart.fastRate = clampU8(c->fastRate, APRS_SMART_BEACON_FAST_RATE_MIN, APRS_SMART_BEACON_FAST_RATE_MAX);
+	st->smart.lowSpeed = clampU8(c->lowSpeed, APRS_SMART_BEACON_LOW_SPEED_MIN, APRS_SMART_BEACON_LOW_SPEED_MAX);
+	st->smart.highSpeed = clampU8(c->highSpeed, APRS_SMART_BEACON_HIGH_SPEED_MIN, APRS_SMART_BEACON_HIGH_SPEED_MAX);
+	st->smart.turnAngle = clampU8(c->turnAngle, APRS_SMART_BEACON_TURN_ANGLE_MIN, APRS_SMART_BEACON_TURN_ANGLE_MAX);
+	st->smart.turnSlope = clampU8(c->turnSlope, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX);
+	st->smart.turnTime = clampU8(c->turnTime, APRS_SMART_BEACON_TURN_TIME_MIN, APRS_SMART_BEACON_TURN_TIME_MAX);
+}
+
 /* Блок -> працюючі налаштування (на старті, ПЕРЕД aprsBeaconingInit()). restoreDefaults == true (скидання налаштувань при вмиканні) -- блок НЕ застосовується,
  * навпаки, його перезаписують з поточних (типових). Блока нема чи він зіпсований -- створюється з поточних налаштувань. */
 void aprsBeaconCfgBoot(bool restoreDefaults)
@@ -536,23 +553,34 @@ void aprsBeaconCfgBoot(bool restoreDefaults)
 		aprsBeaconingSettings_t st;
 
 		aprsBeaconingGetSettings(&st);
-		st.mode = (aprsBeaconingMode_t)c.mode;
-		st.power = c.power;
-		st.initialInterval = clampU8(c.initialInterval, APRS_BEACON_INITIAL_INTERVAL_MIN, APRS_BEACON_INITIAL_INTERVAL_MAX);
-		/* стан: лише 4 збережувані біти (канал / GPS / затухання / стиснення); решта (HAS_*, ENABLED) -- поточні, змінні */
-		st.state = (aprsBeaconingStates_t)(((uint8_t)st.state & 0xE1U) | (uint8_t)((c.stateBits & 0x0FU) << 1));
-		st.smart.slowRate = clampU8(c.slowRate, APRS_SMART_BEACON_SLOW_RATE_MIN, APRS_SMART_BEACON_SLOW_RATE_MAX);
-		st.smart.fastRate = clampU8(c.fastRate, APRS_SMART_BEACON_FAST_RATE_MIN, APRS_SMART_BEACON_FAST_RATE_MAX);
-		st.smart.lowSpeed = clampU8(c.lowSpeed, APRS_SMART_BEACON_LOW_SPEED_MIN, APRS_SMART_BEACON_LOW_SPEED_MAX);
-		st.smart.highSpeed = clampU8(c.highSpeed, APRS_SMART_BEACON_HIGH_SPEED_MIN, APRS_SMART_BEACON_HIGH_SPEED_MAX);
-		st.smart.turnAngle = clampU8(c.turnAngle, APRS_SMART_BEACON_TURN_ANGLE_MIN, APRS_SMART_BEACON_TURN_ANGLE_MAX);
-		st.smart.turnSlope = clampU8(c.turnSlope, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX);
-		st.smart.turnTime = clampU8(c.turnTime, APRS_SMART_BEACON_TURN_TIME_MIN, APRS_SMART_BEACON_TURN_TIME_MAX);
+		cfgToSettings(&c, &st);
 		aprsBeaconingBootSet(&st);
 		aprsRxBcnWinSetMode(c.bcnWin);
 		return;
 	}
 	(void)aprsBeaconCfgStore();
+}
+
+/* APRS-fix N2.1: перечитати блок з флешу в працюючі налаштування (на ВІДКРИТТІ сесії налаштувань). Блок могли переписати з ПК, поки рація працює, -- без цього
+ * закриття сесії записало б поверх старі значення з пам'яті. Блока нема/зіпсований -- нічого не міняємо (закриття сесії його створить). Стоковий бікон
+ * перезапускається лише якщо налаштування справді відрізняються (aprsBeaconingSetSettings() порівнює). */
+bool aprsBeaconCfgReload(void)
+{
+	uint8_t blk[APRSB_BLOCK_LEN];
+	aprsBeaconCfg_t c;
+	aprsBeaconingSettings_t st;
+
+	memset(blk, 0, sizeof(blk));
+	if ((codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG, blk, (int)sizeof(blk)) == false) ||
+			(aprsBeaconCfgFromBytes(&c, blk, sizeof(blk)) == false))
+	{
+		return false;
+	}
+	aprsBeaconingGetSettings(&st);
+	cfgToSettings(&c, &st);
+	aprsBeaconingSetSettings(&st);
+	aprsRxBcnWinSetMode(c.bcnWin);
+	return true;
 }
 
 /* Працюючі налаштування -> блок. Пише лише якщо байти відрізняються від наявних. */
@@ -1003,15 +1031,25 @@ bool aprsModeSettingsSessionOpen(void)
 	buildDefaults(m);
 	unifyMigrate(m);
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
+	(void)aprsBeaconCfgReload();   /* APRS-fix N2.1: сесія починається з того, що реально лежить у флеші (ПК міг переписати блок) */
 	aprsBeaconingGetSettings(&aprsSettingsCopy);   /* стокові параметри бікона редагуються в копії (як у стоковому меню) і застосовуються при закритті сесії */
 #if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU)
-	/* APRS-ui M5: GPS у рації нема, рядок «Джерело» прихований -- джерело позиції безальтернативне: «з каналу / вручну». Якщо в блоці (наприклад,
-	 * записаному з ПК) стояв біт «GPS», знімаємо його у чернетці; на закритті сесії зміна збережеться тим самим шляхом, що й решта. */
+	/* APRS-ui M5 + APRS-fix N1: GPS у рації нема, відповідні рядки приховані, тож недосяжні стани приводимо до єдиного можливого у чернетці (на закритті сесії зміна
+	 * збережеться тим самим шляхом, що й решта):
+	 *  - джерело позиції -- «з каналу / вручну» (знімаємо біт «GPS»);
+	 *  - режим «Розумний маяк» (потребує швидкості/курсу) -- «Авто»;
+	 *  - «Затухання» -- вимкнено (без зсуву позиції скидання не настає, інтервал розтягується до максимуму й там лишається).
+	 * Значення енуму, поля блока й GPS-логіка не змінюються: для рації з GPS усе повертається прибиранням FORK_NO_GPS_MENU (applicationMain.h). */
 	if ((aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U)
 	{
 		aprsSettingsCopy.state = (aprsBeaconingStates_t)(((uint8_t)aprsSettingsCopy.state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_GPS)) |
 				(uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
 	}
+	if (aprsSettingsCopy.mode == APRS_BEACONING_MODE_SMART_BEACONING)
+	{
+		aprsSettingsCopy.mode = APRS_BEACONING_MODE_AUTO;
+	}
+	aprsSettingsCopy.state = (aprsBeaconingStates_t)((uint8_t)aprsSettingsCopy.state & (uint8_t)~(APRS_BEACONING_STATE_DECAY_ALGO_ENABLED));
 #endif
 	u = aprsModeUi();
 	memset(u, 0, sizeof(*u));

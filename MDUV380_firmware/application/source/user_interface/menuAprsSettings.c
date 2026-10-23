@@ -852,7 +852,12 @@ enum
 	AS_S_QSY, AS_S_BAUD, AS_S_SILENT, AS_S_USEPOS   /* R21 З4 / APRS-unify: прапорці СЛОТА конфігу APRS (QSY, 300 бод, «тихо», «використовувати позицію»), лише при APRS_R21_QSY */
 };
 
+#if defined(FORK_NO_GPS_MENU)
+/* APRS-fix N1.5: без GPS у групі «Розумний маяк» не лишається жодного видимого рядка -- групу зі списку прибрано (AS_G_SMART навмисно не визначено). */
+enum { AS_G_STATION = 0, AS_G_BEACON, AS_G_POS, AS_G_RX, AS_G_RESET, AS_G_COUNT };
+#else
 enum { AS_G_STATION = 0, AS_G_BEACON, AS_G_SMART, AS_G_POS, AS_G_RX, AS_G_RESET, AS_G_COUNT };
+#endif
 
 static const uint8_t asRowsStation[] = { APRSM_F_CALL, APRSM_F_SSID, APRSM_F_SYMBOL, APRSM_F_COMMENT };
 static const uint8_t asRowsBeacon[] = { AS_S_MODE, AS_S_POWER, AS_S_BINT, APRSM_F_PATH1, APRSM_F_PATH2, AS_S_COMPR
@@ -860,12 +865,10 @@ static const uint8_t asRowsBeacon[] = { AS_S_MODE, AS_S_POWER, AS_S_BINT, APRSM_
 		, AS_S_QSY, AS_S_BAUD, AS_S_SILENT
 #endif
 		};
-#if defined(FORK_NO_GPS_MENU)
-/* APRS-ui M5: рація без GPS -- швидкість і курс завжди «стоїмо», тож швидкий період, пороги швидкості, кут/нахил/час повороту сенсу не мають. Лишаємо
- * «Повільний» (єдиний чинний період розумного маяка нерухомої станції) і «Затухання». Логіка й значення в налаштуваннях не чіпаються;
- * повернути рядки -- прибрати FORK_NO_GPS_MENU (applicationMain.h). */
-static const uint8_t asRowsSmart[] = { AS_S_SLOW, AS_S_DECAY };
-#else
+#if !defined(FORK_NO_GPS_MENU)
+/* APRS-fix N1: без GPS (FORK_NO_GPS_MENU) група «Розумний маяк» прихована ЦІЛКОМ: швидкість і курс завжди «стоїмо», тож швидкий період, пороги, кут/нахил/час
+ * повороту, «Повільний» (частина розумного маяка), «Затухання» (без зсуву позиції скидання не настає, інтервал розтягується до максимуму) і пресети цифрами
+ * (задають саме ці параметри) сенсу не мають. Логіка й значення в налаштуваннях не чіпаються; повернути все -- прибрати FORK_NO_GPS_MENU (applicationMain.h). */
 static const uint8_t asRowsSmart[] = { AS_S_SLOW, AS_S_FAST, AS_S_LOWSPD, AS_S_HISPD, AS_S_ANGLE, AS_S_SLOPE, AS_S_TIME, AS_S_DECAY };
 #endif
 static const uint8_t asRowsPos[] = {
@@ -892,7 +895,9 @@ static const asGroup_t asGroups[AS_G_COUNT] =
 {
 	{ asRowsStation, AS_N(asRowsStation), APRSM_G_STATION },
 	{ asRowsBeacon,  AS_N(asRowsBeacon),  APRSM_G_BEACON },
+#if !defined(FORK_NO_GPS_MENU)
 	{ asRowsSmart,   AS_N(asRowsSmart),   APRSM_G_SMART },
+#endif
 	{ asRowsPos,     AS_N(asRowsPos),     APRSM_G_POS },
 	{ asRowsRx,      AS_N(asRowsRx),      APRSM_G_RX },
 	{ NULL,          0U,                  APRSM_G_RESET }
@@ -943,7 +948,13 @@ typedef struct
 
 static const asEnum_t asEnums[] =
 {
+#if defined(FORK_NO_GPS_MENU)
+	/* APRS-fix N1.2: «Розумний маяк» -- останнє значення переліку (APRS_BEACONING_MODE_SMART_BEACONING, 4) зі списку вибору прибрано; саме значення енуму й поле
+	 * блока бікона не змінено (нумерація стабільна, блок пишеться й з ПК) */
+	{ AS_S_MODE,   4U, APRSM_L_BMODE,  { APRSM_V_BM0, APRSM_V_BM1, APRSM_V_BM2, APRSM_V_BM3, APRSM_V_BM4 } },
+#else
 	{ AS_S_MODE,   5U, APRSM_L_BMODE,  { APRSM_V_BM0, APRSM_V_BM1, APRSM_V_BM2, APRSM_V_BM3, APRSM_V_BM4 } },
+#endif
 	{ AS_S_COMPR,  2U, APRSM_L_COMPR,  { APRSM_V_OFF, APRSM_V_ON } },
 	{ AS_S_DECAY,  2U, APRSM_L_DECAY,  { APRSM_V_OFF, APRSM_V_ON } },
 	{ AS_S_SOURCE, 2U, APRSM_L_SOURCE, { APRSM_V_SRC_CH, APRSM_V_SRC_GPS } },
@@ -1149,7 +1160,11 @@ static void asResetAll(void)
 	s->power = 0U;
 	s->initialInterval = APRS_BEACON_INITIAL_INTERVAL_DEFAULT;
 	s->state = (aprsBeaconingStates_t)(((uint8_t)s->state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_GPS)) |
-			(uint8_t)(APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL | APRS_BEACONING_STATE_DECAY_ALGO_ENABLED | APRS_BEACONING_STATE_COMPRESSED_FORMAT));
+			(uint8_t)(APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL |
+#if !defined(FORK_NO_GPS_MENU)
+			APRS_BEACONING_STATE_DECAY_ALGO_ENABLED |   /* APRS-fix N1.4: без GPS затухання примусово вимкнено */
+#endif
+			APRS_BEACONING_STATE_COMPRESSED_FORMAT));
 	s->smart.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT;
 	s->smart.fastRate = APRS_SMART_BEACON_FAST_RATE_DEFAULT;
 	s->smart.lowSpeed = APRS_SMART_BEACON_LOW_SPEED_DEFAULT;
@@ -1341,7 +1356,7 @@ static int asLevelEvent(uiEvent_t *ev)
 		asRowGreen(asRowId(u));
 		return 1;
 	}
-#if defined(APRS_R21_PRESETS)
+#if defined(APRS_R21_PRESETS) && !defined(FORK_NO_GPS_MENU)   /* APRS-fix N1.1: без GPS пресети розумного маяка приховано разом із групою */
 	/* R21 З5: пресети розумного маяка -- цифри 0..6, як у стоковому екрані (Default, Car, e-Bike, Bike, Walking, Sailing, APRSdroid); лише в групі «Розумний маяк» */
 	if ((u->scroll == AS_G_SMART) && KEYCHECK_SHORTUP_NUMBER(ev->keys) && (BUTTONCHECK_DOWN(ev, (BUTTON_SK1 | BUTTON_SK2)) == 0))
 	{
