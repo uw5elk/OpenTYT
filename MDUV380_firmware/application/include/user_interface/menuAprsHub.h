@@ -15,6 +15,8 @@
 #include "user_interface/menuSystem.h"
 
 menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun);
+/* APRS-unify L6: відкрити хаб і одразу «Налаштування» (для старої прив'язки швидкої клавіші MENU_APRS -- menuAPRSOptions()). Викликати з першого входу меню. */
+void menuAprsHubOpenSettings(void);
 #endif
 
 #endif /* _OPENGD77_MENU_APRS_HUB_H_ */

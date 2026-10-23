@@ -354,4 +354,11 @@
 /* R23-fix F7: підказка біля індикатора режиму набору назви контакту: коротке «#» -- режим, довге -- шпаргалка розкладки */
 #define APRSM_N_MTHINT2      "#:режим дов:розкл"
 
+/* APRS-unify L5.1: прапорці слота конфігу APRS, яких раніше не було в меню рації (група «Маяк» / «Позиція») */
+#define APRSM_L_BAUD         "Бод"
+#define APRSM_V_BAUD0        "1200"
+#define APRSM_V_BAUD1        "300"
+#define APRSM_L_SILENT       "Тихо"
+#define APRSM_L_USEPOS       "Поз.слота"
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

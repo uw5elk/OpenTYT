@@ -47,6 +47,7 @@ import stock_key_table as skt   # wrap/unwrap-логіка стокової та
 import custom_data as cd        # безпечний read/write custom-data блоків (тема/AES-селектор/
                                  # RCTL і т.д. в ОДНОМУ регіоні -- див. коментар у custom_data.py)
 import rctl_config as rctl      # формат блоку "RCTL" (allowlist віддаленого керування)
+import aprs_beacon_cfg as abc_  # APRS-unify: бікон/шумодав/позивний (custom-data типів 13, 14 і EEPROM 0x00E0)
 import cps_link as cps          # R24: знімок екрана і бекап кодплуга (лише читання, без залежностей крім pyserial)
 import cps_restore as cps_rest  # R25: відновлення кодплуга (ЗАПИС; заблоковано константою RESTORE_UNLOCKED)
 import codeplug_view as cpview  # R25: розбір вмісту кодплуга (спільне декодування назв)
@@ -315,6 +316,10 @@ class FlasherApp(tk.Tk):
         self.rctl_button = ttk.Button(action_frame, text="Віддалене керування (RCTL)...",
                                       command=self._open_rctl_config)
         self.rctl_button.pack(side="left", padx=8)
+
+        self.aprs_cfg_button = ttk.Button(action_frame, text="APRS: бікон і позивний...",
+                                          command=self._open_aprs_beacon_cfg)
+        self.aprs_cfg_button.pack(side="left", padx=8)
 
         # R24: читання з рації. Другий рядок, бо в першому вже чотири кнопки і шість у 700 пікселів не влізуть.
         # Знімок і бекап ЛИШЕ ЧИТАЮТЬ: у рацію нічого не записується. (Третій рядок нижче -- перегляд і відновлення, R25.)
@@ -906,6 +911,9 @@ class FlasherApp(tk.Tk):
     def _open_rctl_config(self):
         RctlConfigWindow(self)
 
+    def _open_aprs_beacon_cfg(self):
+        AprsBeaconWindow(self)
+
     def _on_flash_finished(self, ok, reason):
         self.flashing = False
         self.flash_button.config(state="normal")
@@ -1414,6 +1422,244 @@ class RctlConfigWindow(tk.Toplevel):
                 msg, "увімкнено" if mask else "вимкнено", ",".join(names),
                 "схований" if menu_hidden else "видимий",
                 "OK" if verify_ok else "НЕЗБІГ"))
+
+    def _run_worker(self, fn, status_text):
+        self.busy = True
+        self.status_label.config(text=status_text, foreground=gt.P["info"])
+        self._log("=" * 30)
+        self._log(status_text)
+
+        def worker():
+            old_stdout = sys.stdout
+            sys.stdout = QueueWriter(self.queue)
+            ok, reason = False, None
+            try:
+                fn()
+                ok = True
+            except Exception as e:  # noqa: BLE001
+                reason = str(e)
+            finally:
+                sys.stdout = old_stdout
+                self.queue.put(("done", (ok, reason)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_worker_finished(self, ok, reason):
+        self.busy = False
+        if ok:
+            self.status_label.config(text="Готово.", foreground=gt.P["ok"])
+        else:
+            self.status_label.config(text="Помилка.", foreground=gt.P["err"])
+            self._log("!!! Помилка: {}".format(reason))
+            messagebox.showerror("Помилка", "Щось пішло не так: {}".format(reason))
+
+
+class AprsBeaconWindow(tk.Toplevel):
+    """APRS-unify (L5.4): налаштування бікона (custom-data тип 14), шумодав приймача APRS (байт 4 блоку «Режиму APRS», тип 13) і позивник
+    (ім'я рації, EEPROM 0x00E0). Те саме можна міняти з меню рації; сховище одне. Станція (SSID, шляхи, символ, коментар, позиція...) --
+    у розділі APRS CSV-імпорту. Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU). Бікон рація підхоплює на старті -- після запису
+    перезапусти її, інакше меню рації може записати поверх старі значення з пам'яті."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        gt.style_window(self)
+        self.title("TYT MD-UV390UKR -- APRS: бікон і позивний")
+        self.geometry("560x640")
+        self.minsize(520, 600)
+        self.parent_app = parent
+        self.queue = queue.Queue()
+        self.busy = False
+        self.vars = {}
+        self._build_ui()
+        self.after(50, self._poll_queue)
+
+    def _row(self, parent, label, widget):
+        f = ttk.Frame(parent)
+        f.pack(fill="x", padx=8, pady=2)
+        ttk.Label(f, text=label, width=26).pack(side="left")
+        widget.pack(side="left")
+        return widget
+
+    def _build_ui(self):
+        ttk.Label(self, text=("Одне місце для кожного налаштування: позивник -- ім'я рації, бікон -- власний блок, станція -- розділ APRS у CSV. "
+                              "Після запису перезапусти рацію."), wraplength=520, justify="left", foreground=gt.P["warn"]).pack(anchor="w", padx=12, pady=6)
+
+        who = ttk.LabelFrame(self, text="Позивний і приймач")
+        who.pack(fill="x", padx=12, pady=4)
+        self.vars["call"] = tk.StringVar()
+        self._row(who, "Позивний (без SSID)", ttk.Entry(who, textvariable=self.vars["call"], width=10))
+        self.vars["sql"] = tk.StringVar(value="0")
+        self._row(who, "Шумодав приймача APRS (0..21)", ttk.Spinbox(who, from_=0, to=abc_.SQL_MAX, textvariable=self.vars["sql"], width=6))
+
+        bc = ttk.LabelFrame(self, text="Бікон")
+        bc.pack(fill="x", padx=12, pady=4)
+        self.vars["mode"] = tk.StringVar(value=abc_.MODE_NAMES[0])
+        self._row(bc, "Режим", ttk.Combobox(bc, textvariable=self.vars["mode"], values=abc_.MODE_NAMES, state="readonly", width=14))
+        self.vars["interval"] = tk.StringVar()
+        ivals = ["%d с" % x if x < 60 else "%d хв" % (x // 60) for x in abc_.INITIAL_SECS]
+        self._intervals = ivals
+        self.vars["interval"].set(ivals[abc_.DEFAULT_BEACON["interval"]])
+        self._row(bc, "Інтервал (стоковий)", ttk.Combobox(bc, textvariable=self.vars["interval"], values=ivals, state="readonly", width=14))
+        self.vars["power"] = tk.StringVar(value="0")
+        self._row(bc, "Потужність (0 -- як канал, 1..15)", ttk.Spinbox(bc, from_=0, to=15, textvariable=self.vars["power"], width=6))
+        self.vars["source"] = tk.StringVar(value="Позиція каналу")
+        self._row(bc, "Джерело позиції", ttk.Combobox(bc, textvariable=self.vars["source"], values=["Позиція каналу", "GPS"], state="readonly", width=14))
+        self.vars["decay"] = tk.BooleanVar(value=True)
+        self.vars["compressed"] = tk.BooleanVar(value=True)
+        ttk.Checkbutton(bc, text="Алгоритм затухання", variable=self.vars["decay"]).pack(anchor="w", padx=8)
+        ttk.Checkbutton(bc, text="Стиснений формат позиції", variable=self.vars["compressed"]).pack(anchor="w", padx=8)
+        self.vars["bcnwin"] = tk.StringVar(value=abc_.BCNWIN_NAMES[0])
+        self._row(bc, "Вікно маяків приймача", ttk.Combobox(bc, textvariable=self.vars["bcnwin"], values=abc_.BCNWIN_NAMES, state="readonly", width=14))
+
+        sm = ttk.LabelFrame(self, text="Розумний маяк")
+        sm.pack(fill="x", padx=12, pady=4)
+        for key, label in (("slow", "Повільно, хв (1..100)"), ("fast", "Швидко, с (10..180)"), ("low", "Мала швидкість, км/год (2..30)"),
+                           ("high", "Велика швидкість, км/год (2..90)"), ("angle", "Кут повороту, ° (5..90)"), ("slope", "Нахил повороту (1..255)"),
+                           ("time", "Час повороту, с (5..180)")):
+            lo, hi = abc_.RANGES[key]
+            self.vars[key] = tk.StringVar(value=str(abc_.DEFAULT_BEACON[key]))
+            self._row(sm, label, ttk.Spinbox(sm, from_=lo, to=hi, textvariable=self.vars[key], width=6))
+
+        btn = ttk.Frame(self)
+        btn.pack(fill="x", padx=12, pady=6)
+        ttk.Button(btn, text="Прочитати з рації", command=self._on_read).pack(side="left")
+        ttk.Button(btn, text="Записати бікон і шумодав", command=self._on_write_beacon).pack(side="left", padx=8)
+        ttk.Button(btn, text="Записати позивний", command=self._on_write_call).pack(side="left")
+        self.status_label = ttk.Label(self, text="Натисни «Прочитати з рації».", foreground=gt.P["info"])
+        self.status_label.pack(anchor="w", padx=12)
+        log_frame = ttk.LabelFrame(self, text="Журнал")
+        log_frame.pack(fill="both", expand=True, padx=12, pady=6)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=6, state="disabled", font=("Consolas", 9))
+        self.log_text.pack(fill="both", expand=True, padx=6, pady=6)
+
+    def _log(self, text):
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", text + "\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+
+    def _poll_queue(self):
+        try:
+            while True:
+                kind, payload = self.queue.get_nowait()
+                if kind == "log":
+                    self._log(payload)
+                elif kind == "state":
+                    self._apply_state(payload)
+                elif kind == "confirm":
+                    text, done, answer = payload
+                    answer["yes"] = bool(gd.confirm_dialog(self, "Підтвердження запису в рацію", text, yes="Записати в рацію", no="Скасувати"))
+                    done.set()
+                elif kind == "done":
+                    self._on_worker_finished(*payload)
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_queue)
+
+    def _apply_state(self, st):
+        if st.get("call") is not None:
+            self.vars["call"].set(st["call"])
+        if st.get("sql") is not None:
+            self.vars["sql"].set(str(st["sql"]))
+        d = st.get("beacon")
+        if d:
+            self.vars["mode"].set(abc_.MODE_NAMES[d["mode"]])
+            self.vars["interval"].set(self._intervals[d["interval"]])
+            self.vars["power"].set(str(d["power"]))
+            self.vars["source"].set("Позиція каналу" if d["source"] == "channel" else "GPS")
+            self.vars["decay"].set(d["decay"])
+            self.vars["compressed"].set(d["compressed"])
+            self.vars["bcnwin"].set(abc_.BCNWIN_NAMES[d["bcnwin"]])
+            for k in ("slow", "fast", "low", "high", "angle", "slope", "time"):
+                self.vars[k].set(str(d[k]))
+
+    def _collect(self):
+        """Поля вікна -> (dict бікона, sql). abc_.AprsCfgError -- погане значення."""
+        def num(k):
+            try:
+                return int(self.vars[k].get())
+            except ValueError:
+                raise abc_.AprsCfgError("%s: потрібне ціле число" % k)
+        d = {
+            "mode": abc_.MODE_NAMES.index(self.vars["mode"].get()),
+            "interval": self._intervals.index(self.vars["interval"].get()),
+            "power": num("power"),
+            "source": "channel" if self.vars["source"].get() == "Позиція каналу" else "gps",
+            "decay": bool(self.vars["decay"].get()), "compressed": bool(self.vars["compressed"].get()),
+            "bcnwin": abc_.BCNWIN_NAMES.index(self.vars["bcnwin"].get()),
+        }
+        for k in ("slow", "fast", "low", "high", "angle", "slope", "time"):
+            d[k] = num(k)
+        abc_.beacon_build(d)    # перевірка меж
+        sql = num("sql")
+        abc_.mode_block_with_sql(None, sql)
+        return d, sql
+
+    def _on_read(self):
+        if not self.busy:
+            self._run_worker(self._read_worker, "Читаю...")
+
+    def _on_write_beacon(self):
+        if self.busy:
+            return
+        try:
+            d, sql = self._collect()
+        except abc_.AprsCfgError as e:
+            messagebox.showerror("Помилка", str(e))
+            return
+        self._run_worker(lambda: self._write_worker(d, sql), "Записую...")
+
+    def _on_write_call(self):
+        if self.busy:
+            return
+        try:
+            call = abc_.callsign_check(self.vars["call"].get())
+        except abc_.AprsCfgError as e:
+            messagebox.showerror("Помилка", str(e))
+            return
+        self._run_worker(lambda: self._call_worker(call), "Записую позивний...")
+
+    def _connect(self):
+        return cps.open_radio()
+
+    def _read_worker(self):
+        ser = self._connect()
+        try:
+            st = abc_.read_state(ser)
+            link = cps.CpsLink(ser)
+            st["call"] = abc_.callsign_decode(link.read(cps.CPS_ACCESS_EEPROM, abc_.CALLSIGN_ADDR, abc_.CALLSIGN_LEN))
+            self.queue.put(("state", st))
+            print("Позивний: {}. Шумодав: {}. Бікон: {}".format(st["call"] or "(не заданий)", "типовий" if st["sql"] is None else st["sql"],
+                                                                abc_.describe(st["beacon"])))
+        finally:
+            ser.close()
+
+    def _write_worker(self, d, sql):
+        ser = self._connect()
+        try:
+            for line in abc_.write_state(ser, beacon=d, sql=sql):
+                print(line)
+            print("Перезапусти рацію, щоб вона підхопила новий бікон.")
+        finally:
+            ser.close()
+
+    def _call_worker(self, call):
+        ser = self._connect()
+        try:
+            def confirm(text, _plan):
+                done = threading.Event()
+                answer = {"yes": False}
+                self.queue.put(("confirm", (text, done, answer)))
+                done.wait()
+                return answer["yes"]
+            res = abc_.callsign_to_radio(cps.CpsLink(ser), call, confirm, progress=lambda p, t: print("{}% {}".format(p, t)), log=print,
+                                         out_dir=self.parent_app._cps_output_dir())
+            print("Скасовано." if res.get("cancelled") else ("Позивний уже такий." if res.get("nothingToDo") else "Позивний записано й перевірено. Рація перезавантажується."))
+        finally:
+            try:
+                ser.close()
+            except Exception:  # noqa: BLE001 -- після C 6 1 порт може зникнути
+                pass
 
     def _run_worker(self, fn, status_text):
         self.busy = True

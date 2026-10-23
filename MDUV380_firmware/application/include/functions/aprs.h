@@ -159,6 +159,9 @@ void aprsBeaconingUpdateSystemSettingsFromConfiguration(void);
 
 void aprsBeaconingGetSettings(aprsBeaconingSettings_t *dest);
 void aprsBeaconingSetSettings(aprsBeaconingSettings_t *src);
+#if defined(ENABLE_APRS_RX)
+void aprsBeaconingBootSet(const aprsBeaconingSettings_t *src);   // APRS-unify: на старті, до aprsBeaconingInit() -- без зупинки/запуску бікона
+#endif
 
 void aprsBeaconingInit(void);
 void aprsBeaconingStart(void);

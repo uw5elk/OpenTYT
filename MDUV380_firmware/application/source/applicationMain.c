@@ -607,6 +607,9 @@ void applicationMainTask(void)
 		displayEnableBacklight(true, -1);
 	}
 
+#if defined(APRS_RX)
+	aprsBeaconCfgBoot((buttons & BUTTON_SK2) != 0);   // APRS-unify: блок налаштувань бікона -> працюючі налаштування (SK2 -- скидання налаштувань: блок перезаписується типовими)
+#endif
 	aprsBeaconingInit();
 	aprsBeaconingStart();
 

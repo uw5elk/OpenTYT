@@ -77,7 +77,7 @@ static void testBlock(void)
 	aprsModeCfgInit(&c);
 	c.ov = APRSM_OV_ALL;
 	c.freq = 14482500UL;
-	memcpy(c.call, "UW5ELK", 7);
+	memcpy(c.legacyCall, "UW5ELK", 7);
 	c.ssid = 7;
 	memcpy(c.path[0], "WIDE1", 6); c.pathSsid[0] = 1;
 	memcpy(c.path[1], "WIDE2", 6); c.pathSsid[1] = 2;
@@ -86,20 +86,21 @@ static void testBlock(void)
 	memcpy(c.comment, "\xCF\xF0\xE8\xE2\xBF\xF2 APRS", 11);   /* «Привіт APRS» (cp1251) */
 	c.latU = 50450100; c.lonU = -30523400;
 	c.ambiguity = 3;
-	c.interval = 4;
+	c.interval = 4; c.qsyOff = 1;
 	c.sql = 12;
 	aprsModeCfgToBytes(&c, blk);
 	memset(&d, 0xAA, sizeof(d));
 	CHECK(aprsModeCfgFromBytes(&d, blk, sizeof(blk)), "повний блок читається");
-	CHECK(d.ov == APRSM_OV_ALL, "ov = %04X", d.ov);
+	CHECK(d.ov == (APRSM_OV_ALL & (uint16_t)~APRSM_OV_LEGACY_CALL), "ov без «старого позивного» = %04X", d.ov);
 	CHECK(d.freq == c.freq, "freq");
-	CHECK(strcmp(d.call, "UW5ELK") == 0 && d.ssid == 7, "позивний/ssid");
+	CHECK(d.legacyCall[0] == 0 && d.ssid == 7, "позивний у блок не пишеться (APRS-unify), ssid -- так");
 	CHECK(strcmp(d.path[0], "WIDE1") == 0 && d.pathSsid[0] == 1, "шлях 1");
 	CHECK(strcmp(d.path[1], "WIDE2") == 0 && d.pathSsid[1] == 2, "шлях 2");
 	CHECK(d.iconTable == 1 && d.iconIndex == 29, "символ");
 	CHECK(strcmp(d.comment, c.comment) == 0, "коментар");
 	CHECK(d.latU == 50450100 && d.lonU == -30523400, "позиція");
-	CHECK(d.ambiguity == 3 && d.interval == 4 && d.sql == 12, "неточність/інтервал/шумодав");
+	CHECK(d.ambiguity == 3 && d.interval == 0 && d.qsyOff == 0 && d.sql == 12, "неточність/шумодав; інтервал і qsyOff у блок не пишуться");
+	CHECK(blk[3] == 0 && (blk[7] & 0x80) == 0 && blk[12] == 0 && blk[18] == 0, "зарезервовані байти (інтервал, qsyOff, позивний) -- нулі");
 	aprsModeCfgToBytes(&d, blk2);
 	CHECK(memcmp(blk, blk2, sizeof(blk)) == 0, "повторний запис дає ті самі байти");
 
@@ -134,14 +135,12 @@ static void testBlock(void)
 
 	/* поле з недопустимим значенням знімається з оверрайдів, решта живе */
 	aprsModeCfgInit(&c);
-	c.ov = APRSM_OV_FREQ | APRSM_OV_CALL | APRSM_OV_SSID;
+	c.ov = APRSM_OV_FREQ | APRSM_OV_SSID;
 	c.freq = 5000000UL;                    /* 50 МГц -- поза діапазоном */
-	memcpy(c.call, "uw5elk", 7);           /* малі літери -- недопустимо в збереженому */
 	c.ssid = 7;
 	aprsModeCfgToBytes(&c, blk);
 	CHECK(aprsModeCfgFromBytes(&d, blk, sizeof(blk)), "блок з поганими полями читається");
 	CHECK((d.ov & APRSM_OV_FREQ) == 0, "частота поза діапазоном знята");
-	CHECK((d.ov & APRSM_OV_CALL) == 0, "позивний з малими літерами знятий");
 	CHECK((d.ov & APRSM_OV_SSID) != 0 && d.ssid == 7, "ssid лишився");
 	aprsModeCfgInit(&c);
 	c.ov = APRSM_OV_SSID;
@@ -218,23 +217,22 @@ static void testEffective(void)
 	aprsModeEffective(&c, &d, &e);
 	CHECK(e.freq == 14482500UL && e.ssid == 9 && strcmp(e.call, "UW5ELK") == 0, "без оверрайдів -- типове");
 	CHECK(e.hasPos && e.latU == 50450100, "позиція типова");
-	CHECK(e.interval == 0 && e.sql == 0, "інтервал/шумодав");
+	CHECK(e.sql == 0, "шумодав");
 
-	c.ov = APRSM_OV_FREQ | APRSM_OV_CALL | APRSM_OV_PATH1 | APRSM_OV_ICON | APRSM_OV_COMMENT | APRSM_OV_AMB;
+	c.ov = APRSM_OV_FREQ | APRSM_OV_PATH1 | APRSM_OV_ICON | APRSM_OV_COMMENT | APRSM_OV_AMB;
 	c.freq = 14480000UL;
-	memcpy(c.call, "R2ABC", 6);
 	memcpy(c.path[0], "WIDE2", 6); c.pathSsid[0] = 2;
 	c.iconTable = 0; c.iconIndex = 29;
 	memset(c.comment, 0, sizeof(c.comment)); memcpy(c.comment, "Hi", 2);
 	c.ambiguity = 1;
-	c.interval = 3; c.sql = 5;
+	c.sql = 5;
 	aprsModeEffective(&c, &d, &e);
 	CHECK(e.freq == 14480000UL, "частота з рації");
-	CHECK(strcmp(e.call, "R2ABC") == 0 && e.ssid == 9, "позивний з рації, ssid типовий");
+	CHECK(strcmp(e.call, "UW5ELK") == 0 && e.ssid == 9, "позивний -- лише з імені рації, ssid типовий");
 	CHECK(strcmp(e.path[0], "WIDE2") == 0 && e.pathSsid[0] == 2 && strcmp(e.path[1], "WIDE2") == 0 && e.pathSsid[1] == 2, "шлях 1 з рації, шлях 2 типовий");
 	CHECK(e.iconTable == 0 && e.iconIndex == 29, "символ з рації");
 	CHECK(strcmp(e.comment, "Hi") == 0 && e.ambiguity == 1, "коментар/неточність");
-	CHECK(e.interval == 3 && e.sql == 5, "інтервал/шумодав");
+	CHECK(e.sql == 5, "шумодав");
 
 	/* змінений конфіг у CPS підхоплюється для полів, яких не чіпали */
 	raw.txFrequency = 14482500UL + 2500;
@@ -471,9 +469,7 @@ static void testMisc(void)
 	for (int k = 0; k < APRSM_INTERVALS; k++)
 	{
 		CHECK(aprsModeIntervalMinutes((uint8_t)k) == mins[k], "інтервал %d хв", k);
-		CHECK(aprsModeIntervalMs((uint8_t)k) == (uint32_t)mins[k] * 60000UL, "інтервал %d мс", k);
 	}
-	CHECK(aprsModeIntervalMs(200) == 0, "поганий індекс -- вимкнено");
 
 	CHECK(aprsModeCallValid("UW5ELK") && aprsModeCallValid("A") && aprsModeCallValid("R2ABC"), "позивні");
 	CHECK(!aprsModeCallValid("") && !aprsModeCallValid("TOOLONG") && !aprsModeCallValid("uw5elk") && !aprsModeCallValid("UW-5") && !aprsModeCallValid(NULL), "не позивні");
@@ -668,7 +664,7 @@ static void testAuditCfg(void)
 	aprsModeEff_t base, e;
 	uint8_t blk[APRSM_BLOCK_LEN];
 	int fails = 0;
-	enum { F_FREQ, F_CALL, F_SSID, F_P1, F_P2, F_ICON, F_COMMENT, F_LAT, F_LON, F_AMB, F_INT, F_SQL, F_N };
+	enum { F_FREQ, F_SSID, F_P1, F_P2, F_ICON, F_COMMENT, F_LAT, F_LON, F_AMB, F_SQL, F_N };
 
 	memset(&d, 0, sizeof(d));
 	strcpy(d.call, "DEFCAL"); d.ssid = 7;
@@ -684,7 +680,6 @@ static void testAuditCfg(void)
 		switch (f)
 		{
 			case F_FREQ:    c.freq = 14482500UL; c.ov |= APRSM_OV_FREQ; break;
-			case F_CALL:    strcpy(c.call, "R2ABC"); c.ov |= APRSM_OV_CALL; break;
 			case F_SSID:    c.ssid = 9; c.ov |= APRSM_OV_SSID; break;
 			case F_P1:      strcpy(c.path[0], "RELAY"); c.pathSsid[0] = 3; c.ov |= APRSM_OV_PATH1; break;
 			case F_P2:      strcpy(c.path[1], "TRACE"); c.pathSsid[1] = 4; c.ov |= APRSM_OV_PATH2; break;
@@ -693,7 +688,6 @@ static void testAuditCfg(void)
 			case F_LAT:     c.latU = -33868800; c.ov |= APRSM_OV_LAT; break;
 			case F_LON:     c.lonU = 151209300; c.ov |= APRSM_OV_LON; break;
 			case F_AMB:     c.ambiguity = 3; c.ov |= APRSM_OV_AMB; break;
-			case F_INT:     c.interval = 3; break;
 			default:        c.sql = 8; break;
 		}
 		aprsModeCfgToBytes(&c, blk);
@@ -703,7 +697,6 @@ static void testAuditCfg(void)
 		switch (f)
 		{
 			case F_FREQ:    fails += (e.freq != 14482500UL); break;
-			case F_CALL:    fails += strcmp(e.call, "R2ABC") != 0; break;
 			case F_SSID:    fails += (e.ssid != 9); break;
 			case F_P1:      fails += strcmp(e.path[0], "RELAY") != 0 || e.pathSsid[0] != 3 || strcmp(e.path[1], "WIDE2") != 0; break;
 			case F_P2:      fails += strcmp(e.path[1], "TRACE") != 0 || e.pathSsid[1] != 4 || strcmp(e.path[0], "WIDE1") != 0; break;
@@ -712,7 +705,6 @@ static void testAuditCfg(void)
 			case F_LAT:     fails += (e.latU != -33868800) || (e.lonU != 30250000) || !e.hasPos; break;
 			case F_LON:     fails += (e.lonU != 151209300) || (e.latU != 50500000) || !e.hasPos; break;
 			case F_AMB:     fails += (e.ambiguity != 3); break;
-			case F_INT:     fails += (e.interval != 3); break;
 			default:        fails += (e.sql != 8); break;
 		}
 		/* усе інше -- типове (поле не зачепило сусідів) */
@@ -722,7 +714,6 @@ static void testAuditCfg(void)
 			switch (f)
 			{
 				case F_FREQ:    x.freq = base.freq; break;
-				case F_CALL:    memcpy(x.call, base.call, sizeof(x.call)); break;
 				case F_SSID:    x.ssid = base.ssid; break;
 				case F_P1:      memcpy(x.path[0], base.path[0], sizeof(x.path[0])); x.pathSsid[0] = base.pathSsid[0]; break;
 				case F_P2:      memcpy(x.path[1], base.path[1], sizeof(x.path[1])); x.pathSsid[1] = base.pathSsid[1]; break;
@@ -731,7 +722,6 @@ static void testAuditCfg(void)
 				case F_LAT:     x.latU = base.latU; break;
 				case F_LON:     x.lonU = base.lonU; break;
 				case F_AMB:     x.ambiguity = base.ambiguity; break;
-				case F_INT:     x.interval = base.interval; break;
 				default:        x.sql = base.sql; break;
 			}
 			if (memcmp(&x, &base, sizeof(x)) != 0) { fails++; printf("   поле %d: змінилось ще щось\n", f); }

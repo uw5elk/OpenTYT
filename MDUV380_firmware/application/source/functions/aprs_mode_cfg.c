@@ -22,11 +22,6 @@ uint8_t aprsModeIntervalMinutes(uint8_t idx)
 	return (idx < APRSM_INTERVALS) ? intervalMin[idx] : 0U;
 }
 
-uint32_t aprsModeIntervalMs(uint8_t idx)
-{
-	return (uint32_t)aprsModeIntervalMinutes(idx) * 60000UL;
-}
-
 /* ---- позивні й шляхи ------------------------------------------------------------------------------- */
 
 static bool isCallChar(char c)
@@ -809,13 +804,12 @@ void aprsModeCfgToBytes(const aprsModeCfg_t *c, uint8_t out[APRSM_BLOCK_LEN])
 	out[0] = APRSM_MAGIC0;
 	out[1] = APRSM_MAGIC1;
 	out[2] = APRSM_VERSION;
-	out[3] = c->interval;
+	/* APRS-unify: байт 3 (інтервал), біт 7 байта 7 (qsyOff) і байти 12..18 (позивний) ЗАРЕЗЕРВОВАНІ -- нулі; їх значення переїхали в кодплуг (див. aprsModeMigrate()) */
 	out[4] = c->sql;
-	out[5] = (uint8_t)c->ov;
-	out[6] = (uint8_t)(c->ov >> 8);
-	out[7] = (uint8_t)((c->ambiguity & 0x7FU) | (c->qsyOff ? 0x80U : 0U));   /* R21 З4: біт 7 -- QSY вимкнено (старі блоки: 0 -> QSY ввімкнено) */
+	out[5] = (uint8_t)(c->ov & (APRSM_OV_ALL | APRSM_OV_MIGRATED) & (uint16_t)~APRSM_OV_LEGACY_CALL);
+	out[6] = (uint8_t)((c->ov & (APRSM_OV_ALL | APRSM_OV_MIGRATED) & (uint16_t)~APRSM_OV_LEGACY_CALL) >> 8);
+	out[7] = (uint8_t)(c->ambiguity & 0x7FU);
 	put32(&out[8], c->freq);
-	memcpy(&out[12], c->call, APRSM_CALL_LEN);
 	out[19] = c->ssid;
 	memcpy(&out[20], c->path[0], APRSM_CALL_LEN);
 	out[27] = c->pathSsid[0];
@@ -839,12 +833,12 @@ bool aprsModeCfgFromBytes(aprsModeCfg_t *c, const uint8_t *b, size_t len)
 	}
 	c->interval = (b[3] < APRSM_INTERVALS) ? b[3] : 0U;
 	c->sql = (b[4] <= APRSM_SQL_MAX) ? b[4] : 0U;
-	c->ov = (uint16_t)(b[5] | ((uint16_t)b[6] << 8)) & APRSM_OV_ALL;
-	c->ambiguity = b[7] & 0x7FU;   /* біт 7 -- qsyOff (R21 З4); значення 8..127, як і раніше, знімають оверрайд */
-	c->qsyOff = (uint8_t)((b[7] >> 7) & 1U);
+	c->ov = (uint16_t)(b[5] | ((uint16_t)b[6] << 8)) & (APRSM_OV_ALL | APRSM_OV_MIGRATED);
+	c->ambiguity = b[7] & 0x7FU;   /* значення 8..127, як і раніше, знімають оверрайд */
+	c->qsyOff = (uint8_t)((b[7] >> 7) & 1U);   /* лише для міграції */
 	c->freq = get32(&b[8]);
-	memcpy(c->call, &b[12], APRSM_CALL_LEN);
-	c->call[APRSM_CALL_LEN - 1U] = 0;
+	memcpy(c->legacyCall, &b[12], APRSM_CALL_LEN);
+	c->legacyCall[APRSM_CALL_LEN - 1U] = 0;
 	c->ssid = b[19];
 	memcpy(c->path[0], &b[20], APRSM_CALL_LEN);
 	c->path[0][APRSM_CALL_LEN - 1U] = 0;
@@ -864,9 +858,9 @@ bool aprsModeCfgFromBytes(aprsModeCfg_t *c, const uint8_t *b, size_t len)
 	{
 		c->ov &= (uint16_t)~APRSM_OV_FREQ;
 	}
-	if ((c->ov & APRSM_OV_CALL) && (aprsModeCallValid(c->call) == false))
+	if ((c->ov & APRSM_OV_LEGACY_CALL) && (aprsModeCallValid(c->legacyCall) == false))
 	{
-		c->ov &= (uint16_t)~APRSM_OV_CALL;
+		c->ov &= (uint16_t)~APRSM_OV_LEGACY_CALL;
 	}
 	if ((c->ov & APRSM_OV_SSID) && (c->ssid > 15U))
 	{
@@ -896,6 +890,55 @@ bool aprsModeCfgFromBytes(aprsModeCfg_t *c, const uint8_t *b, size_t len)
 	{
 		c->ov &= (uint16_t)~APRSM_OV_AMB;
 	}
+	return true;
+}
+
+/* ---- APRS-unify (L5.3): блок налаштувань бікона ------------------------------------------------------------------- */
+
+void aprsBeaconCfgToBytes(const aprsBeaconCfg_t *c, uint8_t out[APRSB_BLOCK_LEN])
+{
+	memset(out, 0, APRSB_BLOCK_LEN);
+	out[0] = 'A';
+	out[1] = 'B';
+	out[2] = 1U;
+	out[3] = c->mode;
+	out[4] = c->power;
+	out[5] = c->initialInterval;
+	out[6] = c->stateBits;
+	out[7] = c->slowRate;
+	out[8] = c->fastRate;
+	out[9] = c->lowSpeed;
+	out[10] = c->highSpeed;
+	out[11] = c->turnAngle;
+	out[12] = c->turnSlope;
+	out[13] = c->turnTime;
+	out[14] = c->bcnWin;
+	out[15] = sum8(out, 15);
+}
+
+bool aprsBeaconCfgFromBytes(aprsBeaconCfg_t *c, const uint8_t *b, size_t len)
+{
+	memset(c, 0, sizeof(*c));
+	if ((b == NULL) || (len != APRSB_BLOCK_LEN) || (b[0] != 'A') || (b[1] != 'B') || (b[2] != 1U) || (b[15] != sum8(b, 15)))
+	{
+		return false;
+	}
+	if ((b[3] > 4U) || (b[4] > 15U) || (b[5] > 9U) || (b[14] > 2U) || (((b[6] & 3U) != 1U) && ((b[6] & 3U) != 2U)))
+	{
+		return false;
+	}
+	c->mode = b[3];
+	c->power = b[4];
+	c->initialInterval = b[5];
+	c->stateBits = b[6] & 0x0FU;
+	c->slowRate = b[7];
+	c->fastRate = b[8];
+	c->lowSpeed = b[9];
+	c->highSpeed = b[10];
+	c->turnAngle = b[11];
+	c->turnSlope = b[12];
+	c->turnTime = b[13];
+	c->bcnWin = b[14];
 	return true;
 }
 
@@ -999,6 +1042,7 @@ void aprsModeDefaultsBuild(aprsModeDefaults_t *d, const aprsModeRawCfg_t *raw, b
 		d->comment[k] = 0;
 	}
 	d->ambiguity = (uint8_t)((raw->flags & APRSM_RAW_FLAG_AMB_MASK) >> 5);
+	d->flags = (uint8_t)(raw->flags & APRSM_RAW_FLAG_MASK);
 	if (raw->flags & APRSM_RAW_FLAG_USE_POSITION)
 	{
 		d->hasPos = true;
@@ -1016,7 +1060,7 @@ void aprsModeEffective(const aprsModeCfg_t *c, const aprsModeDefaults_t *d, aprs
 	{
 		e->freq = APRSM_FREQ_DEFAULT;
 	}
-	memcpy(e->call, (c->ov & APRSM_OV_CALL) ? c->call : d->call, APRSM_CALL_LEN);
+	memcpy(e->call, d->call, APRSM_CALL_LEN);
 	e->ssid = (c->ov & APRSM_OV_SSID) ? c->ssid : d->ssid;
 	memcpy(e->path[0], (c->ov & APRSM_OV_PATH1) ? c->path[0] : d->path[0], APRSM_CALL_LEN);
 	e->pathSsid[0] = (c->ov & APRSM_OV_PATH1) ? c->pathSsid[0] : d->pathSsid[0];
@@ -1026,7 +1070,7 @@ void aprsModeEffective(const aprsModeCfg_t *c, const aprsModeDefaults_t *d, aprs
 	e->iconIndex = (c->ov & APRSM_OV_ICON) ? c->iconIndex : d->iconIndex;
 	memcpy(e->comment, (c->ov & APRSM_OV_COMMENT) ? c->comment : d->comment, APRSM_COMMENT_LEN);
 	e->ambiguity = (c->ov & APRSM_OV_AMB) ? c->ambiguity : d->ambiguity;
-	e->interval = c->interval;
+	e->flags = d->flags;
 	e->sql = c->sql;
 
 	/* Позиція: широта й довгота можуть бути задані окремо; відсутню беремо з типової. */
@@ -1037,6 +1081,221 @@ void aprsModeEffective(const aprsModeCfg_t *c, const aprsModeDefaults_t *d, aprs
 		e->latU = latOv ? c->latU : d->latU;
 		e->lonU = lonOv ? c->lonU : d->lonU;
 	}
+}
+
+
+/* ---- APRS-unify: єдине джерело істини ------------------------------------------------------------------------ */
+
+#define APRSM_MAGIC_VER_RAW  0x4153U   /* APRS_MAGIC_VERSION (codeplug.c) */
+
+void aprsModeMicroToFixed24(int32_t u, uint8_t b[3])
+{
+	uint32_t a = (u < 0) ? (0U - (uint32_t)u) : (uint32_t)u;
+	uint32_t ip = a / 1000000UL;
+	uint32_t dp = ((a % 1000000UL) + 50UL) / 100UL;   /* частка -- у 1E-4 градуса (100 мікроградусів), округлення до найближчого */
+	uint32_t v;
+
+	if (dp >= 10000UL)
+	{
+		ip++;
+		dp -= 10000UL;
+	}
+	v = (ip << 15) | dp;
+	if ((u < 0) && (v != 0U))
+	{
+		v |= 0x800000UL;
+	}
+	b[0] = (uint8_t)v;
+	b[1] = (uint8_t)(v >> 8);
+	b[2] = (uint8_t)(v >> 16);
+}
+
+/* Заготовка нового слота (коли в кодплузі конфігів APRS нема зовсім): запасні значення режиму (WIDE1-1, WIDE2-1, автомобіль), QSY ввімкнено --
+ * як було до unify, коли QSY у режимі був увімкнений типово. Назву слота -- «APRS», дописка 0xFF (імена в кодплузі 0xFF); шляхи й коментар -- дописка 0. */
+void aprsModeStoreBlank(aprsModeStore_t *s)
+{
+	memset(&s->raw, 0, sizeof(s->raw));
+	memset(s->raw.name, 0xFF, sizeof(s->raw.name));
+	memcpy(s->raw.name, "APRS", 4);
+	memcpy(s->raw.paths[0].name, "WIDE1", 5);
+	s->raw.paths[0].ssid = 1;
+	memcpy(s->raw.paths[1].name, "WIDE2", 5);
+	s->raw.paths[1].ssid = 1;
+	s->raw.iconIndex = (uint8_t)('>' - '!');
+	s->raw.flags = APRSM_RAW_FLAG_QSY;
+	s->raw.magicVer = APRSM_MAGIC_VER_RAW;
+	s->rawValid = false;
+}
+
+/* Позивний -> ім'я рації (8 байт, дописка 0xFF -- як codeplugUtilConvertStringToBuf()). true -- змінилося. */
+bool aprsModeStoreSetCall(aprsModeStore_t *s, const char *call, bool *valid)
+{
+	char n[APRSM_CALL_LEN];
+	uint8_t nb[APRSM_NAME_RAW_LEN];
+
+	if (valid != NULL)
+	{
+		*valid = false;
+	}
+	if (call == NULL)
+	{
+		return false;
+	}
+	(void)aprsModeNormCall(n, sizeof(n), call);
+	if (aprsModeCallValid(n) == false)
+	{
+		return false;
+	}
+	if (valid != NULL)
+	{
+		*valid = true;
+	}
+	memset(nb, 0xFF, sizeof(nb));
+	memcpy(nb, n, strlen(n));
+	if (memcmp(nb, s->name, sizeof(nb)) == 0)
+	{
+		return false;
+	}
+	memcpy(s->name, nb, sizeof(nb));
+	return true;
+}
+
+void aprsModeStoreSetFlag(aprsModeStore_t *s, uint8_t mask, bool on)
+{
+	s->raw.flags = (uint8_t)(on ? (s->raw.flags | mask) : (s->raw.flags & (uint8_t)~mask));
+}
+
+static void putStr(char *dst, size_t n, const char *src)
+{
+	size_t k = strnlen(src, n);
+
+	memset(dst, 0, n);
+	memcpy(dst, src, k);
+}
+
+unsigned aprsModeFold(aprsModeCfg_t *c, aprsModeStore_t *s, const aprsModeDefaults_t *d)
+{
+	aprsModeRawCfg_t before;
+	aprsModeRawCfg_t *w = &s->raw;
+	uint16_t ov = (uint16_t)(c->ov & APRSM_OV_ALL & (uint16_t)~APRSM_OV_LEGACY_CALL);
+
+	if (ov == 0U)
+	{
+		return 0U;
+	}
+	memcpy(&before, w, sizeof(before));
+	if (ov & APRSM_OV_FREQ)
+	{
+		w->txFrequency = c->freq;
+	}
+	if (ov & APRSM_OV_SSID)
+	{
+		w->senderSSID = c->ssid;
+	}
+	for (int p = 0; p < 2; p++)
+	{
+		if (ov & ((p == 0) ? APRSM_OV_PATH1 : APRSM_OV_PATH2))
+		{
+			putStr(w->paths[p].name, sizeof(w->paths[p].name), c->path[p]);
+			w->paths[p].ssid = c->pathSsid[p];
+		}
+	}
+	if (ov & APRSM_OV_ICON)
+	{
+		w->iconTable = c->iconTable;
+		w->iconIndex = c->iconIndex;
+	}
+	if (ov & APRSM_OV_COMMENT)
+	{
+		putStr(w->comment, sizeof(w->comment), c->comment);
+	}
+	if (ov & APRSM_OV_AMB)
+	{
+		w->flags = (uint8_t)((w->flags & (uint8_t)~APRSM_RAW_FLAG_AMB_MASK) | (uint8_t)((c->ambiguity & 7U) << 5));
+	}
+	if (ov & (APRSM_OV_LAT | APRSM_OV_LON))
+	{
+		/* Широта й довгота в слоті ЗАВЖДИ парою (прапорець USE_POSITION). Задано лише одну, а другої звідки взяти нема (слот без позиції й позиції в
+		 * налаштуваннях рації нема) -- біт лишається в блоці, поки не задано другу. */
+		bool useSlot = ((w->flags & APRSM_RAW_FLAG_USE_POSITION) != 0U);
+		bool haveOther = useSlot || ((d != NULL) && d->hasPos);
+		bool both = ((ov & APRSM_OV_LAT) != 0U) && ((ov & APRSM_OV_LON) != 0U);
+
+		if (both || haveOther)
+		{
+			int32_t la = (ov & APRSM_OV_LAT) ? c->latU : (useSlot ? aprsModeFixed24ToMicro(w->latitude) : d->latU);
+			int32_t lo = (ov & APRSM_OV_LON) ? c->lonU : (useSlot ? aprsModeFixed24ToMicro(w->longitude) : d->lonU);
+
+			aprsModeMicroToFixed24(la, w->latitude);
+			aprsModeMicroToFixed24(lo, w->longitude);
+			w->flags |= APRSM_RAW_FLAG_USE_POSITION;
+		}
+		else
+		{
+			ov &= (uint16_t)~(APRSM_OV_LAT | APRSM_OV_LON);
+		}
+	}
+	c->ov &= (uint16_t)~ov;
+	return ((memcmp(&before, w, sizeof(before)) != 0) || (s->rawValid == false)) ? APRSM_FOLD_RAW : 0U;
+}
+
+uint8_t aprsModeNearestInitial(uint8_t oldIdx, const uint16_t *secs, unsigned n)
+{
+	uint32_t target = (uint32_t)aprsModeIntervalMinutes(oldIdx) * 60UL;
+	unsigned best = 0U;
+	uint32_t bestD = 0xFFFFFFFFUL;
+
+	for (unsigned i = 0; i < n; i++)
+	{
+		uint32_t dd = (secs[i] > target) ? (secs[i] - target) : (target - secs[i]);
+
+		if ((dd < bestD) || ((dd == bestD) && (secs[i] > secs[best])))   /* порівну -- довший інтервал (менше ефіру) */
+		{
+			bestD = dd;
+			best = i;
+		}
+	}
+	return (uint8_t)best;
+}
+
+unsigned aprsModeMigrate(aprsModeCfg_t *c, aprsModeStore_t *s, const aprsModeDefaults_t *d,
+		uint8_t *initialInterval, const uint16_t *secs, unsigned n)
+{
+	unsigned r = 0U;
+
+	if (c->ov & APRSM_OV_MIGRATED)
+	{
+		return 0U;
+	}
+	if ((c->ov & APRSM_OV_LEGACY_CALL) && aprsModeStoreSetCall(s, c->legacyCall, NULL))
+	{
+		r |= APRSM_FOLD_NAME;
+	}
+	c->ov &= (uint16_t)~APRSM_OV_LEGACY_CALL;
+	memset(c->legacyCall, 0, sizeof(c->legacyCall));
+	r |= aprsModeFold(c, s, d);
+	if ((c->interval != 0U) && (initialInterval != NULL) && (secs != NULL))
+	{
+		uint8_t t = aprsModeNearestInitial(c->interval, secs, n);
+
+		if (t != *initialInterval)
+		{
+			*initialInterval = t;
+			r |= APRSM_FOLD_INIT;
+		}
+	}
+	c->interval = 0U;
+	if (c->qsyOff != 0U)
+	{
+		if (s->raw.flags & APRSM_RAW_FLAG_QSY)
+		{
+			s->raw.flags &= (uint8_t)~APRSM_RAW_FLAG_QSY;
+			r |= APRSM_FOLD_RAW;
+		}
+		c->qsyOff = 0U;
+	}
+	c->ov |= APRSM_OV_MIGRATED;
+	return r | APRSM_FOLD_BLOCK;
 }
 
 void aprsModeToBeaconCfg(const aprsModeEff_t *e, aprsModeRawCfg_t *out)
@@ -1071,7 +1330,8 @@ void aprsModeToBeaconCfg(const aprsModeEff_t *e, aprsModeRawCfg_t *out)
 	out->iconTable = e->iconTable;
 	out->iconIndex = e->iconIndex;
 	out->txFrequency = 0U;   /* QSY не потрібен: режим уже стоїть на частоті APRS */
-	out->flags = (uint8_t)((e->ambiguity & 0x07U) << 5);   /* без USE_POSITION: позиція йде окремо */
+	/* без USE_POSITION: позиція йде окремо; без QSY: частоти QSY нема (txFrequency 0), QSY іде в коментарі (aprsModeCommentWithQsy()). 300 бод і «тихо» -- зі слота */
+	out->flags = (uint8_t)(((e->ambiguity & 0x07U) << 5) | (e->flags & (APRSM_RAW_FLAG_300_BAUDS | APRSM_RAW_FLAG_SILENT)));
 }
 
 #endif /* ENABLE_APRS_RX */

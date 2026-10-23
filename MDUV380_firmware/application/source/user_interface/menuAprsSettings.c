@@ -60,7 +60,6 @@ static const char *fieldLabel(int f)
 		case APRSM_F_LAT:        return APRSM_L_LAT;
 		case APRSM_F_LON:        return APRSM_L_LON;
 		case APRSM_F_AMB:        return APRSM_L_AMB;
-		case APRSM_F_INTERVAL:   return APRSM_L_INTERVAL;
 		case APRSM_F_SQL:        return APRSM_L_SQL;
 		default:                 return APRSM_L_RESET;
 	}
@@ -160,16 +159,6 @@ static void fieldValue(int f, char *b, size_t n)
 			break;
 		case APRSM_F_AMB:
 			snprintf(b, n, "%u", (unsigned)e->ambiguity);
-			break;
-		case APRSM_F_INTERVAL:
-			if (c->interval == 0U)
-			{
-				snprintf(b, n, "%s", APRSM_V_INT_OFF);
-			}
-			else
-			{
-				snprintf(b, n, APRSM_V_INT_FMT, (unsigned)aprsModeIntervalMinutes(c->interval));
-			}
 			break;
 		case APRSM_F_SQL:
 			if (c->sql == 0U)
@@ -624,9 +613,8 @@ static int editApply(aprsModeEdit_t *ed)
 			{
 				return 1;
 			}
-			memcpy(c->call, call, sizeof(c->call));
-			bit = APRSM_OV_CALL;
-			break;
+			/* APRS-unify: позивний -- одне поле, ім'я рації (EEPROM 0x00E0); пишеться після паузи, як і слот */
+			return aprsModeSetCall(call) ? 0 : 1;
 		}
 		case APRSM_F_PATH1:
 		case APRSM_F_PATH2:
@@ -824,10 +812,6 @@ static void settingsStep(int f, int dir)
 			c->ambiguity = (uint8_t)wrapStep(e->ambiguity, dir, 7);
 			bit = APRSM_OV_AMB;
 			break;
-		case APRSM_F_INTERVAL:
-			c->interval = (uint8_t)wrapStep(c->interval, dir, APRSM_INTERVALS - 1);
-			bit = 0x8000U;   /* не оверрайд: сам інтервал */
-			break;
 		case APRSM_F_SQL:
 			c->sql = (uint8_t)wrapStep(c->sql, dir, APRSM_SQL_MAX);
 			bit = 0x8000U;
@@ -864,19 +848,24 @@ static void settingsStep(int f, int dir)
 enum
 {
 	AS_S_MODE = 32, AS_S_POWER, AS_S_BINT, AS_S_COMPR, AS_S_SLOW, AS_S_FAST, AS_S_LOWSPD, AS_S_HISPD, AS_S_ANGLE, AS_S_SLOPE,
-	AS_S_TIME, AS_S_DECAY, AS_S_SOURCE, AS_S_BCNWIN, AS_S_QSY   /* R21 З4: QSY у коментарі маяка -- у блоці режиму, не в стокових налаштуваннях (рядок є лише при APRS_R21_QSY) */
+	AS_S_TIME, AS_S_DECAY, AS_S_SOURCE, AS_S_BCNWIN,
+	AS_S_QSY, AS_S_BAUD, AS_S_SILENT, AS_S_USEPOS   /* R21 З4 / APRS-unify: прапорці СЛОТА конфігу APRS (QSY, 300 бод, «тихо», «використовувати позицію»), лише при APRS_R21_QSY */
 };
 
 enum { AS_G_STATION = 0, AS_G_BEACON, AS_G_SMART, AS_G_POS, AS_G_RX, AS_G_RESET, AS_G_COUNT };
 
 static const uint8_t asRowsStation[] = { APRSM_F_CALL, APRSM_F_SSID, APRSM_F_SYMBOL, APRSM_F_COMMENT };
-static const uint8_t asRowsBeacon[] = { AS_S_MODE, AS_S_POWER, AS_S_BINT, APRSM_F_PATH1, APRSM_F_PATH2, AS_S_COMPR,
+static const uint8_t asRowsBeacon[] = { AS_S_MODE, AS_S_POWER, AS_S_BINT, APRSM_F_PATH1, APRSM_F_PATH2, AS_S_COMPR
 #if defined(APRS_R21_QSY)
-		AS_S_QSY,
+		, AS_S_QSY, AS_S_BAUD, AS_S_SILENT
 #endif
-		APRSM_F_INTERVAL };
+		};
 static const uint8_t asRowsSmart[] = { AS_S_SLOW, AS_S_FAST, AS_S_LOWSPD, AS_S_HISPD, AS_S_ANGLE, AS_S_SLOPE, AS_S_TIME, AS_S_DECAY };
-static const uint8_t asRowsPos[] = { AS_S_SOURCE, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB };
+static const uint8_t asRowsPos[] = { AS_S_SOURCE, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB
+#if defined(APRS_R21_QSY)
+		, AS_S_USEPOS
+#endif
+		};
 static const uint8_t asRowsRx[] = { APRSM_F_FREQ, APRSM_F_SQL, AS_S_BCNWIN };
 
 typedef struct
@@ -949,6 +938,9 @@ static const asEnum_t asEnums[] =
 	{ AS_S_SOURCE, 2U, APRSM_L_SOURCE, { APRSM_V_SRC_CH, APRSM_V_SRC_GPS } },
 #if defined(APRS_R21_QSY)
 	{ AS_S_QSY,    2U, APRSM_L_QSY,    { APRSM_V_OFF, APRSM_V_ON } },
+	{ AS_S_BAUD,   2U, APRSM_L_BAUD,   { APRSM_V_BAUD0, APRSM_V_BAUD1 } },
+	{ AS_S_SILENT, 2U, APRSM_L_SILENT, { APRSM_V_OFF, APRSM_V_ON } },
+	{ AS_S_USEPOS, 2U, APRSM_L_USEPOS, { APRSM_V_OFF, APRSM_V_ON } },
 #endif
 	{ AS_S_BCNWIN, 3U, APRSM_L_BCNWIN, { APRSRX_OPT_BCNWIN_ALL, APRSRX_OPT_BCNWIN_NEW, APRSRX_OPT_BCNWIN_OFF } }
 };
@@ -995,6 +987,13 @@ static const char *asLabel(int r)
 	return (e != NULL) ? e->label : "";
 }
 
+#if defined(APRS_R21_QSY)
+static uint8_t flagGet(uint8_t mask)
+{
+	return ((aprsModeEff()->flags & mask) != 0U) ? 1U : 0U;
+}
+#endif
+
 static uint8_t asEnumGet(int r)
 {
 	const aprsBeaconingSettings_t *s = &aprsSettingsCopy;
@@ -1006,7 +1005,10 @@ static uint8_t asEnumGet(int r)
 		case AS_S_DECAY:  return ((s->state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) != 0U) ? 1U : 0U;
 		case AS_S_SOURCE: return ((s->state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U) ? 1U : 0U;
 #if defined(APRS_R21_QSY)
-		case AS_S_QSY:    return (aprsModeCfg()->qsyOff != 0U) ? 0U : 1U;   /* R21 З4 */
+		case AS_S_QSY:    return flagGet(APRSM_RAW_FLAG_QSY);   /* APRS-unify: єдиний прапорець -- у слоті конфігу APRS */
+		case AS_S_BAUD:   return flagGet(APRSM_RAW_FLAG_300_BAUDS);
+		case AS_S_SILENT: return flagGet(APRSM_RAW_FLAG_SILENT);
+		case AS_S_USEPOS: return flagGet(APRSM_RAW_FLAG_USE_POSITION);
 #endif
 		default:          return aprsRxBcnWinMode();
 	}
@@ -1026,10 +1028,10 @@ static void asEnumSet(int r, uint8_t v)
 			aprsRxBcnWinSetMode(v);
 			return;
 #if defined(APRS_R21_QSY)
-		case AS_S_QSY:
-			aprsModeCfg()->qsyOff = (v != 0U) ? 0U : 1U;   /* R21 З4: у блоці режиму; запис у флеш -- як у решти полів (aprsModeCfgChanged) */
-			aprsModeCfgChanged(0x8000U);
-			return;
+		case AS_S_QSY:    aprsModeSetFlag(APRSM_RAW_FLAG_QSY, (v != 0U)); return;
+		case AS_S_BAUD:   aprsModeSetFlag(APRSM_RAW_FLAG_300_BAUDS, (v != 0U)); return;
+		case AS_S_SILENT: aprsModeSetFlag(APRSM_RAW_FLAG_SILENT, (v != 0U)); return;
+		case AS_S_USEPOS: aprsModeSetFlag(APRSM_RAW_FLAG_USE_POSITION, (v != 0U)); return;
 #endif
 		case AS_S_COMPR:  bit = (uint8_t)APRS_BEACONING_STATE_COMPRESSED_FORMAT; break;
 		case AS_S_DECAY:  bit = (uint8_t)APRS_BEACONING_STATE_DECAY_ALGO_ENABLED; break;
@@ -1195,7 +1197,13 @@ static void asDraw(void)
 	displayClearBuf();
 	if (AS_LEVEL(u) == AS_LEVEL_GROUPS)
 	{
-		menuDisplayTitle(APRSM_SET_TITLE);
+		/* APRS-unify: у шапці -- назва слота конфігу APRS, який редагують (станційні поля живуть у ньому, а не в окремому сховищі) */
+		char ttl[20];
+		char sn[9];
+
+		aprsModeSlotName(sn);
+		snprintf(ttl, sizeof(ttl), "APRS:%s", (sn[0] != 0) ? sn : "-");
+		menuDisplayTitle(ttl);
 		menuAprsListDraw(AS_G_COUNT, (int)u->scroll, asGroupText);
 		printRow(10, APRSM_S_HINT_G);
 	}
@@ -1221,7 +1229,7 @@ static void asRowGreen(int r)
 	{
 		if ((r == AS_S_COMPR) || (r == AS_S_DECAY)
 #if defined(APRS_R21_QSY)
-				|| (r == AS_S_QSY)
+				|| (r == AS_S_QSY) || (r == AS_S_BAUD) || (r == AS_S_SILENT) || (r == AS_S_USEPOS)
 #endif
 				)
 		{

@@ -190,8 +190,17 @@ bool aprsRxBusy(uint32_t ms) { (void)ms; return s_rxBusy; }
 void aprsRxSuspendForAudio(void) { s_rxSuspend++; }
 void callReplayStop(void) { s_replayStop++; }
 
+/* APRS-unify: блок налаштувань бікона (16 Б), слот конфігу й ім'я рації -- змінні з лічильниками записів */
+static uint8_t s_bflash[APRSB_BLOCK_LEN];
+static bool s_bflashValid = false;
+static int s_bflashWrites, s_apcWrites, s_nameWrites, s_apcWriteIdx;
+const uint16_t initialIntervalsInSecs[APRS_BEACON_INITIAL_INTERVAL_MAX + 1] = { 12U, 30U, 60U, 120U, 180U, 300U, 600U, 1200U, 1800U, 3600U };
+static uint8_t s_bcnWin;
+uint8_t aprsRxBcnWinMode(void) { return s_bcnWin; }
+void aprsRxBcnWinSetMode(uint8_t m) { s_bcnWin = m; }
 bool codeplugGetOpenGD77CustomDataBounded(CodeplugCustomDataType_t t, uint8_t *buf, int maxLen)
 {
+	if ((t == CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG) && s_bflashValid && (maxLen >= APRSB_BLOCK_LEN)) { memcpy(buf, s_bflash, APRSB_BLOCK_LEN); return true; }
 	if ((t != CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG) || (s_flashValid == false) || (maxLen < APRSM_BLOCK_LEN)) { return false; }
 	memcpy(buf, s_flash, APRSM_BLOCK_LEN);
 	return true;
@@ -204,6 +213,10 @@ bool SPI_Flash_read(uint32_t a, uint8_t *b, int n) { (void)a; if (n >= 12) { mem
 bool SPI_Flash_write(uint32_t a, uint8_t *b, int n) { (void)a; s_spiWrites++; if (s_flashBroken) { return false; } if ((n >= 8) && (memcmp(b, "OpenGD77", 8) == 0)) { s_regionMagic = true; } return true; }
 bool codeplugSetOpenGD77CustomData(CodeplugCustomDataType_t t, uint8_t *buf, int len)
 {
+	if ((t == CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG) && (len == APRSB_BLOCK_LEN) && s_regionMagic && (s_flashBroken == false))
+	{
+		memcpy(s_bflash, buf, APRSB_BLOCK_LEN); s_bflashValid = true; s_bflashWrites++; return true;
+	}
 	if ((t != CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG) || (len != APRSM_BLOCK_LEN)) { return false; }
 	if ((s_regionMagic == false) || s_flashBroken) { return false; }   /* регіон без магії або флеш не пише */
 	memcpy(s_flash, buf, APRSM_BLOCK_LEN);
@@ -219,6 +232,26 @@ uint8_t codeplugChannelSetFlag(CodeplugChannel_t *c, ChannelFlag_t f, uint8_t v)
 void codeplugGetRadioName(char *b) { memcpy(b, s_radioName, 16); }
 int codeplugAPRSConfigGetCount(void) { return s_apcValid ? 1 : 0; }
 bool codeplugAPRSGetDataForIndex(int i, CodeplugAPRSConfig_t *b) { if (!s_apcValid || (i < 1)) { return false; } memcpy(b, &s_apc, sizeof(*b)); return true; }
+bool codeplugAPRSSetDataForIndex(int i, const CodeplugAPRSConfig_t *b, bool *changed)
+{
+	if (changed != NULL) { *changed = false; }
+	if ((i < 1) || (i > 1)) { return false; }   /* у світі тесту один слот */
+	if (s_apcValid && (memcmp(&s_apc, b, sizeof(*b)) == 0)) { return true; }
+	memcpy(&s_apc, b, sizeof(*b)); s_apcValid = true; s_apcWrites++; s_apcWriteIdx = i;
+	if (changed != NULL) { *changed = true; }
+	return true;
+}
+bool codeplugSetRadioName(const char *n, bool *changed)
+{
+	char nb[16];
+	if (changed != NULL) { *changed = false; }
+	memset(nb, 0, sizeof(nb)); strncpy(nb, n, 8);
+	if (strcmp(nb, s_radioName) == 0) { return true; }
+	memset(s_radioName, 0, sizeof(s_radioName)); memcpy(s_radioName, nb, 9); s_nameWrites++;
+	if (changed != NULL) { *changed = true; }
+	return true;
+}
+void aprsBeaconingBootSet(const aprsBeaconingSettings_t *src) { s_stockSettings = *src; }
 bool settingsLocationIsValid(void) { return s_locValid; }
 double settingsLocationGetLatitude(void) { return 50.45; }
 double settingsLocationGetLongitude(void) { return 30.52; }
@@ -234,6 +267,7 @@ static void resetWorld(void)
 	s_tuneCalls = s_loadChanCalls = s_loadVfoCalls = s_resetTimers = s_setSuspendTrue = s_setSuspendFalse = 0;
 	s_rxSuspend = s_abortTx = s_stopScanCh = s_stopScanVfo = s_replayStop = s_txCalls = s_melody = s_notify = 0;
 	s_flashWrites = 0;
+	s_bflashValid = false; s_bflashWrites = s_apcWrites = s_nameWrites = 0; s_bcnWin = 0;
 	s_regionMagic = true; s_flashBroken = false; s_spiWrites = 0;
 	s_tuneFreq = 0; s_tuneMode = -1; s_tuneBw = -1;
 	s_bcnMode = APRS_BEACONING_MODE_OFF; s_bcnSuspended = false;
@@ -259,8 +293,9 @@ static void resetWorld(void)
 	memcpy(s_apc.paths[1].name, "WIDE2", 5); s_apc.paths[1].SSID = 1;
 	s_apc.iconTable = 0; s_apc.iconIndex = 29;
 	memset(s_apc.comment, 0, sizeof(s_apc.comment));
-	s_apc.flags = 0;
+	s_apc.flags = APRSM_RAW_FLAG_QSY;   /* APRS-unify: QSY в коментарі маяка -- прапорець слота (було: блок режиму, типово «ввімкнено») */
 	s_apcValid = true;
+	memset(&s_stockSettings, 0, sizeof(s_stockSettings));   /* стоковий бікон: «Вимкн.», інтервал 12 с -- періодичного маяка режиму нема */
 	s_locValid = true;
 	strcpy(s_radioName, "UW5ELK");
 }
@@ -466,9 +501,9 @@ static void testSettings(void)
 	/* зміна під час редагування кілька разів поспіль -- один запис */
 	c->ssid = 3; c->ov |= APRSM_OV_SSID; aprsModeCfgChanged(APRSM_OV_SSID);
 	tickMs(500);
-	c->ssid = 4; aprsModeCfgChanged(APRSM_OV_SSID);
+	c->ssid = 4; c->ov |= APRSM_OV_SSID; aprsModeCfgChanged(APRSM_OV_SSID);
 	tickMs(500);
-	c->ssid = 5; aprsModeCfgChanged(APRSM_OV_SSID);
+	c->ssid = 5; c->ov |= APRSM_OV_SSID; aprsModeCfgChanged(APRSM_OV_SSID);
 	CHECK(s_flashWrites == 1, "поки редагуємо -- не пишемо");
 	/* вихід зберігає невідкладене */
 	aprsModeExit();
@@ -479,7 +514,9 @@ static void testSettings(void)
 	{
 		aprsModeCfg_t chk;
 		memcpy(blk, s_flash, sizeof(blk));
-		CHECK(aprsModeCfgFromBytes(&chk, blk, sizeof(blk)) && chk.freq == 14482500UL && chk.ssid == 5 && (chk.ov & APRSM_OV_FREQ), "збережений блок розбирається і збігається");
+		/* APRS-unify: у блоці лишився лише маркер міграції -- частота й SSID лежать у слоті конфігу APRS */
+		CHECK(aprsModeCfgFromBytes(&chk, blk, sizeof(blk)) && (chk.ov == APRSM_OV_MIGRATED), "збережений блок: лише маркер міграції (ov=%04X)", chk.ov);
+		CHECK(s_apc.txFrequency == 14482500UL && s_apc.senderSSID == 5, "частота й SSID -- у слоті конфігу APRS (%lu/%u)", (unsigned long)s_apc.txFrequency, s_apc.senderSSID);
 	}
 
 	/* повторний вхід читає збережене */
@@ -489,17 +526,17 @@ static void testSettings(void)
 	aprsModeExit();
 	CHECK(s_flashWrites == 2, "вихід без змін -- не пишемо");
 
-	/* «Скинути» */
+	/* «Скинути»: станційні поля живуть у кодплузі -- не чіпає; лишається маркер міграції */
 	CHECK(aprsModeEnter(), "вхід");
 	aprsModeCfgReset();
-	CHECK(aprsModeEff()->freq == 14480000UL && aprsModeEff()->ssid == 7 && aprsModeCfg()->ov == 0, "скидання повертає типові значення з кодплуга");
-	CHECK(s_tuneFreq == 14480000UL, "і частоту радіо");
+	CHECK(aprsModeEff()->freq == 14482500UL && aprsModeEff()->ssid == 5 && aprsModeCfg()->ov == APRSM_OV_MIGRATED, "скидання не чіпає слот і не губить маркер");
+	CHECK(s_tuneFreq == 14482500UL, "радіо лишилось на частоті слота");
 	aprsModeExit();
 
-	/* зіпсований блок у флеші -- усе типове */
+	/* зіпсований блок у флеші -- ігнорується (слот живе окремо) */
 	s_flash[10] ^= 0x55;
 	CHECK(aprsModeEnter(), "вхід зі зіпсованим блоком");
-	CHECK(aprsModeEff()->freq == 14480000UL && aprsModeCfg()->ov == 0, "зіпсований блок ігноровано");
+	CHECK(aprsModeEff()->freq == 14482500UL && aprsModeCfg()->ov == APRSM_OV_MIGRATED, "зіпсований блок ігноровано, слот на місці (мігровано порожній)");
 	aprsModeExit();
 }
 
@@ -557,12 +594,11 @@ static void testBeacons(void)
 	CHECK(s_txCalls == 2, "PTT після 3 с -- знову маяк");
 	aprsModeExit();
 
-	/* періодичний: 5 хв */
+	/* періодичний: 5 хв -- інтервал ОДИН, стоковий initialInterval, і лише в режимі «Авто» (APRS-unify L3) */
 	resetWorld();
+	s_stockSettings.mode = APRS_BEACONING_MODE_AUTO; s_stockSettings.initialInterval = 5;   /* 300 с */
 	CHECK(aprsModeEnter(), "вхід");
 	c = aprsModeCfg();
-	c->interval = 1;   /* 5 хв */
-	aprsModeCfgChanged(0);
 	CHECK(aprsModeNextBeaconSec() != 0xFFFFFFFFUL && aprsModeNextBeaconSec() <= 300 && aprsModeNextBeaconSec() >= 299, "до наступного маяка ~300 с: %lu", (unsigned long)aprsModeNextBeaconSec());
 	tickMs(299000);
 	CHECK(s_txCalls == 0, "за 299 с маяка ще нема");
@@ -571,20 +607,18 @@ static void testBeacons(void)
 	CHECK(aprsModeNextBeaconSec() >= 298 && aprsModeNextBeaconSec() <= 300, "наступний знову через 5 хв: %lu", (unsigned long)aprsModeNextBeaconSec());
 	tickMs(300000);
 	CHECK(s_txCalls == 2, "ще через 5 хв -- другий маяк");
-	/* вимкнули інтервал */
-	c->interval = 0;
-	aprsModeCfgChanged(0);
-	CHECK(aprsModeNextBeaconSec() == 0xFFFFFFFFUL, "інтервал 0 -- наступного нема");
+	/* стоковий режим бікона -> «Вручну»: періодичного нема (окремого «вимкнено» для інтервалу нема) */
+	s_stockSettings.mode = APRS_BEACONING_MODE_MANUAL;
+	CHECK(aprsModeNextBeaconSec() == 0xFFFFFFFFUL, "режим «Вручну» -- наступного нема");
 	tickMs(600000);
 	CHECK(s_txCalls == 2, "вручну -- більше не йде");
 	aprsModeExit();
 
 	/* інтервал не збивається від зміни інших полів */
 	resetWorld();
+	s_stockSettings.mode = APRS_BEACONING_MODE_SMART_BEACONING; s_stockSettings.initialInterval = 6;   /* 600 с: «Розумний маяк» теж періодичний */
 	CHECK(aprsModeEnter(), "вхід");
 	c = aprsModeCfg();
-	c->interval = 2;   /* 10 хв */
-	aprsModeCfgChanged(0);
 	tickMs(120000);
 	c->ssid = 3; c->ov |= APRSM_OV_SSID;
 	aprsModeCfgChanged(APRSM_OV_SSID);
@@ -644,8 +678,11 @@ static void testBeacons(void)
 	CHECK(s_txCalls == 1 && aprsModeBeaconState() == APRS_MODE_BCN_NOPOS && s_notify == 1, "нема позиції: ручний маяк -- сповіщення");
 	tickMs(100);
 	CHECK(s_txCalls == 1, "ручна відмова не зациклюється");
-	aprsModeCfg()->interval = 1;
+	s_stockSettings.mode = APRS_BEACONING_MODE_AUTO; s_stockSettings.initialInterval = 5;
 	aprsModeCfgChanged(0);
+	aprsModeExit();
+	CHECK(aprsModeEnter(), "вхід (періодичний 300 с)");
+	s_txResult = APRS_MODE_TX_NOPOS;
 	tickMs(301000);
 	CHECK(s_txCalls == 2 && s_notify == 1, "періодичний: спроба без сповіщення");
 	tickMs(500);
@@ -1098,7 +1135,7 @@ static void testSaveBlankRegion(void)
 	c->ssid = 5; c->ov |= APRSM_OV_SSID; aprsModeCfgChanged(APRSM_OV_SSID);
 	tickMs(2500);
 	CHECK(s_notify == 1 && s_melody == 1, "запис не вдався: одне сповіщення «Не збережено» (%d, звук %d)", s_notify, s_melody);
-	c->ssid = 6; aprsModeCfgChanged(APRSM_OV_SSID);
+	c->ssid = 6; c->ov |= APRSM_OV_SSID; aprsModeCfgChanged(APRSM_OV_SSID);
 	tickMs(2500);
 	CHECK(s_notify == 1, "повторна невдача того самого сеансу -- без нового сповіщення (%d)", s_notify);
 	CHECK(aprsModeEff()->ssid == 6, "налаштування в RAM діють попри невдалий запис");
@@ -1263,14 +1300,13 @@ static void testQsy(void)
 	s_userChan.rxFreq = 43895000UL; s_userChan.txFreq = 43135000UL; s_userChan.rxTone = 0xFFFFU;
 	s_chanBw25 = 1;
 	CHECK(aprsModeEnter(), "вхід");
-	c = aprsModeCfg();
-	c->qsyOff = 1U;
-	aprsModeCfgChanged(0x8000U);
+	(void)c;
+	aprsModeSetFlag(APRSM_RAW_FLAG_QSY, false);   /* APRS-unify L4: єдиний прапорець -- у слоті конфігу APRS */
+	CHECK((s_apc.flags & APRSM_RAW_FLAG_QSY) == 0U || s_apcWrites == 0, "прапорець знято в RAM; у слот напишемо після паузи");
 	aprsModeRequestBeacon();
 	tickMs(10);
 	CHECK((s_txCalls == 1) && (s_txLastQsy[0] == 0), "QSY вимкнено -> порожній рядок «%s»", s_txLastQsy);
-	c->qsyOff = 0U;
-	aprsModeCfgChanged(0x8000U);
+	aprsModeSetFlag(APRSM_RAW_FLAG_QSY, true);
 	tickMs(4000);
 	aprsModeRequestBeacon();
 	tickMs(3100);
@@ -1338,6 +1374,183 @@ static void testHotkeyOnMain(void)
 	CHECK(aprsModeIsActive() == false, "без разового маяка головний екран вимикає режим");
 }
 
+
+/* ---- APRS-unify: міграція (T1..T5) ------------------------------------------------------------------------------ */
+
+/* Старий блок режиму (до unify): усі оверрайди, позивний, інтервал, qsyOff -- збирається вручну поверх нового формату (зарезервовані байти). */
+static void mkLegacyBlock(uint8_t blk[APRSM_BLOCK_LEN], const aprsModeCfg_t *c, const char *call, uint8_t interval, uint8_t qsyOff, bool withCall)
+{
+	uint8_t sum = 0x5A;   /* APRSM_SUM_SEED */
+
+	aprsModeCfgToBytes(c, blk);
+	blk[3] = interval;
+	if (qsyOff) { blk[7] |= 0x80U; }
+	if (withCall)
+	{
+		uint16_t ov = (uint16_t)(blk[5] | ((uint16_t)blk[6] << 8)) | APRSM_OV_LEGACY_CALL;
+		blk[5] = (uint8_t)ov; blk[6] = (uint8_t)(ov >> 8);
+		memset(&blk[12], 0, 7);
+		memcpy(&blk[12], call, strlen(call));
+	}
+	for (int i = 0; i < 71; i++) { sum = (uint8_t)(sum + blk[i]); }
+	blk[71] = sum;
+}
+
+static void putLegacy(const uint8_t blk[APRSM_BLOCK_LEN])
+{
+	memcpy(s_flash, blk, APRSM_BLOCK_LEN);
+	s_flashValid = true;
+}
+
+/* T1/T2/T3: блок із усіма оверрайдами + порожній кодплуг -> слот, ім'я, initialInterval; ov-біти зняті */
+static void testUnifyMigration(void)
+{
+	aprsModeCfg_t c, chk;
+	uint8_t blk[APRSM_BLOCK_LEN];
+
+	resetWorld();
+	s_apcValid = false;               /* порожній кодплуг: слота нема */
+	strcpy(s_radioName, "");          /* імені нема */
+	aprsModeCfgInit(&c);
+	c.ov = APRSM_OV_ALL & (uint16_t)~APRSM_OV_LEGACY_CALL;
+	c.freq = 14482500UL; c.ssid = 9;
+	strcpy(c.path[0], "WIDE2"); c.pathSsid[0] = 2;
+	strcpy(c.path[1], "TRACE"); c.pathSsid[1] = 3;
+	c.iconTable = 1; c.iconIndex = (uint8_t)('[' - '!');
+	strcpy(c.comment, "Hello");
+	c.latU = 50450100; c.lonU = -30523400; c.ambiguity = 2; c.sql = 7;
+	mkLegacyBlock(blk, &c, "R2ABC", 3 /* 15 хв */, 1, true);
+	putLegacy(blk);
+	CHECK(aprsModeCfgFromBytes(&chk, blk, sizeof(blk)) && (chk.ov & APRSM_OV_LEGACY_CALL) && strcmp(chk.legacyCall, "R2ABC") == 0 && chk.interval == 3 && chk.qsyOff == 1, "T1: старий блок читається (позивний, інтервал, qsyOff)");
+
+	CHECK(aprsModeEnter(), "T1: вхід");
+	aprsModeExit();
+	CHECK(s_apcValid && s_apcWrites == 1 && s_apcWriteIdx == 1, "T1: слот створено одним записом (%d)", s_apcWrites);
+	CHECK(s_apc.txFrequency == 14482500UL && s_apc.senderSSID == 9, "T1: частота/SSID у слоті");
+	CHECK(strcmp(s_apc.paths[0].name, "WIDE2") == 0 && s_apc.paths[0].SSID == 2 && strcmp(s_apc.paths[1].name, "TRACE") == 0 && s_apc.paths[1].SSID == 3, "T1: шляхи у слоті");
+	CHECK(s_apc.iconTable == 1 && s_apc.iconIndex == (uint8_t)('[' - '!') && strcmp(s_apc.comment, "Hello") == 0, "T1: символ/коментар у слоті");
+	CHECK(aprsModeFixed24ToMicro((const uint8_t *)s_apc.latitude) == 50450100 && aprsModeFixed24ToMicro((const uint8_t *)s_apc.longitude) == -30523400, "T1: позиція у слоті (%d/%d)",
+			aprsModeFixed24ToMicro((const uint8_t *)s_apc.latitude), aprsModeFixed24ToMicro((const uint8_t *)s_apc.longitude));
+	CHECK((s_apc.flags & APRSM_RAW_FLAG_USE_POSITION) != 0 && ((s_apc.flags >> 5) & 7U) == 2, "T1: «використовувати позицію» і неточність 2 (flags=%02X)", s_apc.flags);
+	CHECK(s_apc.magicVer == 0x4153, "T1: сигнатура слота");
+	CHECK(memcmp(s_apc.comment + 5, "\0\0\0", 3) == 0, "T1: коментар доповнено нулями");
+	/* T2: позивник -> ім'я рації */
+	CHECK(strcmp(s_radioName, "R2ABC") == 0 && s_nameWrites == 1, "T2: старий позивний -> ім'я рації (%s, записів %d)", s_radioName, s_nameWrites);
+	/* T3: інтервал -> найближчий стоковий (15 хв = 900 с: порівну 600/1200 -> довший = індекс 7), QSY вимкнено -> прапорець знято */
+	CHECK(s_stockSettings.initialInterval == 7, "T3: інтервал 15 хв -> стоковий індекс 7 (=%u)", s_stockSettings.initialInterval);
+	CHECK((s_apc.flags & APRSM_RAW_FLAG_QSY) == 0, "T3: qsyOff=1 -> прапорець QSY знято");
+	/* блок: лише маркер + шумодав, зарезервовані байти нулі */
+	CHECK(s_flashValid && aprsModeCfgFromBytes(&chk, s_flash, APRSM_BLOCK_LEN), "T1: блок записано й читається");
+	CHECK(chk.ov == APRSM_OV_MIGRATED && chk.sql == 7 && chk.interval == 0 && chk.qsyOff == 0 && s_flash[3] == 0 && s_flash[12] == 0, "T1: у блоці лише маркер і шумодав (ov=%04X)", chk.ov);
+
+	/* повторний вхід нічого більше не пише (міграція одноразова) */
+	{
+		int a = s_apcWrites, n = s_nameWrites, f = s_flashWrites;
+
+		CHECK(aprsModeEnter(), "повторний вхід");
+		aprsModeExit();
+		CHECK(s_apcWrites == a && s_nameWrites == n && s_flashWrites == f, "T4: повторна міграція не пише нічого (слот %d/%d, ім'я %d/%d, блок %d/%d)", s_apcWrites, a, s_nameWrites, n, s_flashWrites, f);
+	}
+}
+
+/* T3 (продовження): інтервал і qsyOff по одному; qsyOff=0 прапорець не чіпає */
+static void testUnifyMigrationEdges(void)
+{
+	aprsModeCfg_t c;
+	uint8_t blk[APRSM_BLOCK_LEN];
+	static const struct { uint8_t old, want; } tab[] = { { 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 }, { 5, 9 } };   /* 5->300 с, 10->600, 15->1200 (порівну -- довший), 30->1800, 60->3600 */
+
+	for (unsigned i = 0; i < sizeof(tab) / sizeof(tab[0]); i++)
+	{
+		resetWorld();
+		aprsModeCfgInit(&c);
+		mkLegacyBlock(blk, &c, "", tab[i].old, 0, false);
+		putLegacy(blk);
+		CHECK(aprsModeEnter(), "вхід");
+		aprsModeExit();
+		CHECK(s_stockSettings.initialInterval == tab[i].want, "T3: старий інтервал %u -> стоковий індекс %u (=%u)", tab[i].old, tab[i].want, s_stockSettings.initialInterval);
+		CHECK((s_apc.flags & APRSM_RAW_FLAG_QSY) != 0, "T3: qsyOff=0 -- прапорець QSY лишився");
+		CHECK(s_nameWrites == 0 && strcmp(s_radioName, "UW5ELK") == 0, "T2: без старого позивного ім'я не чіпаємо");
+	}
+	/* старий інтервал 0 -- стоковий initialInterval не міняємо */
+	resetWorld();
+	s_stockSettings.initialInterval = 4;
+	aprsModeCfgInit(&c);
+	mkLegacyBlock(blk, &c, "", 0, 0, false);
+	putLegacy(blk);
+	CHECK(aprsModeEnter(), "вхід");
+	aprsModeExit();
+	CHECK(s_stockSettings.initialInterval == 4 && s_apcWrites == 0, "T3: старий інтервал 0 -- нічого не змінює (initialInterval=%u, записів слота %d)", s_stockSettings.initialInterval, s_apcWrites);
+	/* недійсний позивник у старому блоці (малі літери) -- ім'я не чіпаємо */
+	resetWorld();
+	aprsModeCfgInit(&c);
+	mkLegacyBlock(blk, &c, "uw5elk", 0, 0, true);
+	putLegacy(blk);
+	CHECK(aprsModeEnter(), "вхід");
+	aprsModeExit();
+	CHECK(s_nameWrites == 0 && strcmp(s_radioName, "UW5ELK") == 0, "T2: недійсний старий позивний ігнорується");
+}
+
+/* T4: слот і ім'я не пишуться, якщо байти не змінилися */
+static void testUnifyNoRewrite(void)
+{
+	aprsModeCfg_t *c;
+
+	resetWorld();
+	CHECK(aprsModeEnter(), "вхід");
+	c = aprsModeCfg();
+	c->ssid = s_apc.senderSSID; c->ov |= APRSM_OV_SSID; aprsModeCfgChanged(APRSM_OV_SSID);   /* те саме значення */
+	tickMs(3000);
+	CHECK(s_apcWrites == 0 && s_nameWrites == 0, "T4: те саме значення SSID -- слот не пишемо (%d), ім'я не пишемо (%d)", s_apcWrites, s_nameWrites);
+	CHECK(aprsModeSetCall("UW5ELK") == true, "позивний той самий приймається");
+	tickMs(3000);
+	CHECK(s_nameWrites == 0, "T4: той самий позивний -- ім'я не пишемо");
+	CHECK(aprsModeSetCall("!!!") == false, "недійсний позивний відхилено");
+	tickMs(3000);
+	CHECK(s_nameWrites == 0 && strcmp(s_radioName, "UW5ELK") == 0, "недійсний позивний -- ім'я не чіпаємо");
+	CHECK(aprsModeSetCall("R2XYZ") == true, "новий позивний приймається");
+	tickMs(3000);
+	CHECK(s_nameWrites == 1 && strcmp(s_radioName, "R2XYZ") == 0, "новий позивний -- один запис імені (%d, %s)", s_nameWrites, s_radioName);
+	aprsModeExit();
+	CHECK(s_nameWrites == 1 && s_apcWrites == 0, "T4: вихід без змін нічого не дописує");
+}
+
+/* T5: блок налаштувань бікона -- запис/читання; створюється, якщо його нема */
+static void testUnifyBeaconBlock(void)
+{
+	aprsBeaconCfg_t b, r;
+	uint8_t raw[APRSB_BLOCK_LEN], bad[APRSB_BLOCK_LEN];
+
+	memset(&b, 0, sizeof(b));
+	b.mode = 4; b.power = 5; b.initialInterval = 7; b.stateBits = 0x01U | 0x08U; b.slowRate = 20; b.fastRate = 90; b.lowSpeed = 5; b.highSpeed = 70; b.turnAngle = 28; b.turnSlope = 26; b.turnTime = 30; b.bcnWin = 2;
+	aprsBeaconCfgToBytes(&b, raw);
+	CHECK(raw[0] == 'A' && raw[1] == 'B' && raw[2] == 1, "T5: магія/версія блока бікона");
+	CHECK(aprsBeaconCfgFromBytes(&r, raw, sizeof(raw)) && memcmp(&r, &b, sizeof(b)) == 0, "T5: записали -> прочитали те саме");
+	memcpy(bad, raw, sizeof(bad)); bad[5] ^= 1;
+	CHECK(!aprsBeaconCfgFromBytes(&r, bad, sizeof(bad)), "T5: зіпсована сума -- відмова");
+	CHECK(!aprsBeaconCfgFromBytes(&r, raw, sizeof(raw) - 1) && !aprsBeaconCfgFromBytes(&r, NULL, 0), "T5: коротший/порожній блок -- відмова");
+	b.mode = 9; aprsBeaconCfgToBytes(&b, raw);
+	CHECK(!aprsBeaconCfgFromBytes(&r, raw, sizeof(raw)), "T5: режим поза діапазоном -- відмова");
+	b.mode = 4; b.stateBits = 0x03U; aprsBeaconCfgToBytes(&b, raw);
+	CHECK(!aprsBeaconCfgFromBytes(&r, raw, sizeof(raw)), "T5: обидва джерела позиції -- відмова");
+
+	/* блока нема -> при завантаженні створюється зі стокових налаштувань */
+	resetWorld();
+	s_stockSettings.mode = APRS_BEACONING_MODE_AUTO; s_stockSettings.initialInterval = 6; s_stockSettings.state = APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL;
+	aprsBeaconCfgBoot(false);
+	CHECK(s_bflashValid && s_bflashWrites == 1, "T5: блока нема -- створено (%d)", s_bflashWrites);
+	CHECK(aprsBeaconCfgFromBytes(&r, s_bflash, APRSB_BLOCK_LEN) && r.mode == (uint8_t)APRS_BEACONING_MODE_AUTO && r.initialInterval == 6, "T5: створений блок відповідає стоковим налаштуванням");
+	/* блок є -> стокові налаштування беруться з блока */
+	b.mode = 3; b.initialInterval = 2; b.stateBits = 0x02U; b.power = 0; b.bcnWin = 1; aprsBeaconCfgToBytes(&b, raw);
+	memcpy(s_bflash, raw, APRSB_BLOCK_LEN); s_bflashValid = true; s_bflashWrites = 0;
+	memset(&s_stockSettings, 0, sizeof(s_stockSettings));
+	aprsBeaconCfgBoot(false);
+	CHECK(s_stockSettings.mode == 3 && s_stockSettings.initialInterval == 2 && s_bcnWin == 1 && s_bflashWrites == 0, "T5: блок є -- стокові налаштування взято з нього, перезапису нема (mode=%u init=%u win=%u)", s_stockSettings.mode, s_stockSettings.initialInterval, s_bcnWin);
+	/* SK2 при старті -- типові: блок перезаписується з поточних */
+	aprsBeaconCfgBoot(true);
+	CHECK(s_bflashWrites >= 0, "T5: SK2 при старті не падає");
+}
+
 int main(void)
 {
 	testBootInit();
@@ -1359,6 +1572,10 @@ int main(void)
 	testBeaconOnce();
 	testQsy();
 	testHotkeyOnMain();
+	testUnifyMigration();
+	testUnifyMigrationEdges();
+	testUnifyNoRewrite();
+	testUnifyBeaconBlock();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_mode_state: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

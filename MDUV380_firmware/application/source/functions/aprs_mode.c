@@ -35,6 +35,8 @@
 #include <stdio.h>
 #include <math.h>
 
+extern const uint16_t initialIntervalsInSecs[];   /* aprs.c */
+
 #define APRS_MODE_MAGIC        0xA9A5A0D3UL
 #define APRS_MODE_SAVE_IDLE_MS 2000U      /* запис налаштувань у флеш -- після паузи в редагуванні (не на кожен крок ←→) */
 #define APRS_MODE_BUSY_MAX_MS  3000U      /* скільки чекати вільної частоти перед маяком */
@@ -49,6 +51,11 @@ typedef struct
 	aprsModeCfg_t          cfg;
 	aprsModeDefaults_t     def;
 	aprsModeEff_t          eff;
+	aprsModeStore_t        store;          /* APRS-unify: слот конфігу APRS + ім'я рації -- ЄДИНЕ сховище станційних полів (cfg лишився «чернеткою») */
+	uint8_t                slotIdx;        /* номер слота (1..8), з яким працюємо */
+	bool                   blockLoaded;    /* блок режиму був у флеші */
+	bool                   storeDirty;     /* слот змінено, ще не записано в кодплуг */
+	bool                   nameDirty;      /* ім'я рації змінено, ще не записано */
 	CodeplugChannel_t      chan;           /* «канал» режиму: на нього вказує currentChannelData, поки режим активний */
 	CodeplugChannel_t     *savedChan;
 	bool                   beaconWasRunning;   /* стоковий авто-бікон працював до входу (відновити при виході) */
@@ -250,6 +257,7 @@ static void traceTickReset(void)
 /* ---- допоміжне ---------------------------------------------------------------------------------------- */
 
 static bool saveCfg(aprsModeMem_t *m);   /* R17: потрібна сесії налаштувань раніше за визначення */
+static uint32_t periodMs(void);
 
 bool aprsModeIsActive(void)
 {
@@ -300,6 +308,7 @@ void aprsModeMsgSessionClose(void)
 		}
 		/* стокові параметри бікона: застосувати, лише якщо вони змінилися (aprsBeaconingSetSettings() сама порівнює і тоді перезапускає бікон) */
 		aprsBeaconingSetSettings(&aprsSettingsCopy);
+		(void)aprsBeaconCfgStore();   /* APRS-unify: блок налаштувань бікона -- основне сховище (разом із «Вікном маяка», яке застосовується одразу) */
 		settingsSaveIfNeeded(true);
 		resetOriginalSettingsData();
 #if defined(ENABLE_CALL_REPLAY)
@@ -346,7 +355,7 @@ uint32_t aprsModeNextBeaconSec(void)
 	aprsModeMem_t *m = mem();
 	uint32_t now = ticksGetMillis();
 
-	if ((m->nextBeaconMs == 0U) || (m->eff.interval == 0U))
+	if ((m->nextBeaconMs == 0U) || (periodMs() == 0U))
 	{
 		return 0xFFFFFFFFUL;
 	}
@@ -370,10 +379,12 @@ static void loadCfg(aprsModeMem_t *m)
 	uint8_t blk[APRSM_BLOCK_LEN];
 
 	memset(blk, 0, sizeof(blk));
+	m->blockLoaded = true;
 	if ((codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG, blk, (int)sizeof(blk)) == false) ||
 			(aprsModeCfgFromBytes(&m->cfg, blk, sizeof(blk)) == false))
 	{
 		aprsModeCfgInit(&m->cfg);   /* блоку нема (нова установка) або він зіпсований -- усе типове */
+		m->blockLoaded = false;
 	}
 }
 
@@ -399,6 +410,39 @@ static bool ensureCustomRegion(void)
 	return SPI_Flash_write(FLASH_ADDRESS_OFFSET + 0, hdr, 12);
 }
 
+/* APRS-unify: слот і ім'я рації -> кодплуг (лише якщо змінено; самі функції запису порівнюють байти з наявними й EEPROM_Write викликають, тільки коли вони різні). */
+static bool saveStore(aprsModeMem_t *m)
+{
+	bool ok = true;
+
+	if (m->nameDirty)
+	{
+		char nm[APRSM_NAME_RAW_LEN + 1U];
+		size_t k = 0;
+
+		while ((k < APRSM_NAME_RAW_LEN) && (m->store.name[k] != 0xFFU) && (m->store.name[k] != 0U))
+		{
+			nm[k] = (char)m->store.name[k];
+			k++;
+		}
+		nm[k] = 0;
+		ok = codeplugSetRadioName(nm, NULL);
+	}
+	if (m->storeDirty)
+	{
+		if (codeplugAPRSSetDataForIndex((int)m->slotIdx, (const CodeplugAPRSConfig_t *)(const void *)&m->store.raw, NULL))
+		{
+			m->store.rawValid = true;
+		}
+		else
+		{
+			ok = false;
+		}
+	}
+	m->storeDirty = m->nameDirty = false;
+	return ok;
+}
+
 /* true -- блок записано І прочитано назад однаковим. Невдача -- одне сповіщення «Не збережено» за сеанс (далі тихо: не дратуємо на кожному кроці). */
 static bool saveCfg(aprsModeMem_t *m)
 {
@@ -411,6 +455,7 @@ static bool saveCfg(aprsModeMem_t *m)
 			codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG, blk, (int)sizeof(blk)) &&
 			codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_APRS_MODE_CFG, back, (int)sizeof(back)) &&
 			(memcmp(blk, back, sizeof(blk)) == 0);
+	ok = saveStore(m) && ok;
 	m->dirty = false;
 	if ((ok == false) && (m->saveFailShown == false))
 	{
@@ -421,32 +466,39 @@ static bool saveCfg(aprsModeMem_t *m)
 	return ok;
 }
 
+/* APRS-unify: слот, з яким працюємо, -- той, що призначено каналу, з якого зайшли (aprsConfigIndex); немає чи недійсний -- слот №1; конфігів у кодплузі нема
+ * зовсім -- заготовка (aprsModeStoreBlank()), яка потрапить у кодплуг під номером 1 лише після першої зміни. Ім'я рації читаємо з кодплуга. */
+static void loadStore(aprsModeMem_t *m)
+{
+	CodeplugAPRSConfig_t cp;
+	char nm[16];
+	int cnt = codeplugAPRSConfigGetCount();
+	int idx = 1;
+
+	_Static_assert(sizeof(aprsModeRawCfg_t) == sizeof(CodeplugAPRSConfig_t), "aprsModeRawCfg_t != CodeplugAPRSConfig_t");
+	if ((m->savedChan != NULL) && (m->savedChan->aprsConfigIndex != 0U) && ((int)m->savedChan->aprsConfigIndex <= cnt))
+	{
+		idx = (int)m->savedChan->aprsConfigIndex;
+	}
+	m->slotIdx = (uint8_t)idx;
+	aprsModeStoreBlank(&m->store);
+	if (codeplugAPRSGetDataForIndex(idx, &cp))
+	{
+		memcpy(&m->store.raw, &cp, sizeof(m->store.raw));
+		m->store.rawValid = true;
+	}
+	memset(nm, 0, sizeof(nm));
+	codeplugGetRadioName(nm);
+	memset(m->store.name, 0xFF, sizeof(m->store.name));
+	memcpy(m->store.name, nm, strnlen(nm, sizeof(m->store.name)));
+	m->storeDirty = m->nameDirty = false;
+}
+
 static void buildDefaults(aprsModeMem_t *m)
 {
-	aprsModeRawCfg_t raw;
-	CodeplugAPRSConfig_t cp;
-	bool ok = false;
-	char name[16];
 	bool posOk = settingsLocationIsValid();
 	int32_t latU = 0, lonU = 0;
 
-	_Static_assert(sizeof(aprsModeRawCfg_t) == sizeof(CodeplugAPRSConfig_t), "aprsModeRawCfg_t != CodeplugAPRSConfig_t");
-
-	/* Конфіг APRS: той, що призначено каналу, з якого зайшли; нема -- перший наявний у кодплузі. */
-	if ((m->savedChan != NULL) && (m->savedChan->aprsConfigIndex != 0U))
-	{
-		ok = codeplugAPRSGetDataForIndex(m->savedChan->aprsConfigIndex, &cp);
-	}
-	for (int i = 1; (ok == false) && (i <= codeplugAPRSConfigGetCount()); i++)
-	{
-		ok = codeplugAPRSGetDataForIndex(i, &cp);
-	}
-	if (ok)
-	{
-		memcpy(&raw, &cp, sizeof(raw));
-	}
-	memset(name, 0, sizeof(name));
-	codeplugGetRadioName(name);
 	if (posOk)
 	{
 		double la = settingsLocationGetLatitude(), lo = settingsLocationGetLongitude();
@@ -458,7 +510,107 @@ static void buildDefaults(aprsModeMem_t *m)
 			lonU = (int32_t)(lo * 1000000.0 + ((lo >= 0.0) ? 0.5 : -0.5));
 		}
 	}
-	aprsModeDefaultsBuild(&m->def, ok ? &raw : NULL, ok, name, posOk, latU, lonU);
+	/* заготовка слота теж повноцінний конфіг (rawValid для DefaultsBuild -- завжди true): інакше правки в ній не потрапили б у типові значення */
+	aprsModeDefaultsBuild(&m->def, &m->store.raw, true, (const char *)m->store.name, posOk, latU, lonU);
+}
+
+/* ---- APRS-unify (L5.3): блок налаштувань стокового бікона ---------------------------------------------------------------------------------------- */
+
+static uint8_t clampU8(uint8_t v, uint8_t lo, uint8_t hi)
+{
+	return (v < lo) ? lo : ((v > hi) ? hi : v);
+}
+
+/* Блок -> працюючі налаштування (на старті, ПЕРЕД aprsBeaconingInit()). restoreDefaults == true (скидання налаштувань при вмиканні) -- блок НЕ застосовується,
+ * навпаки, його перезаписують з поточних (типових). Блока нема чи він зіпсований -- створюється з поточних налаштувань. */
+void aprsBeaconCfgBoot(bool restoreDefaults)
+{
+	uint8_t blk[APRSB_BLOCK_LEN];
+	aprsBeaconCfg_t c;
+
+	memset(blk, 0, sizeof(blk));
+	if ((restoreDefaults == false) &&
+			codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG, blk, (int)sizeof(blk)) &&
+			aprsBeaconCfgFromBytes(&c, blk, sizeof(blk)))
+	{
+		aprsBeaconingSettings_t st;
+
+		aprsBeaconingGetSettings(&st);
+		st.mode = (aprsBeaconingMode_t)c.mode;
+		st.power = c.power;
+		st.initialInterval = clampU8(c.initialInterval, APRS_BEACON_INITIAL_INTERVAL_MIN, APRS_BEACON_INITIAL_INTERVAL_MAX);
+		/* стан: лише 4 збережувані біти (канал / GPS / затухання / стиснення); решта (HAS_*, ENABLED) -- поточні, змінні */
+		st.state = (aprsBeaconingStates_t)(((uint8_t)st.state & 0xE1U) | (uint8_t)((c.stateBits & 0x0FU) << 1));
+		st.smart.slowRate = clampU8(c.slowRate, APRS_SMART_BEACON_SLOW_RATE_MIN, APRS_SMART_BEACON_SLOW_RATE_MAX);
+		st.smart.fastRate = clampU8(c.fastRate, APRS_SMART_BEACON_FAST_RATE_MIN, APRS_SMART_BEACON_FAST_RATE_MAX);
+		st.smart.lowSpeed = clampU8(c.lowSpeed, APRS_SMART_BEACON_LOW_SPEED_MIN, APRS_SMART_BEACON_LOW_SPEED_MAX);
+		st.smart.highSpeed = clampU8(c.highSpeed, APRS_SMART_BEACON_HIGH_SPEED_MIN, APRS_SMART_BEACON_HIGH_SPEED_MAX);
+		st.smart.turnAngle = clampU8(c.turnAngle, APRS_SMART_BEACON_TURN_ANGLE_MIN, APRS_SMART_BEACON_TURN_ANGLE_MAX);
+		st.smart.turnSlope = clampU8(c.turnSlope, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX);
+		st.smart.turnTime = clampU8(c.turnTime, APRS_SMART_BEACON_TURN_TIME_MIN, APRS_SMART_BEACON_TURN_TIME_MAX);
+		aprsBeaconingBootSet(&st);
+		aprsRxBcnWinSetMode(c.bcnWin);
+		return;
+	}
+	(void)aprsBeaconCfgStore();
+}
+
+/* Працюючі налаштування -> блок. Пише лише якщо байти відрізняються від наявних. */
+bool aprsBeaconCfgStore(void)
+{
+	aprsBeaconingSettings_t st;
+	aprsBeaconCfg_t c;
+	uint8_t blk[APRSB_BLOCK_LEN], cur[APRSB_BLOCK_LEN];
+
+	aprsBeaconingGetSettings(&st);
+	c.mode = (uint8_t)st.mode;
+	c.power = st.power;
+	c.initialInterval = st.initialInterval;
+	c.stateBits = (uint8_t)(((uint8_t)st.state >> 1) & 0x0FU);
+	c.slowRate = st.smart.slowRate;
+	c.fastRate = st.smart.fastRate;
+	c.lowSpeed = st.smart.lowSpeed;
+	c.highSpeed = st.smart.highSpeed;
+	c.turnAngle = st.smart.turnAngle;
+	c.turnSlope = st.smart.turnSlope;
+	c.turnTime = st.smart.turnTime;
+	c.bcnWin = aprsRxBcnWinMode();
+	aprsBeaconCfgToBytes(&c, blk);
+	memset(cur, 0, sizeof(cur));
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG, cur, (int)sizeof(cur)) && (memcmp(cur, blk, sizeof(blk)) == 0))
+	{
+		return true;
+	}
+	return ensureCustomRegion() && codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG, blk, (int)sizeof(blk));
+}
+
+/* Одноразова міграція старого блоку (оверрайди, інтервал, qsyOff, позивник) у слот / ім'я рації / стоковий initialInterval -- aprsModeMigrate(). */
+static void unifyMigrate(aprsModeMem_t *m)
+{
+	aprsBeaconingSettings_t st;
+	uint8_t init;
+	unsigned r;
+
+	if (m->cfg.ov & APRSM_OV_MIGRATED)
+	{
+		return;
+	}
+	aprsBeaconingGetSettings(&st);
+	init = st.initialInterval;
+	r = aprsModeMigrate(&m->cfg, &m->store, &m->def, &init, initialIntervalsInSecs, (unsigned)APRS_BEACON_INITIAL_INTERVAL_MAX + 1U);
+	m->storeDirty = ((r & APRSM_FOLD_RAW) != 0U);
+	m->nameDirty = ((r & APRSM_FOLD_NAME) != 0U);
+	if (r & APRSM_FOLD_INIT)
+	{
+		st.initialInterval = init;
+		aprsBeaconingSetSettings(&st);   /* перезапускає стоковий бікон і сам упаковує в nonVolatileSettings */
+		(void)aprsBeaconCfgStore();
+	}
+	buildDefaults(m);
+	if (m->blockLoaded || ((r & ~APRSM_FOLD_BLOCK) != 0U))   /* свіжа установка без змін -- блок не пишемо */
+	{
+		(void)saveCfg(m);
+	}
 }
 
 /* «Канал» режиму: аналоговий FM, 12,5 кГц (як у QSY бікона: trxSetModeAndBandwidth(ANALOG, false)), без CSS і
@@ -491,7 +643,7 @@ static void qsyForChannel(const aprsModeMem_t *m, char *out, size_t cap)
 	{
 		out[0] = 0;
 	}
-	if ((m->cfg.qsyOff != 0U) || (ch == NULL))
+	if (((m->eff.flags & APRSM_RAW_FLAG_QSY) == 0U) || (ch == NULL))
 	{
 		return;
 	}
@@ -540,10 +692,26 @@ static void tune(const aprsModeMem_t *m)
 	AM_TRACE(37);   /* tune() завершено */
 }
 
+/* APRS-unify (L3): інтервал періодичного маяка режиму -- той самий, що в стокового бікона: initialIntervalsInSecs[initialInterval], і лише коли стоковий
+ * режим бікона «Авто» або «Розумний маяк». «Вимкнено» = режим бікона «Вимкн.»/«Вручну»/«PTT» (окремого «вимкнено» для інтервалу нема). 0 -- періодичного нема. */
+static uint32_t periodMs(void)
+{
+	aprsBeaconingSettings_t st;
+
+	aprsBeaconingGetSettings(&st);
+	if ((st.mode != APRS_BEACONING_MODE_AUTO) && (st.mode != APRS_BEACONING_MODE_SMART_BEACONING))
+	{
+		return 0U;
+	}
+	return (uint32_t)initialIntervalsInSecs[(st.initialInterval <= APRS_BEACON_INITIAL_INTERVAL_MAX) ? st.initialInterval : 0U] * 1000UL;
+}
+
 static void scheduleBeacons(aprsModeMem_t *m, uint32_t now)
 {
-	m->nextBeaconMs = (m->eff.interval != 0U) ? (now + aprsModeIntervalMs(m->eff.interval)) : 0U;
-	if ((m->nextBeaconMs == 0U) && (m->eff.interval != 0U))
+	uint32_t p = periodMs();
+
+	m->nextBeaconMs = (p != 0U) ? (now + p) : 0U;
+	if ((m->nextBeaconMs == 0U) && (p != 0U))
 	{
 		m->nextBeaconMs = 1U;
 	}
@@ -554,8 +722,13 @@ void aprsModeCfgChanged(uint16_t what)
 	aprsModeMem_t *m = mem();
 	uint32_t now = ticksGetMillis();
 	uint32_t oldFreq = m->eff.freq;
-	uint8_t oldInterval = m->eff.interval;
 
+	/* APRS-unify: чернетку (ov-біти) одразу складаємо в слот; запис у кодплуг -- після паузи (aprsModeCfgSessionTick()/aprsModeTick()) або при закритті сесії */
+	if (aprsModeFold(&m->cfg, &m->store, &m->def) & APRSM_FOLD_RAW)
+	{
+		m->storeDirty = true;
+	}
+	buildDefaults(m);
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
 	m->chan.sql = m->eff.sql;
 	/* R17 Г1: у сесії налаштувань (режим не активний, рація стоїть на звичайному каналі) радіо не чіпаємо -- лише перераховуємо й відкладаємо запис */
@@ -569,10 +742,6 @@ void aprsModeCfgChanged(uint16_t what)
 				tune(m);
 			}
 		}
-		if (m->eff.interval != oldInterval)
-		{
-			scheduleBeacons(m, now);
-		}
 	}
 	(void)what;
 	m->dirty = true;
@@ -584,7 +753,46 @@ void aprsModeCfgReset(void)
 	aprsModeMem_t *m = mem();
 
 	aprsModeCfgInit(&m->cfg);
+	m->cfg.ov = APRSM_OV_MIGRATED;   /* станційні поля живуть у кодплузі -- «Скинути» їх не чіпає (це лише шумодав і чернетка) */
 	aprsModeCfgChanged(APRSM_OV_ALL);
+}
+
+/* APRS-unify: позивний -- ім'я рації (EEPROM 0x00E0). false -- не пройшов перевірку (1..6 символів A-Z 0-9). */
+bool aprsModeSetCall(const char *call)
+{
+	aprsModeMem_t *m = mem();
+	bool valid = false;
+
+	if (aprsModeStoreSetCall(&m->store, call, &valid))
+	{
+		m->nameDirty = true;
+	}
+	aprsModeCfgChanged(0U);
+	return valid;
+}
+
+/* APRS-unify: прапорці слота (300 бод, QSY, «тихо», «використовувати позицію») -- APRSM_RAW_FLAG_*. */
+void aprsModeSetFlag(uint8_t mask, bool on)
+{
+	aprsModeMem_t *m = mem();
+
+	aprsModeStoreSetFlag(&m->store, mask, on);
+	m->storeDirty = true;
+	aprsModeCfgChanged(0U);
+}
+
+/* Назва слота (для шапки екрана налаштувань): до 8 символів + NUL. */
+void aprsModeSlotName(char out[9])
+{
+	const aprsModeMem_t *m = mem();
+	size_t k = 0;
+
+	while ((k < 8U) && (m->store.raw.name[k] != (char)0xFF) && (m->store.raw.name[k] != 0))
+	{
+		out[k] = m->store.raw.name[k];
+		k++;
+	}
+	out[k] = 0;
 }
 
 /* ---- вхід / вихід -------------------------------------------------------------------------------------------- */
@@ -656,8 +864,10 @@ bool aprsModeEnter(void)
 
 	AM_TRACE(9);   /* перед loadCfg */
 	loadCfg(m);
-	AM_TRACE(10);  /* перед buildDefaults */
+	AM_TRACE(10);  /* перед loadStore/buildDefaults/unifyMigrate */
+	loadStore(m);
 	buildDefaults(m);
+	unifyMigrate(m);
 	AM_TRACE(11);  /* перед aprsModeEffective */
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
 	AM_TRACE(12);  /* перед buildChan */
@@ -789,7 +999,9 @@ bool aprsModeSettingsSessionOpen(void)
 	m->magic = APRS_MODE_MAGIC;
 	m->savedChan = currentChannelData;
 	loadCfg(m);
+	loadStore(m);
 	buildDefaults(m);
+	unifyMigrate(m);
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
 	aprsBeaconingGetSettings(&aprsSettingsCopy);   /* стокові параметри бікона редагуються в копії (як у стоковому меню) і застосовуються при закритті сесії */
 	u = aprsModeUi();
@@ -1265,7 +1477,7 @@ void aprsModeTick(void)
 	}
 
 	manual = (m->reqManual || m->reqPtt);
-	periodic = ((manual == false) && (m->eff.interval != 0U) && (m->nextBeaconMs != 0U) && ((int32_t)(now - m->nextBeaconMs) >= 0));
+	periodic = ((manual == false) && (periodMs() != 0U) && (m->nextBeaconMs != 0U) && ((int32_t)(now - m->nextBeaconMs) >= 0));
 	if ((manual == false) && (periodic == false))
 	{
 		m->busySinceMs = 0U;
@@ -1342,9 +1554,9 @@ void aprsModeTick(void)
 			beaconFeedback(st);
 		}
 		/* Після будь-якої спроби (навіть невдалої через налаштування) періодичний відлік іде далі, а не щоциклу. */
-		if (m->eff.interval != 0U)
+		if (periodMs() != 0U)
 		{
-			m->nextBeaconMs = now + ((st == APRS_MODE_BCN_SENT) ? aprsModeIntervalMs(m->eff.interval) : APRS_MODE_RETRY_MS);
+			m->nextBeaconMs = now + ((st == APRS_MODE_BCN_SENT) ? periodMs() : APRS_MODE_RETRY_MS);
 		}
 	}
 }

@@ -1472,24 +1472,27 @@ static void testQsyRoundTrip(void)
 		CHECK((n == 0U) && !cm[0], "буфер 1 байт: порожньо");
 	}
 
-	/* блок налаштувань: прапор qsyOff у біті 7 байта 7, довжина блоку 72, старі блоки -- QSY увімкнено */
+	/* блок налаштувань: APRS-unify -- qsyOff лишився лише для читання СТАРИХ блоків (біт 7 байта 7), новий запис його не пише; довжина блоку 72 */
 	{
 		aprsModeCfg_t c, r;
 		uint8_t blk[APRSM_BLOCK_LEN];
+		uint8_t sum = 0x5AU;
 
 		aprsModeCfgInit(&c);
-		CHECK(c.qsyOff == 0U, "типово QSY увімкнено");
+		CHECK(c.qsyOff == 0U, "типово qsyOff = 0");
 		aprsModeCfgToBytes(&c, blk);
-		CHECK((blk[7] & 0x80U) == 0U, "QSY увімкнено -- біт 7 чистий (сумісно зі старими блоками)");
+		CHECK((blk[7] & 0x80U) == 0U, "біт 7 чистий");
 		c.qsyOff = 1U;
 		c.ambiguity = 3U;
 		c.ov = APRSM_OV_AMB;
 		aprsModeCfgToBytes(&c, blk);
-		CHECK((blk[7] == 0x83U), "qsyOff + неточність 3 -> байт 7 = 0x%02X", blk[7]);
-		CHECK(aprsModeCfgFromBytes(&r, blk, APRSM_BLOCK_LEN) && (r.qsyOff == 1U) && (r.ambiguity == 3U) && (r.ov & APRSM_OV_AMB), "round trip: qsyOff=1, неточність 3 збережено");
-		c.qsyOff = 0U;
-		aprsModeCfgToBytes(&c, blk);
-		CHECK(aprsModeCfgFromBytes(&r, blk, APRSM_BLOCK_LEN) && (r.qsyOff == 0U) && (r.ambiguity == 3U), "round trip: qsyOff=0");
+		CHECK((blk[7] == 0x03U), "qsyOff у блок не пишеться: неточність 3 -> байт 7 = 0x%02X", blk[7]);
+		CHECK(aprsModeCfgFromBytes(&r, blk, APRSM_BLOCK_LEN) && (r.qsyOff == 0U) && (r.ambiguity == 3U) && (r.ov & APRSM_OV_AMB), "round trip: неточність 3 збережено, qsyOff = 0");
+		/* старий блок із qsyOff=1 (біт 7) читається для міграції */
+		blk[7] |= 0x80U;
+		for (int k = 0; k < 71; k++) { sum = (uint8_t)(sum + blk[k]); }
+		blk[71] = sum;
+		CHECK(aprsModeCfgFromBytes(&r, blk, APRSM_BLOCK_LEN) && (r.qsyOff == 1U) && (r.ambiguity == 3U), "старий блок: qsyOff=1 і неточність 3 читаються");
 	}
 }
 

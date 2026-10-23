@@ -64,7 +64,7 @@ typedef struct
 enum
 {
 	APRSM_F_FREQ = 0, APRSM_F_CALL, APRSM_F_SSID, APRSM_F_PATH1, APRSM_F_PATH2, APRSM_F_SYMBOL,
-	APRSM_F_COMMENT, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB, APRSM_F_INTERVAL, APRSM_F_SQL, APRSM_F_RESET, APRSM_F_COUNT
+	APRSM_F_COMMENT, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB, APRSM_F_SQL, APRSM_F_RESET, APRSM_F_COUNT
 };
 
 /* Редактор поля (текст / число) -- стан екрана, лежить у стані режиму. */
@@ -140,7 +140,13 @@ aprsModeCfg_t       *aprsModeCfg(void);
 const aprsModeEff_t *aprsModeEff(void);
 const aprsModeDefaults_t *aprsModeDefaults(void);
 void aprsModeCfgChanged(uint16_t whatChanged);   /* оверрайди/налаштування змінено: перерахувати, підлаштувати радіо, відкласти запис */
-void aprsModeCfgReset(void);                     /* зняти всі оверрайди, інтервал 0, шумодав типовий */
+void aprsModeCfgReset(void);                     /* зняти чернетку й шумодав (станційні поля лежать у кодплузі -- не чіпає) */
+/* APRS-unify */
+bool aprsModeSetCall(const char *call);          /* позивний -> ім'я рації (EEPROM 0x00E0); false -- не пройшов перевірку */
+void aprsModeSetFlag(uint8_t mask, bool on);     /* прапорці слота: APRSM_RAW_FLAG_300_BAUDS / _QSY / _SILENT / _USE_POSITION */
+void aprsModeSlotName(char out[9]);              /* назва слота конфігу APRS, з яким працюють налаштування */
+void aprsBeaconCfgBoot(bool restoreDefaults);    /* на старті, перед aprsBeaconingInit(): блок налаштувань бікона -> працюючі налаштування (немає -- створити) */
+bool aprsBeaconCfgStore(void);                   /* працюючі налаштування бікона -> блок (лише якщо змінилися) */
 void aprsModeRequestBeacon(void);                /* ручний маяк (GREEN на «Моніторі») */
 uint32_t aprsModeBeaconCount(void);
 uint32_t aprsModeLastBeaconAgeSec(void);         /* 0xFFFFFFFF -- ще не було */

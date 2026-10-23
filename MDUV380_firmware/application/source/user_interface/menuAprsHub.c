@@ -54,6 +54,7 @@ enum
 #endif
 
 static menuStatus_t hubExitCode = MENU_STATUS_SUCCESS;
+static bool s_openSettings = false;   /* APRS-unify L6: наступний перший вхід у хаб одразу відкриває «Налаштування» */
 
 static const char *itemName(int n, char *buf, size_t cap)
 {
@@ -257,6 +258,12 @@ static void exitCallback(void *data)
 #endif
 }
 
+void menuAprsHubOpenSettings(void)
+{
+	s_openSettings = true;
+	menuSystemSetCurrentMenu(MENU_APRS_HUB);
+}
+
 menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 {
 	if (isFirstRun)
@@ -285,7 +292,20 @@ menuStatus_t menuAprsHub(uiEvent_t *ev, bool isFirstRun)
 		aprsRxProbeClose();
 #endif
 
-		updateScreen(true);
+		{
+			bool openSettings = s_openSettings;
+
+			s_openSettings = false;
+			if (openSettings)
+			{
+				menuDataGlobal.currentItemIndex = APRS_HUB_SETTINGS;
+			}
+			updateScreen(true);
+			if (openSettings)
+			{
+				(void)menuAprsSettingsEnter();
+			}
+		}
 		return (MENU_STATUS_LIST_TYPE | MENU_STATUS_SUCCESS);
 	}
 

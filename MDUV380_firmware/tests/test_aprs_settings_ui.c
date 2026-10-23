@@ -25,12 +25,8 @@ void displayFillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool inv) { (vo
 void displayDrawXBitmap(int16_t x, int16_t y, const uint8_t *b, int16_t w, int16_t h, bool inv) { (void)x; (void)y; (void)b; (void)w; (void)h; (void)inv; }
 /* стокові допоміжні, що в прошивці живуть у uiUtilities.c / codeplug.c / aprs.c / aprs_rx.c */
 const int CODEPLUG_MIN_PER_CHANNEL_POWER = 1;
-const uint16_t initialIntervalsInSecs[APRS_BEACON_INITIAL_INTERVAL_MAX + 1] = { 12U, 30U, 60U, 120U, 180U, 300U, 600U, 1200U, 1800U, 3600U };
 const char *getPowerLevel(uint8_t level) { static char b[8]; snprintf(b, sizeof(b), "%u", (unsigned)(level + 1U)); return b; }
 const char *getPowerLevelUnit(uint8_t level) { (void)level; return "W"; }
-static uint8_t s_bcnWin;
-uint8_t aprsRxBcnWinMode(void) { return s_bcnWin; }
-void aprsRxBcnWinSetMode(uint8_t m) { s_bcnWin = m; }
 void menuDisplayTitle(const char *t) { snprintf(s_title, sizeof(s_title), "%s", t); }
 /* R19 Е1: списки -- стокові пункти меню. menuAprsListDraw() справжній живе в menuAprsStations.c (його перевіряє test_aprs_stations_ui); тут -- те саме вікно з 6 рядків */
 static int s_entryMax, s_entryRows;
@@ -145,11 +141,12 @@ static void testSymbol(void)
 	t0 = aprsModeEff()->iconTable; i0 = aprsModeEff()->iconIndex;
 	click(KEY_RIGHT);
 	CHECK((aprsModeEff()->iconTable != t0) || (aprsModeEff()->iconIndex != i0), "ручка змінила символ в ефективних налаштуваннях");
-	CHECK(aprsModeCfg()->ov & APRSM_OV_ICON, "біт оверрайду символу виставлено");
+	CHECK((aprsModeCfg()->ov & APRSM_OV_ICON) == 0, "APRS-unify: чернетку складено в слот (ov-біт знято)");
 	t0 = aprsModeEff()->iconTable; i0 = aprsModeEff()->iconIndex;
 	s_now += 3000; tickMs(0);   /* пауза в редагуванні */
 	(void)menuAprsSettingsTick(&(uiEvent_t){ 0 });
-	CHECK(s_flashWrites >= 1 && s_flashValid, "символ записано у флеш після паузи");
+	CHECK(s_flashWrites >= 1 && s_flashValid, "блок режиму записано у флеш після паузи");
+	CHECK(s_apcWrites == 1 && s_apc.iconTable == t0 && s_apc.iconIndex == i0, "символ записано в слот конфігу APRS після паузи (%d)", s_apcWrites);
 	aprsModeMsgSessionClose();
 	/* повторний вхід у меню */
 	CHECK(menuAprsSettingsEnter(), "повторний вхід");
@@ -185,13 +182,13 @@ static void testStock(void)
 	/* R21 З4: «QSY інфо» -- наступний рядок після «Стиснення»; типово увімкнено, зберігається в блоці режиму (qsyOff) */
 	click(KEY_DOWN);
 	CHECK(asRowId(aprsModeUi()) == AS_S_QSY, "рядок «QSY інфо»");
-	CHECK(aprsModeCfg()->qsyOff == 0U, "типово QSY увімкнено");
+	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_QSY) != 0U, "QSY увімкнено -- прапорець у слоті");
 	click(KEY_LEFT);
-	CHECK(aprsModeCfg()->qsyOff == 1U, "ручка вліво -- QSY вимкнено");
+	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_QSY) == 0U, "ручка вліво -- QSY вимкнено");
 	click(KEY_GREEN);
-	CHECK(aprsModeCfg()->qsyOff == 0U, "GREEN -- перемикач, QSY знов увімкнено");
+	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_QSY) != 0U, "GREEN -- перемикач, QSY знов увімкнено");
 	click(KEY_LEFT);
-	CHECK(aprsModeCfg()->qsyOff == 1U, "QSY вимкнено перед скиданням");
+	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_QSY) == 0U, "QSY вимкнено перед скиданням");
 	click(KEY_UP);
 	selectRow(AS_G_SMART, 0);
 	click(KEY_RIGHT);
@@ -220,15 +217,15 @@ static void testReset(void)
 	u = aprsModeUi();
 	selectRow(AS_G_STATION, 1);
 	click(KEY_RIGHT);   /* SSID */
-	CHECK(aprsModeCfg()->ov & APRSM_OV_SSID, "SSID змінено");
+	CHECK(aprsModeEff()->ssid == 8U, "SSID змінено (слот 7 -> 8)");
 	AS_LEVEL(u) = AS_LEVEL_GROUPS; u->scroll = AS_G_RESET;
 	click(KEY_GREEN);
-	CHECK(u->resetArmed == 1 && (aprsModeCfg()->ov & APRSM_OV_SSID), "перше GREEN -- лише запит підтвердження");
+	CHECK(u->resetArmed == 1 && aprsModeEff()->ssid == 8U, "перше GREEN -- лише запит підтвердження");
 	asDraw(); CHECK(rowHas(APRSM_G_RESET_ASK), "на екрані запит «GREEN ще раз»");
 	click(KEY_DOWN);
 	CHECK(u->resetArmed == 0, "рух по списку скасовує підтвердження");
 	u->scroll = AS_G_RESET; click(KEY_GREEN); click(KEY_GREEN);
-	CHECK((aprsModeCfg()->ov & APRSM_OV_SSID) == 0 && u->resetArmed == 0, "друге GREEN -- налаштування скинуто");
+	CHECK(aprsModeEff()->ssid == 8U && aprsModeCfg()->ov == APRSM_OV_MIGRATED && u->resetArmed == 0, "друге GREEN -- скинуто чернетку й шумодав; станційні поля у кодплузі не чіпає");
 	aprsModeMsgSessionClose();
 }
 
@@ -267,6 +264,63 @@ static void testEditor(void)
 	aprsModeMsgSessionClose();
 }
 
+/* APRS-unify: позивний -- ім'я рації; прапорці слота в меню; назва слота в шапці; запис у кодплуг лише коли байти змінилися */
+static int rowIndexOf(const uint8_t *rows, int n, int id)
+{
+	for (int i = 0; i < n; i++) { if (rows[i] == id) { return i; } }
+	return -1;
+}
+
+static void testUnify(void)
+{
+	uint8_t fl;
+	int ib, ip;
+
+	resetWorld();
+	memset(s_apc.name, 0xFF, sizeof(s_apc.name)); memcpy(s_apc.name, "MYSLOT", 6);
+	CHECK(menuAprsSettingsEnter(), "налаштування");
+	asDraw();
+	CHECK(strcmp(s_title, "APRS:MYSLOT") == 0, "у шапці -- назва слота (%s)", s_title);
+
+	/* позивний */
+	CHECK(aprsModeSetCall("r2abc") && strcmp(aprsModeEff()->call, "R2ABC") == 0, "позивний r2abc -> R2ABC в ефективних");
+	CHECK(aprsModeSetCall("") == false && aprsModeSetCall("--") == false, "порожній/недопустимий позивний відхилено");
+	CHECK(strcmp(s_radioName, "UW5ELK") == 0 && s_nameWrites == 0, "до паузи ім'я рації в кодплуг не писали");
+	s_now += 3000; tickMs(0);
+	(void)menuAprsSettingsTick(&(uiEvent_t){ 0 });
+	CHECK(strcmp(s_radioName, "R2ABC") == 0 && s_nameWrites == 1, "після паузи ім'я рації = позивний (%s, записів %d)", s_radioName, s_nameWrites);
+	CHECK(s_apcWrites == 0, "слот не чіпали, бо байти не змінилися");
+	(void)aprsModeSetCall("R2ABC");
+	s_now += 3000; tickMs(0);
+	(void)menuAprsSettingsTick(&(uiEvent_t){ 0 });
+	CHECK(s_nameWrites == 1, "той самий позивник -- без нового запису");
+
+	/* прапорці слота: 300 бод, «тихо» (група «Маяк»), «використовувати позицію» (група «Позиція») */
+	ib = rowIndexOf(asRowsBeacon, AS_N(asRowsBeacon), AS_S_BAUD);
+	CHECK(ib >= 0, "у групі «Маяк» є рядок «Бод»");
+	selectRow(AS_G_BEACON, ib);
+	click(KEY_RIGHT);
+	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_300_BAUDS) != 0U, "300 бод увімкнено");
+	asDraw(); CHECK(rowHas(APRSM_L_BAUD ":" APRSM_V_BAUD1), "на екрані «Бод:300»");
+	ib = rowIndexOf(asRowsBeacon, AS_N(asRowsBeacon), AS_S_SILENT);
+	selectRow(AS_G_BEACON, ib);
+	click(KEY_GREEN);
+	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_SILENT) != 0U, "«Тихо» увімкнено");
+	ip = rowIndexOf(asRowsPos, AS_N(asRowsPos), AS_S_USEPOS);
+	selectRow(AS_G_POS, ip);
+	click(KEY_GREEN);
+	CHECK((aprsModeEff()->flags & APRSM_RAW_FLAG_USE_POSITION) != 0U, "«Поз.слота» увімкнено");
+	s_now += 3000; tickMs(0);
+	(void)menuAprsSettingsTick(&(uiEvent_t){ 0 });
+	fl = s_apc.flags;
+	CHECK(s_apcWrites == 1 && (fl & (APRSM_RAW_FLAG_300_BAUDS | APRSM_RAW_FLAG_SILENT | APRSM_RAW_FLAG_USE_POSITION)) == (APRSM_RAW_FLAG_300_BAUDS | APRSM_RAW_FLAG_SILENT | APRSM_RAW_FLAG_USE_POSITION) &&
+			(fl & APRSM_RAW_FLAG_QSY) != 0U, "три прапорці в слоті одним записом (%d, %02X); QSY лишився", s_apcWrites, fl);
+	/* стокові рядки більше не містять окремого «Період» */
+	CHECK(rowIndexOf(asRowsBeacon, AS_N(asRowsBeacon), AS_S_BINT) >= 0, "інтервал -- стоковий рядок «Інтервал»");
+	aprsModeMsgSessionClose();
+	CHECK(s_bflashValid && s_bflashWrites >= 1, "при закритті записано блок налаштувань бікона");
+}
+
 int main(void)
 {
 	testWalk();
@@ -275,6 +329,7 @@ int main(void)
 	testStock();
 	testReset();
 	testEditor();
+	testUnify();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_settings_ui: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

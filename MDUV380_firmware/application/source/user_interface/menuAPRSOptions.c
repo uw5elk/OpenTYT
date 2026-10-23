@@ -43,17 +43,21 @@
 #if defined(APRS_RX)
 #include "functions/aprs_rx.h"
 #include "user_interface/languages/aprsrx_ua.h"
+#include "user_interface/menuAprsHub.h"
 #endif
 
 extern uint16_t initialIntervalsInSecs[];
 
+#if !defined(APRS_R21_MENU)
 static void updateScreen(bool isFirstRun);
 static void handleEvent(uiEvent_t *ev);
 static void applySettings(void);
 static void exitCallback(void *data);
+#endif
 
 // See https://thewakesileave.wordpress.com/2017/06/14/rediscovering-the-smartbeaconing-parameters/
 #define SMART_BEACONING_PRESETS_MAX  7U
+#if !defined(APRS_R21_MENU) || defined(APRS_R21_PRESETS)   /* APRS-unify L6: у збірках із хабом стоковий екран вирізано; таблиця потрібна лише пресетам нового меню */
 static const char *sbPresetsStr[] = { "Default", "Car", "e-Bike", "Bike", "Walking", "Sailing", "APRSdroid" };
 static aprsSmartBeaconingSettings_t smartPresets[SMART_BEACONING_PRESETS_MAX] =
 {
@@ -122,6 +126,8 @@ static aprsSmartBeaconingSettings_t smartPresets[SMART_BEACONING_PRESETS_MAX] =
 		}
 };
 
+#endif   /* таблиця пресетів */
+
 #if defined(APRS_R21_PRESETS)
 /* R21 З5: пресети розумного маяка (цифри 0..6 у стоковому екрані) потрібні й єдиному екрану «APRS -> Налаштування» (menuAprsSettings.c) -- беруться звідси,
  * таблиця одна. Поза APRS_R21_PRESETS функції немає: типова збірка байт-у-байт стокова. NULL -- номер поза таблицею. */
@@ -139,6 +145,20 @@ const aprsSmartBeaconingSettings_t *aprsSmartPresetGet(unsigned i, const char **
 }
 #endif
 
+#if defined(APRS_R21_MENU)
+/* APRS-unify L6: одне меню налаштувань APRS. У збірках із хабом «APRS» стоковий екран «Опції -> APRS» вирізано (він дублював «APRS -> Налаштування» й
+ * писав ті самі параметри іншим шляхом): MENU_APRS у menuFunctions[] і ця функція ЛИШИЛИСЬ, щоб стара прив'язка швидкої клавіші відкривала те саме
+ * єдине меню -- хаб, одразу «Налаштування». Збірки без хаба (типова, ua, uacr) лишаються байт-у-байт стоковими. */
+menuStatus_t menuAPRSOptions(uiEvent_t *ev, bool isFirstRun)
+{
+	(void)ev;
+	if (isFirstRun)
+	{
+		menuAprsHubOpenSettings();   /* замінює верхівку стека хабом (push зациклився б при поверненні) */
+	}
+	return (MENU_STATUS_LIST_TYPE | MENU_STATUS_SUCCESS);
+}
+#else
 static menuStatus_t menuAPRSExitCode = MENU_STATUS_SUCCESS;
 #if defined(APRS_RX)
 static uint8_t bcnWinCopy;   /* R13: робоча копія «Вікно маяка»; у налаштування потрапляє разом з рештою (applySettings()), RED її відкидає */
@@ -803,5 +823,6 @@ static void exitCallback(void *data)
 {
 	resetOriginalSettingsData();
 }
+#endif   /* !APRS_R21_MENU */
 
 #endif // PLATFORM_GD77S

@@ -379,6 +379,10 @@ typedef enum
 	                                        * (частота, позивний, SSID, шлях, символ, коментар, позиція, інтервал
 	                                        * маяка...). 72 Б, пишеться прямо з рації. Формат -- aprs_mode_cfg.h.
 	                                        * Номер = 13 (12-й -- SMS_TX_MODE). */
+	CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG, /* APRS-unify: налаштування стокового бікона (режим, потужність, інтервал, стиснення, розумний маяк,
+	                                        * джерело позиції, вікно маяка) -- ОСНОВНЕ сховище (ПК-інструмент tools/aprs_beacon_cfg.py пише сюди,
+	                                        * на старті прошивка переносить блок у nonVolatileSettings). 14 Б. Формат -- aprs_mode_cfg.h.
+	                                        * Номер = 14. */
 #endif
 } CodeplugCustomDataType_t;
 
@@ -568,5 +572,14 @@ bool codeplugSaveLastUsedChannelInZone(void);
 int codeplugAPRSConfigGetCount(void);
 bool codeplugAPRSGetDataForIndex(int index, CodeplugAPRSConfig_t *APRS_Buf);
 int codeplugAPRSGetIndexOfName(char *configName);
+#if defined(ENABLE_APRS_RX)
+/* APRS-unify. Запис слота конфігу APRS за номером 1..8 (адреса та сама, що читає codeplugAPRSGetDataForIndex()). Порожній слот (magicVer == 0) отримує
+ * APRS_MAGIC_VERSION; номер count+1 створює слот (кеш кількості оновлюється). EEPROM_Write лише якщо байти відрізняються від наявних. false -- номер поза 1..8
+ * чи слот не наступний за останнім (діра зламала б codeplugAPRSInitCache()), чи запис не вдався. *changed (може бути NULL) -- чи були записані байти. */
+bool codeplugAPRSSetDataForIndex(int index, const CodeplugAPRSConfig_t *APRS_Buf, bool *changed);
+/* APRS-unify. Ім'я рації (позивний) в EEPROM 0x00E0, 8 Б; name -- до 8 символів, дописка 0xFF (як codeplugUtilConvertStringToBuf()). Пише лише якщо
+ * байти відрізняються. false -- запис не вдався. */
+bool codeplugSetRadioName(const char *name, bool *changed);
+#endif
 
 #endif

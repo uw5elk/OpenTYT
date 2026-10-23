@@ -1791,6 +1791,76 @@ bool codeplugAPRSGetDataForIndex(int index, CodeplugAPRSConfig_t *APRS_Buf)
 	return !((APRS_Buf->name[0] == 0xFF) || (APRS_Buf->magicVer != APRS_MAGIC_VERSION));
 }
 
+#if defined(ENABLE_APRS_RX)
+bool codeplugAPRSSetDataForIndex(int index, const CodeplugAPRSConfig_t *APRS_Buf, bool *changed)
+{
+	CodeplugAPRSConfig_t out;
+	uint8_t cur[CODEPLUG_APRS_CONFIG_DATA_STRUCT_SIZE];
+	int addr;
+
+	if (changed != NULL)
+	{
+		*changed = false;
+	}
+	if ((index < 1) || (index > 8) || (index > (codeplugAPRSCache.numOfConfigs + 1)))
+	{
+		return false;
+	}
+	memcpy(&out, APRS_Buf, sizeof(out));
+	if (out.magicVer == 0U)
+	{
+		out.magicVer = APRS_MAGIC_VERSION;
+	}
+	if (out.name[0] == (char)0xFF)
+	{
+		return false;   // порожня назва = слот недійсний для codeplugAPRSGetDataForIndex()
+	}
+	addr = CODEPLUG_ADDR_APRS_CONFIGS + ((index - 1) * CODEPLUG_APRS_CONFIG_DATA_STRUCT_SIZE);
+	if (EEPROM_Read(addr, cur, sizeof(cur)) && (memcmp(cur, &out, sizeof(cur)) == 0))
+	{
+		return true;
+	}
+	if (EEPROM_Write(addr, (uint8_t *)&out, sizeof(out)) == false)
+	{
+		return false;
+	}
+	if (changed != NULL)
+	{
+		*changed = true;
+	}
+	if (index > codeplugAPRSCache.numOfConfigs)
+	{
+		codeplugAPRSCache.numOfConfigs = index;
+	}
+	return true;
+}
+
+bool codeplugSetRadioName(const char *name, bool *changed)
+{
+	char buf[8];
+	char cur[8];
+
+	if (changed != NULL)
+	{
+		*changed = false;
+	}
+	codeplugUtilConvertStringToBuf((char *)name, buf, 8);   // 0xFF-дописка; name -- NUL-кінцевий, до 8 символів
+	if (EEPROM_Read(CODEPLUG_ADDR_USER_CALLSIGN, (uint8_t *)cur, 8) && (memcmp(cur, buf, 8) == 0))
+	{
+		return true;
+	}
+	if (EEPROM_Write(CODEPLUG_ADDR_USER_CALLSIGN, (uint8_t *)buf, 8) == false)
+	{
+		return false;
+	}
+	if (changed != NULL)
+	{
+		*changed = true;
+	}
+	return true;
+}
+#endif
+
 int codeplugAPRSGetIndexOfName(char *configName)
 {
 	uint8_t APRSConfigName[8];

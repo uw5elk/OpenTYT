@@ -482,8 +482,12 @@ static void air_audit(void)
 	aprsModeCfgInit(&c);
 	air_one("типові", &c, &d, "DEFCAL", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
 
-	aprsModeCfgInit(&c); strcpy(c.call, "R2ABC"); c.ov |= APRSM_OV_CALL;
-	air_one("позивний", &c, &d, "R2ABC", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
+	{
+		aprsModeDefaults_t d2 = d;   /* APRS-unify: позивний один -- ім'я рації (типове значення), а не оверрайд */
+
+		aprsModeCfgInit(&c); strcpy(d2.call, "R2ABC");
+		air_one("позивний", &c, &d2, "R2ABC", 7, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "TYT");
+	}
 
 	aprsModeCfgInit(&c); c.ssid = 9; c.ov |= APRSM_OV_SSID;
 	air_one("SSID", &c, &d, "DEFCAL", 9, (const char (*)[6])p6, ps, 2, '/', '[', "5030.00N", "03015.00E", "TYT");

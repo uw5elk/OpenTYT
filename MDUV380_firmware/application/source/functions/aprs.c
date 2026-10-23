@@ -2628,6 +2628,14 @@ void aprsBeaconingSetSettings(aprsBeaconingSettings_t *src)
 	}
 }
 
+#if defined(ENABLE_APRS_RX)
+void aprsBeaconingBootSet(const aprsBeaconingSettings_t *src)
+{
+	memcpy(&aprsBcnData.settings, src, sizeof(aprsBeaconingSettings_t));
+	aprsBeaconingUpdateSystemSettingsFromConfiguration();
+}
+#endif
+
 void aprsBeaconingTick(uiEvent_t *ev)
 {
 	if (aprsTxProgress != APRS_TX_IDLE)
