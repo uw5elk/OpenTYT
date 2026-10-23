@@ -164,7 +164,9 @@ def test_gui():
     import gui_flasher as gf
     import codeplug_viewer_gui as cvg
     spi, cp = fixture()
-    app = gf.FlasherApp()
+    import tempfile
+    os.environ["TYT_CPS_SETTINGS"] = os.path.join(tempfile.mkdtemp(prefix="cedit_"), "ui.json")     # справжні налаштування не чіпаємо
+    app = gf.FlasherApp(autoprobe=False)
     try:
         sent = []
         v = cvg.CodeplugViewerWindow(app, cp, "тест", HERE, write_contacts=lambda ops, w: sent.append(ops))

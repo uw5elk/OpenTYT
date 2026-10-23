@@ -169,10 +169,13 @@ def test_gui():
     if not os.environ.get("DISPLAY"):
         print("ПРОПУЩЕНО (GUI): нема DISPLAY")
         return
+    import tempfile
     import gui_flasher as gf
-    app = gf.FlasherApp()
+    os.environ["TYT_CPS_SETTINGS"] = os.path.join(tempfile.mkdtemp(prefix="aprscfg_"), "ui.json")     # справжні налаштування не чіпаємо
+    app = gf.FlasherApp(autoprobe=False)
     try:
-        w = gf.AprsBeaconWindow(app)
+        app.show("aprs")                 # CPS-shell: APRS -- панель дерева, а не окреме вікно
+        w = app.get_panel("aprs")
         w.update()
         d0 = dict(ab.DEFAULT_BEACON, mode=4, power=3, interval=6, source="gps", decay=False, compressed=True, slow=11, fast=33, low=4, high=66, angle=33, slope=44, time=55, bcnwin=1)
         w._apply_state({"call": "UW5ELK", "sql": 5, "beacon": d0})
@@ -185,7 +188,6 @@ def test_gui():
             check(False, "fast=9 мав дати відмову")
         except ab.AprsCfgError:
             pass
-        w.destroy()
     finally:
         app.destroy()
 

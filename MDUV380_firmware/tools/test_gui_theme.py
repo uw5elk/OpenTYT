@@ -31,14 +31,19 @@ def test_palette():
         check(re.fullmatch(r"#[0-9a-f]{6}", v) is not None, "палітра: %s = %r не #rrggbb" % (k, v))
     for k in ("bg", "surface", "field", "button_bg", "button_hover", "disabled_bg", "select_bg"):
         check(gt._lum(gt.P[k]) < 0.2, "тло %s має бути темним (яскравість %.2f)" % (k, gt._lum(gt.P[k])))
-    # жодних кольорових літералів поза палітрою
-    for fn in ("gui_flasher.py", "codeplug_viewer_gui.py", "gui_dialogs.py"):
+    # жодних кольорових літералів поза палітрою (CPS-shell: увесь пакет cps_ui/)
+    files = ["gui_flasher.py", "codeplug_viewer_gui.py", "gui_dialogs.py"]
+    pkg = os.path.join(HERE, "cps_ui")
+    files += [os.path.join("cps_ui", f) for f in sorted(os.listdir(pkg)) if f.endswith(".py")]
+    check(len(files) >= 12, "знайдено файли пакета cps_ui (%d)" % len(files))
+    for fn in files:
         src = open(os.path.join(HERE, fn), encoding="utf-8").read()
         bad = re.findall(r"[\"']#[0-9a-fA-F]{3,6}[\"']", src)
         check(not bad, "%s: кольорові літерали поза палітрою: %r" % (fn, bad))
-    src = open(os.path.join(HERE, "gui_flasher.py"), encoding="utf-8").read()
-    check("gt.apply(self)" in src, "FlasherApp викликає gt.apply")
-    check(len(re.findall(r"gt\.style_window\(self\)", src)) >= 2, "обидва Toplevel (AES, RCTL) викликають gt.style_window")
+    src = open(os.path.join(pkg, "app.py"), encoding="utf-8").read()
+    check("gt.apply(self)" in src, "CpsApp викликає gt.apply")
+    check("gt.style_window(self)" in open(os.path.join(HERE, "codeplug_viewer_gui.py"), encoding="utf-8").read(), "ContactDialog викликає gt.style_window")
+    check("gt.style_window(win)" in open(os.path.join(HERE, "gui_dialogs.py"), encoding="utf-8").read(), "діалоги gd викликають gt.style_window")
 
 
 def light(color_hex):
@@ -61,27 +66,36 @@ def test_widget_tree():
         print("ПРОПУЩЕНО: нема DISPLAY (запусти через xvfb-run)")
         return
     try:
+        import tempfile
         import gui_flasher as gf
         import gui_dialogs as gd
-        import codeplug_viewer_gui as cvg
         import cps_link as cl
         import test_cps_csv as tc
     except ImportError as e:
         print("ПРОПУЩЕНО: нема залежностей для вікон (%s)" % e)
         return
-    app = gf.FlasherApp()
+    os.environ["TYT_CPS_SETTINGS"] = os.path.join(tempfile.mkdtemp(prefix="gtheme_"), "ui.json")     # справжні налаштування не чіпаємо
+    app = gf.FlasherApp(autoprobe=False)
     try:
         app.update()
         spi = tc.make_fixture_spi()
         cp, _data = tc.codeplug_of(spi)
-        wins = [app, gf.AesKeyManagerWindow(app), gf.RctlConfigWindow(app), cvg.CodeplugViewerWindow(app, cp, "тест", HERE)]
+        # CPS-shell: усі розділи дерева створюються (кожна панель -- частина дерева віджетів app), перегляд кодплага -- у своїй панелі
+        for key in app.section_keys():
+            app.show(key)
+            app.update()
+        app.get_panel("viewer").open_codeplug(cp, "тест", writable=True)
+        app.update()
+        wins = [app]
         dlg, _r = gd._build(app, "Тест", "Рядок 1\nРядок 2", [("Так", True), ("Ні", False)], 1)
         wins.append(dlg)
         pop_menu = tk.Menu(app, tearoff=0)
         gt.style_menu(pop_menu)
         wins.append(pop_menu)
         # випадний список Combobox
-        cb = ttk.Combobox(app, values=("а", "б"), state="readonly")
+        holder = ttk.Frame(app)          # корінь CpsApp керується grid -- pack-віджет кладемо у власний контейнер
+        holder.grid(row=3, column=0)
+        cb = ttk.Combobox(holder, values=("а", "б"), state="readonly")
         cb.pack()
         app.update()
         pop = app.tk.call("ttk::combobox::PopdownWindow", str(cb))
