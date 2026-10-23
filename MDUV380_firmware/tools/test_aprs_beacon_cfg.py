@@ -3,7 +3,7 @@
 """Хост-тест APRS-unify (L5.4): tools/aprs_beacon_cfg.py -- блок бікона (16 Б), шумодав у блоці режиму (72 Б), позивний (EEPROM 0x00E0).
 
 Блок бікона перевіряється ще й проти C-реалізації (tests/golden_aprs_beacon.txt не потрібен: байти порівнюються з тими, що будує прошивка у
-tests/test_aprs_mode_state.c -- формат один: 'A','B',1 ... сума 0x5A). Без заліза: custom_data підміняється словником, запис кодплуга -- FakeRadioX.
+tests/test_aprs_mode_state.c -- формат один: 'A','B',1 ... сума 0x5A). Без заліза: custom_data підміняється словником, запис кодплага -- FakeRadioX.
 """
 import os
 import sys

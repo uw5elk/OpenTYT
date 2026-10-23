@@ -227,7 +227,7 @@ static void testReset(void)
 	click(KEY_DOWN);
 	CHECK(u->resetArmed == 0, "рух по списку скасовує підтвердження");
 	u->scroll = AS_G_RESET; click(KEY_GREEN); click(KEY_GREEN);
-	CHECK(aprsModeEff()->ssid == 8U && aprsModeCfg()->ov == APRSM_OV_MIGRATED && u->resetArmed == 0, "друге GREEN -- скинуто чернетку й шумодав; станційні поля у кодплузі не чіпає");
+	CHECK(aprsModeEff()->ssid == 8U && aprsModeCfg()->ov == APRSM_OV_MIGRATED && u->resetArmed == 0, "друге GREEN -- скинуто чернетку й шумодав; станційні поля у кодплазі не чіпає");
 	aprsModeMsgSessionClose();
 }
 
@@ -266,7 +266,7 @@ static void testEditor(void)
 	aprsModeMsgSessionClose();
 }
 
-/* APRS-unify: позивний -- ім'я рації; прапорці слота в меню; назва слота в шапці; запис у кодплуг лише коли байти змінилися */
+/* APRS-unify: позивний -- ім'я рації; прапорці слота в меню; назва слота в шапці; запис у кодплаг лише коли байти змінилися */
 static int rowIndexOf(const uint8_t *rows, int n, int id)
 {
 	for (int i = 0; i < n; i++) { if (rows[i] == id) { return i; } }
@@ -287,7 +287,7 @@ static void testUnify(void)
 	/* позивний */
 	CHECK(aprsModeSetCall("r2abc") && strcmp(aprsModeEff()->call, "R2ABC") == 0, "позивний r2abc -> R2ABC в ефективних");
 	CHECK(aprsModeSetCall("") == false && aprsModeSetCall("--") == false, "порожній/недопустимий позивний відхилено");
-	CHECK(strcmp(s_radioName, "UW5ELK") == 0 && s_nameWrites == 0, "до паузи ім'я рації в кодплуг не писали");
+	CHECK(strcmp(s_radioName, "UW5ELK") == 0 && s_nameWrites == 0, "до паузи ім'я рації в кодплаг не писали");
 	s_now += 3000; tickMs(0);
 	(void)menuAprsSettingsTick(&(uiEvent_t){ 0 });
 	CHECK(strcmp(s_radioName, "R2ABC") == 0 && s_nameWrites == 1, "після паузи ім'я рації = позивний (%s, записів %d)", s_radioName, s_nameWrites);

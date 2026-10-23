@@ -48,9 +48,9 @@ import custom_data as cd        # безпечний read/write custom-data бл
                                  # RCTL і т.д. в ОДНОМУ регіоні -- див. коментар у custom_data.py)
 import rctl_config as rctl      # формат блоку "RCTL" (allowlist віддаленого керування)
 import aprs_beacon_cfg as abc_  # APRS-unify: бікон/шумодав/позивний (custom-data типів 13, 14 і EEPROM 0x00E0)
-import cps_link as cps          # R24: знімок екрана і бекап кодплуга (лише читання, без залежностей крім pyserial)
-import cps_restore as cps_rest  # R25: відновлення кодплуга (ЗАПИС; заблоковано константою RESTORE_UNLOCKED)
-import codeplug_view as cpview  # R25: розбір вмісту кодплуга (спільне декодування назв)
+import cps_link as cps          # R24: знімок екрана і бекап кодплага (лише читання, без залежностей крім pyserial)
+import cps_restore as cps_rest  # R25: відновлення кодплага (ЗАПИС; заблоковано константою RESTORE_UNLOCKED)
+import codeplug_view as cpview  # R25: розбір вмісту кодплага (спільне декодування назв)
 import codeplug_viewer_gui      # R25: вікно перегляду (R26 V2: редактор контактів на вкладці «Контакти»)
 import contact_edit             # R26 V2: операції над контактами -> запис шляхом відновлення з бекапу
 import cps_csv                  # R26: експорт/імпорт CSV (формат OpenGD77 CPS); імпорт іде шляхом відновлення з бекапу
@@ -330,7 +330,7 @@ class FlasherApp(tk.Tk):
                                       command=self._on_screenshot_clicked)
         self.shot_button.pack(side="left")
 
-        self.backup_button = ttk.Button(read_frame, text="Бекап кодплуга",
+        self.backup_button = ttk.Button(read_frame, text="Бекап кодплага",
                                         command=self._on_backup_clicked)
         self.backup_button.pack(side="left", padx=8)
 
@@ -349,16 +349,16 @@ class FlasherApp(tk.Tk):
         self.view_file_button = ttk.Button(view_frame, text="Переглянути бекап...", command=self._on_view_file_clicked)
         self.view_file_button.pack(side="left")
 
-        self.view_radio_button = ttk.Button(view_frame, text="Переглянути кодплуг з рації", command=self._on_view_radio_clicked)
+        self.view_radio_button = ttk.Button(view_frame, text="Переглянути кодплаг з рації", command=self._on_view_radio_clicked)
         self.view_radio_button.pack(side="left", padx=8)
 
-        self.restore_button = ttk.Button(view_frame, text="Відновити кодплуг...", command=self._on_restore_clicked)
+        self.restore_button = ttk.Button(view_frame, text="Відновити кодплаг...", command=self._on_restore_clicked)
         self.restore_button.pack(side="left", padx=8)
         self.restore_note = ttk.Label(view_frame, text="" if cps_rest.RESTORE_UNLOCKED else cps_rest.LOCKED_CAPTION,
                                       foreground=gt.P["warn"])
         self.restore_note.pack(side="left")
 
-        # R26: обмін кодплуга з CSV (формат OpenGD77 CPS). Експорт ЛИШЕ читає; імпорт іде ТІЄЮ САМОЮ дорогою, що й «Відновити кодплуг»
+        # R26: обмін кодплага з CSV (формат OpenGD77 CPS). Експорт ЛИШЕ читає; імпорт іде ТІЄЮ САМОЮ дорогою, що й «Відновити кодплаг»
         # (страхова копія -> діалог зі списком змін -> лише відмінні сектори -> перечитування -> SHA-256) і блокується тією ж константою.
         csv_frame = ttk.Frame(self)
         csv_frame.pack(fill="x", padx=12, pady=(0, 6))
@@ -609,7 +609,7 @@ class FlasherApp(tk.Tk):
             sys.stdout = old_stdout
             self.queue.put(("done", (ok, reason)))
 
-    # --- R24: знімок екрана і бекап кодплуга (лише читання, звичайний режим рації) -----
+    # --- R24: знімок екрана і бекап кодплага (лише читання, звичайний режим рації) -----
 
     def _cps_output_dir(self):
         d = Path.home() / "MD-UV390UKR"
@@ -634,15 +634,15 @@ class FlasherApp(tk.Tk):
 
     def _on_backup_clicked(self):
         full = bool(self.full_snapshot_var.get())
-        self._run_cps_task(lambda: self._backup_worker(full), "Читаю кодплуг з рації (бекап)...")
+        self._run_cps_task(lambda: self._backup_worker(full), "Читаю кодплаг з рації (бекап)...")
 
     # --- R25: перегляд ---
 
     def _on_view_file_clicked(self):
         if self.flashing or self.cps_busy:
             return
-        path = filedialog.askopenfilename(title="Бекап кодплуга", initialdir=self._cps_output_dir(),
-                                          filetypes=[("Бекап кодплуга (.zip)", "*.zip"), ("Усі файли", "*.*")])
+        path = filedialog.askopenfilename(title="Бекап кодплага", initialdir=self._cps_output_dir(),
+                                          filetypes=[("Бекап кодплага (.zip)", "*.zip"), ("Усі файли", "*.*")])
         if not path:
             return
         try:
@@ -653,7 +653,7 @@ class FlasherApp(tk.Tk):
         codeplug_viewer_gui.CodeplugViewerWindow(self, cp, os.path.basename(path), self._cps_output_dir())
 
     def _on_view_radio_clicked(self):
-        self._run_cps_task(self._view_radio_worker, "Читаю кодплуг з рації для перегляду...",
+        self._run_cps_task(self._view_radio_worker, "Читаю кодплаг з рації для перегляду...",
                            on_done=self._show_viewer_from_radio, fail_suffix="")
 
     def _view_radio_worker(self):
@@ -718,7 +718,7 @@ class FlasherApp(tk.Tk):
             return
         out = self._csv_new_export_dir(parent_dir)
         dp = self._csv_decimal()
-        self._run_cps_task(lambda: self._csv_export_radio_worker(out, dp), "Читаю кодплуг з рації для CSV...",
+        self._run_cps_task(lambda: self._csv_export_radio_worker(out, dp), "Читаю кодплаг з рації для CSV...",
                            on_done=self._csv_export_done, fail_suffix="\n\nФайли CSV не створено.")
 
     def _csv_export_radio_worker(self, out, dp):
@@ -731,8 +731,8 @@ class FlasherApp(tk.Tk):
     def _on_csv_export_file_clicked(self):
         if self.flashing or self.cps_busy:
             return
-        path = filedialog.askopenfilename(title="Бекап кодплуга", initialdir=self._cps_output_dir(),
-                                          filetypes=[("Бекап кодплуга (.zip)", "*.zip"), ("Усі файли", "*.*")])
+        path = filedialog.askopenfilename(title="Бекап кодплага", initialdir=self._cps_output_dir(),
+                                          filetypes=[("Бекап кодплага (.zip)", "*.zip"), ("Усі файли", "*.*")])
         if not path:
             return
         parent_dir = filedialog.askdirectory(title="Куди покласти теку з CSV", initialdir=os.path.dirname(path))
@@ -770,7 +770,7 @@ class FlasherApp(tk.Tk):
 
     def _csv_import_done(self, res):
         if res.get("nothingToDo") and not res.get("safetyCopy"):
-            messagebox.showinfo("Нічого імпортувати", "CSV не відрізняється від кодплуга рації. Записувати нічого.")
+            messagebox.showinfo("Нічого імпортувати", "CSV не відрізняється від кодплага рації. Записувати нічого.")
             return
         self._restore_done(res)
 
@@ -779,11 +779,11 @@ class FlasherApp(tk.Tk):
     def _on_restore_clicked(self):
         if self.flashing or self.cps_busy or not cps_rest.RESTORE_UNLOCKED:
             return
-        path = filedialog.askopenfilename(title="Бекап, з якого відновити кодплуг", initialdir=self._cps_output_dir(),
-                                          filetypes=[("Бекап кодплуга (.zip)", "*.zip")])
+        path = filedialog.askopenfilename(title="Бекап, з якого відновити кодплаг", initialdir=self._cps_output_dir(),
+                                          filetypes=[("Бекап кодплага (.zip)", "*.zip")])
         if not path:
             return
-        self._run_cps_task(lambda: self._restore_worker(path), "Відновлюю кодплуг...", on_done=self._restore_done,
+        self._run_cps_task(lambda: self._restore_worker(path), "Відновлюю кодплаг...", on_done=self._restore_done,
                            fail_suffix="\n\nСтан рації описано вище. Не вимикай програму, поки не прочитаєш повідомлення.")
 
     def _restore_worker(self, path):
@@ -812,10 +812,10 @@ class FlasherApp(tk.Tk):
         if res.get("cancelled"):
             messagebox.showinfo("Скасовано", "Рацію не змінено.\nСтрахова копія лишилась:\n{}".format(res["safetyCopy"]))
         elif res.get("nothingToDo"):
-            messagebox.showinfo("Нічого відновлювати", "Рація вже містить цей кодплуг (крім калібрування й квіккеїв).\n"
+            messagebox.showinfo("Нічого відновлювати", "Рація вже містить цей кодплаг (крім калібрування й квіккеїв).\n"
                                                        "Страхова копія:\n{}".format(res["safetyCopy"]))
         else:
-            what = "Зміни записано й перевірено" if res.get("report") is not None else "Кодплуг відновлено й перевірено"
+            what = "Зміни записано й перевірено" if res.get("report") is not None else "Кодплаг відновлено й перевірено"
             messagebox.showinfo("Готово", "{} (записано секторів: {} з {}, {} с).\n"
                                           "Рація перезавантажується.\n\nСтрахова копія стану ДО запису:\n{}".format(
                                               what, res["sectorsWritten"], res["sectorsTotal"], res["seconds"], res["safetyCopy"]))

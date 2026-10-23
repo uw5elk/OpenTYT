@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Хост-тести R26 V1: tools/cps_csv.py (CSV-обмін кодплуга у форматі OpenGD77 CPS). Без рації, без pyserial.
+"""Хост-тести R26 V1: tools/cps_csv.py (CSV-обмін кодплага у форматі OpenGD77 CPS). Без рації, без pyserial.
 
-T1  кругова оборотність: експорт -> імпорт без правок повертає кодплуг БАЙТ-У-БАЙТ (зі сміттям у неописаних полях);
+T1  кругова оборотність: експорт -> імпорт без правок повертає кодплаг БАЙТ-У-БАЙТ (зі сміттям у неописаних полях);
 T2  кирилиця в обидва боки (GBK з CPS і cp1251 з рації), правки сумісної й читабельної колонок;
 T3  кома й крапка (читаємо обидві, пишемо за заданим знаком);
 T4  табуляція перед частотами;
@@ -194,7 +194,7 @@ def test_format_and_roundtrip():
             check(by_num["1"][5] == "" and by_num["1"][13] == "", "поля аналога для цифрового каналу порожні")
             # --- T1: байт-у-байт ---
             res = import_dir(cp, d, dp=dp)
-            check(images_equal(res, cp), "T1 (%r): експорт -> імпорт без правок == вихідний кодплуг БАЙТ-У-БАЙТ" % dp)
+            check(images_equal(res, cp), "T1 (%r): експорт -> імпорт без правок == вихідний кодплаг БАЙТ-У-БАЙТ" % dp)
             check(not res.any_change() and not res.warnings, "T1: жодної зміни й жодного попередження: %s %r" % (res.summary(), res.warnings))
 
 
@@ -488,7 +488,7 @@ def test_add_change_delete():
         crec = [rec for s_, rec in img.contacts() if s_ + 1 == contact_no][0]
         check(cv.decode_name_ex(crec[:16]) == ("Одеса", "GBK") and cv.bcd_to_int(crec[16:20]) == 2550, "новий канал посилається на новий контакт")
         check(r4[43] == 1, "посилання на TG-список «Ukraine» -> №1")
-        # решта кодплуга не змінилась
+        # решта кодплага не змінилась
         diff_ee = [i for i in range(len(cp.eeprom)) if cp.eeprom[i] != img.eeprom[i]]
         check(all(0x3780 <= i < 0x3780 + 16 + 128 * 56 or 0x8030 <= i < 0x8030 + 68 * 176 for i in diff_ee),
               "EEPROM змінено лише в банку каналів 0 і списку зон (%d байтів)" % len(diff_ee))

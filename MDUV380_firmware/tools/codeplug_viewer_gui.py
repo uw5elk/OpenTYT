@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""codeplug_viewer_gui.py -- R25 W2: вікно перегляду кодплуга (контакти, групи RX, зони, канали). ТІЛЬКИ ЧИТАННЯ.
+"""codeplug_viewer_gui.py -- R25 W2: вікно перегляду кодплага (контакти, групи RX, зони, канали). ТІЛЬКИ ЧИТАННЯ.
 
 Джерело -- уже розібраний codeplug_view.Codeplug (з бекап-файла або з прямого читання рації: це ті самі байти).
 Уся логіка (декодування назв, фільтри сміття) -- у codeplug_view.py; тут лише Tk. Назви показуються як рядки Unicode
@@ -28,7 +28,7 @@ class CodeplugViewerWindow(tk.Toplevel):
         (так для перегляду бекап-файла: правки там вводити нема сенсу -- файл не рація)."""
         super().__init__(parent)
         gt.style_window(self)
-        self.title("Кодплуг: " + source_text)
+        self.title("Кодплаг: " + source_text)
         self.geometry("900x520")
         self.minsize(640, 360)
         self.codeplug = codeplug

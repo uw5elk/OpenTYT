@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""cps_restore.py -- R25 W1: ВІДНОВЛЕННЯ кодплуга з бекапу (.zip з tools/cps_link.py) у рацію.
+"""cps_restore.py -- R25 W1: ВІДНОВЛЕННЯ кодплага з бекапу (.zip з tools/cps_link.py) у рацію.
 
 *** ЦЕ ПЕРША ФУНКЦІЯ ПРОШИВАЛЬНИКА, ЯКА ПИШЕ В КОДПЛУГ РАЦІЇ. *** Увесь запис 'X' зібрано в цьому файлі (cps_link.py
 лишається суто читальним). Лише стандартна бібліотека + pyserial (через cps_link.open_radio).
@@ -14,7 +14,7 @@
   * 'X' 2 + addr[4] + len[2] + дані (<= 1528 Б) -> байти, що потрапляють у підготовлений сектор, лягають у буфер;
   * 'X' 3                      -> стерти сектор і записати 16 сторінок по 256 Б.
   * 'X' 4 (EEPROM) на MDUV380 НІЧОГО НЕ РОБИТЬ (ok = true без запису), тож EEPROM (= той самий SPI-флеш від адреси 0,
-    MDUV380_EMULATED_EEPROM_ADDRESS_OFFSET = 0) пишеться тим самим механізмом секторів, що й флеш-кодплуг.
+    MDUV380_EMULATED_EEPROM_ADDRESS_OFFSET = 0) пишеться тим самим механізмом секторів, що й флеш-кодплаг.
   Збій будь-якої команди X скидає внутрішній стан прошивки (sector = -1), тож повторний X 1 після обриву працює.
 
 ЧОГО НЕ ЧІПАЄМО І ЧОМУ:
@@ -55,13 +55,13 @@ X_TIMEOUT = 2.0                           # секунд на відповідь
 X_COMMIT_TIMEOUT = 8.0                    # X 3: стирання сектора + 16 сторінок
 POST_RESTORE_SUB = 1                      # 'C' 6 1 -- див. шапку
 
-# R26 V4.1: що НЕ звіряється після запису, бо рація міняє це сама, поки ми пишемо/читаємо (EEPROM, адреси кодплуга):
+# R26 V4.1: що НЕ звіряється після запису, бо рація міняє це сама, поки ми пишемо/читаємо (EEPROM, адреси кодплага):
 #   * 20 байтів квіккеїв -- прошивка їх не перезаписує зовсім;
 #   * 0x6000..0x608E -- "останній використаний канал у зоні" (LUCZ, тег "LUCZ" + по байту на зону, 0x6000..0x604A) і початок
 #     структури налаштувань (0x604B..): поточний канал/зона/індекс у списку груп. Вони змінюються від кожного повороту
 #     ручки; на залізі це вже дало розбіжність в один байт (0x607F, 01 -> 02) між двома бекапами поспіль.
 #     (Що саме лежить на 0x607F -- гіпотеза: одне з полів "поточний ...", структура settingsStruct_t.)
-# Решта EEPROM і весь флеш-кодплуг звіряються байт-у-байт (через SHA-256).
+# Решта EEPROM і весь флеш-кодплаг звіряються байт-у-байт (через SHA-256).
 LUCZ_START = 0x6000
 LUCZ_END = 0x608F                         # виключно
 UNSTABLE_EEPROM = (
@@ -80,7 +80,7 @@ class RestoreRefused(cl.CpsError):
 
 
 class RestoreInterrupted(cl.CpsError):
-    """Запис обірвався/відмовлений ПІСЛЯ початку: кодплуг рації у невизначеному стані."""
+    """Запис обірвався/відмовлений ПІСЛЯ початку: кодплаг рації у невизначеному стані."""
 
 
 class RestoreVerifyFailed(cl.CpsError):
@@ -128,8 +128,8 @@ def validate_manifest(m):
                 raise RestoreRefused("у маніфесті немає обов'язкового поля parts.%s.%s" % (key, f))
         if (part["file"], part["area"], part["start"], part["length"]) != (fname, area, start, length):
             raise RestoreRefused(
-                "частина %s у маніфесті описує інший діапазон (файл %s, область %s, початок 0x%X, довжина %s), ніж відомий кодплуг цієї "
-                "прошивки (файл %s, область %d, початок 0x%X, довжина %d). Записувати поза відомим кодплугом заборонено."
+                "частина %s у маніфесті описує інший діапазон (файл %s, область %s, початок 0x%X, довжина %s), ніж відомий кодплаг цієї "
+                "прошивки (файл %s, область %d, початок 0x%X, довжина %d). Записувати поза відомим кодплагом заборонено."
                 % (key, part["file"], part["area"], part["start"] if isinstance(part["start"], int) else 0, part["length"],
                    fname, area, start, length))
 
@@ -144,7 +144,7 @@ def load_backup_for_restore(source):
         with zipfile.ZipFile(f) as z:
             manifest = json.loads(z.read("manifest.json").decode("utf-8"))
     except (OSError, zipfile.BadZipFile, KeyError, ValueError) as e:
-        raise RestoreRefused("це не бекап кодплуга або файл пошкоджено: %s" % e)
+        raise RestoreRefused("це не бекап кодплага або файл пошкоджено: %s" % e)
     validate_manifest(manifest)
     try:
         manifest, eeprom, flash = cl.read_backup_zip(source)
@@ -165,7 +165,7 @@ def check_radio(info, manifest):
         raise RestoreRefused("бекап зроблено з рації іншого типу: radioType у файлі %d, у підключеній рації %d. Нічого не записано."
                              % (mr["radioType"], info["radioType"]))
     if mr["structVersion"] != info["structVersion"]:
-        raise RestoreRefused("не збігається версія структури кодплуга: structVersion у файлі %d, у підключеній рації %d. Нічого не записано."
+        raise RestoreRefused("не збігається версія структури кодплага: structVersion у файлі %d, у підключеній рації %d. Нічого не записано."
                              % (mr["structVersion"], info["structVersion"]))
 
 
@@ -237,7 +237,7 @@ def confirm_text(manifest, bk_ee, bk_fl, info, plan, safety_path, zip_path, titl
         "  - EEPROM: адреси 0x0 .. 0x%X (%d КБ); секторів, що відрізняються: %d з %d. Не чіпаються: сектор калібрування "
         "0x%X..0x%X і 20 байтів квіккеїв (0x%X)." % (cl.EEPROM_BACKUP_LEN, cl.EEPROM_BACKUP_LEN // 1024, plan.count("EEPROM"),
                                                      cl.EEPROM_BACKUP_LEN // SECTOR, CAL_START, CAL_END - 1, QUICKKEYS_START),
-        "  - Флеш-кодплуг: сирі адреси 0x%X .. 0x%X (%d КБ); секторів, що відрізняються: %d з %d."
+        "  - Флеш-кодплаг: сирі адреси 0x%X .. 0x%X (%d КБ); секторів, що відрізняються: %d з %d."
         % (rng["raw_start"], rng["raw_end"], rng["length"] // 1024, plan.count("флеш"), rng["length"] // SECTOR),
         "Не чіпаються: голосові підказки, ключі AES, база DMR ID, прошивка.",
         "Після запису не звіряється (рація міняє саме): %s." % UNVERIFIED_TEXT,
@@ -344,7 +344,7 @@ def safety_backup_path(zip_path, now=None):
 
 def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=time.time, now=None, post_reset=True,
                      title=None, extra_lines=None):
-    """Відновити кодплуг рації з бекапу `zip_path`.
+    """Відновити кодплаг рації з бекапу `zip_path`.
 
     confirm(text, plan) -> bool викликається ПІСЛЯ всіх перевірок і страхового бекапу, ПЕРЕД першим записом.
     progress(percent, text). Повертає словник-підсумок; при відхиленні -- RestoreRefused (нічого не записано),
@@ -400,7 +400,7 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
     # --- план і підтвердження (W1.6) ---
     plan = compute_plan(cur_ee, cur_fl, bk_ee, bk_fl)
     if not plan.sectors:
-        prog(100, "Рація вже містить цей кодплуг")
+        prog(100, "Рація вже містить цей кодплаг")
         log("Усі сектори збігаються з бекапом (крім калібрування й квіккеїв) -- записувати нічого.")
         return {"cancelled": False, "nothingToDo": True, "sectorsWritten": 0, "sectorsTotal": plan.total_sectors,
                 "safetyCopy": safety, "seconds": round(clock() - t0, 1)}
@@ -420,7 +420,7 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
         except (_XSilent, _XRefused) as e:
             raise RestoreInterrupted(
                 "ЗАПИС ОБІРВАНО на секторі %d з %d (%s, адреса 0x%X): %s.\n"
-                "Кодплуг рації тепер у НЕВИЗНАЧЕНОМУ стані: частина секторів уже з бекапу, частина ще ні.\n"
+                "Кодплаг рації тепер у НЕВИЗНАЧЕНОМУ стані: частина секторів уже з бекапу, частина ще ні.\n"
                 "Страхова копія стану ДО відновлення: %s\n"
                 "Що робити: вимкни й увімкни рацію (щоб скинути її внутрішній стан запису), перевір кабель і ПОВТОРИ відновлення з ТИМ САМИМ "
                 "файлом %s. Якщо рація не вмикається нормально -- відновлення зі страхової копії робиться так само."
@@ -439,7 +439,7 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
     except cl.CpsError as e:
         raise RestoreInterrupted(
             "ЗАПИС ЗАВЕРШЕНО, але перечитати рацію для перевірки не вдалося: %s.\n"
-            "Стан кодплуга не підтверджено. Страхова копія стану ДО відновлення: %s\n"
+            "Стан кодплага не підтверджено. Страхова копія стану ДО відновлення: %s\n"
             "Що робити: перепідключи рацію й повтори відновлення з тим самим файлом %s." % (e, safety, os.path.basename(zip_path)))
     sha_ee_got = cl.sha256(_mask_unstable(rb_ee))
     sha_ee_want = cl.sha256(_mask_unstable(plan.want_ee))
@@ -450,7 +450,7 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
         if sha_ee_got != sha_ee_want:
             bad.append("EEPROM")
         if sha_fl_got != sha_fl_want:
-            bad.append("флеш-кодплуг")
+            bad.append("флеш-кодплаг")
         raise RestoreVerifyFailed(
             "ПЕРЕВІРКА НЕ ПРОЙШЛА: після запису %s не збігається з бекапом (SHA-256 різні).\n"
             "Не звірялось (рація міняє саме): %s.\n"
@@ -474,7 +474,7 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
 
 def main(argv=None):
     import argparse
-    ap = argparse.ArgumentParser(description="R25: відновлення кодплуга з бекапу (ЗАПИСУЄ в рацію).")
+    ap = argparse.ArgumentParser(description="R25: відновлення кодплага з бекапу (ЗАПИСУЄ в рацію).")
     ap.add_argument("zip")
     ap.add_argument("--port")
     a = ap.parse_args(argv)

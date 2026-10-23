@@ -1,6 +1,6 @@
 /*
  * aprs_mode_cfg.h -- налаштування «Режиму APRS» (R10): що редагується з рації, як це зберігається і як
- * з типових значень кодплуга та оверрайдів складається те, з чим працює режим.
+ * з типових значень кодплага та оверрайдів складається те, з чим працює режим.
  *
  * ЧИСТИЙ C без заліза (як aprs_rx_parse.c): той самий файл збирає хост-тест tests/test_aprs_mode.c.
  * Усе під ENABLE_APRS_RX -- у типовій збірці порожній translation unit.
@@ -8,7 +8,7 @@
  * Звідки налаштування (APRS-unify). Кожне налаштування живе в ОДНОМУ місці й редагується і з рації, і з ПК:
  *   - позивний -- ім'я рації (EEPROM 0x00E0, codeplugSetRadioName());
  *   - станція (SSID, шляхи, символ, коментар, позиція, неточність, частота, 300 бод / QSY / «тихо» / «використовувати позицію») -- слот конфігу APRS
- *     кодплуга (EEPROM 0x1588, codeplugAPRSSetDataForIndex()): слот каналу (aprsConfigIndex), інакше №1;
+ *     кодплага (EEPROM 0x1588, codeplugAPRSSetDataForIndex()): слот каналу (aprsConfigIndex), інакше №1;
  *   - інтервал і режим бікона, потужність, джерело позиції, затухання, стиснення, розумний маяк, вікно маяка -- блок
  *     CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG (див. нижче) <-> стокові nonVolatileSettings;
  *   - шумодав приймача APRS -- блок режиму (APRSM_BLOCK_LEN байт).
@@ -30,7 +30,7 @@
 #if defined(ENABLE_APRS_RX)
 
 #define APRSM_CALL_LEN        7          /* 6 символів + NUL */
-#define APRSM_COMMENT_LEN     25         /* 24 символи cp1251 + NUL (як comment[24] у конфігу кодплуга) */
+#define APRSM_COMMENT_LEN     25         /* 24 символи cp1251 + NUL (як comment[24] у конфігу кодплага) */
 #define APRSM_COMMENT_MAX     24
 #define APRSM_COMMENT_AIR_MAX 43         /* рекомендований максимум коментаря позиції в ефірі, байт UTF-8 */
 #define APRSM_BLOCK_LEN       72         /* довжина custom-data блоку (незмінна) */
@@ -40,7 +40,7 @@
 #define APRSM_QSY_LEN         24         /* R21 З4: «FFF.FFFMHz Cnnn +nnn» (20 символів) + NUL, з запасом */
 #define APRSM_ICON_MAX        93         /* iconIndex: символ = '!' + iconIndex (0x21..0x7E) */
 
-/* Які поля задано з рації (інакше -- типове значення з кодплуга). */
+/* Які поля задано з рації (інакше -- типове значення з кодплага). */
 #define APRSM_OV_FREQ         0x0001U
 #define APRSM_OV_LEGACY_CALL  0x0002U    /* BT-unify: лише в старих блоках (позивник тепер один -- ім'я рації, EEPROM 0x00E0); читається для міграції, назад не пишеться */
 #define APRSM_OV_SSID         0x0004U
@@ -52,7 +52,7 @@
 #define APRSM_OV_LON          0x0100U
 #define APRSM_OV_AMB          0x0200U
 #define APRSM_OV_ALL          0x03FFU
-#define APRSM_OV_MIGRATED     0x4000U    /* APRS-unify: міграцію оверрайдів у кодплуг виконано (біт у старих блоках ніколи не стоїть: FromBytes маскував 0x03FF) */
+#define APRSM_OV_MIGRATED     0x4000U    /* APRS-unify: міграцію оверрайдів у кодплаг виконано (біт у старих блоках ніколи не стоїть: FromBytes маскував 0x03FF) */
 
 /* Налаштування, що зберігаються (значення полів без біта в ov -- ігноруються). */
 typedef struct
@@ -98,7 +98,7 @@ typedef struct __attribute__((packed))
 #define APRSM_RAW_FLAG_MASK           0x0FU
 #define APRSM_RAW_FLAG_AMB_MASK       0xE0U
 
-/* Типові значення (кодплуг, а де його нема -- запасні). */
+/* Типові значення (кодплаг, а де його нема -- запасні). */
 typedef struct
 {
 	bool     hasCfg;                        /* конфіг APRS є */
@@ -141,7 +141,7 @@ void aprsModeCfgToBytes(const aprsModeCfg_t *c, uint8_t out[APRSM_BLOCK_LEN]);
 bool aprsModeCfgFromBytes(aprsModeCfg_t *c, const uint8_t *b, size_t len);
 
 /* ---- типові значення й ефективні -------------------------------------------------------------------- */
-/* raw/rawValid -- конфіг APRS з кодплуга (rawValid == false -- нема); radioName -- ім'я рації (кодплуг),
+/* raw/rawValid -- конфіг APRS з кодплага (rawValid == false -- нема); radioName -- ім'я рації (кодплаг),
  * settingsPos* -- позиція з налаштувань рації (хоч не задана -- false). */
 void aprsModeDefaultsBuild(aprsModeDefaults_t *d, const aprsModeRawCfg_t *raw, bool rawValid,
 		const char *radioName, bool settingsPosValid, int32_t settingsLatU, int32_t settingsLonU);
@@ -217,7 +217,7 @@ void aprsSymPickToggle(aprsSymPick_t *p);                       /* перелі�
 void aprsSymPickResult(const aprsSymPick_t *p, uint8_t *table, uint8_t *index);
 /* Наступний символ із названих (для швидкого перебору); починає з наступного після (table,index). */
 void aprsModeSymbolNextNamed(uint8_t *table, uint8_t *index);
-/* 24-бітна позиція кодплуга (знак -- біт 23; ціла частина -- біти 22..15; частка -- молодші 15 біт у
+/* 24-бітна позиція кодплага (знак -- біт 23; ціла частина -- біти 22..15; частка -- молодші 15 біт у
  * одиницях 1E-4 градуса) -> мікроградуси. Та сама формула, що latLonFixed24ToDouble() (uiUtilities.c). */
 int32_t aprsModeFixed24ToMicro(const uint8_t b[3]);
 /* Старий (до unify) інтервал режиму: індекс 0..5 -> хвилини (0 -- вимкнено). Лише для міграції. */
@@ -225,15 +225,15 @@ uint8_t  aprsModeIntervalMinutes(uint8_t idx);
 
 /* ---- APRS-unify: одне джерело істини для кожного налаштування ------------------------------------------------------------------------------
  * Станція (SSID, шляхи, символ, коментар, позиція, неточність, частота, прапорці 300 бод / QSY / «тихо» / «використовувати позицію») живе в слоті конфігу APRS
- * кодплуга (EEPROM 0x1588, 64 Б); позивний -- в імені рації (EEPROM 0x00E0, 8 Б); інтервал -- стоковий initialInterval. Блок режиму (aprsModeCfg_t) лишився
+ * кодплага (EEPROM 0x1588, 64 Б); позивний -- в імені рації (EEPROM 0x00E0, 8 Б); інтервал -- стоковий initialInterval. Блок режиму (aprsModeCfg_t) лишився
  * ЛИШЕ як «чернетка» (ov-біти між правкою в меню і записом у слот), шумодав приймача й маркер міграції. Старі блоки (з оверрайдами, інтервалом, qsyOff,
  * позивним) один раз переносяться у слот / ім'я / initialInterval функцією aprsModeMigrate(). */
 #define APRSM_NAME_RAW_LEN  8
 typedef struct
 {
 	aprsModeRawCfg_t raw;                       /* слот: той, що призначено каналу (або №1) */
-	bool             rawValid;                  /* слот існує в кодплузі; false -- raw лише заготовка (aprsModeStoreBlank()), у кодплуг ще не записана */
-	uint8_t          name[APRSM_NAME_RAW_LEN];  /* ім'я рації як у кодплузі: 0xFF-дописка */
+	bool             rawValid;                  /* слот існує в кодплазі; false -- raw лише заготовка (aprsModeStoreBlank()), у кодплаг ще не записана */
+	uint8_t          name[APRSM_NAME_RAW_LEN];  /* ім'я рації як у кодплазі: 0xFF-дописка */
 } aprsModeStore_t;
 
 #define APRSM_FOLD_RAW    0x01U    /* слот змінено (треба записати) */

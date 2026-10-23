@@ -4,11 +4,11 @@
  * Що перевіряє (чистий C, без заліза):
  *  - збереження/читання нового custom-data блоку (72 Б): круговий обхід, зіпсований/чужий/коротший блок,
  *    поля з недопустимим значенням знімаються з оверрайдів;
- *  - підстановка типових значень з конфігу APRS кодплуга (і запасних, коли конфігу нема);
+ *  - підстановка типових значень з конфігу APRS кодплага (і запасних, коли конфігу нема);
  *  - ефективні значення (типові + оверрайди), позиція з окремих широти/довготи;
  *  - складання структури бікона з відредагованими шляхами й символом (те, що піде в aprsSendPacket());
  *  - коментар cp1251 -> UTF-8 для ефіру (круговий обхід з aprsDecodeText(), межі, керівні символи);
- *  - частота/координати: розбір і форматування, межі; 24-бітна позиція кодплуга; таблиця інтервалів; символи.
+ *  - частота/координати: розбір і форматування, межі; 24-бітна позиція кодплага; таблиця інтервалів; символи.
  *
  * Кадр AFSK/AX.25 сам (aprsSendPacket()) -- стоковий код прошивки, тут його немає: перевіряється все, що ми
  * в нього подаємо. Кирилиця в тесті -- лише байтами cp1251 (файл у UTF-8).
@@ -24,7 +24,7 @@ static int s_fail = 0;
 static int s_checks = 0;
 #define CHECK(c, ...) do { s_checks++; if (!(c)) { s_fail++; printf("ПРОВАЛ %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-/* кодплуг: ціла частина << 15 | частка (1E-4), знак -- біт 23 */
+/* кодплаг: ціла частина << 15 | частка (1E-4), знак -- біт 23 */
 static void fixed24(uint8_t b[3], int neg, unsigned ip, unsigned dp)
 {
 	uint32_t v = ((uint32_t)ip << 15) | (dp & 0x7FFFU) | (neg ? 0x800000U : 0U);
@@ -36,7 +36,7 @@ static void fixed24(uint8_t b[3], int neg, unsigned ip, unsigned dp)
 
 static void fillRaw(aprsModeRawCfg_t *r)
 {
-	memset(r, 0xFF, sizeof(*r));   /* як стерта пам'ять кодплуга */
+	memset(r, 0xFF, sizeof(*r));   /* як стерта пам'ять кодплага */
 	memset(r->name, 0, sizeof(r->name));
 	memcpy(r->name, "CFG1", 4);
 	r->senderSSID = 9;
@@ -186,7 +186,7 @@ static void testDefaults(void)
 	aprsModeDefaultsBuild(&d, &raw, true, "UW5ELK", true, 0, 0);
 	CHECK(d.path[0][0] == 0, "порожній перший шлях лишається порожнім");
 
-	/* стерті поля кодплуга (0xFF) */
+	/* стерті поля кодплага (0xFF) */
 	memset(&raw, 0xFF, sizeof(raw));
 	aprsModeDefaultsBuild(&d, &raw, true, "ab 12", false, 0, 0);
 	CHECK(strcmp(d.call, "AB") == 0, "ім'я рації до пробілу, верхній регістр: '%s'", d.call);
@@ -508,7 +508,7 @@ static void testSymbolChain(void)
 
 	memset(&d, 0, sizeof(d));
 	d.iconTable = 0;
-	d.iconIndex = (uint8_t)('[' - '!');   /* у кодплузі -- «людина» */
+	d.iconIndex = (uint8_t)('[' - '!');   /* у кодплазі -- «людина» */
 	for (int t = 0; t < 2; t++)
 	{
 		for (int i = 0; i <= APRSM_ICON_MAX; i++)
@@ -629,7 +629,7 @@ static void testSymbolPicker(void)
 		CHECK(p.table == 0U, "у переліку таблиця не перемикається");
 	}
 
-	/* ПОВНИЙ СЦЕНАРІЙ користувача (Г2.1/BC4): було «людина» з кодплуга, вибрали «авто» -> блок -> «вимкнули/ввімкнули» -> «авто» */
+	/* ПОВНИЙ СЦЕНАРІЙ користувача (Г2.1/BC4): було «людина» з кодплага, вибрали «авто» -> блок -> «вимкнули/ввімкнули» -> «авто» */
 	{
 		aprsModeCfg_t c, r;
 		aprsModeDefaults_t d;
@@ -642,7 +642,7 @@ static void testSymbolPicker(void)
 		d.iconTable = 0; d.iconIndex = (uint8_t)('[' - '!');
 		aprsModeCfgInit(&c);
 		aprsModeEffective(&c, &d, &e);
-		CHECK(e.iconIndex == (uint8_t)('[' - '!'), "до вибору -- «людина» з кодплуга");
+		CHECK(e.iconIndex == (uint8_t)('[' - '!'), "до вибору -- «людина» з кодплага");
 		aprsSymPickInit(&p, e.iconTable, e.iconIndex);
 		do { aprsSymPickStep(&p, -1); aprsSymPickResult(&p, &t, &x); steps++; } while (!((t == 0) && (x == (uint8_t)('>' - '!'))) && (steps < 200));
 		CHECK(steps < 200, "«авто» знайдено ручкою за %d кроків", steps);

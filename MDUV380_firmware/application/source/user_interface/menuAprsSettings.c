@@ -935,7 +935,7 @@ static const asNum_t asNums[] =
 	AS_NUM(AS_S_SLOPE,  smart.turnSlope, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX, 10U, 10U, APRSM_L_SLOPE,  APRSM_V_PLAIN),
 	AS_NUM(AS_S_TIME,   smart.turnTime,  APRS_SMART_BEACON_TURN_TIME_MIN,  APRS_SMART_BEACON_TURN_TIME_MAX,  10U, 1U,  APRSM_L_TIME,   APRSM_V_SEC),
 	AS_NUM(AS_S_BINT,   initialInterval, APRS_BEACON_INITIAL_INTERVAL_MIN, APRS_BEACON_INITIAL_INTERVAL_MAX, 1U,  1U,  APRSM_L_BINT,   NULL),   /* показ -- asStockValue() */
-	AS_NUM(AS_S_POWER,  power,           0U,                               0U,                               1U,  1U,  APRSM_L_POWER,  NULL)    /* верхня межа -- у asStockStep() (залежить від кодплуга) */
+	AS_NUM(AS_S_POWER,  power,           0U,                               0U,                               1U,  1U,  APRSM_L_POWER,  NULL)    /* верхня межа -- у asStockStep() (залежить від кодплага) */
 };
 
 typedef struct

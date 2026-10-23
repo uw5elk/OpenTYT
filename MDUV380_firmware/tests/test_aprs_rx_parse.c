@@ -1204,13 +1204,13 @@ static void testBeaconOrder(void)
 	}
 }
 
-/* R21 З3: імена з кодплуга -- UTF-8 (кирилиця з CPS) -> cp1251 для показу; усе інше не чіпається. */
+/* R21 З3: імена з кодплага -- UTF-8 (кирилиця з CPS) -> cp1251 для показу; усе інше не чіпається. */
 static void testNameDisplay(void)
 {
 	char b[40];
 	size_t n;
 
-	printf("--- R21 З3: імена кодплуга для показу ---\n");
+	printf("--- R21 З3: імена кодплага для показу ---\n");
 	/* «Папуга» в UTF-8 -> cp1251 */
 	strcpy(b, "\xD0\x9F\xD0\xB0\xD0\xBF\xD1\x83\xD0\xB3\xD0\xB0");
 	n = aprsNameToDisplay(b);
@@ -1271,7 +1271,7 @@ static void testNameDisplay(void)
 	CHECK((n == 2U) && !strcmp(b, "\xFF\xFE"), "недійсні лід-байти -- без змін");
 }
 
-/* R23 Y1: імена кодплуга в GBK (CPS від TYT пише кирилицю в рядок 0xA7): A7A1..A7C1 -- А..Я (з Ё), A7D1..A7F1 -- а..я (з ё) -> cp1251 на місці. */
+/* R23 Y1: імена кодплага в GBK (CPS від TYT пише кирилицю в рядок 0xA7): A7A1..A7C1 -- А..Я (з Ё), A7D1..A7F1 -- а..я (з ё) -> cp1251 на місці. */
 static void testNameGbk(void)
 {
 	char b[40];
@@ -1282,7 +1282,7 @@ static void testNameGbk(void)
 	bool okUp = true;
 	bool okLo = true;
 
-	printf("--- R23 Y1: GBK-кирилиця з кодплуга ---\n");
+	printf("--- R23 Y1: GBK-кирилиця з кодплага ---\n");
 	/* підтверджений на залізі приклад: контакт «Папуга» */
 	memcpy(b, "\xA7\xB1\xA7\xD1\xA7\xE1\xA7\xE5\xA7\xD4\xA7\xD1", 13);
 	n = aprsNameToDisplay(b);

@@ -284,7 +284,7 @@ static volatile uint8_t dataByte;
 static AX25Encoder_t encoderData;
 static CodeplugAPRSConfig_t *aprsConfig;
 #if defined(ENABLE_APRS_RX)
-/* R10 (форк): «Режим APRS» передає маяк зі СВОЇМ позивним і коментарем (UTF-8), а не з імені рації/конфігу кодплуга.
+/* R10 (форк): «Режим APRS» передає маяк зі СВОЇМ позивним і коментарем (UTF-8), а не з імені рації/конфігу кодплага.
  * Вказівники діють лише на час aprsSendPacket() з aprsModeTxBeacon(); поза ним NULL. Стан -- у CCM, main RAM +0.
  *
  * R10-fix5: CCM при старті -- СМІТТЯ (лінкер кладе .ccmram AT> FLASH, але стартап її не копіює й не обнуляє; див. також
@@ -581,7 +581,7 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 	uint8_t symbol = (aprsConfig->iconIndex + '!'); //'+'; // + = cross symbol. Y = yacht etc
 	uint8_t symTable = ((aprsConfig->iconTable == 0) ? '/' : '\\'); //' = secondary table
 #if defined(ENABLE_APRS_RX)
-	/* R10: коментар «Режиму APRS» -- UTF-8, довший за comment[24] конфігу кодплуга */
+	/* R10: коментар «Режиму APRS» -- UTF-8, довший за comment[24] конфігу кодплага */
 	const char *commentStr = (s_modeComment != NULL) ? s_modeComment : aprsConfig->comment;
 	bool hasComment = (commentStr[0] != 0);
 #else
@@ -659,7 +659,7 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 	if (hasComment)
 	{
 #if defined(ENABLE_APRS_RX)
-		/* межа: коментар режиму -- локальний рядок з нулем (до APRSM_COMMENT_AIR_MAX байт), коментар кодплуга -- char[24] без нуля */
+		/* межа: коментар режиму -- локальний рядок з нулем (до APRSM_COMMENT_AIR_MAX байт), коментар кодплага -- char[24] без нуля */
 		enqueueStringN(encoderData, commentStr, (s_modeComment != NULL) ? (uint16_t)APRSM_COMMENT_AIR_MAX : (uint16_t)sizeof(aprsConfig->comment));
 #else
 		enqueueString(encoderData, aprsConfig->comment);
@@ -2306,7 +2306,7 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info,
 	s_msgFrom = from;    // R13 (П.6): NULL — позивний режиму
 	_Static_assert(sizeof(aprsModeRawCfg_t) == sizeof(CodeplugAPRSConfig_t), "aprsModeRawCfg_t != CodeplugAPRSConfig_t");
 	/* R10-fix2: cfg -- ЛОКАЛЬНА змінна, а aprsSendPacket() кладе вказівник на неї в глобальний aprsConfig. Після виходу з
-	 * цієї функції він був би висячим (мертвий стек) -- нижче, одразу після виклику, його повертаємо на конфіг кодплуга. */
+	 * цієї функції він був би висячим (мертвий стек) -- нижче, одразу після виклику, його повертаємо на конфіг кодплага. */
 	AM_TRACE(232);   /* перед aprsSendPacket (далі 240..) */
 	bool frameOk = aprsSendPacket((CodeplugAPRSConfig_t *)(void *)&cfg, &loc, &loc, &channelSettings, false);
 	aprsConfig = &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL];   // R10-fix2: більше ніяких вказівників на стек

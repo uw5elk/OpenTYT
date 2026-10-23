@@ -3107,7 +3107,7 @@ void uiChannelModeColdStart(void)
 void uiChannelInitializeCurrentZone(void)
 {
 #if ! defined(PLATFORM_GD77S)
-	// R22 Z1.4: збережена зона могла бути "сміттєвою" (її вибрав валкодер до R22) або зникнути після запису кодплуга --
+	// R22 Z1.4: збережена зона могла бути "сміттєвою" (її вибрав валкодер до R22) або зникнути після запису кодплага --
 	// тоді замість сміттєвих каналів стартуємо з віртуальної "Всі канали" (остання зона).
 	if (!codeplugZoneIsUsable(nonVolatileSettings.currentZone, &currentZone))
 	{

@@ -2,7 +2,7 @@
  * test_aprs_mode_state.c -- хостовий тест СТАНУ «Режиму APRS» (R10, functions/aprs_mode.c).
  *
  * Лінкує РЕАЛЬНІ aprs_mode.c, aprs_mode_cfg.c і callReplay.c (той самий код, що йде в прошивку); усе залізо
- * (радіо, меню, кодплуг, приймач, бікон) -- заглушки нижче, що записують виклики. Перевіряє те, що не видно
+ * (радіо, меню, кодплаг, приймач, бікон) -- заглушки нижче, що записують виклики. Перевіряє те, що не видно
  * без рації, але видно в логіці:
  *  - вхід: відмови (не канал/VFO, хотспот, TX), збережений канал, «канал» режиму (аналоговий FM, 12,5 кГц,
  *    частота), приймач хоче слухати, позичений буфер "Переслухати" інвалідовано;
@@ -348,7 +348,7 @@ static void testEnterExit(void)
 	modeChan = currentChannelData;
 	CHECK(modeChan != &s_userChan, "currentChannelData вказує на «канал» режиму");
 	CHECK(modeChan->chMode == RADIO_MODE_ANALOG, "аналоговий FM");
-	CHECK(modeChan->rxFreq == 14480000UL && modeChan->txFreq == 14480000UL, "частота каналу режиму = 144.800 (з конфігу кодплуга)");
+	CHECK(modeChan->rxFreq == 14480000UL && modeChan->txFreq == 14480000UL, "частота каналу режиму = 144.800 (з конфігу кодплага)");
 	CHECK(s_tuneCalls == 1 && s_tuneFreq == 14480000UL, "радіо перелаштовано на 144.800");
 	CHECK(s_tuneMode == RADIO_MODE_ANALOG && s_tuneBw == 25, "аналог, 25 кГц (APRS-ui M1)");
 	CHECK((modeChan->flag4 & 0x02U) != 0, "«канал» режиму має прапорець 25 кГц (flag4=%02X)", modeChan->flag4);
@@ -527,7 +527,7 @@ static void testSettings(void)
 	aprsModeExit();
 	CHECK(s_flashWrites == 2, "вихід без змін -- не пишемо");
 
-	/* «Скинути»: станційні поля живуть у кодплузі -- не чіпає; лишається маркер міграції */
+	/* «Скинути»: станційні поля живуть у кодплазі -- не чіпає; лишається маркер міграції */
 	CHECK(aprsModeEnter(), "вхід");
 	aprsModeCfgReset();
 	CHECK(aprsModeEff()->freq == 14482500UL && aprsModeEff()->ssid == 5 && aprsModeCfg()->ov == APRSM_OV_MIGRATED, "скидання не чіпає слот і не губить маркер");
@@ -544,7 +544,7 @@ static void testSettings(void)
 static void testDefaultsFallback(void)
 {
 	resetWorld();
-	s_apcValid = false;     /* у кодплузі конфігу APRS нема */
+	s_apcValid = false;     /* у кодплазі конфігу APRS нема */
 	s_locValid = false;
 	CHECK(aprsModeEnter(), "вхід без конфігу APRS");
 	CHECK(aprsModeEff()->freq == APRSM_FREQ_DEFAULT && s_tuneFreq == 14480000UL, "запасна частота 144.800");
@@ -1157,7 +1157,7 @@ static void testSettingsSession(void)
 	CHECK(currentChannelData == &s_userChan && s_tuneCalls == 0 && s_rxSuspend == 0, "канал і радіо не чіпали");
 	CHECK(callReplayIsBorrowed(), "кільце позичене під стан");
 	CHECK(aprsModeUi()->page == APRS_MODE_PAGE_SETTINGS, "сторінка «Налаштування»");
-	CHECK(strcmp(aprsModeEff()->call, "UW5ELK") == 0 && aprsModeEff()->ssid == 7, "ефективні налаштування з кодплуга");
+	CHECK(strcmp(aprsModeEff()->call, "UW5ELK") == 0 && aprsModeEff()->ssid == 7, "ефективні налаштування з кодплага");
 	/* поле режиму: змінили -> не торкаючись радіо перераховано й відкладено запис */
 	c = aprsModeCfg();
 	c->iconTable = 0; c->iconIndex = (uint8_t)('>' - '!'); c->ov |= APRSM_OV_ICON;
@@ -1429,14 +1429,14 @@ static void putLegacy(const uint8_t blk[APRSM_BLOCK_LEN])
 	s_flashValid = true;
 }
 
-/* T1/T2/T3: блок із усіма оверрайдами + порожній кодплуг -> слот, ім'я, initialInterval; ov-біти зняті */
+/* T1/T2/T3: блок із усіма оверрайдами + порожній кодплаг -> слот, ім'я, initialInterval; ov-біти зняті */
 static void testUnifyMigration(void)
 {
 	aprsModeCfg_t c, chk;
 	uint8_t blk[APRSM_BLOCK_LEN];
 
 	resetWorld();
-	s_apcValid = false;               /* порожній кодплуг: слота нема */
+	s_apcValid = false;               /* порожній кодплаг: слота нема */
 	strcpy(s_radioName, "");          /* імені нема */
 	aprsModeCfgInit(&c);
 	c.ov = APRSM_OV_ALL & (uint16_t)~APRSM_OV_LEGACY_CALL;

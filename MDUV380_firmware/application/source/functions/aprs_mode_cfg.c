@@ -804,7 +804,7 @@ void aprsModeCfgToBytes(const aprsModeCfg_t *c, uint8_t out[APRSM_BLOCK_LEN])
 	out[0] = APRSM_MAGIC0;
 	out[1] = APRSM_MAGIC1;
 	out[2] = APRSM_VERSION;
-	/* APRS-unify: байт 3 (інтервал), біт 7 байта 7 (qsyOff) і байти 12..18 (позивний) ЗАРЕЗЕРВОВАНІ -- нулі; їх значення переїхали в кодплуг (див. aprsModeMigrate()) */
+	/* APRS-unify: байт 3 (інтервал), біт 7 байта 7 (qsyOff) і байти 12..18 (позивний) ЗАРЕЗЕРВОВАНІ -- нулі; їх значення переїхали в кодплаг (див. aprsModeMigrate()) */
 	out[4] = c->sql;
 	out[5] = (uint8_t)(c->ov & (APRSM_OV_ALL | APRSM_OV_MIGRATED) & (uint16_t)~APRSM_OV_LEGACY_CALL);
 	out[6] = (uint8_t)((c->ov & (APRSM_OV_ALL | APRSM_OV_MIGRATED) & (uint16_t)~APRSM_OV_LEGACY_CALL) >> 8);
@@ -944,7 +944,7 @@ bool aprsBeaconCfgFromBytes(aprsBeaconCfg_t *c, const uint8_t *b, size_t len)
 
 /* ---- типові значення ---------------------------------------------------------------------------------------- */
 
-/* Рядок кодплуга (name[n]) -> позивний/шлях: до NUL/0xFF/пробілу, лише допустимі символи. */
+/* Рядок кодплага (name[n]) -> позивний/шлях: до NUL/0xFF/пробілу, лише допустимі символи. */
 static void rawToCall(char *dst, const char *src, size_t n)
 {
 	size_t k = 0;
@@ -1110,8 +1110,8 @@ void aprsModeMicroToFixed24(int32_t u, uint8_t b[3])
 	b[2] = (uint8_t)(v >> 16);
 }
 
-/* Заготовка нового слота (коли в кодплузі конфігів APRS нема зовсім): запасні значення режиму (WIDE1-1, WIDE2-1, автомобіль), QSY ввімкнено --
- * як було до unify, коли QSY у режимі був увімкнений типово. Назву слота -- «APRS», дописка 0xFF (імена в кодплузі 0xFF); шляхи й коментар -- дописка 0. */
+/* Заготовка нового слота (коли в кодплазі конфігів APRS нема зовсім): запасні значення режиму (WIDE1-1, WIDE2-1, автомобіль), QSY ввімкнено --
+ * як було до unify, коли QSY у режимі був увімкнений типово. Назву слота -- «APRS», дописка 0xFF (імена в кодплазі 0xFF); шляхи й коментар -- дописка 0. */
 void aprsModeStoreBlank(aprsModeStore_t *s)
 {
 	memset(&s->raw, 0, sizeof(s->raw));

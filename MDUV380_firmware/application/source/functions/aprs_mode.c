@@ -3,7 +3,7 @@
  * aprs-rx-feasibility.md, розділ 13; кроки перевірки -- TESTING.md, блок AM.
  *
  * Що тут. Вхід/вихід (паркування рації на частоті APRS, відновлення каналу), налаштування (читання/запис
- * custom-data блоку, типові значення з кодплуга), маяк (ручний, PTT, періодичний), «останній пакет» для монітора.
+ * custom-data блоку, типові значення з кодплага), маяк (ручний, PTT, періодичний), «останній пакет» для монітора.
  * Екран -- user_interface/menuAprsMode.c. Приймач -- functions/aprs_rx.c (R8), у режимі він слухає частоту
  * «каналу» режиму. Модулятор AFSK і сам кадр маяка -- стокові (aprs.c: aprsModeTxBeacon()).
  */
@@ -54,7 +54,7 @@ typedef struct
 	aprsModeStore_t        store;          /* APRS-unify: слот конфігу APRS + ім'я рації -- ЄДИНЕ сховище станційних полів (cfg лишився «чернеткою») */
 	uint8_t                slotIdx;        /* номер слота (1..8), з яким працюємо */
 	bool                   blockLoaded;    /* блок режиму був у флеші */
-	bool                   storeDirty;     /* слот змінено, ще не записано в кодплуг */
+	bool                   storeDirty;     /* слот змінено, ще не записано в кодплаг */
 	bool                   nameDirty;      /* ім'я рації змінено, ще не записано */
 	CodeplugChannel_t      chan;           /* «канал» режиму: на нього вказує currentChannelData, поки режим активний */
 	CodeplugChannel_t     *savedChan;
@@ -390,7 +390,7 @@ static void loadCfg(aprsModeMem_t *m)
 
 /* R17 (Г2): регіон custom-data у флеші рації, де його ще ніхто не ініціалізував (усе 0xFF), НЕ має "OpenGD77"-магії -- і codeplugSetOpenGD77CustomData()
  * тоді мовчки повертає false: блок ніколи не записується. Раніше saveCfg() ні готував регіон, ні дивився на результат -- налаштування режиму жили
- * лише в RAM, а після виходу з меню «APRS» і повторного входу знову були типовими (символ -- «людина» з конфігу кодплуга). Решта форку (ключі AES, теми,
+ * лише в RAM, а після виходу з меню «APRS» і повторного входу знову були типовими (символ -- «людина» з конфігу кодплага). Решта форку (ключі AES, теми,
  * RCTL, SMS) викликає dmrAesEnsureCustomDataRegion() ПЕРЕД записом -- тут те саме, але без залежності від ENABLE_AES. Ту саму магію (12 байт, далі 0xFF --
  * порожній блок) пише й вона; SPI_Flash_write робить read-modify-write сектора, решту регіону не чіпає. */
 static bool ensureCustomRegion(void)
@@ -410,7 +410,7 @@ static bool ensureCustomRegion(void)
 	return SPI_Flash_write(FLASH_ADDRESS_OFFSET + 0, hdr, 12);
 }
 
-/* APRS-unify: слот і ім'я рації -> кодплуг (лише якщо змінено; самі функції запису порівнюють байти з наявними й EEPROM_Write викликають, тільки коли вони різні). */
+/* APRS-unify: слот і ім'я рації -> кодплаг (лише якщо змінено; самі функції запису порівнюють байти з наявними й EEPROM_Write викликають, тільки коли вони різні). */
 static bool saveStore(aprsModeMem_t *m)
 {
 	bool ok = true;
@@ -466,8 +466,8 @@ static bool saveCfg(aprsModeMem_t *m)
 	return ok;
 }
 
-/* APRS-unify: слот, з яким працюємо, -- той, що призначено каналу, з якого зайшли (aprsConfigIndex); немає чи недійсний -- слот №1; конфігів у кодплузі нема
- * зовсім -- заготовка (aprsModeStoreBlank()), яка потрапить у кодплуг під номером 1 лише після першої зміни. Ім'я рації читаємо з кодплуга. */
+/* APRS-unify: слот, з яким працюємо, -- той, що призначено каналу, з якого зайшли (aprsConfigIndex); немає чи недійсний -- слот №1; конфігів у кодплазі нема
+ * зовсім -- заготовка (aprsModeStoreBlank()), яка потрапить у кодплаг під номером 1 лише після першої зміни. Ім'я рації читаємо з кодплага. */
 static void loadStore(aprsModeMem_t *m)
 {
 	CodeplugAPRSConfig_t cp;
@@ -751,7 +751,7 @@ void aprsModeCfgChanged(uint16_t what)
 	uint32_t now = ticksGetMillis();
 	uint32_t oldFreq = m->eff.freq;
 
-	/* APRS-unify: чернетку (ov-біти) одразу складаємо в слот; запис у кодплуг -- після паузи (aprsModeCfgSessionTick()/aprsModeTick()) або при закритті сесії */
+	/* APRS-unify: чернетку (ov-біти) одразу складаємо в слот; запис у кодплаг -- після паузи (aprsModeCfgSessionTick()/aprsModeTick()) або при закритті сесії */
 	if (aprsModeFold(&m->cfg, &m->store, &m->def) & APRSM_FOLD_RAW)
 	{
 		m->storeDirty = true;
@@ -781,7 +781,7 @@ void aprsModeCfgReset(void)
 	aprsModeMem_t *m = mem();
 
 	aprsModeCfgInit(&m->cfg);
-	m->cfg.ov = APRSM_OV_MIGRATED;   /* станційні поля живуть у кодплузі -- «Скинути» їх не чіпає (це лише шумодав і чернетка) */
+	m->cfg.ov = APRSM_OV_MIGRATED;   /* станційні поля живуть у кодплазі -- «Скинути» їх не чіпає (це лише шумодав і чернетка) */
 	aprsModeCfgChanged(APRSM_OV_ALL);
 }
 

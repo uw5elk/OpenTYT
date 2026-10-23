@@ -286,10 +286,10 @@ def test_refusals():
             rewrite_zip(good, p, edit_manifest=fn)
             expect_refusal(label, FakeRadioX(spi_b(a)), p, frag, d)
 
-        # (д) маніфест просить інший діапазон (спроба писати поза кодплугом): початок флешу 0x0
+        # (д) маніфест просить інший діапазон (спроба писати поза кодплагом): початок флешу 0x0
         p = os.path.join(d, "range.zip")
         rewrite_zip(good, p, edit_manifest=lambda m: m["parts"]["flash"].__setitem__("start", 0x0))
-        expect_refusal("діапазон поза кодплугом", FakeRadioX(spi_b(a)), p, "інший діапазон", d)
+        expect_refusal("діапазон поза кодплагом", FakeRadioX(spi_b(a)), p, "інший діапазон", d)
 
         # (е) не zip / відсутній файл
         junk = os.path.join(d, "junk.zip")
@@ -340,7 +340,7 @@ def test_full_cycle():
             y[0x10000:0x11000] = b"\0" * 4096
             return bytes(y)
         check(masked(ee_a) == masked(ee_b), "EEPROM рації == бекап (крім сектора калібрування й квіккеїв)")
-        check(after[0x9B000:0xAF000] == bytes(a[0x9B000:0xAF000]), "флеш-кодплуг рації == бекап")
+        check(after[0x9B000:0xAF000] == bytes(a[0x9B000:0xAF000]), "флеш-кодплаг рації == бекап")
         check(after[0x10000:0x10010] == b"CALIB-B-CALIB-B!", "калібрування рації НЕ змінено (лишилось своє)")
         check(after[QK_START:QK_END + 1] == b"\x11" * 20, "квіккеї рації не змінені (прошивка їх не перезаписує)")
         check(after[0x20000:0x9B000] == before[0x20000:0x9B000] and after[0xAF000:] == before[0xAF000:],
@@ -349,7 +349,7 @@ def test_full_cycle():
         check(radio.cal_touched is False, "до сектора калібрування (0x10000) не торкались")
         check(all(s != 16 for s in radio.commits), "сектор 16 не записувався")
         allowed = set(range(0, 32)) | set(range(0x9B, 0xAF))
-        check(set(radio.commits) <= allowed, "записано лише сектори EEPROM / флеш-кодплуга: %r" % sorted(set(radio.commits) - allowed))
+        check(set(radio.commits) <= allowed, "записано лише сектори EEPROM / флеш-кодплага: %r" % sorted(set(radio.commits) - allowed))
         check(not any(c[0] == 4 for c in radio.x_calls), "X 4 (EEPROM) не використовується -- на MDUV380 це порожня дія")
         differing = {i for i in range(len(before) // 4096) if before[i * 4096:(i + 1) * 4096] != bytes(a[i * 4096:(i + 1) * 4096])}
         check(set(radio.commits) <= differing, "пишемо лише сектори, що відрізнялись")
@@ -475,7 +475,7 @@ def test_names():
     check(cv.decode_name_ex(gbk, "cp1251")[1] == "cp1251" and cv.decode_name_ex(gbk, "gbk")[0] == "Папуга", "примусове кодування")
     # скрипт S3 і вікно -- ОДНА реалізація
     check(info.decode_name is cv.decode_name and info.name_bytes is cv.name_bytes, "cps_backup_info використовує ту саму функцію")
-    check(info.Codeplug is cv.Codeplug, "cps_backup_info використовує той самий розбір кодплуга")
+    check(info.Codeplug is cv.Codeplug, "cps_backup_info використовує той самий розбір кодплага")
     here = os.path.dirname(os.path.abspath(__file__))
     for fn in ("cps_backup_info.py", "cps_restore.py", "cps_link.py", "gui_flasher.py", "codeplug_viewer_gui.py"):
         pth = os.path.join(here, fn)
@@ -625,7 +625,7 @@ def test_full_snapshot():
         run_restore(rb, pth)
         check(bytes(rb.spi[cl.AES_KEYS_RAW_START:cl.AES_KEYS_RAW_START + 4]) == b"MINE", "ключі AES рації не перезаписано")
         check(all(not (0xAF <= s < 0xDA) for s in rb.commits), "жоден сектор голосових підказок/ключів не записувався")
-        check(bytes(rb.spi[0xAF000:]) == before[0xAF000:], "усе за межею флеш-кодплуга незмінне")
+        check(bytes(rb.spi[0xAF000:]) == before[0xAF000:], "усе за межею флеш-кодплага незмінне")
 
 
 def main():

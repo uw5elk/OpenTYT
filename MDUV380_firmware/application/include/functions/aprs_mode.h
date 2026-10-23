@@ -14,7 +14,7 @@
  *    приймається, а вільного CCM у збірці лишається ~300 Б. Без "Переслухати" (діагностична збірка) -- у статичній
  *    структурі в CCM. Прапорець «режим активний» -- не в цьому буфері, а в aprsRxUi()->modeOn (CCM приймача, у
  *    байтах вирівнювання), бо його читають і тоді, коли режим не активний.
- *  - Налаштування -- оверрайди поверх конфігу APRS кодплуга в новому custom-data блоці (aprs_mode_cfg.h).
+ *  - Налаштування -- оверрайди поверх конфігу APRS кодплага в новому custom-data блоці (aprs_mode_cfg.h).
  *  - Приймач -- той самий R8 (aprs_rx.c): у режимі він завжди «хоче слухати» й бере частоту з «каналу» режиму.
  *  - PTT у режимі передає маяк, а не голос (applicationMain.c викликає aprsModeOnPtt() і гасить кнопку).
  */
@@ -140,7 +140,7 @@ aprsModeCfg_t       *aprsModeCfg(void);
 const aprsModeEff_t *aprsModeEff(void);
 const aprsModeDefaults_t *aprsModeDefaults(void);
 void aprsModeCfgChanged(uint16_t whatChanged);   /* оверрайди/налаштування змінено: перерахувати, підлаштувати радіо, відкласти запис */
-void aprsModeCfgReset(void);                     /* зняти чернетку й шумодав (станційні поля лежать у кодплузі -- не чіпає) */
+void aprsModeCfgReset(void);                     /* зняти чернетку й шумодав (станційні поля лежать у кодплазі -- не чіпає) */
 /* APRS-unify */
 bool aprsModeSetCall(const char *call);          /* позивний -> ім'я рації (EEPROM 0x00E0); false -- не пройшов перевірку */
 void aprsModeSetFlag(uint8_t mask, bool on);     /* прапорці слота: APRSM_RAW_FLAG_300_BAUDS / _QSY / _SILENT / _USE_POSITION */
