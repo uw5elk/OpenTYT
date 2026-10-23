@@ -613,7 +613,7 @@ static void unifyMigrate(aprsModeMem_t *m)
 	}
 }
 
-/* «Канал» режиму: аналоговий FM, 12,5 кГц (як у QSY бікона: trxSetModeAndBandwidth(ANALOG, false)), без CSS і
+/* «Канал» режиму: аналоговий FM, 25 кГц (APRS-ui M1; було 12,5 кГц -- в шапці "FMN"), без CSS і
  * потужності каналу. Поля, яких не зачепив memset, -- нулі, як у satelliteChannelData. */
 static void buildChan(aprsModeMem_t *m)
 {
@@ -625,7 +625,7 @@ static void buildChan(aprsModeMem_t *m)
 	m->chan.txTone = CODEPLUG_CSS_TONE_NONE;
 	m->chan.sql = m->eff.sql;
 	m->chan.aprsConfigIndex = 0U;   /* стоковий бікон нічого не знайде для цього «каналу» */
-	codeplugChannelSetFlag(&m->chan, CHANNEL_FLAG_BW_25K, 0);
+	codeplugChannelSetFlag(&m->chan, CHANNEL_FLAG_BW_25K, APRS_BEACON_BW_25K ? 1 : 0);   /* APRS-ui M1: 25 кГц */
 }
 
 #if defined(APRS_R21_QSY)
@@ -680,7 +680,7 @@ static void tune(const aprsModeMem_t *m)
 	AM_TRACE(31);   /* перед trxSetFrequency */
 	trxSetFrequency(f, f, DMR_MODE_AUTO);
 	AM_TRACE(32);   /* перед trxSetModeAndBandwidth */
-	trxSetModeAndBandwidth(RADIO_MODE_ANALOG, false);   /* 12,5 кГц -- як у бікона */
+	trxSetModeAndBandwidth(RADIO_MODE_ANALOG, APRS_BEACON_BW_25K);   /* APRS-ui M1: 25 кГц (стандарт APRS); у збірках без приймача APRS_BEACON_BW_25K = false */
 	AM_TRACE(33);   /* перед trxSetRxCSS */
 	trxSetRxCSS(RADIO_DEVICE_PRIMARY, CODEPLUG_CSS_TONE_NONE);
 	AM_TRACE(34);   /* перед trxSetTxCSS */
@@ -1004,6 +1004,15 @@ bool aprsModeSettingsSessionOpen(void)
 	unifyMigrate(m);
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
 	aprsBeaconingGetSettings(&aprsSettingsCopy);   /* стокові параметри бікона редагуються в копії (як у стоковому меню) і застосовуються при закритті сесії */
+#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU)
+	/* APRS-ui M5: GPS у рації нема, рядок «Джерело» прихований -- джерело позиції безальтернативне: «з каналу / вручну». Якщо в блоці (наприклад,
+	 * записаному з ПК) стояв біт «GPS», знімаємо його у чернетці; на закритті сесії зміна збережеться тим самим шляхом, що й решта. */
+	if ((aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U)
+	{
+		aprsSettingsCopy.state = (aprsBeaconingStates_t)(((uint8_t)aprsSettingsCopy.state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_GPS)) |
+				(uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
+	}
+#endif
 	u = aprsModeUi();
 	memset(u, 0, sizeof(*u));
 	u->page = APRS_MODE_PAGE_SETTINGS;
@@ -1058,13 +1067,41 @@ bool aprsModeBeaconOnceBusy(void)
 	return aprsModeIsActive() && (mem()->oneShot != 0U);
 }
 
-/* Кожен тік меню «APRS». Результат: передано -- сповіщення; помилки (зайнято, нема позивного...) уже показала beaconFeedback(). Режим, увімкнений лише заради
- * маяка, вимикається, коли передачу завершено. */
+/* APRS-ui M4: головний екран (канал / VFO) -- чи це він. */
+static bool isMainScreenMenu(int menuNumber)
+{
+	return (menuNumber == UI_CHANNEL_MODE) || (menuNumber == UI_VFO_MODE);
+}
+
+/* APRS-ui M4: явний перемалюнок головного екрана після разового маяка (SK1+3).
+ * ПРИЧИНА («екран VFO з параметрами каналу, доки не натиснеш кнопку»): акорд SK1+3 починається з натискання SK1, а головний екран за SK1 показує
+ * «параметри каналу» (RX/TX-частоти; прапорець uiDataGlobal.displayChannelSettings) і знімає їх лише коли бачить відпускання SK1. Поки йде разовий
+ * маяк, тік каналу/VFO повертається зарані (aprsModeBeaconOnceBusy()) і відпускання SK1 ковтає, тож прапорець лишався піднятим, а перемалюнок після
+ * виходу з режиму малював саме екран параметрів. Будь-яке наступне натискання доходило до обробника, той бачив «прапорець є, SK1 не затиснуто» і
+ * ховав параметри -- тому екран «лагодився» від PTT. Це код стокового uiChannelMode.c/uiVFOMode.c, але чіпаємо тут, у нашому файлі: прапорець
+ * знімаємо самі, меню НЕ перемикаємо (швидкі клавіші й сканування залежать від поточного меню). Перемалюнок -- синтетична FUNC_REDRAW, як у
+ * uiNotificationHide(); якщо на екрані картка (помилка передачі), її закриття перемалює екран тим самим шляхом, а прапорець уже знято. */
+static void repaintMainScreen(void)
+{
+	uiDataGlobal.displayChannelSettings = false;
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+
+	if (uiNotificationIsVisible() == false)
+	{
+		uiEvent_t redrawEvent = { .buttons = 0, .keys = NO_KEYCODE, .rotary = 0, .function = FUNC_REDRAW, .events = FUNCTION_EVENT, .hasEvent = true,
+				.time = ticksGetMillis() };
+
+		menuSystemCallCurrentMenuTick(&redrawEvent);
+	}
+}
+
+/* Кожен тік меню «APRS». Помилки (зайнято, нема позивного...) уже показала beaconFeedback(); APRS-ui M3: окремого сповіщення «Маяк надіслано» нема --
+ * достатньо червоного «APRS» у шапці під час передачі. Режим, увімкнений лише заради маяка, вимикається, коли передачу завершено, і головний екран
+ * перемальовується явно (repaintMainScreen()). */
 void aprsModeBeaconOncePoll(void)
 {
 	aprsModeMem_t *m;
 	uint8_t what;
-	bool sent;
 
 	if (aprsModeBeaconOnceBusy() == false)
 	{
@@ -1077,22 +1114,11 @@ void aprsModeBeaconOncePoll(void)
 	}
 	what = m->oneShot;
 	m->oneShot = 0U;
-	sent = (m->bcnState == APRS_MODE_BCN_SENT);
-	if (what == 2U)
+	if ((what == 2U) || (isMainScreenMenu(menuSystemGetCurrentMenuNumber())))
 	{
+		/* what == 1 на головному екрані: режим там і так вийшов би на наступному тіку (aprsModeTick(), «меню не APRS»), але без перемалювання */
 		aprsModeExit();   /* m недійсне; канал/VFO повернуто */
-		if (uiNotificationIsVisible() == false)
-		{
-			/* помилку передачі вже показала картка (тоді екран перемалює її закриття); інакше головний екран перемальовуємо самі */
-			uiEvent_t redrawEvent = { .buttons = 0, .keys = NO_KEYCODE, .rotary = 0, .function = FUNC_REDRAW, .events = FUNCTION_EVENT, .hasEvent = true,
-					.time = ticksGetMillis() };
-
-			menuSystemCallCurrentMenuTick(&redrawEvent);
-		}
-	}
-	if (sent)
-	{
-		uiNotificationShowShort(1500, APRSM_BCN_SENT, true);
+		repaintMainScreen();
 	}
 }
 

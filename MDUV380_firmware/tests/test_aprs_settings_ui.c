@@ -321,6 +321,27 @@ static void testUnify(void)
 	CHECK(s_bflashValid && s_bflashWrites >= 1, "при закритті записано блок налаштувань бікона");
 }
 
+/* APRS-ui M5: у рації нема GPS -- «Джерело» (канал / GPS) і рядки, що мають сенс лише з рухом, не показуються; джерело безальтернативно «канал/вручну» */
+static void testNoGps(void)
+{
+#if defined(FORK_NO_GPS_MENU)
+	resetWorld();
+	memset(&s_stockSettings, 0, sizeof(s_stockSettings)); s_stockSettings.mode = APRS_BEACONING_MODE_OFF; s_stockSettings.initialInterval = APRS_BEACON_INITIAL_INTERVAL_DEFAULT; s_stockSettings.smart.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT; s_stockSetCalls = 0;
+	s_stockSettings.state = (aprsBeaconingStates_t)(APRS_BEACONING_STATE_LOCATION_FROM_GPS | APRS_BEACONING_STATE_COMPRESSED_FORMAT);   /* блок із ПК: джерело «GPS» */
+	CHECK(menuAprsSettingsEnter(), "налаштування");
+	CHECK(rowIndexOf(asRowsPos, AS_N(asRowsPos), AS_S_SOURCE) < 0, "M5: у групі «Позиція» нема рядка «Джерело»");
+	CHECK(rowIndexOf(asRowsPos, AS_N(asRowsPos), APRSM_F_LAT) >= 0 && rowIndexOf(asRowsPos, AS_N(asRowsPos), APRSM_F_LON) >= 0, "M5: координати вручну лишились");
+	CHECK(rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_SLOW) >= 0 && rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_FAST) < 0 &&
+			rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_HISPD) < 0 && rowIndexOf(asRowsSmart, AS_N(asRowsSmart), AS_S_ANGLE) < 0, "M5: рядки швидкості/курсу приховані, «Повільний» лишився");
+	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) == 0U && (aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL) != 0U,
+			"M5: джерело позиції у чернетці зафіксовано «канал/вручну» (state %02X)", (unsigned)aprsSettingsCopy.state);
+	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0U, "M5: решта бітів стану не зачеплена");
+	asStockStep(AS_S_SOURCE, 1, false);
+	CHECK((aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) == 0U, "M5: перемкнути джерело на GPS не можна");
+	aprsModeMsgSessionClose();
+#endif
+}
+
 int main(void)
 {
 	testWalk();
@@ -330,6 +351,7 @@ int main(void)
 	testReset();
 	testEditor();
 	testUnify();
+	testNoGps();
 	if (s_fail != 0)
 	{
 		printf("test_aprs_settings_ui: ПРОВАЛІВ %d з %d перевірок\n", s_fail, s_checks);

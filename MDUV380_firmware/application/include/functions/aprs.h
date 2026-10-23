@@ -45,6 +45,14 @@
 #define APRS_BEACON_INITIAL_INTERVAL_DEFAULT  2U
 #define APRS_BEACON_INITIAL_INTERVAL_MAX      9U
 
+/* APRS-ui M1: смуга, в якій рація йде на частоту маяка (QSY стокового бікона, QSY разового маяка, «канал» режиму APRS). Стандарт APRS -- звичайний 25 кГц FM (не вузький 12,5).
+ * Лише у збірках форку з приймачем APRS; без нього -- false, тобто код ТОЧНО як у стоковому OpenGD77 (типова збірка байт-у-байт). */
+#if defined(ENABLE_APRS_RX)
+#define APRS_BEACON_BW_25K  true
+#else
+#define APRS_BEACON_BW_25K  false
+#endif
+
 #define APRS_SMART_BEACON_SLOW_RATE_MIN       1U
 #define APRS_SMART_BEACON_SLOW_RATE_DEFAULT  30U
 #define APRS_SMART_BEACON_SLOW_RATE_MAX     100U

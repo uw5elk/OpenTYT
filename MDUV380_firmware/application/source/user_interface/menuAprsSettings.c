@@ -860,8 +860,19 @@ static const uint8_t asRowsBeacon[] = { AS_S_MODE, AS_S_POWER, AS_S_BINT, APRSM_
 		, AS_S_QSY, AS_S_BAUD, AS_S_SILENT
 #endif
 		};
+#if defined(FORK_NO_GPS_MENU)
+/* APRS-ui M5: рація без GPS -- швидкість і курс завжди «стоїмо», тож швидкий період, пороги швидкості, кут/нахил/час повороту сенсу не мають. Лишаємо
+ * «Повільний» (єдиний чинний період розумного маяка нерухомої станції) і «Затухання». Логіка й значення в налаштуваннях не чіпаються;
+ * повернути рядки -- прибрати FORK_NO_GPS_MENU (applicationMain.h). */
+static const uint8_t asRowsSmart[] = { AS_S_SLOW, AS_S_DECAY };
+#else
 static const uint8_t asRowsSmart[] = { AS_S_SLOW, AS_S_FAST, AS_S_LOWSPD, AS_S_HISPD, AS_S_ANGLE, AS_S_SLOPE, AS_S_TIME, AS_S_DECAY };
-static const uint8_t asRowsPos[] = { AS_S_SOURCE, APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB
+#endif
+static const uint8_t asRowsPos[] = {
+#if !defined(FORK_NO_GPS_MENU)
+		AS_S_SOURCE,   /* APRS-ui M5: «Джерело» (канал / GPS) -- без GPS єдине джерело «канал/вручну», рядок прихований; поле в блоці бікона лишається */
+#endif
+		APRSM_F_LAT, APRSM_F_LON, APRSM_F_AMB
 #if defined(APRS_R21_QSY)
 		, AS_S_USEPOS
 #endif
@@ -1109,7 +1120,7 @@ static void asStockStep(int r, int dir, bool big)
 
 		if ((e != NULL) && (v >= 0) && (v < (int)e->count))
 		{
-#if !defined(HAS_GPS)
+#if !defined(HAS_GPS) || defined(FORK_NO_GPS_MENU)
 			if (r == AS_S_SOURCE)
 			{
 				return;   /* GPS нема -- єдине джерело: позиція каналу */

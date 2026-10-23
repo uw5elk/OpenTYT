@@ -350,7 +350,8 @@ static void testEnterExit(void)
 	CHECK(modeChan->chMode == RADIO_MODE_ANALOG, "аналоговий FM");
 	CHECK(modeChan->rxFreq == 14480000UL && modeChan->txFreq == 14480000UL, "частота каналу режиму = 144.800 (з конфігу кодплуга)");
 	CHECK(s_tuneCalls == 1 && s_tuneFreq == 14480000UL, "радіо перелаштовано на 144.800");
-	CHECK(s_tuneMode == RADIO_MODE_ANALOG && s_tuneBw == 12, "аналог, 12,5 кГц");
+	CHECK(s_tuneMode == RADIO_MODE_ANALOG && s_tuneBw == 25, "аналог, 25 кГц (APRS-ui M1)");
+	CHECK((modeChan->flag4 & 0x02U) != 0, "«канал» режиму має прапорець 25 кГц (flag4=%02X)", modeChan->flag4);
 	CHECK(aprsModeCfgSessionActive() == false, "режим сам не відкриває сесію налаштувань");
 	CHECK(aprsModeEff()->ssid == 7 && strcmp(aprsModeEff()->call, "UW5ELK") == 0, "позивний з імені рації, ssid з конфігу");
 
@@ -1212,7 +1213,7 @@ static void testBeaconOnce(void)
 	CHECK(s_txCalls == 1, "маяк передано тим самим кодом (%d)", s_txCalls);
 	aprsModeBeaconOncePoll();
 	CHECK(aprsModeIsActive() == false && aprsModeBeaconOnceBusy() == false && currentChannelData == &s_userChan, "після передачі режим вимкнено, канал повернуто");
-	CHECK(s_notify == 1, "сповіщення «Маяк передано» (%d)", s_notify);
+	CHECK(s_notify == 0, "APRS-ui M3: вікна «Маяк надіслано» нема (%d)", s_notify);
 	CHECK(s_loadChanCalls == 1, "канал перезавантажено рівно раз");
 
 	/* з увімкненим «Слухати»: режим лишається */
@@ -1222,7 +1223,7 @@ static void testBeaconOnce(void)
 	CHECK(aprsModeBeaconOnce(), "разовий маяк при увімкненому «Слухати»");
 	tickMs(10);
 	aprsModeBeaconOncePoll();
-	CHECK(s_txCalls == 1 && aprsModeIsActive() && aprsModeBeaconOnceBusy() == false && s_notify == 1, "передано, режим лишився");
+	CHECK(s_txCalls == 1 && aprsModeIsActive() && aprsModeBeaconOnceBusy() == false && s_notify == 0, "передано, режим лишився, без вікна");
 	aprsModeExit();
 
 	/* частота зайнята: чекаємо вільної, поки не передано -- Busy */
@@ -1320,6 +1321,7 @@ static void testHotkeyOnMain(void)
 	s_curMenu = UI_CHANNEL_MODE;
 	s_notify = 0;
 	s_redraws = 0;
+	uiDataGlobal.displayChannelSettings = true;   /* APRS-ui M4: SK1 затиснуто -- екран «параметри каналу»; відпускання SK1 ковтається, поки маяк іде */
 	aprsModeBeaconHotkey();
 	CHECK(aprsModeIsActive() && aprsModeBeaconOnceBusy(), "SK1+3: рація запаркована, маяк замовлено");
 	tickMs(10);   /* тік на ГОЛОВНОМУ екрані: режим не вимикається (виняток для разового маяка) і маяк іде */
@@ -1328,8 +1330,9 @@ static void testHotkeyOnMain(void)
 	CHECK(s_txCalls == 1, "повторне SK1+3 під час маяка нічого не робить");
 	tickMs(10);
 	CHECK(aprsModeIsActive() == false && aprsModeBeaconOnceBusy() == false && currentChannelData == &s_userChan, "після передачі режим вимкнено, канал повернуто");
-	CHECK(s_notify == 1, "картка «Маяк передано» (%d)", s_notify);
+	CHECK(s_notify == 0, "APRS-ui M3: вікна «Маяк надіслано» нема (%d)", s_notify);
 	CHECK(s_redraws == 1, "головний екран перемальовано (%d)", s_redraws);
+	CHECK(uiDataGlobal.displayChannelSettings == false, "APRS-ui M4: «параметри каналу» зняті до перемалювання (канал)");
 
 	/* заборона TX: нічого не вмикаємо */
 	resetWorld();
@@ -1348,6 +1351,30 @@ static void testHotkeyOnMain(void)
 	tickMs(10);
 	CHECK(s_txCalls == 1 && aprsModeIsActive() == false && s_loadVfoCalls >= 1, "VFO: передано, VFO перезавантажено");
 	s_rootMenu = UI_CHANNEL_MODE;
+
+	/* APRS-ui M4: те саме з VFO -- прапорець «параметри каналу» знято, екран перемальовано */
+	resetWorld();
+	s_rootMenu = UI_VFO_MODE;
+	s_curMenu = UI_VFO_MODE;
+	s_redraws = 0;
+	uiDataGlobal.displayChannelSettings = true;
+	aprsModeBeaconHotkey();
+	tickMs(10);
+	tickMs(10);
+	CHECK(aprsModeIsActive() == false && s_redraws == 1 && uiDataGlobal.displayChannelSettings == false, "APRS-ui M4: VFO -- прапорець знято, перемалювано (%d)", s_redraws);
+	s_rootMenu = UI_CHANNEL_MODE;
+
+	/* APRS-ui M4: режим «Слухати» вже активний (oneShot == 1), хоткей на головному екрані -- теж перемалюнок і вихід з режиму */
+	resetWorld();
+	CHECK(aprsModeEnter(), "вхід");
+	s_curMenu = UI_CHANNEL_MODE;
+	s_redraws = 0;
+	uiDataGlobal.displayChannelSettings = true;
+	aprsModeBeaconHotkey();
+	tickMs(10);
+	tickMs(10);
+	CHECK(s_txCalls == 1 && aprsModeIsActive() == false && s_redraws == 1 && uiDataGlobal.displayChannelSettings == false,
+			"APRS-ui M4: oneShot == 1 на головному екрані -- вихід і перемалюнок (%d, %d)", s_txCalls, s_redraws);
 
 	/* передача йде -- не можна: картка про це, режим не вмикається */
 	resetWorld();

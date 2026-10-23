@@ -2096,7 +2096,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 						radioSetTRxDevice(RADIO_DEVICE_PRIMARY);
 
 						trxSetFrequency(txFrequency, txFrequency, DMR_MODE_AUTO);
-						trxSetModeAndBandwidth(RADIO_MODE_ANALOG, false);
+						trxSetModeAndBandwidth(RADIO_MODE_ANALOG, APRS_BEACON_BW_25K);
 						trxSetRxCSS(RADIO_DEVICE_PRIMARY, CODEPLUG_CSS_TONE_NONE);
 						trxSetTxCSS(CODEPLUG_CSS_TONE_NONE);
 
@@ -2432,7 +2432,7 @@ aprsModeTxResult_t aprsBeaconingSendMessage(const char *info, const char *from)
 		radioSetTRxDevice(RADIO_DEVICE_PRIMARY);
 
 		trxSetFrequency(txFrequency, txFrequency, DMR_MODE_AUTO);
-		trxSetModeAndBandwidth(RADIO_MODE_ANALOG, false);
+		trxSetModeAndBandwidth(RADIO_MODE_ANALOG, APRS_BEACON_BW_25K);
 		trxSetRxCSS(RADIO_DEVICE_PRIMARY, CODEPLUG_CSS_TONE_NONE);
 		trxSetTxCSS(CODEPLUG_CSS_TONE_NONE);
 

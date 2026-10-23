@@ -2069,7 +2069,7 @@ static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
 #endif
 
 #if defined(APRS_R21_TXLABEL)
-/* R21 З6: див. uiUtilities.h. Слот: x = 25..48 (4 символи по 6 px) -- прапорець «a» закінчується на x = 24 (DMR: 1+18+6), потужність у найгіршому випадку
+/* R21 З6: див. uiUtilities.h. APRS-ui M2: на час маяка прапорець «a» не малюється (напис «APRS» стоїть замість нього). Слот: x = 25..48 (4 символи по 6 px) -- прапорець «a» (коли малюється) закінчується на x = 24 (DMR: 1+18+6), потужність у найгіршому випадку
  * ("250mW", 30 px) починається з x = 50. Малюється в шапці, тож S-метр (нижче шапки) і рядок контакту не зачіпаються. */
 void uiUtilityDrawAprsTxLabel(void)
 {
@@ -2366,7 +2366,11 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 
 	// APRS flag
 	if ((isVFOSweepScanning == false) && (isVFODualWatchScanning == false)
-			&& (currentChannelData->aprsConfigIndex != 0))
+			&& (currentChannelData->aprsConfigIndex != 0)
+#if defined(APRS_R21_TXLABEL)
+			&& (aprsIsTXing == false)   // APRS-ui M2: на час маяка замість прапорця «a» -- напис «APRS» нижче (раніше вони зліплювались: «aAPRS»)
+#endif
+			)
 	{
 		bool aprsSuspended = false;
 		themeItem_t fgItem, bgItem;
