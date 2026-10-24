@@ -26,7 +26,7 @@ import contact_edit as ce  # noqa: E402
 TG_MAX = cv.RXGROUP_MAX_CONTACTS        # 32
 NAME_LEN = 16
 KIND_TITLES = {"contact": "Контакти", "tg": "TG-списки", "zone": "Зони", "channel": "Канали", "dtmf": "DTMF-контакти"}
-KIND_LABELS = {"contact": "контакт", "tg": "список прийому", "zone": "зона", "channel": "канал", "dtmf": "DTMF-контакт"}
+KIND_LABELS = {"contact": "контакт", "tg": "список прийому", "zone": "зона", "channel": "канал", "dtmf": "DTMF-контакт", "aprs": "APRS-слот"}
 
 
 class TableEditError(cl.CpsError):
@@ -189,7 +189,7 @@ class Refs:
 
 
 def references(img, kind, ident):
-    """Усі, хто посилається на запис (kind: contact / tg / channel; ident -- як вище). Для зони посилань нема."""
+    """Усі, хто посилається на запис (kind: contact / tg / aprs / channel; ident -- як вище, для aprs -- 0-based слот). Для зони посилань нема."""
     r = Refs()
     if kind == "contact":
         n = ident + 1
@@ -206,6 +206,11 @@ def references(img, kind, ident):
         for num, rec in img.channels():
             if rec[cc.O_GROUP] == n and rec[cc.O_MODE] != 0:
                 r.items.append(("Канали", "№%d «%s» (поле «Список прийому»)" % (num, cc.readable_text(rec[:16]))))
+    elif kind == "aprs":
+        n = ident + 1
+        for num, rec in img.channels():
+            if rec[cc.O_APRS] == n:          # колонка APRS актуальна і для аналогових, і для цифрових каналів (на відміну від контакту/списку прийому)
+                r.items.append(("Канали", "№%d «%s» (поле «APRS»)" % (num, cc.readable_text(rec[:16]))))
     elif kind == "channel":
         for _b, name, mem in zones(img):
             if ident in mem:
@@ -342,6 +347,18 @@ def _set_cell(hdr, row, col, text):
     row[hdr.index(col)] = text
 
 
+def aprs_delete_problem(img, slot):
+    """Чому слот (0-based) не можна видалити, або None. Прошивка читає APRS-слоти підряд з №1 до першого порожнього (codeplugAPRSInitCache), тому
+    видалити можна лише ОСТАННІЙ -- інакше наступні слоти зникли б для рації (те саме правило в імпорті CSV і в codeplug_edit.delete_aprs_slot)."""
+    slots = [s for s, _r in img.aprs()]
+    if slot not in slots:
+        return "APRS-слот №%d порожній або не бачиться рацією" % (slot + 1)
+    if slot != len(slots) - 1:
+        return ("видалення APRS-слота з середини (№%d з %d) не підтримується: рація читає слоти підряд з №1 до першого порожнього, "
+                "решта зникла б. Видаліть останній або змініть цей слот." % (slot + 1, len(slots)))
+    return None
+
+
 def delete_entity(img, kind, ident, dp, cascade=False):
     """Видалити запис. Є посилання і cascade=False -- TableEditError з переліком (нічого не змінено); cascade=True -- посилання
     прибираються тим самим імпортом (канал у зонах, контакт у списках і каналах, список прийому в каналах), зона/список без
@@ -352,9 +369,17 @@ def delete_entity(img, kind, ident, dp, cascade=False):
     T = tables_of(img, dp)
     tok = _Tokens(img)
     edits = {}
-    n = ident + 1 if kind in ("contact", "tg") else ident
+    n = ident + 1 if kind in ("contact", "tg", "aprs") else ident
 
-    if kind == "zone":
+    if kind == "aprs":
+        hdr, rows = T["aprs"]
+        prob = aprs_delete_problem(img, ident)
+        if prob:
+            raise TableEditError([prob])
+        del rows[ident]
+        edits["aprs"] = (hdr, rows)
+        _clear_channel_ref(img, T, edits, "APRS", lambda rec: rec[cc.O_APRS] == n, digital_only=False)
+    elif kind == "zone":
         hdr, rows = T["zones"]
         del rows[_row_of(img, "zone", ident)]
         edits["zones"] = (hdr, rows)
@@ -404,11 +429,12 @@ def delete_entity(img, kind, ident, dp, cascade=False):
     return _run(img, edits, dp)
 
 
-def _clear_channel_ref(img, T, edits, col, pred):
-    """Поле col (Contact / TG List) у каналах, що задовольняють pred(rec), -> «None». Таблицю каналів створює/доповнює edits."""
+def _clear_channel_ref(img, T, edits, col, pred, digital_only=True):
+    """Поле col (Contact / TG List / APRS) у каналах, що задовольняють pred(rec), -> «None». Таблицю каналів створює/доповнює edits.
+    digital_only -- Contact і TG List є лише в цифрових каналах; APRS -- в усіх."""
     hdr, rows = edits.get("channels") or T["channels"]
     for (num, rec), row in zip(img.channels(), rows):
-        if rec[cc.O_MODE] != 0 and pred(rec):
+        if (not digital_only or rec[cc.O_MODE] != 0) and pred(rec):
             _set_cell(hdr, row, col, "None")
     edits["channels"] = (hdr, rows)
 

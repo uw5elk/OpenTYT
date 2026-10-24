@@ -122,6 +122,10 @@ def test_widget_tree():
                         check(gt.contrast(to_hex(app, fg), bg if cls != "TEntry" else gt.P["field"]) >= 4.5,
                               "%s %s: контраст тексту %s на %s < 4,5" % (cls, w, fg, bg))
                 else:
+                    if getattr(w, "_data_colour", False):
+                        # зразки кольорів і перегляд екрана рації в «Теми екрана» (R28) показують кольори, які ВИБРАВ користувач, -- це дані, а не оформлення вікна
+                        seen["_data_colour"] = seen.get("_data_colour", 0) + 1
+                        continue
                     try:
                         bg = to_hex(app, w.cget("background"))
                     except tk.TclError:

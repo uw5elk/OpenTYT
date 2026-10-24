@@ -41,6 +41,7 @@ from .p_general import GeneralPanel
 from .p_rctl import RctlPanel
 from .p_screenshot import ScreenshotPanel
 from .p_tglists import TgListsPanel
+from .p_themes import ThemesPanel
 from .p_vfo import VfoPanel
 from .p_viewer import ViewerPanel
 from .p_zones import ZonesPanel
@@ -52,7 +53,7 @@ SECTIONS = [
     ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
     ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, VfoPanel, ZonesPanel, TgListsPanel,
                                   DtmfPanel, AprsPanel, CsvPanel]),
-    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel]),
+    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel]),
 ]
 DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}

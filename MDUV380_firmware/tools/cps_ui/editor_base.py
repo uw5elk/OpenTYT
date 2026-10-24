@@ -253,18 +253,9 @@ class EditorPanel(Panel):
         ident = self.sel
         name = dict(te.entity_names(d.image, self.kind)).get(ident, "")
         refs = te.references(d.image, self.kind, ident)
-        if refs:
-            text = ("Видалити %s «%s»?\n\nНа нього посилаються:\n%s\n\n«Скасувати» -- нічого не міняти.\n«Видалити разом із посиланнями» -- запис "
-                    "зникне, а посилання буде прибрано (елемент списку / зони викреслюється, поле каналу стає «None»)." % (self.noun, name, refs.text()))
-            choice = gd.choice_dialog(self.shell, "Запис використовується", text,
-                                      [("Скасувати", "cancel"), ("Видалити разом із посиланнями", "cascade")], 0)
-            if choice != "cascade":
-                return
-            cascade = True
-        else:
-            if not gd.confirm_dialog(self.shell, "Видалити?", "Видалити %s «%s» з документа?" % (self.noun, name), yes="Видалити", no="Скасувати"):
-                return
-            cascade = False
+        cascade = gd.delete_choice(self.shell, self.noun, name, refs.text() if refs else None)
+        if cascade is None:
+            return
         self.sel = None
         self.run_edit(lambda img: te.delete_entity(img, self.kind, ident, self.dp, cascade=cascade))
 
