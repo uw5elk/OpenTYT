@@ -12,6 +12,7 @@ import codeplug_edit as ced
 import cps_csv as cc
 import gui_dialogs as gd
 import gui_theme as gt
+import table_edit as te
 
 from .panel import HINT_NO_DOC
 
@@ -269,20 +270,26 @@ class StationBlock(ttk.LabelFrame):
         self.shell.set_status("APRS-слот змінено в документі.", "ok")
 
     def _on_delete(self):
+        """Те саме, що видалення зони / списку прийому (table_edit.delete_entity + gd.delete_choice): є канали з посиланням на слот -- вибір
+        «Скасувати» / «Видалити разом із посиланнями» (поле APRS у цих каналах стане «None»); посилань нема -- звичайне підтвердження."""
         d = self.doc
         if d is None or self.shell.busy or self.current is None:
             return
         slot = self.current
-        users = ced.aprs_users(d.image, slot)
-        text = "Видалити APRS-слот №%d з документа?" % (slot + 1)
-        if users:
-            text += "\n\nЙого використовують канали: %s. Посилання в них стане порожнім." % ", ".join("№%d «%s»" % u for u in users[:8])
-        if not gd.confirm_dialog(self.shell, "Видалити слот?", text, yes="Видалити", no="Скасувати"):
+        prob = te.aprs_delete_problem(d.image, slot)
+        if prob:
+            messagebox.showerror("APRS-слот", prob, parent=self.shell)
+            return
+        name = cc.readable_text(dict(d.image.aprs())[slot][:8])
+        refs = te.references(d.image, "aprs", slot)
+        cascade = gd.delete_choice(self.shell, "APRS-слот №%d" % (slot + 1), name, refs.text() if refs else None)
+        if cascade is None:
             return
         try:
-            d.delete_aprs_slot(slot)
-        except ced.CodeplugEditError as e:
-            messagebox.showerror("APRS-слот", str(e), parent=self.shell)
+            res = te.delete_entity(d.image, "aprs", slot, cc.system_decimal_point(), cascade=cascade)
+            d.apply(res)
+        except te.TableEditError as e:
+            messagebox.showerror("APRS-слот", "\n".join(e.problems), parent=self.shell)
             return
         self.current = None
         self.on_document_changed()
