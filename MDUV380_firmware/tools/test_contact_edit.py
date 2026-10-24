@@ -154,7 +154,7 @@ def test_radio_flow():
 
 def test_gui():
     try:
-        import tkinter as tk
+        import tkinter as tk  # noqa: F401
     except ImportError:
         print("ПРОПУЩЕНО (GUI): нема tkinter")
         return
@@ -163,19 +163,22 @@ def test_gui():
         return
     import gui_flasher as gf
     import codeplug_viewer_gui as cvg
+    from cps_ui import document as D
     spi, cp = fixture()
     import tempfile
     os.environ["TYT_CPS_SETTINGS"] = os.path.join(tempfile.mkdtemp(prefix="cedit_"), "ui.json")     # справжні налаштування не чіпаємо
     app = gf.FlasherApp(autoprobe=False)
     try:
-        sent = []
-        v = cvg.CodeplugViewerWindow(app, cp, "тест", HERE, write_contacts=lambda ops, w: sent.append(ops))
+        doc = D.Document(cp, D.ORIGIN_FILE, source_file="тест.zip")
+        busy = [False]
+        v = cvg.CodeplugViewerWindow(app, doc, HERE, is_busy=lambda: busy[0])
         v.update()
+        doc.add_listener(lambda _d: v.refresh())          # у програмі це робить панель «Перегляд кодплага» (doc_event)
         tree = v.contact_tree
         hdr = [tree.heading(c)["text"] for c in tree["columns"]]
-        check(hdr[-1] == "Стан", "є колонка «Стан»: %r" % hdr)
+        check("Стан" not in hdr, "колонки таблиці контактів без «Стан» (правки йдуть у документ, а не в чергу): %r" % hdr)
         rows = [tree.item(i)["values"] for i in tree.get_children()]
-        check(len(rows) == 4 and all(r[-1] == "" for r in rows), "спершу зміни відсутні: %r" % rows)
+        check(len(rows) == 4 and not doc.modified, "спершу зміни відсутні: %r" % rows)
         # додати через діалог
         def fill_add():
             dlg = None
@@ -193,9 +196,10 @@ def test_gui():
             dlg._ok()
         app.after(200, fill_add)
         v._on_add_contact()
+        v.update()
         rows = [tree.item(i)["values"] for i in tree.get_children()]
-        check(len(rows) == 5 and rows[-1][0] == "нов." and rows[-1][-1] == "новий" and rows[-1][1] == "Київ", "новий контакт у таблиці зі словом «новий»: %r" % rows[-1])
-        # видалити виділений (LOCAL, яким користується TG-список): діалог-попередження -- закриваємо «Додати в чергу»
+        check(doc.modified and len(rows) == 5 and any(r[1] == "Київ" for r in rows), "новий контакт одразу в документі й таблиці: %r" % rows)
+        # видалити виділений (LOCAL, яким користується TG-список): діалог-попередження -- підтверджуємо
         item = [i for i in tree.get_children() if tree.item(i)["values"][1] == "LOCAL"][0]
         tree.selection_set(item)
 
@@ -206,35 +210,27 @@ def test_gui():
                     check("Ukraine" in txt, "попередження називає групу: %r" % txt[:120])
                     for ch in w.winfo_children():
                         for b in ch.winfo_children():
-                            if b.winfo_class() == "TButton" and b.cget("text") == "Додати в чергу":
+                            if b.winfo_class() == "TButton" and b.cget("text") == "Видалити":
                                 b.invoke()
                                 return
         app.after(200, press_yes)
         v._on_delete_contact()
-        rows = {tree.item(i)["values"][1]: tree.item(i)["values"][-1] for i in tree.get_children()}
-        check(rows.get("LOCAL") == "видалятиметься", "видалення позначено словом: %r" % rows)
-        check(len(v.ops) == 2, "у черзі 2 операції")
-        # «Записати» вимкнено, поки відновлення заблоковане (RESTORE_UNLOCKED == False) -- і працює, коли розблоковане
-        import cps_restore as cr
-        old = cr.RESTORE_UNLOCKED
-        try:
-            cr.RESTORE_UNLOCKED = False
-            v._refresh_contacts()
-            check(str(v.btn_write.cget("state")) == "disabled" and cr.LOCKED_CAPTION in v.edit_note.cget("text"), "заблоковано: кнопка запису вимкнена, є пояснення")
-            v._on_write()
-            check(not sent, "заблоковано: обробник запису не викликано")
-            cr.RESTORE_UNLOCKED = True
-            v._refresh_contacts()
-            check(str(v.btn_write.cget("state")) == "normal", "розблоковано: кнопка запису активна")
-            v._on_write()
-            check(len(sent) == 1 and len(sent[0]) == 2, "обробник отримав 2 операції")
-        finally:
-            cr.RESTORE_UNLOCKED = old
-        v._on_undo_all()
-        check(not v.ops and len(tree.get_children()) == 4, "скасування змін")
-        # вікно «з бекапу» -- без редактора
-        v2 = cvg.CodeplugViewerWindow(app, cp, "файл", HERE)
-        check(v2.contact_tree is None, "перегляд бекап-файла не має редактора")
+        v.update()
+        names = [tree.item(i)["values"][1] for i in tree.get_children()]
+        check("LOCAL" not in names and "Київ" in names, "видалення одразу в документі: %r" % names)
+        check(len(doc.changes) == 2, "у журналі документа 2 зміни: %r" % doc.changes)
+        # під час операції з рацією правка вимкнена
+        busy[0] = True
+        v.set_editable(False)
+        check(str(v.btn_add.cget("state")) == "disabled", "під час операції кнопки правки вимкнені")
+        n_before = len(doc.changes)
+        v._on_add_contact()
+        check(len(doc.changes) == n_before, "під час операції додавання ігнорується")
+        busy[0] = False
+        # відкидання змін документа -> таблиця оновлюється через refresh()
+        doc.discard()
+        v.refresh()
+        check(len(tree.get_children()) == 4 and not doc.modified, "відкидання: назад 4 контакти, зірочки нема")
     finally:
         app.destroy()
 

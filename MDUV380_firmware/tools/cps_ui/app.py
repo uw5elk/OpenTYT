@@ -7,7 +7,9 @@
   confirm_from_worker(text, plan)     -- запитати підтвердження з робочого потоку (діалог показує головний потік);
   post(fn) / post_progress / cps_progress -- безпечне оновлення інтерфейсу з робочого потоку;
   conn                                -- єдине підключення до рації (пошук один раз + кеш);
-  show(key) / get_panel(key)          -- перейти до розділу / отримати його панель.
+  show(key) / get_panel(key)          -- перейти до розділу / отримати його панель;
+  doc                                 -- ДОКУМЕНТ кодплага (cps_ui/document.py) або None: один образ у пам'яті, з якого працюють усі
+                                         панелі групи «Кодплаг»; дії над ним (відкрити / зберегти / записати / відкинути) -- doc_actions.py.
 
 Тема лише темна (gui_theme). Розмір вікна, останній розділ і видимість журналу запам'ятовуються між запусками (settings.py).
 """
@@ -25,29 +27,32 @@ import gui_theme as gt
 
 from .common import APP_TITLE, QueueWriter, load_usb_backend, read_build_info
 from .connection import RadioConnection
+from .doc_actions import DocActions
 from .p_aes import AesPanel
 from .p_aprs import AprsPanel
+from .p_aprs_slots import AprsSlotsPanel
 from .p_backup import BackupPanel
+from .p_basic import BasicInfoPanel
 from .p_connect import ConnectionPanel
 from .p_csv import CsvPanel
 from .p_flash import FlashPanel
 from .p_rctl import RctlPanel
 from .p_screenshot import ScreenshotPanel
 from .p_viewer import ViewerPanel
-from .panel import ScrollFrame
+from .panel import BUSY_REASON, HINT_NO_DOC, ScrollFrame
 from .settings import Settings
 
 # Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
     ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
-    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, CsvPanel]),
+    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, AprsSlotsPanel, CsvPanel]),
     ("grp_settings", "Налаштування рації", [AprsPanel, AesPanel, RctlPanel]),
 ]
 DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}
 
 
-class CpsApp(tk.Tk):
+class CpsApp(DocActions, tk.Tk):
     def __init__(self, settings=None, autoprobe=True):
         super().__init__()
         gt.apply(self)            # темна тема -- до створення будь-яких віджетів
@@ -60,6 +65,7 @@ class CpsApp(tk.Tk):
         self.conn = RadioConnection()
         self.busy = False
         self._task = None
+        self.init_document()
         self._panels = {}
         self._hosts = {}
         self._current = None
@@ -71,6 +77,7 @@ class CpsApp(tk.Tk):
                 self._defs[cls.key] = {"cls": cls, "title": cls.title, "group": gkey}
 
         self._build_ui()
+        self.update_doc_ui()
         self._apply_saved_window()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Configure>", self._on_configure)
@@ -148,6 +155,8 @@ class CpsApp(tk.Tk):
         if self.busy and not messagebox.askyesno(
                 "Іде операція", "Операція з рацією ще триває. Закрити програму зараз? Це може перервати запис.", default="no"):
             return
+        if not self.confirm_leave_document("закрити програму"):
+            return
         self.save_settings()
         self.destroy()
 
@@ -188,7 +197,8 @@ class CpsApp(tk.Tk):
         self.right = ttk.Frame(self.hpane)
         self.hpane.add(self.right, weight=1)
         self.right.columnconfigure(0, weight=1)
-        self.right.rowconfigure(0, weight=1)
+        self.right.rowconfigure(1, weight=1)
+        self._build_docbar()
 
         # журнал (згортається; висота за замовчуванням -- 4 рядки, межу можна тягнути)
         self.log_frame = ttk.Frame(self.vpane)
@@ -217,6 +227,8 @@ class CpsApp(tk.Tk):
         self.status_label.pack(side="left")
         self.log_toggle = ttk.Button(inner, text="", command=self.toggle_log)
         self.log_toggle.pack(side="right")
+        self.doc_label = ttk.Label(inner, text="Кодплаг не відкрито", foreground=gt.P["muted"])
+        self.doc_label.pack(side="right", padx=12)
         self.progress = ttk.Progressbar(inner, mode="determinate", maximum=100, length=220)    # не пакується, доки нема операції
         self._progress_shown = False
         self._update_log_toggle()
@@ -272,6 +284,78 @@ class CpsApp(tk.Tk):
                 pass
         return left_w, log_h
 
+    # --- панель документа -------------------------------------------------------------------
+
+    def _build_docbar(self):
+        """Над усіма розділами: дії над документом кодплага. Недоступне не зникає, а вимкнено з причиною (docbar_note)."""
+        bar = ttk.Frame(self.right)
+        bar.grid(row=0, column=0, sticky="ew")
+        self.docbar = bar
+        row = ttk.Frame(bar)
+        row.pack(fill="x", padx=12, pady=(6, 2))
+        self._docbtn_row = row
+        self._docbtn_items = [ttk.Label(row, text="Кодплаг:", font=("Segoe UI", 10, "bold"))]
+        self.docbtn = {}
+        for key, text, cmd in (("open_radio", "Відкрити з рації", lambda: self.doc_open_radio()),
+                               ("open_file", "Відкрити з бекапу...", lambda: self.doc_open_file()),
+                               ("save_as", "Зберегти як...", lambda: self.doc_save_as()),
+                               ("write", "Записати в рацію", lambda: self.doc_write()),
+                               ("discard", "Відкинути зміни", lambda: self.doc_discard())):
+            b = ttk.Button(row, text=text, command=cmd)
+            self.docbtn[key] = b
+            self._docbtn_items.append(b)
+        self._docbtn_layout = None
+        row.bind("<Configure>", self._relayout_docbar)
+        self._relayout_docbar()
+        self.docbar_note = ttk.Label(bar, text="", wraplength=700, justify="left", foreground=gt.P["warn"])
+        self._docbar_note_shown = False
+        ttk.Separator(bar, orient="horizontal").pack(fill="x", pady=(4, 0), side="bottom")
+
+    def _relayout_docbar(self, _e=None):
+        """Кнопки документа в один рядок, а коли вікно вузьке -- переносяться на наступний (нічого не обрізається)."""
+        w = self._docbtn_row.winfo_width()
+        if w <= 1:
+            w = 100000                      # ще не показано: усе в один рядок, перекладемо при першому <Configure>
+        plan, x, r, c = [], 0, 0, 0
+        for it in self._docbtn_items:
+            iw = it.winfo_reqwidth() + 8
+            if c and x + iw > w:
+                r, c, x = r + 1, 0, 0
+            plan.append((it, r, c))
+            x += iw
+            c += 1
+        sig = [(id(it), rr, cc_) for it, rr, cc_ in plan]
+        if sig == self._docbtn_layout:
+            return
+        self._docbtn_layout = sig
+        for it, rr, cc_ in plan:
+            it.grid(row=rr, column=cc_, padx=(0, 8), pady=2, sticky="w")
+
+    def refresh_docbar(self):
+        """Стан кнопок документа й підпис-причина поруч (кодплаг заблоковано, рації нема, тип рації не той тощо)."""
+        if not hasattr(self, "docbtn"):
+            return
+        reasons = self.doc_reasons()
+        for key, b in self.docbtn.items():
+            try:
+                b.config(state="disabled" if reasons.get(key) else "normal")
+            except tk.TclError:
+                pass
+        # причина показується один раз: насамперед для «Записати», далі для «Відкрити з рації»; «Відкрийте кодплаг…» -- не причина, а підказка
+        shown = ""
+        for key in ("write", "open_radio"):
+            r = reasons.get(key)
+            if r and r not in (HINT_NO_DOC, BUSY_REASON):
+                shown = ("Запис у рацію: " if key == "write" else "") + r
+                break
+        self.docbar_note.config(text=shown)
+        if shown and not self._docbar_note_shown:
+            self.docbar_note.pack(anchor="w", padx=12, pady=(0, 2))
+            self._docbar_note_shown = True
+        elif not shown and self._docbar_note_shown:
+            self.docbar_note.pack_forget()
+            self._docbar_note_shown = False
+
     # --- дерево і розділи -------------------------------------------------------------------
 
     def _on_tree_select(self, _e):
@@ -321,7 +405,7 @@ class CpsApp(tk.Tk):
         panel = self.get_panel(key)
         if self._current is not None and self._current != key:
             self._hosts[self._current].grid_remove()
-        self._hosts[key].grid(row=0, column=0, sticky="nsew")
+        self._hosts[key].grid(row=1, column=0, sticky="nsew")
         changed = key != self._current
         self._current = key
         panel.on_show()
@@ -337,7 +421,8 @@ class CpsApp(tk.Tk):
         return list(self._defs)
 
     def _refresh_all(self):
-        """Оновити стан кнопок поточної панелі й приглушення пунктів дерева."""
+        """Оновити стан кнопок поточної панелі, панелі документа й приглушення пунктів дерева."""
+        self.refresh_docbar()
         if self._current is not None and self._current in self._panels:
             self._panels[self._current].refresh_state()
         for key, d in self._defs.items():

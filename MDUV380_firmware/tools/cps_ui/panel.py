@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Базовий клас панелі правої області. Панель знає тільки про `shell` (вікно CpsApp) і його сервіси:
   shell.log(text), shell.set_status(text, kind), shell.run_task(...), shell.post(fn), shell.confirm_from_worker(...),
-  shell.conn (RadioConnection), shell.busy, shell.show(key).
+  shell.conn (RadioConnection), shell.busy, shell.show(key), shell.doc (відкритий документ кодплага або None).
 Дії, що потребують рації або розблокованого запису, реєструються через reg(): оболонка сама вимикає їх із поясненням причини
 (P1.7: недоступне не зникає, а лишається видимим і вимкненим)."""
 from tkinter import ttk
@@ -10,6 +10,7 @@ import cps_restore as cps_rest
 import gui_theme as gt
 
 BUSY_REASON = "Триває інша операція -- зачекай, поки вона завершиться."
+HINT_NO_DOC = "Відкрийте кодплаг з рації або з бекапу"
 
 
 class Panel(ttk.Frame):
@@ -17,13 +18,15 @@ class Panel(ttk.Frame):
     title = ""
     radio_only = False     # True -- увесь розділ потребує рації (у дереві приглушується, коли рації нема)
     scroll = True          # False -- панель сама розтягується на всю область і має власну прокрутку (таблиці)
+    doc_panel = False      # True -- панель працює з ДОКУМЕНТОМ кодплага (shell.doc); без документа показує підказку HINT_NO_DOC
 
     def __init__(self, parent, shell):
         super().__init__(parent)
         self.shell = shell
-        self._regs = []        # [(віджет, потребує рації, потребує розблокованого запису)]
+        self._regs = []        # [(віджет, потребує рації, потребує розблокованого запису, потребує відкритого документа)]
         self.note = None
         self._wrap_labels = None
+        self._doc_stale = False
         self.bind("<Configure>", self._on_resize)
 
     def _on_resize(self, e):
@@ -77,17 +80,19 @@ class Panel(ttk.Frame):
         else:
             self.note.pack_forget()
 
-    def reg(self, widget, radio=True, write=False):
-        """Зареєструвати кнопку: потребує знайденої рації (radio) і/або розблокованого запису (write)."""
-        self._regs.append((widget, radio, write))
+    def reg(self, widget, radio=True, write=False, doc=False):
+        """Зареєструвати кнопку: потребує знайденої рації (radio), розблокованого запису (write) і/або відкритого документа (doc)."""
+        self._regs.append((widget, radio, write, doc))
         return widget
 
     # --- стан ---
 
-    def disabled_reason(self, radio=True, write=False):
+    def disabled_reason(self, radio=True, write=False, doc=False):
         """Текст причини вимкнення або None, якщо дія доступна."""
         if self.shell.busy:
             return BUSY_REASON
+        if doc and self.shell.doc is None:
+            return HINT_NO_DOC
         if radio and not self.shell.conn.found:
             return self.shell.conn.reason()
         if write and not cps_rest.RESTORE_UNLOCKED:
@@ -96,13 +101,13 @@ class Panel(ttk.Frame):
 
     def refresh_state(self):
         shown = None
-        for w, radio, write in self._regs:
-            reason = self.disabled_reason(radio, write)
+        for w, radio, write, need_doc in self._regs:
+            reason = self.disabled_reason(radio, write, need_doc)
             try:
                 w.config(state="disabled" if reason else "normal")
             except Exception:  # noqa: BLE001 -- віджет міг бути знищений (напр. перегляд кодплага)
                 continue
-            if reason and shown is None and reason != cps_rest.LOCKED_CAPTION:
+            if reason and shown is None and reason not in (cps_rest.LOCKED_CAPTION, HINT_NO_DOC):
                 shown = reason
         self._set_note(shown or "")
         self.after_refresh()
@@ -110,8 +115,27 @@ class Panel(ttk.Frame):
     def after_refresh(self):
         """Місце для додаткових оновлень у нащадках (підписи, що залежать від стану)."""
 
+    @property
+    def doc(self):
+        return self.shell.doc
+
+    def doc_event(self, visible):
+        """Документ змінився (відкрито, закрито, відредаговано). Невидима панель оновиться при показі, видима -- одразу."""
+        if visible:
+            self._doc_stale = False
+            self.on_document_changed()
+            self.refresh_state()
+        else:
+            self._doc_stale = True
+
+    def on_document_changed(self):
+        """Місце для нащадків, що працюють з документом: перемалювати вміст за shell.doc."""
+
     def on_show(self):
         """Викликається щоразу, коли розділ обрано в дереві."""
+        if self._doc_stale:
+            self._doc_stale = False
+            self.on_document_changed()
         self.refresh_state()
 
 

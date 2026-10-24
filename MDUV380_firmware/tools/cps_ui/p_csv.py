@@ -1,48 +1,49 @@
 # -*- coding: utf-8 -*-
-"""Розділ «Кодплаг → CSV» (R26): експорт з рації, експорт з бекапу, імпорт у рацію, вибір десяткового знака. Експорт ЛИШЕ читає;
-імпорт іде ТІЄЮ САМОЮ дорогою, що й «Відновити кодплаг» (страхова копія -> діалог зі списком змін -> лише відмінні сектори ->
-перечитування -> SHA-256) і блокується тією ж константою. Логіку перенесено з gui_flasher.py без змін."""
+"""Розділ «Кодплаг → CSV» (R26, CPS-doc): експорт ДОКУМЕНТА в шість CSV і імпорт CSV У ДОКУМЕНТ. Формат CSV не змінено.
+
+Імпорт має ту саму сувору перевірку (усі проблеми одним списком ДО будь-якої зміни; при проблемі документ лишається як був). Після
+успішного імпорту таблиці перегляду оновлюються одразу, а рація не чіпається: у неї документ пишеться окремою дією «Записати в рацію»
+(страхова копія -> діалог зі списком змін -> лише відмінні сектори -> перечитування -> SHA-256)."""
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import cps_csv
 import cps_link as cps
-import cps_restore as cps_rest
+import gui_dialogs as gd
 import gui_theme as gt
 
 from .common import output_dir
-from .p_backup import show_restore_result, close_quietly
-from .panel import Panel
+from .panel import HINT_NO_DOC, Panel
 
 
 class CsvPanel(Panel):
     key = "csv"
     title = "CSV"
     CSV_DECIMAL_CHOICES = ("за системою", "кома", "крапка")
+    doc_panel = True
 
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
         self.csv_session = cps_csv.Session()      # R26: «про cp1251 вже попередили» -- один раз за сеанс
-        self.header("CSV", "Обмін кодплага з CSV у форматі OpenGD77 CPS. Рація має бути у звичайному режимі (не в DFU).")
+        self.header("CSV", "Обмін відкритого кодплага з CSV у форматі OpenGD77 CPS. Працює з документом (кодплаг відкривається з рації "
+                           "або з бекапу над розділами); рація тут не чіпається.")
+        self.hint = ttk.Label(self, text=HINT_NO_DOC, foreground=gt.P["muted"])
 
         ex = ttk.LabelFrame(self, text="Експорт (лише читання)")
         ex.pack(fill="x", padx=12, pady=6)
-        self.csv_export_radio_button = ttk.Button(ex, text="CSV з рації...", command=self._on_csv_export_radio_clicked)
-        self.csv_export_radio_button.pack(side="left", padx=8, pady=8)
-        self.reg(self.csv_export_radio_button)
-        self.csv_export_file_button = ttk.Button(ex, text="CSV з бекапу...", command=self._on_csv_export_file_clicked)
-        self.csv_export_file_button.pack(side="left", padx=8, pady=8)
-        self.reg(self.csv_export_file_button, radio=False)
+        self.csv_export_button = ttk.Button(ex, text="Зберегти документ у CSV...", command=self._on_export_clicked)
+        self.csv_export_button.pack(side="left", padx=8, pady=8)
+        self.reg(self.csv_export_button, radio=False, doc=True)
 
-        im = ttk.LabelFrame(self, text="Імпорт (ЗАПИС у рацію)")
+        im = ttk.LabelFrame(self, text="Імпорт (у ДОКУМЕНТ, не в рацію)")
         im.pack(fill="x", padx=12, pady=6)
-        self.csv_import_button = ttk.Button(im, text="Імпорт CSV у рацію...", command=self._on_csv_import_clicked)
+        self.csv_import_button = ttk.Button(im, text="Імпорт CSV у документ...", command=self._on_import_clicked)
         self.csv_import_button.pack(anchor="w", padx=8, pady=(8, 4))
-        self.reg(self.csv_import_button, radio=True, write=True)
-        self.import_note = ttk.Label(im, text="" if cps_rest.RESTORE_UNLOCKED else cps_rest.LOCKED_CAPTION, foreground=gt.P["warn"],
-                                     wraplength=600, justify="left")
-        self.import_note.pack(anchor="w", padx=8, pady=(0, 8))
+        self.reg(self.csv_import_button, radio=False, doc=True)
+        ttk.Label(im, text=("Спершу перевіряється ВЕСЬ CSV: якщо є проблеми, їх буде показано списком, а документ не зміниться. "
+                            "У рацію зміни потраплять лише за дією «Записати в рацію» над розділами."),
+                  wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 8))
 
         opt = ttk.LabelFrame(self, text="Формат чисел")
         opt.pack(fill="x", padx=12, pady=6)
@@ -50,74 +51,63 @@ class CsvPanel(Panel):
         self.csv_decimal_var = tk.StringVar(value=self.CSV_DECIMAL_CHOICES[0])
         self.csv_decimal_box = ttk.Combobox(opt, textvariable=self.csv_decimal_var, values=self.CSV_DECIMAL_CHOICES, state="readonly", width=14)
         self.csv_decimal_box.pack(side="left", pady=8)
+        self.on_document_changed()
 
-    def after_refresh(self):
-        self.import_note.config(text="" if cps_rest.RESTORE_UNLOCKED else cps_rest.LOCKED_CAPTION)
+    def on_document_changed(self):
+        if self.doc is None:
+            self.hint.pack(anchor="w", padx=12, pady=(0, 4), after=self._note_box)
+        else:
+            self.hint.pack_forget()
 
     def _csv_decimal(self):
         return {"кома": ",", "крапка": ".", "за системою": None}.get(self.csv_decimal_var.get())
 
-    def _csv_new_export_dir(self, parent_dir):
-        name = cps.timestamp_name("codeplug_csv", "")
-        return cps.unique_path(parent_dir, name)
-
-    def _on_csv_export_radio_clicked(self):
-        if self.shell.busy:
+    def _on_export_clicked(self):
+        d = self.doc
+        if d is None or self.shell.busy:
             return
-        parent_dir = filedialog.askdirectory(title="Куди покласти теку з CSV", initialdir=output_dir())
+        parent_dir = filedialog.askdirectory(parent=self.shell, title="Куди покласти теку з CSV", initialdir=output_dir())
         if not parent_dir:
             return
-        out = self._csv_new_export_dir(parent_dir)
-        dp = self._csv_decimal()
-        self.shell.run_task(lambda: self._csv_export_radio_worker(out, dp), "Читаю кодплаг з рації для CSV...",
-                            on_done=self._csv_export_done, fail_suffix="\n\nФайли CSV не створено.")
-
-    def _csv_export_radio_worker(self, out, dp):
-        ser = cps.open_radio()
+        out = cps.unique_path(parent_dir, cps.timestamp_name("codeplug_csv", ""))
         try:
-            return cps_csv.export_from_radio(cps.CpsLink(ser), out, dp, progress=self.shell.cps_progress, log=print)
-        finally:
-            ser.close()
+            paths = d.export_csv(out, self._csv_decimal(), log=self.shell.log)
+        except (OSError, cps.CpsError) as e:
+            messagebox.showerror("Помилка", "Файли CSV не створено:\n{}".format(e), parent=self.shell)
+            return
+        folder = os.path.dirname(paths[0]) if paths else out
+        messagebox.showinfo("CSV створено", "Шість файлів CSV (формат OpenGD77 CPS + додаткова колонка «Name (readable)»):\n{}".format(folder),
+                            parent=self.shell)
 
-    def _on_csv_export_file_clicked(self):
-        if self.shell.busy:
+    def _on_import_clicked(self):
+        d = self.doc
+        if d is None or self.shell.busy:
             return
-        path = filedialog.askopenfilename(title="Бекап кодплага", initialdir=output_dir(),
-                                          filetypes=[("Бекап кодплага (.zip)", "*.zip"), ("Усі файли", "*.*")])
-        if not path:
-            return
-        parent_dir = filedialog.askdirectory(title="Куди покласти теку з CSV", initialdir=os.path.dirname(path))
-        if not parent_dir:
-            return
-        out = self._csv_new_export_dir(parent_dir)
-        dp = self._csv_decimal()
-        self.shell.run_task(lambda: cps_csv.export_from_backup(path, out, dp, log=print), "Експортую бекап у CSV...",
-                            on_done=self._csv_export_done, fail_suffix="\n\nФайли CSV не створено.")
-
-    def _csv_export_done(self, paths):
-        folder = os.path.dirname(paths[0]) if paths else "?"
-        messagebox.showinfo("CSV створено", "Шість файлів CSV (формат OpenGD77 CPS + додаткова колонка «Name (readable)»):\n{}".format(folder))
-
-    def _on_csv_import_clicked(self):
-        if self.shell.busy or not cps_rest.RESTORE_UNLOCKED:
-            return
-        folder = filedialog.askdirectory(title="Тека з CSV (Channels.csv, Contacts.csv, ...)", initialdir=output_dir())
+        folder = filedialog.askdirectory(parent=self.shell, title="Тека з CSV (Channels.csv, Contacts.csv, ...)", initialdir=output_dir())
         if not folder:
             return
-        dp = self._csv_decimal()
-        self.shell.run_task(lambda: self._csv_import_worker(folder, dp), "Імпортую CSV у рацію...", on_done=self._csv_import_done,
-                            fail_suffix="\n\nЯкщо про відмову сказано «Нічого не записано» -- рація не змінена.", reconnect_ms=6000)
+        self.import_folder(folder)
 
-    def _csv_import_worker(self, folder, dp):
-        ser = cps.open_radio()
+    def import_folder(self, folder):
+        """Імпортувати CSV з теки У документ. Повертає ImportResult або None (відмова/нічого)."""
+        d = self.doc
         try:
-            return cps_csv.import_to_radio(cps.CpsLink(ser), folder, self.shell.confirm_from_worker, self.shell.cps_progress, log=print,
-                                           session=self.csv_session, dp=dp, out_dir=output_dir())
-        finally:
-            close_quietly(ser)
-
-    def _csv_import_done(self, res):
-        if res.get("nothingToDo") and not res.get("safetyCopy"):
-            messagebox.showinfo("Нічого імпортувати", "CSV не відрізняється від кодплага рації. Записувати нічого.")
-            return
-        show_restore_result(res)
+            tables = cps_csv.read_dir(folder)
+            if not tables:
+                raise cps_csv.CsvError("у теці %s немає жодного з файлів: %s" % (folder, ", ".join(cps_csv.FILE_NAMES.values())))
+            res = d.import_csv(tables, self._csv_decimal(), self.csv_session)
+        except cps_csv.CsvImportRefused as e:
+            self.shell.log("!!! Імпорт CSV відхилено (проблем: {}). Документ не змінено.".format(len(e.problems)))
+            gd.text_dialog(self.shell, "Імпорт CSV відхилено", str(e))
+            return None
+        except (OSError, cps.CpsError) as e:
+            messagebox.showerror("Помилка", "Імпорт CSV не вдався. Документ не змінено.\n\n{}".format(e), parent=self.shell)
+            return None
+        if not res.any_change():
+            messagebox.showinfo("Нічого імпортувати", "CSV не відрізняється від відкритого кодплага. Документ не змінено.", parent=self.shell)
+            return res
+        self.shell.log("Імпорт CSV у документ: {}".format(res.summary()))
+        gd.text_dialog(self.shell, "CSV імпортовано в документ",
+                       "\n".join(res.report_lines()) + "\n\n" + res.summary() + "\n\nДокумент змінено; рацію НЕ чіпали. "
+                       "Щоб записати зміни в рацію, натисни «Записати в рацію» над розділами.")
+        return res

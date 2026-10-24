@@ -29,6 +29,8 @@ EXPECTED = [
     ("grp_codeplug", "Кодплаг", ""),
     ("backup", "Бекап і відновлення", "grp_codeplug"),
     ("viewer", "Перегляд кодплага", "grp_codeplug"),
+    ("basic", "Основна інформація", "grp_codeplug"),
+    ("aprs_slots", "APRS-слоти", "grp_codeplug"),
     ("csv", "CSV", "grp_codeplug"),
     ("grp_settings", "Налаштування рації", ""),
     ("aprs", "APRS: бікон і позивний", "grp_settings"),
@@ -105,7 +107,7 @@ def test_gui():
                 check(tree.parent(key) == parent, "дерево: %s лежить у %r" % (key, parent))
         all_items = list(tree.get_children()) + [c for g in tree.get_children() for c in tree.get_children(g)]
         check(len(all_items) == len(EXPECTED), "дерево: рівно %d пунктів (є %d)" % (len(EXPECTED), len(all_items)))
-        check(sum(len(s[2]) for s in SECTIONS) == 9, "SECTIONS: 9 панелей")
+        check(sum(len(s[2]) for s in SECTIONS) == 11, "SECTIONS: 11 панелей")
 
         # --- стан 1: рації нема ---
         app.conn.mark_absent()
@@ -120,19 +122,20 @@ def test_gui():
             others = [k for k in app._hosts if k != want and app._hosts[k].winfo_ismapped()]
             check(not others, "відкрита лише одна панель, а видно ще %s" % others)
         # дії, що потребують рації, вимкнені з поясненням
-        for key in ("shot", "backup", "csv", "viewer", "aprs", "aes", "rctl"):
+        for key in ("shot", "backup", "aprs", "aes", "rctl"):
             panel = app.get_panel(key)
             app.show(key)
             app.update()
             check(panel.note is not None and "не знайдено" in panel.note.cget("text"), "%s: пояснення «рацію не знайдено» (є %r)" %
                   (key, panel.note.cget("text") if panel.note else None))
-            radio_btns = [w for (w, radio, _w) in panel._regs if radio]
+            radio_btns = [r[0] for r in panel._regs if r[1]]
             check(radio_btns and all(str(w.cget("state")) == "disabled" for w in radio_btns), "%s: кнопки, що потребують рації, вимкнені" % key)
         # без рації лишаються доступними: перегляд бекапу, CSV з бекапу, прошивка (рація може бути в DFU), оновлення
         app.show("backup"); app.update()
-        check(str(app.get_panel("backup").view_file_button.cget("state")) == "normal", "без рації: «Переглянути бекап» доступна")
-        app.show("csv"); app.update()
-        check(str(app.get_panel("csv").csv_export_file_button.cget("state")) == "normal", "без рації: «CSV з бекапу» доступна")
+        check(str(app.get_panel("backup").view_file_button.cget("state")) == "normal", "без рації: «Відкрити бекап у перегляді» доступна")
+        check(str(app.docbtn["open_file"].cget("state")) == "normal", "без рації: «Відкрити з бекапу» над розділами доступна")
+        check(str(app.docbtn["open_radio"].cget("state")) == "disabled", "без рації: «Відкрити з рації» вимкнена")
+        check("не знайдено" in app.docbar_note.cget("text"), "без рації: біля кнопок документа є причина (%r)" % app.docbar_note.cget("text"))
         app.show("flash"); app.update()
         check(str(app.get_panel("flash").flash_button.cget("state")) == "normal", "без рації: «ПРОШИТИ» доступна (рація може бути в DFU)")
         app.show("conn"); app.update()
@@ -163,12 +166,17 @@ def test_gui():
             app.show("backup"); app.update()
             b = app.get_panel("backup")
             check(str(b.restore_button.cget("state")) == "disabled" and cr.LOCKED_CAPTION in b.restore_note.cget("text"), "відновлення заблоковане з підписом")
-            app.show("csv"); app.update()
-            c = app.get_panel("csv")
-            check(str(c.csv_import_button.cget("state")) == "disabled" and cr.LOCKED_CAPTION in c.import_note.cget("text"), "імпорт CSV заблокований з підписом")
+            import test_cps_csv as _tc0
+            from cps_ui import document as _D0
+            _cp0, _d0 = _tc0.codeplug_of(_tc0.make_fixture_spi())
+            app.set_document(_D0.Document(_cp0, _D0.ORIGIN_FILE, source_file="x.zip"))
+            app.update()
+            check(str(app.docbtn["write"].cget("state")) == "disabled" and cr.LOCKED_CAPTION in app.docbar_note.cget("text"),
+                  "запис документа заблокований з підписом біля кнопки")
             cr.RESTORE_UNLOCKED = True
             app._refresh_all()
-            check(str(c.csv_import_button.cget("state")) == "normal", "розблоковано + рація: імпорт доступний")
+            check(str(app.docbtn["write"].cget("state")) == "normal", "розблоковано + рація + документ: «Записати в рацію» доступна")
+            app.set_document(None)
         finally:
             cr.RESTORE_UNLOCKED = old
 
@@ -218,14 +226,15 @@ def test_gui():
         import test_cps_csv as tc
         _spi = tc.make_fixture_spi()
         _cp, _d = tc.codeplug_of(_spi)
-        app.get_panel("viewer").open_codeplug(_cp, "тест", writable=True)
+        from cps_ui import document as _D
+        app.set_document(_D.Document(_cp, _D.ORIGIN_FILE, source_file="тест.zip"))
         leaf = [k for k in app.section_keys() if k not in FIRST_OF]
         for (W, H) in ((760, 520), (1800, 1000)):
             app.geometry("%dx%d" % (W, H))
             for _ in range(4):
                 app.update()
-            rw, rh = app.right.winfo_width(), app.right.winfo_height()
-            check(rw >= W - 420 and rh >= H - 200, "Q1 %dx%d: область панелі велика (%dx%d)" % (W, H, rw, rh))
+            rw, rh = app.right.winfo_width(), app.right.winfo_height() - app.docbar.winfo_height()
+            check(rw >= W - 420 and rh >= H - 270, "Q1 %dx%d: область панелі велика (%dx%d)" % (W, H, rw, rh))
             for key in leaf:
                 app.show(key)
                 for _ in range(3):
@@ -254,7 +263,7 @@ def test_gui():
                 for _ in range(3):
                     app.update()
                 check(app.get_panel("aprs")._wide is False, "Q1: на малому вікні APRS в одну колонку")
-        app.get_panel("viewer").close_viewer()
+        app.set_document(None)
         app.geometry("1000x700")
         for _ in range(4):
             app.update()
