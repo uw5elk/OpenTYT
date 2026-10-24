@@ -17,6 +17,8 @@ import codeplug_view as cv
 import gui_theme as gt
 import gui_dialogs as gd
 import contact_edit as ce
+import cps_csv as cc
+import table_edit as te
 
 # ширини колонок за назвою (пікселі); решта -- 120
 _WIDTHS = {"№": 50, "Назва": 190, "TG / ID": 100, "Тип": 80, "Кодування": 80, "Контактів": 80, "Склад": 420, "Каналів": 70,
@@ -54,8 +56,8 @@ class CodeplugViewer(ttk.Frame):
             for c in cols:
                 tree.heading(c, text=c)
                 tree.column(c, width=_WIDTHS.get(c, 120), anchor="w", stretch=(c in ("Склад", "Канали")))
-            vs = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-            hs = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+            vs = gt.AutoScrollbar(frame, orient="vertical", command=tree.yview)
+            hs = gt.AutoScrollbar(frame, orient="horizontal", command=tree.xview)
             tree.configure(yscrollcommand=vs.set, xscrollcommand=hs.set)
             tree.grid(row=0, column=0, sticky="nsew")
             vs.grid(row=0, column=1, sticky="ns")
@@ -190,9 +192,19 @@ class CodeplugViewer(ttk.Frame):
         orig = self._original(slot)
         if orig is None:
             return
-        warn = ce.delete_warning(self.document.image, slot)
-        if warn and not gd.confirm_dialog(self.winfo_toplevel(), "Видалити контакт?", warn + "\n\nВсе одно видалити (з документа; у рацію -- лише після запису)?",
-                                          yes="Видалити", no="Скасувати"):
+        refs = te.references(self.document.image, "contact", slot)
+        if refs:
+            # T0.3: запис, на який хтось посилається, не видаляється мовчки -- показуємо, хто посилається, і даємо вибір
+            text = ("Видалити контакт №%d «%s»?\n\nНа нього посилаються:\n%s\n\n«Скасувати» -- нічого не міняти.\n«Видалити разом із посиланнями» -- контакт "
+                    "зникне, його буде викреслено зі списків прийому, а поле «Контакт» у каналах стане «None»." % (slot + 1, orig[1], refs.text()))
+            choice = gd.choice_dialog(self.winfo_toplevel(), "Контакт використовується", text,
+                                      [("Скасувати", "cancel"), ("Видалити разом із посиланнями", "cascade")], 0)
+            if choice != "cascade":
+                return
+            try:
+                self.document.apply(te.delete_entity(self.document.image, "contact", slot, cc.system_decimal_point(), cascade=True))
+            except te.TableEditError as e:
+                messagebox.showerror("Контакти", str(e), parent=self.winfo_toplevel())
             return
         self._apply([{"op": "delete", "slot": slot, "expect_name": orig[4]}])
 

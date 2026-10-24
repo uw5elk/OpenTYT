@@ -210,7 +210,7 @@ def test_gui():
                     check("Ukraine" in txt, "попередження називає групу: %r" % txt[:120])
                     for ch in w.winfo_children():
                         for b in ch.winfo_children():
-                            if b.winfo_class() == "TButton" and b.cget("text") == "Видалити":
+                            if b.winfo_class() == "TButton" and b.cget("text") == "Видалити разом із посиланнями":
                                 b.invoke()
                                 return
         app.after(200, press_yes)
@@ -218,7 +218,10 @@ def test_gui():
         v.update()
         names = [tree.item(i)["values"][1] for i in tree.get_children()]
         check("LOCAL" not in names and "Київ" in names, "видалення одразу в документі: %r" % names)
-        check(len(doc.changes) == 2, "у журналі документа 2 зміни: %r" % doc.changes)
+        import table_edit as te_
+        ukr = [m for _s, nm, m in te_.tg_lists(doc.image) if nm == "Ukraine"]
+        check(ukr == [[1, 2]], "CPS-fix2 T0.3: «видалити разом із посиланнями» викреслило контакт зі списку «Ukraine»: %r" % ukr)
+        check(len(doc.changes) == 3, "у журналі документа 3 зміни (новий, видалений, змінений список): %r" % doc.changes)
         # під час операції з рацією правка вимкнена
         busy[0] = True
         v.set_editable(False)

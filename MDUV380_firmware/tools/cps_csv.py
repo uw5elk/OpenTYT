@@ -94,8 +94,11 @@ class CsvImportRefused(CsvError):
 class Session:
     """Стан одного сеансу роботи (прапорець «про cp1251 вже попередили»)."""
 
-    def __init__(self):
+    def __init__(self, numeric_refs=False):
         self.warned_cp1251 = False
+        # True -- посилання за номером «#N» приймаються, коли назва не знайшлась (так редактори документа вказують на записи з однаковими
+        # назвами). Для CSV-файлів завжди False: формат файла не змінюється.
+        self.numeric_refs = numeric_refs
 
 
 # =========================================================================================
@@ -791,66 +794,62 @@ def dtmf_code_text(code16):
     return "".join(out)
 
 
-def export_files(cp_or_image, outdir, dp=None, log=print):
-    """Записати шість CSV у outdir. cp_or_image -- codeplug_view.Codeplug або Image. Повертає список шляхів."""
+def export_rows(cp_or_image, dp=None):
+    """Усі шість таблиць у пам'яті: {ключ: (заголовок, [рядки])}. Це ТІ САМІ рядки, що йдуть у CSV (export_files лише пише їх у файли);
+    ними ж користуються редактори документа (table_edit.py): редактор змінює рядки й проганяє їх через import_csv."""
     img = cp_or_image if isinstance(cp_or_image, Image) else Image.from_codeplug(cp_or_image)
     dp = dp or system_decimal_point()
-    os.makedirs(outdir, exist_ok=True)
     ctx = make_ctx_for_export(img, dp)
-    paths = []
+    out = {}
+    out["channels"] = (CHANNEL_HDR + [READABLE], [channel_row(n, rec, ctx) for n, rec in img.channels()])
+    rows = []
+    for _slot, rec in img.contacts():
+        res1 = rec[23]
+        ts = "Disabled" if res1 & 0x01 else str(((res1 & 0x02) >> 1) + 1)
+        rows.append([compat_text(rec[:16]), str(cv.bcd_to_int(rec[16:20])), CALL_TYPE_NAMES.get(rec[20], "Group"), ts, readable_text(rec[:16])])
+    out["contacts"] = (CONTACT_HDR + [READABLE], rows)
+    rows = []
+    names = {slot + 1: compat_text(rec[:16]) for slot, rec in img.contacts()}
+    for _slot, rec, length in img.groups():
+        members = []
+        for k in range(length):
+            v = rec[16 + 2 * k] | (rec[17 + 2 * k] << 8)
+            if v == 0:
+                break
+            members.append(names.get(v, "#%d" % v))
+        rows.append([compat_text(rec[:16])] + members + [""] * (32 - len(members)) + [readable_text(rec[:16])])
+    out["tg_lists"] = (TG_HDR + [READABLE], rows)
+    rows = []
+    chn = {n: compat_text(rec[:16]) for n, rec in img.channels()}
+    n_per = img.zone_format()
+    for _bit, rec in img.zones():
+        members = []
+        for k in range(n_per):
+            v = rec[16 + 2 * k] | (rec[17 + 2 * k] << 8)
+            if v == 0:
+                break
+            members.append(chn.get(v, "#%d" % v))
+        rows.append([compat_text(rec[:16])] + members + [""] * (80 - len(members)) + [readable_text(rec[:16])])
+    out["zones"] = (ZONE_HDR + [READABLE], rows)
+    out["aprs"] = (APRS_HDR + [READABLE], [aprs_decode(rec, dp) + [readable_text(rec[:8])] for _slot, rec in img.aprs()])
+    out["dtmf"] = (DTMF_HDR + [READABLE], [[compat_text(rec[:16]), dtmf_code_text(rec[16:32]), readable_text(rec[:16])] for _slot, rec in img.dtmf()])
+    return out
 
-    def out(key):
+
+def export_files(cp_or_image, outdir, dp=None, log=print):
+    """Записати шість CSV у outdir. cp_or_image -- codeplug_view.Codeplug або Image. Повертає список шляхів."""
+    tables = export_rows(cp_or_image, dp)
+    os.makedirs(outdir, exist_ok=True)
+    paths = []
+    for key in ("channels", "contacts", "tg_lists", "zones", "aprs", "dtmf"):
         p = os.path.join(outdir, FILE_NAMES[key])
         paths.append(p)
-        return p
-
-    with _open_out(out("channels")) as f:
-        w = _writer(f)
-        w.writerow(CHANNEL_HDR + [READABLE])
-        for n, rec in img.channels():
-            w.writerow(channel_row(n, rec, ctx))
-    with _open_out(out("contacts")) as f:
-        w = _writer(f)
-        w.writerow(CONTACT_HDR + [READABLE])
-        for _slot, rec in img.contacts():
-            res1 = rec[23]
-            ts = "Disabled" if res1 & 0x01 else str(((res1 & 0x02) >> 1) + 1)
-            w.writerow([compat_text(rec[:16]), str(cv.bcd_to_int(rec[16:20])), CALL_TYPE_NAMES.get(rec[20], "Group"), ts, readable_text(rec[:16])])
-    with _open_out(out("tg_lists")) as f:
-        w = _writer(f)
-        w.writerow(TG_HDR + [READABLE])
-        names = {slot + 1: compat_text(rec[:16]) for slot, rec in img.contacts()}
-        for _slot, rec, length in img.groups():
-            members = []
-            for k in range(length):
-                v = rec[16 + 2 * k] | (rec[17 + 2 * k] << 8)
-                if v == 0:
-                    break
-                members.append(names.get(v, "#%d" % v))
-            w.writerow([compat_text(rec[:16])] + members + [""] * (32 - len(members)) + [readable_text(rec[:16])])
-    with _open_out(out("zones")) as f:
-        w = _writer(f)
-        w.writerow(ZONE_HDR + [READABLE])
-        chn = {n: compat_text(rec[:16]) for n, rec in img.channels()}
-        n_per = img.zone_format()
-        for _bit, rec in img.zones():
-            members = []
-            for k in range(n_per):
-                v = rec[16 + 2 * k] | (rec[17 + 2 * k] << 8)
-                if v == 0:
-                    break
-                members.append(chn.get(v, "#%d" % v))
-            w.writerow([compat_text(rec[:16])] + members + [""] * (80 - len(members)) + [readable_text(rec[:16])])
-    with _open_out(out("aprs")) as f:
-        w = _writer(f)
-        w.writerow(APRS_HDR + [READABLE])
-        for _slot, rec in img.aprs():
-            w.writerow(aprs_decode(rec, dp) + [readable_text(rec[:8])])
-    with _open_out(out("dtmf")) as f:
-        w = _writer(f)
-        w.writerow(DTMF_HDR + [READABLE])
-        for _slot, rec in img.dtmf():
-            w.writerow([compat_text(rec[:16]), dtmf_code_text(rec[16:32]), readable_text(rec[:16])])
+        header, rows = tables[key]
+        with _open_out(p) as f:
+            w = _writer(f)
+            w.writerow(header)
+            for row in rows:
+                w.writerow(row)
     log("Експорт: %s" % ", ".join(os.path.basename(p) for p in paths))
     return paths
 
@@ -1104,6 +1103,10 @@ class _Imp:
         hits = [n for n, (c, _r) in names.items() if c == text] or [n for n, (_c, r) in names.items() if r == text]
         if len(hits) == 1:
             return hits[0], None
+        if not hits and self.session is not None and getattr(self.session, "numeric_refs", False):
+            m = re.fullmatch(r"#(\d+)", (text or "").strip())
+            if m and int(m.group(1)) in names:
+                return int(m.group(1)), None
         label = {"contact": "контакту", "group": "TG-списку", "aprs": "APRS-конфігу", "channel": "каналу"}[kind]
         if not hits:
             return None, "немає %s з назвою «%s»" % (label, text)

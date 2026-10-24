@@ -148,7 +148,7 @@ class ScrollFrame(ttk.Frame):
         self.canvas = tk.Canvas(self, bg=gt.P["bg"], highlightthickness=0, borderwidth=0)
         self.vbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.vbar.set)
-        self.vbar.pack(side="right", fill="y")
+        self._bar_shown = False          # смуга з'являється лише тоді, коли вміст вищий за область (CPS-fix2 S2)
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner = ttk.Frame(self.canvas)
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
@@ -161,6 +161,14 @@ class ScrollFrame(ttk.Frame):
     def _fit(self):
         """Вміст займає всю ширину й, якщо коротший за область, усю висоту (тоді форми можуть розтягуватись); якщо вищий -- прокрутка."""
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        need = self.inner.winfo_reqheight() > h > 1
+        if need != self._bar_shown:
+            self._bar_shown = need
+            if need:
+                self.vbar.pack(side="right", fill="y", before=self.canvas)
+            else:
+                self.vbar.pack_forget()
+                self.canvas.yview_moveto(0)
         self.canvas.itemconfigure(self._win, width=w, height=max(h, self.inner.winfo_reqheight()))
         self.canvas.configure(scrollregion=(0, 0, w, max(h, self.inner.winfo_reqheight())))
 

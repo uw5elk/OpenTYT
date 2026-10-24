@@ -32,12 +32,11 @@ class ConnectionPanel(Panel):
         self.refresh_btn = ttk.Button(self, text="Оновити", command=lambda: self.shell.refresh_connection(force=True))
         self.refresh_btn.pack(anchor="w", padx=12, pady=6)
         self.reg(self.refresh_btn, radio=False)
+        ttk.Label(self, wraplength=640, justify="left", foreground=gt.P["muted"],
+                  text=("Режим DFU (прошивка) тут не показується: рація в завантажувачі не відповідає CPS-протоколу, "
+                        "тому розділ «Прошивка» доступний і без знайденої рації.")).pack(anchor="w", padx=12, pady=(0, 6))
         self.extra = ttk.Label(self, text="", wraplength=640, justify="left", foreground=gt.P["warn"])
         self.extra.pack(anchor="w", padx=12, pady=2)
-        ttk.Label(self, wraplength=640, justify="left", foreground=gt.P["muted"],
-                  text=("Режим DFU (прошивка) тут не показується: рація в завантажувачі не відповідає CPS-протоколу, тому розділ "
-                        "«Прошивка» лишається доступним, навіть коли рацію не знайдено. Заряд акумулятора CPS-протокол не передає.")).pack(
-            anchor="w", padx=12, pady=(8, 2))
 
     def after_refresh(self):
         c = self.shell.conn

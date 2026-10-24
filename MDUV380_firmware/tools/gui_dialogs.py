@@ -66,3 +66,206 @@ def choice_dialog(parent, title, text, buttons, default_index=0):
     win.grab_set()
     parent.wait_window(win)
     return res["value"]
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+#  CPS-fix2 / етап 3: діалоги редакторів списків прийому, зон і каналів
+# ----------------------------------------------------------------------------------------------------------------------------
+
+def _small_window(parent, title):
+    win = tk.Toplevel(parent)
+    gt.style_window(win)
+    win.title(title)
+    win.transient(parent.winfo_toplevel())
+    win.resizable(True, True)
+    return win
+
+
+def _live_check(check, text):
+    """check(text) -> None (усе гаразд) | текст проблеми. Повертає (ok, повідомлення, колір)."""
+    try:
+        problem = check(text) if check else None
+    except Exception as e:  # noqa: BLE001 -- перевірка не має валити діалог
+        problem = str(e)
+    if problem:
+        return False, problem, gt.P["err"]
+    return True, "Назва підходить.", gt.P["muted"]
+
+
+def name_dialog(parent, title, prompt, initial="", check=None, ok="Гаразд"):
+    """Один рядок тексту з живою перевіркою (check(текст) -> None або текст проблеми). Кнопка неактивна, поки є проблема.
+    Повертає текст або None (скасовано)."""
+    win = _small_window(parent, title)
+    result = {"value": None}
+    var = tk.StringVar(value=initial)
+    body = ttk.Frame(win)
+    body.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+    ttk.Label(body, text=prompt).pack(anchor="w")
+    entry = ttk.Entry(body, textvariable=var, width=40)
+    entry.pack(fill="x", pady=4)
+    msg = ttk.Label(body, text="", wraplength=380, justify="left")
+    msg.pack(anchor="w", pady=2)
+    bar = ttk.Frame(win)
+    bar.pack(fill="x", padx=12, pady=(4, 12))
+
+    def finish(value):
+        result["value"] = value
+        win.destroy()
+    ok_btn = ttk.Button(bar, text=ok, command=lambda: finish(var.get()))
+    ok_btn.pack(side="right", padx=(8, 0))
+    ttk.Button(bar, text="Скасувати", command=lambda: finish(None)).pack(side="right")
+
+    def update(*_a):
+        good, text, color = _live_check(check, var.get())
+        msg.config(text=text, foreground=color)
+        ok_btn.config(state="normal" if good else "disabled")
+    var.trace_add("write", update)
+    update()
+    win.bind("<Return>", lambda _e: ok_btn.invoke() if str(ok_btn.cget("state")) == "normal" else None)
+    win.bind("<Escape>", lambda _e: finish(None))
+    win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+    entry.focus_set()
+    entry.select_range(0, "end")
+    win.update_idletasks()
+    win.grab_set()
+    parent.wait_window(win)
+    return result["value"]
+
+
+def pick_dialog(parent, title, name_prompt, items, limit, check=None, ok="Створити", noun="елементів", initial=""):
+    """Назва + вибір елементів (мінімум 1, не більше limit) зі списку items [(значення, підпис)]. Порядок результату -- як у списку.
+    Повертає (назва, [значення]) або None."""
+    win = _small_window(parent, title)
+    win.minsize(460, 460)
+    result = {"value": None}
+    var = tk.StringVar(value=initial)
+    flt = tk.StringVar()
+    body = ttk.Frame(win)
+    body.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+    ttk.Label(body, text=name_prompt).pack(anchor="w")
+    entry = ttk.Entry(body, textvariable=var, width=40)
+    entry.pack(fill="x", pady=4)
+    msg = ttk.Label(body, text="", wraplength=420, justify="left")
+    msg.pack(anchor="w", pady=2)
+    ttk.Label(body, text="Фільтр списку:").pack(anchor="w", pady=(6, 0))
+    ttk.Entry(body, textvariable=flt).pack(fill="x", pady=2)
+    frame = ttk.Frame(body)
+    frame.pack(fill="both", expand=True, pady=4)
+    lb = tk.Listbox(frame, selectmode="extended", exportselection=False, height=12)
+    gt.style_text(lb)
+    sb = gt.AutoScrollbar(frame, orient="vertical", command=lb.yview)
+    lb.configure(yscrollcommand=sb.set)
+    lb.grid(row=0, column=0, sticky="nsew")
+    sb.grid(row=0, column=1, sticky="ns")
+    frame.rowconfigure(0, weight=1)
+    frame.columnconfigure(0, weight=1)
+    count = ttk.Label(body, text="")
+    count.pack(anchor="w")
+    chosen = []                 # значення, відмічені користувачем (зберігаються, поки список фільтрується)
+    shown = []
+
+    def fill(*_a):
+        lb.delete(0, "end")
+        shown.clear()
+        needle = flt.get().strip().casefold()
+        for value, label in items:
+            if not needle or needle in label.casefold():
+                shown.append(value)
+                lb.insert("end", label)
+                if value in chosen:
+                    lb.selection_set("end")
+        refresh()
+
+    def on_select(_e=None):
+        vis = set(lb.curselection())
+        for i, value in enumerate(shown):
+            if i in vis and value not in chosen:
+                chosen.append(value)
+            elif i not in vis and value in chosen:
+                chosen.remove(value)
+        refresh()
+
+    ok_btn = None
+
+    def refresh():
+        good, text, color = _live_check(check, var.get())
+        n = len(chosen)
+        if good and n == 0:
+            good, text, color = False, "Оберіть хоча б один елемент (порожнього запису рація не використовує).", gt.P["warn"]
+        elif good and n > limit:
+            good, text, color = False, "Забагато: обрано %d, ліміт кодплага -- %d %s." % (n, limit, noun), gt.P["err"]
+        msg.config(text=text, foreground=color)
+        count.config(text="Обрано: %d з %d" % (n, limit))
+        if ok_btn is not None:
+            ok_btn.config(state="normal" if good else "disabled")
+    lb.bind("<<ListboxSelect>>", on_select)
+    flt.trace_add("write", fill)
+    var.trace_add("write", lambda *_a: refresh())
+    bar = ttk.Frame(win)
+    bar.pack(fill="x", padx=12, pady=(4, 12))
+
+    def finish(value):
+        result["value"] = value
+        win.destroy()
+    ok_btn = ttk.Button(bar, text=ok, command=lambda: finish((var.get(), [v for v, _l in items if v in chosen])))
+    ok_btn.pack(side="right", padx=(8, 0))
+    ttk.Button(bar, text="Скасувати", command=lambda: finish(None)).pack(side="right")
+    win.bind("<Escape>", lambda _e: finish(None))
+    win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+    fill()
+    entry.focus_set()
+    win.update_idletasks()
+    win.grab_set()
+    parent.wait_window(win)
+    return result["value"]
+
+
+def new_channel_dialog(parent, title, check=None, base_label=None):
+    """Назва нового каналу + тип (аналоговий / цифровий). base_label -- підпис вибраного каналу: з'являється прапорець «взяти за основу»
+    (тоді тип береться з нього). Повертає (назва, цифровий?, за_основою?) або None."""
+    win = _small_window(parent, title)
+    result = {"value": None}
+    var = tk.StringVar()
+    kind = tk.StringVar(value="analog")
+    use_base = tk.BooleanVar(value=False)
+    body = ttk.Frame(win)
+    body.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+    ttk.Label(body, text="Назва нового каналу:").pack(anchor="w")
+    entry = ttk.Entry(body, textvariable=var, width=40)
+    entry.pack(fill="x", pady=4)
+    msg = ttk.Label(body, text="", wraplength=380, justify="left")
+    msg.pack(anchor="w", pady=2)
+    box = ttk.LabelFrame(body, text="Тип")
+    box.pack(fill="x", pady=6)
+    r1 = ttk.Radiobutton(box, text="Аналоговий (FM)", variable=kind, value="analog")
+    r1.pack(anchor="w", padx=8, pady=2)
+    r2 = ttk.Radiobutton(box, text="Цифровий (DMR)", variable=kind, value="digital")
+    r2.pack(anchor="w", padx=8, pady=2)
+    ttk.Label(body, text="Частоти RX/TX нового каналу -- типові (145,50000 МГц): змініть їх у формі.", wraplength=380, justify="left",
+              foreground=gt.P["muted"]).pack(anchor="w", pady=2)
+    if base_label:
+        ttk.Checkbutton(body, text="Узяти значення з вибраного каналу: %s (тип береться з нього)" % base_label, variable=use_base,
+                        command=lambda: [w.config(state="disabled" if use_base.get() else "normal") for w in (r1, r2)]).pack(anchor="w", pady=4)
+    bar = ttk.Frame(win)
+    bar.pack(fill="x", padx=12, pady=(4, 12))
+
+    def finish(value):
+        result["value"] = value
+        win.destroy()
+    ok_btn = ttk.Button(bar, text="Створити", command=lambda: finish((var.get(), kind.get() == "digital", bool(use_base.get()))))
+    ok_btn.pack(side="right", padx=(8, 0))
+    ttk.Button(bar, text="Скасувати", command=lambda: finish(None)).pack(side="right")
+
+    def update(*_a):
+        good, text, color = _live_check(check, var.get())
+        msg.config(text=text, foreground=color)
+        ok_btn.config(state="normal" if good else "disabled")
+    var.trace_add("write", update)
+    update()
+    win.bind("<Escape>", lambda _e: finish(None))
+    win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+    entry.focus_set()
+    win.update_idletasks()
+    win.grab_set()
+    parent.wait_window(win)
+    return result["value"]
