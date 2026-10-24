@@ -57,3 +57,12 @@ def text_dialog(parent, title, text, close="Закрити"):
     win, _res = _build(parent, title, text, [(close, None)], 0)
     win.grab_set()
     parent.wait_window(win)
+
+
+def choice_dialog(parent, title, text, buttons, default_index=0):
+    """Вибір з кількох кнопок. buttons: [(підпис, значення)] -- ПЕРША в списку стоїть крайньою правою (і має фокус, якщо default_index = 0).
+    Закриття вікна без вибору повертає None."""
+    win, res = _build(parent, title, text, buttons, default_index, width=70, height=10)
+    win.grab_set()
+    parent.wait_window(win)
+    return res["value"]

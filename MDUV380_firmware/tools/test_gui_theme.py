@@ -84,7 +84,12 @@ def test_widget_tree():
         for key in app.section_keys():
             app.show(key)
             app.update()
-        app.get_panel("viewer").open_codeplug(cp, "тест", writable=True)
+        from cps_ui import document as _doc
+        app.set_document(_doc.Document(cp, _doc.ORIGIN_FILE, source_file="тест.zip"))
+        for key in app.section_keys():            # з відкритим документом: усі панелі й таблиці теж темні
+            app.show(key)
+            app.update()
+        app.get_panel("aprs_slots")._on_new()
         app.update()
         wins = [app]
         dlg, _r = gd._build(app, "Тест", "Рядок 1\nРядок 2", [("Так", True), ("Ні", False)], 1)

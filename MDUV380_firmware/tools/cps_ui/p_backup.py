@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 """Розділ «Кодплаг → Бекап і відновлення»: бекап у .zip (R24, лише читання), перегляд бекапу, відновлення (R25, ЗАПИС у рацію;
 заблоковано константою cps_restore.RESTORE_UNLOCKED). Логіку перенесено з gui_flasher.py без змін."""
-import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-import codeplug_view as cpview
 import cps_link as cps
 import cps_restore as cps_rest
 import gui_theme as gt
@@ -53,9 +51,9 @@ class BackupPanel(Panel):
         self.reg(self.backup_button)
         ttk.Checkbutton(box, text="повний знімок (+ голосові підказки і ключі AES)", variable=self.full_snapshot_var).pack(anchor="w", padx=8, pady=(0, 8))
 
-        view = ttk.LabelFrame(self, text="Перегляд бекапу")
+        view = ttk.LabelFrame(self, text="Перегляд і правка бекапу")
         view.pack(fill="x", padx=12, pady=6)
-        self.view_file_button = ttk.Button(view, text="Переглянути бекап...", command=self._on_view_file_clicked)
+        self.view_file_button = ttk.Button(view, text="Відкрити бекап у перегляді...", command=self._on_view_file_clicked)
         self.view_file_button.pack(anchor="w", padx=8, pady=8)
         self.reg(self.view_file_button, radio=False)        # файл читається з диска, рація не потрібна
 
@@ -95,22 +93,13 @@ class BackupPanel(Panel):
             print("ПОВНИЙ ЗНІМОК: у файлі ключі AES -- зберігай його як секрет.")
         return [path]
 
-    # --- перегляд бекапу (відкривається в розділі «Перегляд кодплага») ---
+    # --- перегляд бекапу: відкривається як ДОКУМЕНТ (тим самим, що й «Відкрити з бекапу» над розділами) ---
 
     def _on_view_file_clicked(self):
         if self.shell.busy:
             return
-        path = filedialog.askopenfilename(title="Бекап кодплага", initialdir=output_dir(),
-                                          filetypes=[("Бекап кодплага (.zip)", "*.zip"), ("Усі файли", "*.*")])
-        if not path:
-            return
-        try:
-            cp, _manifest = cpview.codeplug_from_backup(path)
-        except (OSError, cps.CpsError) as e:
-            messagebox.showerror("Помилка", "Не вдалося прочитати бекап:\n{}".format(e))
-            return
-        self.shell.show("viewer")
-        self.shell.get_panel("viewer").open_codeplug(cp, os.path.basename(path), writable=False)
+        if self.shell.doc_open_file():
+            self.shell.show("viewer")
 
     # --- відновлення (ЗАПИС у рацію) ---
 
