@@ -2,7 +2,6 @@
 """Розділ «Рація → Знімок екрана» (R24, лише читання). Перенесено з gui_flasher.py без змін логіки."""
 from tkinter import ttk
 
-import tkinter as tk
 
 import cps_link as cps
 
@@ -19,15 +18,12 @@ class ScreenshotPanel(Panel):
         super().__init__(parent, shell)
         self.header("Знімок екрана", "Знімає те, що зараз на екрані рації, і зберігає в теці MD-UV390UKR (у домашній теці). "
                                      "Лише читання: у рацію нічого не записується. Рація має бути у звичайному режимі (не в DFU).")
-        self.shot_diag_var = tk.BooleanVar(value=False)
         self.shot_button = ttk.Button(self, text="Знімок екрана", command=self._on_screenshot_clicked)
         self.shot_button.pack(anchor="w", padx=12, pady=6)
         self.reg(self.shot_button)
-        ttk.Checkbutton(self, text="діагностика (обидва порядки байтів + сирий буфер)", variable=self.shot_diag_var).pack(anchor="w", padx=12)
 
     def _on_screenshot_clicked(self):
-        diag = bool(self.shot_diag_var.get())
-        self.shell.run_task(lambda: self._screenshot_worker(diag), "Знімаю екран рації...")
+        self.shell.run_task(lambda: self._screenshot_worker(False), "Знімаю екран рації...")
 
     def _screenshot_worker(self, diagnostic):
         ser = cps.open_radio()

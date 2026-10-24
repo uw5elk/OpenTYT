@@ -221,6 +221,53 @@ def test_aes_slot_warning():
     check(not res2.any_change(), "той самий DMR ID -- нічого не змінюється")
 
 
+def _chan_rows(img):
+    """Усі клітинки CSV-рядків каналів (як їх бачить експорт) -- для порівняння «що змінилося»."""
+    hdr, rows = te.tables_of(img, DP)["channels"]
+    return hdr, [list(r) for r in rows]
+
+
+def test_aes_key_in_channel():
+    """V3 / W2: ключ AES у каналі пишеться тим самим байтом, що читає прошивка; решта запису (зокрема DMR ID) і CSV-рядки не змінюються."""
+    doc, _s, _d = fixture_doc()
+    img = doc.image
+    own = 1                                                                 # канал №1 -- цифровий, з власним DMR ID
+    plain = [n for n, r in img.channels() if r[cc.O_MODE] != 0 and not (r[cc.O_FLAG1L] & cc.FL_DMRID)]
+    analog = [n for n, r in img.channels() if r[cc.O_MODE] == 0]
+    check(img.channel_rec(own)[cc.O_FLAG1L] & cc.FL_DMRID and plain and analog, "фікстура: є канал з DMR ID, цифровий без нього й аналоговий")
+    plain = plain[0]
+    for n in (plain, own):
+        before_rec = img.channel_rec(n)
+        before_hdr, before_rows = _chan_rows(img)
+        res = te.channel_set_aes_slot(img, n, 7)
+        after_rec = res.image.channel_rec(n)
+        diff = [i for i in range(len(before_rec)) if before_rec[i] != after_rec[i]]
+        want = te.AES_UNUSED2_OFF if n == own else te.AES_ENCRYPT_OFF
+        check(diff == [want], "канал №%d: ключ 7 змінює лише байт %d, змінено %r" % (n, want, diff))
+        check(te.aes_slot(after_rec) == 7, "канал №%d: прошивка (aes_slot) читає ключ 7" % n)
+        hdr2, rows2 = _chan_rows(res.image)
+        check(hdr2 == before_hdr and rows2 == before_rows, "канал №%d: CSV-рядки каналів після зміни ключа ті самі (DMR ID й решта полів цілі)" % n)
+        check(bool(res.warnings) == (n == own), "канал №%d: попередження про спільні байти лише на каналі з власним DMR ID: %r" % (n, res.warnings))
+        # знімаємо ключ: повертається вихідний запис
+        res0 = te.channel_set_aes_slot(res.image, n, 0)
+        check(te.aes_slot(res0.image.channel_rec(n)) == 0, "канал №%d: ключ 0 -- без шифрування" % n)
+        # той самий ключ -- змін нема
+        check(not te.channel_set_aes_slot(res.image, n, 7).any_change(), "канал №%d: той самий ключ -- нічого не змінюється" % n)
+    # V3.3: порядок «ключ, потім DMR ID» -- попередження про скинутий слот; «DMR ID, потім ключ» -- DMR ID цілий
+    keyed = te.channel_set_aes_slot(img, own, 4).image
+    res = te.channel_edit(keyed, own, {"DMR ID": "None"}, DP)
+    check(any("AES-слот" in w and "ключ 4" in w for w in res.warnings), "ключ -> зміна DMR ID: попередження про скинутий слот: %r" % res.warnings)
+    dmr_before = te.channel_values(img, own, DP)["DMR ID"]
+    res2 = te.channel_edit(img, own, {"DMR ID": "123456"}, DP)
+    res3 = te.channel_set_aes_slot(res2.image, own, 9)
+    check(te.channel_values(res3.image, own, DP)["DMR ID"] == "123456" and dmr_before != "123456", "DMR ID -> ключ: новий DMR ID цілий")
+    check(te.aes_slot(res3.image.channel_rec(own)) == 9, "DMR ID -> ключ: слот встановлено")
+    # відмови
+    check(refused(te.channel_set_aes_slot, img, plain, 16) and refused(te.channel_set_aes_slot, img, plain, -1), "ключ поза 0..15 відхилено")
+    check(refused(te.channel_set_aes_slot, img, analog[0], 3), "аналоговий канал: ключа нема")
+    check(refused(te.channel_set_aes_slot, img, 999, 3), "невідомий канал відхилено")
+
+
 def test_cp1251_warning():
     doc, _s, _d = fixture_doc()
     res = te.add_entity(doc.image, "tg", "Київ і Їжак", [1], DP)
@@ -527,6 +574,22 @@ def test_gui():
         c.fields["Contact"]["var"].set(labels[2])
         c.commit("Contact")
         check(te.channel_refs(app.doc.image, 2)["Contact"] == 2, "контакт обрано зі списку")
+        # V3: ключ AES у каналі -- випадний список 0..15; зайнятість слотів лише з даних «AES-ключі», матеріалу ключа нема
+        aes = c.fields[te.AES_KEY_COLUMN]
+        vals = list(aes["widget"].cget("values"))
+        check(len(vals) == 16 and vals[0].startswith("0 ") and str(aes["widget"].cget("state")) != "disabled", "V3.1: поле «Ключ AES» -- 16 пунктів, на цифровому каналі доступне")
+        check("невідомо" in c._aes_hint.cget("text"), "V3.2: до читання слотів -- підказка, що зайнятість невідома")
+        aes["var"].set(vals[5])
+        c.commit(te.AES_KEY_COLUMN)
+        check(te.aes_slot(app.doc.image.channel_rec(2)) == 5 and app.doc.modified, "V3.1: ключ 5 потрапив у документ")
+        app.aes_slots = {"occupied": (5, 9)}
+        app.on_aes_slots_changed()
+        _spin(app)
+        check("ключ є" in c._aes_label(5) and "порожній" in c._aes_label(3) and "5, 9" in c._aes_hint.cget("text"), "V3.2: зайняті слоти позначені: %s / %s" % (c._aes_label(5), c._aes_hint.cget("text")))
+        check(c._display(te.AES_KEY_COLUMN) == "5" and "ключ є" in aes["var"].get(), "підпис оновився, вибір лишився")
+        aes["var"].set(c._aes_label(3))
+        c.commit(te.AES_KEY_COLUMN)
+        check(te.aes_slot(app.doc.image.channel_rec(2)) == 3 and "немає ключа" in c.msg.cget("text"), "слот без ключа в рації: ключ записано, попередження в повідомленні")
         # фільтр
         c._filter.set("pmr")
         _spin(app)
@@ -678,7 +741,7 @@ def _all(w):
 
 
 def main():
-    for t in (test_export_rows_same_as_files, test_tg_lists, test_zones, test_channels_edit, test_aes_slot_warning, test_cp1251_warning, test_duplicate_names_numeric_refs,
+    for t in (test_export_rows_same_as_files, test_tg_lists, test_zones, test_channels_edit, test_aes_slot_warning, test_aes_key_in_channel, test_cp1251_warning, test_duplicate_names_numeric_refs,
               test_delete_with_references, test_limits, test_csv_roundtrip_of_edits, test_untouched_roundtrip, test_write_edited_document, test_gui):
         try:
             t()

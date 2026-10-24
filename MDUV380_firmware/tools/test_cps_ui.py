@@ -33,16 +33,15 @@ EXPECTED = [
     ("channels", "Канали", "grp_codeplug"),
     ("zones", "Зони", "grp_codeplug"),
     ("tglists", "Списки прийому", "grp_codeplug"),
-    ("aprs_slots", "APRS-слоти", "grp_codeplug"),
+    ("aprs", "APRS", "grp_codeplug"),
     ("csv", "CSV", "grp_codeplug"),
     ("grp_settings", "Налаштування рації", ""),
-    ("aprs", "APRS: бікон і позивний", "grp_settings"),
     ("aes", "AES-ключі", "grp_settings"),
     ("rctl", "Віддалене керування (RCTL)", "grp_settings"),
 ]
 
 
-FIRST_OF = {"grp_radio": "conn", "grp_codeplug": "backup", "grp_settings": "aprs"}
+FIRST_OF = {"grp_radio": "conn", "grp_codeplug": "backup", "grp_settings": "aes"}
 
 
 def check(cond, msg):
@@ -80,6 +79,7 @@ def _buttons(panel):
 def test_gui():
     try:
         import tkinter  # noqa: F401
+        import tkinter.ttk
     except ImportError:
         print("ПРОПУЩЕНО: нема tkinter")
         return
@@ -110,7 +110,7 @@ def test_gui():
                 check(tree.parent(key) == parent, "дерево: %s лежить у %r" % (key, parent))
         all_items = list(tree.get_children()) + [c for g in tree.get_children() for c in tree.get_children(g)]
         check(len(all_items) == len(EXPECTED), "дерево: рівно %d пунктів (є %d)" % (len(EXPECTED), len(all_items)))
-        check(sum(len(s[2]) for s in SECTIONS) == 14, "SECTIONS: 14 панелей")
+        check(sum(len(s[2]) for s in SECTIONS) == 13, "SECTIONS: 13 панелей (APRS злито в одну)")
 
         # --- стан 1: рації нема ---
         app.conn.mark_absent()
@@ -125,7 +125,7 @@ def test_gui():
             others = [k for k in app._hosts if k != want and app._hosts[k].winfo_ismapped()]
             check(not others, "відкрита лише одна панель, а видно ще %s" % others)
         # дії, що потребують рації, вимкнені з поясненням
-        for key in ("shot", "backup", "aprs", "aes", "rctl"):
+        for key in ("shot", "backup", "aes", "rctl"):
             panel = app.get_panel(key)
             app.show(key)
             app.update()
@@ -144,7 +144,15 @@ def test_gui():
         app.show("conn"); app.update()
         cp = app.get_panel("conn")
         check("не знайдено" in cp.vals["state"].cget("text"), "підключення: стан «не знайдено»")
-        check("недоступно" in cp.vals["battery"].cget("text"), "підключення: заряд -- чесне «недоступно»")
+        # CB1: рядка заряду, прапорця діагностики і блоку TX-ключа більше нема
+        check("battery" not in cp.vals and "Заряд" not in " ".join(str(w.cget("text")) for w in _walk(cp) if "text" in w.keys()), "CB1: рядка «Заряд акумулятора» нема")
+        app.show("shot"); app.update()
+        check(not any(isinstance(w, tkinter.ttk.Checkbutton) for w in _walk(app.get_panel("shot"))), "CB1: у «Знімок екрана» нема прапорця діагностики")
+        app.show("aes"); app.update()
+        aes_texts = [str(w.cget("text")) for w in _walk(app.get_panel("aes")) if "text" in w.keys()]
+        check(not any("TX" in t and "ключ" in t.lower() and "слот" not in t.lower() for t in aes_texts) and not hasattr(app.get_panel("aes"), "tx_btn"),
+              "CB1: в «AES-ключі» нема блоку «Активний ключ для передачі (TX)»: %r" % [t for t in aes_texts if "TX" in t])
+        app.show("conn"); app.update()
         check(tree.item("aes", "tags") and "dim" in tree.item("aes", "tags"), "дерево: AES приглушений без рації")
         check(not tree.item("flash", "tags"), "дерево: «Прошивка» не приглушена")
 
@@ -371,6 +379,12 @@ def test_gui():
         check(app3.log_text.cget("height") == 4, "Q3.1: журнал на 4 рядки")
     finally:
         app3.destroy()
+
+
+def _walk(w):
+    yield w
+    for c in w.winfo_children():
+        yield from _walk(c)
 
 
 def main():

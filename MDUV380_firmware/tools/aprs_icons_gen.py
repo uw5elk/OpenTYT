@@ -5,6 +5,8 @@
 Виходи (КОМІТЯТЬСЯ; CI у мережу не ходить, Python під час збірки прошивки не потрібен):
   application/source/functions/aprs_icons.c   -- індекс [таблиця][код] -> зміщення + пул даних (const у flash, 0 байт RAM/CCM)
   docs/aprs-icons.md                          -- контактний аркуш усіх піктограм (напівблоки), щоб переглянути набір одним файлом
+  tools/aprs_icons_data.py                    -- ті самі 72-байтові зображення (hex) і назви для вікна CPS (CPS-fix3 V2: сітка вибору символу APRS); окремий
+                                                 .py, а не читання txt, бо PyInstaller вбудовує імпортований модуль, а файл-довідник у .exe не потрапив би
 
 Використання:
   python3 MDUV380_firmware/tools/aprs_icons_gen.py            # перегенерувати обидва файли
@@ -29,6 +31,7 @@ ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 TXT = os.path.join(HERE, 'aprs_icons.txt')
 CFILE = os.path.join(ROOT, 'MDUV380_firmware', 'application', 'source', 'functions', 'aprs_icons.c')
 MDFILE = os.path.join(ROOT, 'docs', 'aprs-icons.md')
+PYFILE = os.path.join(HERE, 'aprs_icons_data.py')
 NAMES_H = os.path.join(ROOT, 'MDUV380_firmware', 'application', 'include', 'user_interface', 'languages', 'aprsmode_ua.h')
 
 W = H = 24
@@ -292,6 +295,20 @@ def build_md(icons, sizes):
     return '\n'.join(L)
 
 
+def build_py(icons):
+    """tools/aprs_icons_data.py: ICONS['<таблиця><код>'] = (назва, 144 hex-символи = ті самі 72 байти XBM, що й у aprs_icons.c)."""
+    L = ['# -*- coding: utf-8 -*-',
+         '"""ЗГЕНЕРОВАНО tools/aprs_icons_gen.py з tools/aprs_icons.txt -- НЕ РЕДАГУВАТИ РУКАМИ (правити txt і перегенерувати).',
+         'Піктограми символів APRS 24x24 для вікна CPS (сітка вибору символу): ключ -- таблиця (\'/\' або \'\\\\\') + код символу; значення -- (назва, 72 байти XBM у hex:',
+         '24 рядки по 3 байти, молодший біт ліворуч) -- ТІ САМІ байти, що в application/source/functions/aprs_icons.c."""',
+         'ICONS = {']
+    for table, code, name, rows, _ln in icons:
+        L.append('    %r: (%r, %r),' % (table + code, name, to_bytes(rows).hex()))
+    L.append('}')
+    L.append('')
+    return '\n'.join(L)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true', help='не писати файли; код виходу 1, якщо вони застаріли')
@@ -305,11 +322,12 @@ def main():
     icons.sort(key=lambda ic: (0 if ic[0] == '/' else 1, ord(ic[1])))
     c, sizes = build_c(icons)
     md = build_md(icons, sizes)
+    py = build_py(icons)
     print('кодів %d, унікальних зображень %d (A %d + B %d), пул A %d Б + B %d Б + індекс %d Б = %d Б' %
           (sizes['icons'], sizes['unique'], sizes['nA'], sizes['nB'], sizes['poolA'], sizes['poolB'], sizes['index'], sizes['poolA'] + sizes['poolB'] + sizes['index']))
     if a.check:
         bad = 0
-        for path, text in ((CFILE, c), (MDFILE, md)):
+        for path, text in ((CFILE, c), (MDFILE, md), (PYFILE, py)):
             cur = open(path, encoding='utf-8').read() if os.path.exists(path) else None
             if cur != text:
                 print('ЗАСТАРІЛО:', os.path.relpath(path, ROOT), '-- перегенеруйте aprs_icons_gen.py')
@@ -318,7 +336,8 @@ def main():
     open(CFILE, 'w', encoding='utf-8', newline='\n').write(c)
     os.makedirs(os.path.dirname(MDFILE), exist_ok=True)
     open(MDFILE, 'w', encoding='utf-8', newline='\n').write(md)
-    print('записано', os.path.relpath(CFILE, ROOT), 'і', os.path.relpath(MDFILE, ROOT))
+    open(PYFILE, 'w', encoding='utf-8', newline='\n').write(py)
+    print('записано', os.path.relpath(CFILE, ROOT), ',', os.path.relpath(MDFILE, ROOT), 'і', os.path.relpath(PYFILE, ROOT))
     return 0
 
 

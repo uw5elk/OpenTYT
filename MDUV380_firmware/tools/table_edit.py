@@ -451,6 +451,49 @@ def aes_slot(rec):
     return rec[AES_ENCRYPT_OFF]
 
 
+AES_KEY_COLUMN = "AES Key"      # лише в редакторі: у CSV такої колонки немає (формат CSV не змінюємо), тож перевірки імпорту сюди не застосовуються
+AES_SLOT_MAX = 15
+AES_TAG = 0xA0
+
+
+def aes_slot_set(rec, slot):
+    """Записати слот у запис каналу так само, як codeplugChannelSetAesKeySlot(): на каналі з власним DMR ID -- у _UNUSED_2 з міткою 0xA0, інакше -- у
+    байт encrypt. slot: 0 -- без ключа, 1..15 -- ключ, 0xFF -- примусово відкрито."""
+    rec = bytearray(rec)
+    if rec[cc.O_FLAG1L] & cc.FL_DMRID:
+        rec[AES_UNUSED2_OFF] = 0 if slot == 0 else (AES_TAG | (0 if slot == 0xFF else slot & 0x0F))
+    else:
+        rec[AES_ENCRYPT_OFF] = slot
+    return bytes(rec)
+
+
+def channel_set_aes_slot(img, number, slot):
+    """Ключ AES каналу (V3.1): 0 -- без шифрування, 1..15 -- слот ключа. Інші поля запису (зокрема DMR ID) не змінюються ні на біт. Повертає
+    ImportResult, як і решта правок документа. Матеріал ключа тут не з'являється: канал зберігає лише НОМЕР слота."""
+    if not isinstance(slot, int) or not (0 <= slot <= AES_SLOT_MAX):
+        raise TableEditError(["ключ AES: очікується число 0..%d (0 -- без шифрування)" % AES_SLOT_MAX])
+    rec = img.channel_rec(number) if any(n == number for n, _r in img.channels()) else None
+    if rec is None:
+        raise TableEditError(["канал №%s не знайдено в документі" % number])
+    if rec[cc.O_MODE] == 0:
+        raise TableEditError(["ключ AES задається лише для цифрового каналу"])
+    before = aes_slot(rec)
+    new_rec = aes_slot_set(rec, slot)
+    out = cc.Image(img.eeprom, img.flash, img.base)
+    res = cc.ImportResult()
+    res.image = out
+    if new_rec != bytes(rec):
+        out.set_channel_rec(number, new_rec)
+        name = cc.readable_text(rec[:16])
+        def txt(v):
+            return "без шифрування" if v in (0, 0xFF) else "ключ %d" % v
+        res.changed.append(("Канали", "№%d %s: ключ AES %s -> %s" % (number, name, txt(before), txt(slot))))
+        if rec[cc.O_FLAG1L] & cc.FL_DMRID:
+            res.warnings.append("Канал №%d має власний DMR ID: слот ключа лежить у іншому байті (мітка 0xA0), тож DMR ID не зачеплено. Але будь-яка "
+                                "зміна власного DMR ID каналу -- тут чи в меню рації -- скидає слот ключа." % number)
+    return res
+
+
 def channel_edit(img, number, changes, dp):
     """Змінити поля каналу. changes: {«Channel Name»|назва колонки CSV: текст}. Посилання (Contact / TG List / APRS) можна давати за
     назвою або «#N». Зміна типу підставляє типові значення для колонок, що стали актуальними."""

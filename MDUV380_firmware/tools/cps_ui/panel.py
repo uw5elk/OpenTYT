@@ -139,6 +139,11 @@ class Panel(ttk.Frame):
         self.refresh_state()
 
 
+def tk_error():
+    import tkinter
+    return tkinter.TclError
+
+
 class ScrollFrame(ttk.Frame):
     """Область з вертикальною прокруткою для високих панелей (коли вікно маленьке). Панель кладеться в `inner`."""
 
@@ -157,6 +162,20 @@ class ScrollFrame(ttk.Frame):
         for w in (self.canvas, self.inner):
             w.bind("<Enter>", self._bind_wheel)
             w.bind("<Leave>", self._unbind_wheel)
+        self._seen_req = 0
+        self._poll_id = self.after(200, self._poll_req)
+
+    def _poll_req(self):
+        """Висота, яку ЗАПИТУЄ вміст, змінюється й без зміни розміру вікна (відкрито документ, зникла підказка, з'явився рядок). Вікно-елемент canvas
+        має явну висоту, тож <Configure> від такої зміни не приходить -- перевіряємо запит ~5 разів на секунду (дешево: одне порівняння)."""
+        try:
+            req = self.inner.winfo_reqheight()
+            if req != self._seen_req:
+                self._seen_req = req
+                self._fit()
+            self._poll_id = self.after(200, self._poll_req)
+        except tk_error():
+            pass          # вікно знищено
 
     def _fit(self):
         """Вміст займає всю ширину й, якщо коротший за область, усю висоту (тоді форми можуть розтягуватись); якщо вищий -- прокрутка."""

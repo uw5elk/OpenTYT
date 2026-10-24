@@ -18,7 +18,7 @@ CTCSS = ("67.0 69.3 71.9 74.4 77.0 79.7 82.5 85.4 88.5 91.5 94.8 97.4 100.0 103.
          "151.4 156.7 159.8 162.2 165.5 167.9 171.3 173.8 177.3 179.9 183.5 186.2 189.9 192.8 196.6 199.5 203.5 206.5 210.7 218.1 225.7 229.1 "
          "233.6 241.8 250.3 254.1").split()
 
-# (група, [(колонка CSV, підпис, тип поля)]). Типи: name, type, number, entry, bw, tone, sql, spin, ts, ref:<вид>, ta, power, tot, check
+# (група, [(колонка CSV, підпис, тип поля)]). Типи: name, type, number, entry, bw, tone, sql, spin, ts, ref:<вид>, ta, power, tot, check, aes (лише редактор; у CSV колонки нема)
 GROUPS = [
     ("Основне", [("Channel Name", "Назва", "name"), ("Channel Type", "Тип", "type"), ("Channel Number", "Номер", "number")]),
     ("Частоти", [("Rx Frequency", "RX, МГц", "entry"), ("Tx Frequency", "TX, МГц", "entry"), ("Bandwidth (kHz)", "Смуга, кГц (аналог)", "bw")]),
@@ -26,7 +26,8 @@ GROUPS = [
                    ("Squelch", "Шумодав", "sql")]),
     ("Цифрові", [("Colour Code", "Колір-код (0..15)", "spin"), ("Timeslot", "Таймслот", "ts"), ("Contact", "Контакт", "ref:contact"),
                  ("TG List", "Список прийому", "ref:group"), ("DMR ID", "DMR ID (None -- загальний)", "entry"),
-                 ("TS1_TA_Tx", "TA на таймслоті 1", "ta"), ("TS2_TA_Tx ID", "TA на таймслоті 2", "ta")]),
+                 ("TS1_TA_Tx", "TA на таймслоті 1", "ta"), ("TS2_TA_Tx ID", "TA на таймслоті 2", "ta"),
+                 (te.AES_KEY_COLUMN, "Ключ AES (0 -- без шифрування)", "aes")]),
     ("Опції", [("Power", "Потужність", "power"), ("Rx Only", "Лише прийом", "check"), ("Zone Skip", "Пропуск у зоні", "check"),
                ("All Skip", "Пропуск у всіх", "check"), ("TOT", "TOT, с (Off -- вимкнено)", "tot"), ("VOX", "VOX", "check"),
                ("No Beep", "Без звуку", "check"), ("No Eco", "Без еко", "check")]),
@@ -87,6 +88,9 @@ class ChannelsPanel(EditorPanel):
                         w.bind("<Return>", lambda _e, c=col: self.commit(c))
                         w.bind("<FocusOut>", lambda _e, c=col: self.commit(c))
                 self.fields[col] = {"var": var, "widget": w, "type": ftype}
+                if ftype == "aes":
+                    self._aes_hint = ttk.Label(box, text=self._aes_hint_text(), wraplength=420, justify="left", foreground=gt.P["muted"])
+                    self._aes_hint.pack(anchor="w", padx=8, pady=(0, 4))
         self._hint = ttk.Label(form, text=("Частоти без «\\t» і з комою або крапкою -- як у CSV. Тони: None, CTCSS у герцах (напр. 67%s0) або DCS (D023N, D023I). "
                               "Контакт, список прийому і конфіг APRS вибираються зі списку наявних; записи з однаковими назвами розрізняються за №." % sep),
                   wraplength=520, justify="left", foreground=gt.P["muted"])
@@ -98,6 +102,7 @@ class ChannelsPanel(EditorPanel):
             return
         narrow = form_width < 420
         self._hint.config(wraplength=max(180, form_width - 40))
+        self._aes_hint.config(wraplength=max(180, form_width - 60))
         if narrow == self._narrow:
             return
         self._narrow = narrow
@@ -130,6 +135,8 @@ class ChannelsPanel(EditorPanel):
             w = ttk.Combobox(parent, textvariable=var, values=["1", "2"], state="readonly", width=24)
         elif ftype.startswith("ref:"):
             w = ttk.Combobox(parent, textvariable=var, values=[NONE_LABEL], state="readonly", width=36)
+        elif ftype == "aes":
+            w = ttk.Combobox(parent, textvariable=var, values=self._aes_labels(), state="readonly", width=36)
         elif ftype == "ta":
             w = ttk.Combobox(parent, textvariable=var, values=cc.TA_NAMES, state="readonly", width=24)
         elif ftype == "power":
@@ -191,6 +198,10 @@ class ChannelsPanel(EditorPanel):
                     else:
                         f["widget"].config(values=[NONE_LABEL] + [lab for _n, lab in opts])
                     var.set(label if self._digital or ftype == "ref:aprs" else "")
+                elif ftype == "aes":
+                    slot = te.aes_slot(img.channel_rec(self.sel))
+                    f["widget"].config(values=self._aes_labels())
+                    var.set(self._aes_label(0 if slot == 0xFF else slot) if self._digital else "")
                 else:
                     var.set(vals.get(col, ""))
                 self._loaded[col] = self._display(col)
@@ -201,15 +212,60 @@ class ChannelsPanel(EditorPanel):
     def _display(self, col):
         f = self.fields[col]
         v = f["var"].get()
+        if f["type"] == "aes":          # порівнюємо за номером слота: підпис змінюється, коли оновлюється список зайнятих слотів
+            return str(v).split(" ")[0]
         return bool(v) if f["type"] == "check" else str(v).strip()
+
+    # --- ключ AES: номери слотів і чи зайняті вони (за останнім читанням «AES-ключі»; матеріалу ключа тут нема) ---
+
+    def _aes_occupied(self):
+        info = getattr(self.shell, "aes_slots", None)
+        return None if info is None else set(info["occupied"])
+
+    def _aes_label(self, slot):
+        if slot == 0:
+            return "0 -- без шифрування"
+        occ = self._aes_occupied()
+        mark = "" if occ is None else (" -- ключ є" if slot in occ else " -- порожній")
+        return "%d%s" % (slot, mark)
+
+    def _aes_labels(self):
+        return [self._aes_label(k) for k in range(0, te.AES_SLOT_MAX + 1)]
+
+    def _aes_hint_text(self):
+        occ = self._aes_occupied()
+        if occ is None:
+            return ("Які слоти зайняті, невідомо: відкрийте «AES-ключі» і натисніть «Оновити список зайнятих слотів». "
+                    "Саме ключі лише в рації і тут не показуються.")
+        return "Зайняті слоти в рації: %s. Саме ключі тут не показуються." % (", ".join(map(str, sorted(occ))) if occ else "немає")
+
+    def on_aes_slots(self):
+        """Оболонка повідомила про свіже читання зайнятих слотів: перемалювати підписи списку й підказку."""
+        if not hasattr(self, "_aes_hint"):
+            return
+        self._aes_hint.config(text=self._aes_hint_text())
+        f = self.fields.get(te.AES_KEY_COLUMN)
+        if f is None:
+            return
+        f["widget"].config(values=self._aes_labels())
+        cur = self._display(te.AES_KEY_COLUMN)
+        if cur.isdigit():
+            self._loading = True
+            try:
+                f["var"].set(self._aes_label(int(cur)))
+            finally:
+                self._loading = False
 
     def form_state(self, enabled):
         for col, f in self.fields.items():
             if col == "Channel Number":
                 continue
-            ok = enabled and (col in ("Channel Name", "Channel Type") or te.applicable(col, self._digital))
+            if col == te.AES_KEY_COLUMN:
+                ok = enabled and self._digital
+            else:
+                ok = enabled and (col in ("Channel Name", "Channel Type") or te.applicable(col, self._digital))
             w, ftype = f["widget"], f["type"]
-            if ftype in ("type", "bw", "ts", "ta", "power") or ftype.startswith("ref:"):
+            if ftype in ("type", "bw", "ts", "ta", "power", "aes") or ftype.startswith("ref:"):
                 w.config(state="readonly" if ok else "disabled")
             else:
                 w.config(state="normal" if ok else "disabled")
@@ -237,6 +293,16 @@ class ChannelsPanel(EditorPanel):
         num = self.sel
         text = self._edit_text(col, d.image)
         label = [lab for _g, fs in GROUPS for c, lab, _t in fs if c == col][0]
+        if col == te.AES_KEY_COLUMN:
+            slot = int(text.split(" ")[0])
+            if not self.run_edit(lambda img: te.channel_set_aes_slot(img, num, slot)):
+                self.show_message("Поле «%s»: %s" % (label, self.msg.cget("text")), "err")
+                return
+            occ = self._aes_occupied()
+            if slot and occ is not None and slot not in occ:
+                self.show_message(self.msg.cget("text") + "\nУвага: у слоті %d на рації немає ключа (за останнім читанням «AES-ключі»): канал не шифруватиме, "
+                                  "доки ключ не запишуть." % slot, "warn")
+            return
         if not self.run_edit(lambda img: te.channel_edit(img, num, {col: text}, self.dp)):
             self.show_message("Поле «%s»: %s" % (label, self.msg.cget("text")), "err")
 
