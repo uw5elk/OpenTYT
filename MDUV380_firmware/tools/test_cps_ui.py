@@ -30,9 +30,12 @@ EXPECTED = [
     ("backup", "Бекап і відновлення", "grp_codeplug"),
     ("viewer", "Перегляд кодплага", "grp_codeplug"),
     ("basic", "Основна інформація", "grp_codeplug"),
+    ("general", "Загальні налаштування", "grp_codeplug"),
     ("channels", "Канали", "grp_codeplug"),
+    ("vfo", "VFO A / VFO B", "grp_codeplug"),
     ("zones", "Зони", "grp_codeplug"),
     ("tglists", "Списки прийому", "grp_codeplug"),
+    ("dtmf", "DTMF-контакти", "grp_codeplug"),
     ("aprs", "APRS", "grp_codeplug"),
     ("csv", "CSV", "grp_codeplug"),
     ("grp_settings", "Налаштування рації", ""),
@@ -110,7 +113,7 @@ def test_gui():
                 check(tree.parent(key) == parent, "дерево: %s лежить у %r" % (key, parent))
         all_items = list(tree.get_children()) + [c for g in tree.get_children() for c in tree.get_children(g)]
         check(len(all_items) == len(EXPECTED), "дерево: рівно %d пунктів (є %d)" % (len(EXPECTED), len(all_items)))
-        check(sum(len(s[2]) for s in SECTIONS) == 13, "SECTIONS: 13 панелей (APRS злито в одну)")
+        check(sum(len(s[2]) for s in SECTIONS) == 16, "SECTIONS: 16 панелей (R-next: +загальні налаштування, VFO, DTMF)")
 
         # --- стан 1: рації нема ---
         app.conn.mark_absent()

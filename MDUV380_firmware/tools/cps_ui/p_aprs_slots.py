@@ -69,34 +69,41 @@ class StationBlock(ttk.LabelFrame):
         self.form.pack(fill="x", padx=8, pady=6)
         self.entries = {}
         for key, label, width in TEXT_FIELDS:
+            self.vars[key].trace_add("write", lambda *_: self._validate())
+            if key == "icon_table":
+                continue                       # Y1: числових полів символу нема -- таблиця й код живуть лише в прихованих змінних, їх задає сітка
             f = ttk.Frame(self.form)
             f.pack(fill="x", padx=8, pady=2)
+            if key == "icon":
+                self._build_symbol_row(f)
+                continue
             ttk.Label(f, text=label, width=32).pack(side="left")
             e = ttk.Entry(f, textvariable=self.vars[key], width=width)
             e.pack(side="left")
             self.entries[key] = e
-            self.vars[key].trace_add("write", lambda *_: self._validate())
-            if key == "icon":
-                self._build_symbol_row(f)
         self.checks = {}
         for key, label in FLAG_FIELDS:
             c = ttk.Checkbutton(self.form, text=label, variable=self.flags[key], command=self._validate)
             c.pack(anchor="w", padx=8, pady=1)
             self.checks[key] = c
-        self.symbol_info = ttk.Label(self.form, text="", wraplength=520, justify="left", foreground=gt.P["muted"])
-        self.symbol_info.pack(anchor="w", padx=8, pady=(0, 4), after=self.entries["icon"].master)
         self.on_document_changed()
 
-    # --- символ: іконка поруч із числами й сітка вибору (V2) ---
+    # --- символ (Y1): лише іконка, підпис під нею й «Обрати символ...»; чисел для вводу нема ---
 
     def _build_symbol_row(self, row):
         self._symbol_img = None
-        self.symbol_preview = tk.Label(row, bd=1, relief="solid", bg=gt.P["field"], fg=gt.P["muted"], text="--", width=6, height=3)
-        self.symbol_preview.pack(side="left", padx=(12, 6))
-        self.symbol_button = ttk.Button(row, text="Обрати символ...", command=self._on_pick_symbol)
-        self.symbol_button.pack(side="left")
+        ttk.Label(row, text="Символ APRS", width=32).pack(side="left", anchor="n")
+        col = ttk.Frame(row)
+        col.pack(side="left")
+        self.symbol_preview = tk.Label(col, bd=1, relief="solid", bg=gt.P["field"], fg=gt.P["muted"], text="--", width=6, height=3)
+        self.symbol_preview.pack(anchor="w")
+        self.symbol_info = ttk.Label(col, text="", wraplength=360, justify="left", foreground=gt.P["muted"])
+        self.symbol_info.pack(anchor="w", pady=(2, 4))
+        self.symbol_button = ttk.Button(col, text="Обрати символ...", command=self._on_pick_symbol)
+        self.symbol_button.pack(anchor="w")
         if not asym.available():
             self.symbol_button.config(state="disabled")
+            self.symbol_info.config(text="Набір іконок недоступний у цій збірці CPS: символ не можна ні переглянути, ні змінити.")
         for k in ("icon_table", "icon"):
             self.vars[k].trace_add("write", lambda *_: self._update_symbol())
 
@@ -107,23 +114,34 @@ class StationBlock(ttk.LabelFrame):
             return None
 
     def _update_symbol(self):
+        if not asym.available():
+            return
         nums = self._symbol_numbers()
-        img, text = None, "Символ задайте числами 0..255 (таблиця: 47 -- «/», 92 -- «\\»; символ: 33..126)."
-        if nums is not None:
-            text = asym.symbol_text(*nums)
-            t = asym.table_char(nums[0])
-            if t is not None:
+        img, color = None, gt.P["muted"]
+        if nums is None:
+            text, color = "Символ у слоті не розпізнано. Оберіть його: «Обрати символ...».", gt.P["warn"]
+        else:
+            if asym.is_known(*nums):
+                t = asym.table_char(nums[0])
                 img = asym.photo(self, t, nums[1], scale=2)
+                text = asym.symbol_text(*nums)
+            else:
+                text, color = asym.unknown_text(*nums), gt.P["warn"]
         self._symbol_img = img            # PhotoImage треба тримати посиланням
         if img is not None:
             self.symbol_preview.config(image=img, width=img.width(), height=img.height(), text="")
         else:
             self.symbol_preview.config(image="", text="--", width=6, height=3, fg=gt.P["muted"])
-        self.symbol_info.config(text=text)
+        self.symbol_info.config(text=text, foreground=color)
 
     def _on_pick_symbol(self):
-        nums = self._symbol_numbers() or (asym.PRIMARY, ord(">"))
-        got = asym.pick_symbol(self.shell, *nums)
+        nums = self._symbol_numbers()
+        if nums is None or not asym.is_known(*nums):
+            nums = (nums[0] if nums and asym.table_char(nums[0]) else asym.PRIMARY, ord(">"))      # сітка відкривається на звичайному символі, не на «порожньому»
+            known = False
+        else:
+            known = True
+        got = asym.pick_symbol(self.shell, nums[0], nums[1], preselect=known)
         if got is not None:
             self.vars["icon_table"].set(str(got[0]))
             self.vars["icon"].set(str(got[1]))

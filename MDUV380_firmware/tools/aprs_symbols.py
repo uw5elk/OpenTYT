@@ -48,6 +48,21 @@ def decode(data_hex):
     return rows
 
 
+def is_known(table_value, code_value):
+    """Чи є в наборі рації зображення для цього символу (інакше рація малює рамку зі знаком символу)."""
+    t = table_char(table_value)
+    return t is not None and entry(t, code_value) is not None
+
+
+def unknown_text(table_value, code_value):
+    """Словами: чому символа в слоті нема в наборі рації й що робити (Y1.3). Чисел для вводу не пропонуємо."""
+    if code_value == 0:
+        return "Символ не обрано. Оберіть його: «Обрати символ...»."
+    where = "у цій таблиці" if table_char(table_value) else "у такій таблиці"
+    return ("У слоті записано символ, якого немає в наборі рації (таблиця %d, код %d: %s). Рація намалює для нього рамку зі знаком. "
+            "Оберіть інший: «Обрати символ...»." % (table_value, code_value, where))
+
+
 def symbol_text(table_value, code_value):
     """Підпис під полями: «'>' (код 62) -- Авто» або чому зображення нема."""
     t = table_char(table_value)
@@ -82,7 +97,7 @@ def photo(master, table, code, scale=1, ink="#e8eaef", paper=None):
     return img.zoom(scale, scale) if scale > 1 else img
 
 
-def pick_symbol(parent, table_value, code_value):
+def pick_symbol(parent, table_value, code_value, preselect=True):
     """Сітка піктограм: перемикач таблиць, підпис під курсором, «Обрати». Повертає (таблиця, символ) як числа або None.
     Якщо поточна таблиця -- накладка (не '/' і не '\\'), при виборі з додаткової таблиці накладка лишається."""
     import tkinter as tk
@@ -93,7 +108,7 @@ def pick_symbol(parent, table_value, code_value):
     win = gd._small_window(parent, "Символ APRS")
     win.minsize(560, 420)
     cur_t = table_char(table_value) or "/"
-    state = {"table": cur_t, "code": code_value if entry(cur_t, code_value) else None, "result": None}
+    state = {"table": cur_t, "code": code_value if (preselect and entry(cur_t, code_value)) else None, "result": None}
     tvar = tk.StringVar(value=cur_t)
     top = ttk.Frame(win)
     top.pack(fill="x", padx=12, pady=(12, 4))
