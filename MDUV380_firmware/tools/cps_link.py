@@ -394,7 +394,7 @@ def verify_random_blocks(link, area, start, data, count=3, rng=None):
     return bad
 
 
-def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_blocks, now_utc=None, extras=None):
+def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_blocks, now_utc=None, extras=None, region=None):
     """extras -- {ключ частини: (файл, початок, дані)} для повного знімка (W3.2); у маніфесті їх позначено
     `includes` і `restorable` (відновлюються лише eeprom та flash)."""
     now_utc = now_utc or datetime.datetime.now(datetime.timezone.utc)
@@ -411,7 +411,7 @@ def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_b
                       "derivation": rng_range["derivation"], "sha256": sha256(flash)},
         },
         "selfCheck": {"randomBlocksRereadPerPart": verified_blocks, "result": "ok"},
-        "note": "Лише читання; у рацію нічого не записувалось. Ключі AES (SPI 0xD9F9C...) у звичайний бекап не входять.",
+        "note": "Лише читання; у рацію нічого не записувалось. Таблиця ключів AES (SPI 0xD9F9C...) у звичайний бекап не входить.",
     }
     m["includes"] = ["eeprom", "flash"]
     m["restorable"] = ["eeprom", "flash"]
@@ -422,6 +422,16 @@ def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_b
             m["includes"].append(key)
         m["note"] = ("Лише читання; у рацію нічого не записувалось. ПОВНИЙ ЗНІМОК: додатково голосові підказки та таблиця ключів AES "
                      "(SPI 0xD9F9C) -- містить секретні ключі, зберігай файл як секрет. Відновлення цих двох ділянок не реалізовано.")
+    if region is not None:
+        # R30: область custom-data (теми, SMS, RCTL, APRS...) -- окремий файл у архіві. cps_restore її не відновлює (restorable лишається [eeprom, flash]);
+        # відновлює custom_region.restore_region окремим прапорцем.
+        import custom_region
+        m["parts"][custom_region.PART_KEY] = custom_region.manifest_part(region)
+        m["includes"].append(custom_region.PART_KEY)
+        m["note"] += (" Область custom-data (SPI 0x%X..0x%X: теми, SMS, RCTL, APRS, вибір ключа AES) додано окремим файлом %s; повідомлення SMS у ній "
+                      "особисті%s." % (custom_region.REGION_RAW_START, custom_region.REGION_RAW_END - 1, custom_region.PART_FILE,
+                                       ", а блок AES може містити ключовий матеріал -- зберігай файл як секрет"
+                                       if m["parts"][custom_region.PART_KEY].get("blocks") and any(b.get("secret") for b in m["parts"][custom_region.PART_KEY]["blocks"]) else ""))
     return m
 
 
@@ -468,7 +478,7 @@ def read_backup_zip(source):
     return manifest, eeprom, flash
 
 
-def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False):
+def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False, custom_data=True):
     """Прочитати EEPROM і флеш-частину кодплага, самоперевірити й зібрати .zip.
     full_snapshot=True (R25 W3.2) -- додатково голосові підказки і таблицю ключів AES (за замовчуванням ВИМКНЕНО).
     progress(percent, text). Повертає (zip_bytes, manifest). При невдалій самоперевірці -- BackupInvalid."""
@@ -476,7 +486,9 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
     rng_range = flash_backup_range()
     flash_len = rng_range["length"]
     extra_len = sum(p[3] for p in FULL_SNAPSHOT_PARTS) if full_snapshot else 0
-    total = EEPROM_BACKUP_LEN + flash_len + extra_len
+    import custom_region
+    region_len = custom_region.REGION_LEN if custom_data else 0
+    total = EEPROM_BACKUP_LEN + flash_len + extra_len + region_len
     verify_cost = 6 * CHUNK
 
     def step(done_before):
@@ -493,10 +505,15 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
 
     eeprom = read_part(link, CPS_ACCESS_EEPROM, 0, EEPROM_BACKUP_LEN, step(0))
     flash = read_part(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash_len, step(EEPROM_BACKUP_LEN))
+    region = None
+    if custom_data:
+        # R30: область custom-data -- ПІСЛЯ флешу, ДО повного знімка (прогрес рахується в тому ж порядку)
+        log("Область custom-data: сирі 0x%X .. 0x%X (%d КБ)." % (custom_region.REGION_RAW_START, custom_region.REGION_RAW_END, region_len // 1024))
+        region = read_part(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region_len, step(EEPROM_BACKUP_LEN + flash_len))
     extras = {}
     extra_files = {}
     if full_snapshot:
-        done_before = EEPROM_BACKUP_LEN + flash_len
+        done_before = EEPROM_BACKUP_LEN + flash_len + region_len
         for key, fname, start, length in FULL_SNAPSHOT_PARTS:
             log("Повний знімок: %s -- сирі 0x%X .. 0x%X (%d Б)." % (key, start, start + length, length))
             data = read_part(link, CPS_ACCESS_FLASH, start, length, step(done_before))
@@ -510,6 +527,8 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
     bad = verify_random_blocks(link, CPS_ACCESS_EEPROM, 0, eeprom, 3, rng)
     bad_f = verify_random_blocks(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash, 3, rng)
     bad_x = []
+    if region is not None:
+        bad_x += ["область custom-data 0x%X" % a for a in verify_random_blocks(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region, 3, rng)]
     for key, (_fname, start, data) in extras.items():
         bad_x += ["%s 0x%X" % (key, a) for a in verify_random_blocks(link, CPS_ACCESS_FLASH, start, data, 3, rng)]
     if bad or bad_f or bad_x:
@@ -518,7 +537,9 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
                             "Рація могла записувати налаштування під час читання -- спробуй ще раз, не торкаючись кнопок." % where)
 
     finished = clock()
-    manifest = build_manifest(info, eeprom, flash, rng_range, started, finished, 3, now_utc, extras or None)
+    manifest = build_manifest(info, eeprom, flash, rng_range, started, finished, 3, now_utc, extras or None, region)
+    if region is not None:
+        extra_files[custom_region.PART_FILE] = region
     if progress:
         progress(100, "Готово")
     return make_zip(eeprom, flash, manifest, extra_files), manifest

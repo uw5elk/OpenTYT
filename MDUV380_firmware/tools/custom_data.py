@@ -71,9 +71,15 @@ def flash_write_span(ser, addr, data):
     """Sector-safe запис: розбиває [addr, addr+len(data)) по межах 4КБ-секторів і
     викликає aes_key_store.flash_write_block() окремо на кожен сектор -- та функція
     готує/стирає РІВНО ОДИН сектор і не призначена для запису, що його перетинає.
-    addr тут -- АБСОЛЮТНА адреса SPI-флешу (вже з урахуванням FLASH_BASE)."""
+    addr тут -- АБСОЛЮТНА адреса SPI-флешу (вже з урахуванням FLASH_BASE).
+
+    R30: будь-який запис, що виходить за область custom-data [FLASH_BASE, FLASH_BASE+MAX_BLOCK_ADDRESS), відхиляється ДО першого звернення до флеша
+    -- насамперед щоб помилка в обчисленні адреси ніколи не дісталась сектора калібрування (0x10000..0x10FFF) чи сусідніх ділянок."""
     pos = 0
     n = len(data)
+    if addr < FLASH_BASE or addr + n > FLASH_BASE + MAX_BLOCK_ADDRESS:
+        raise ValueError("запис 0x%X..0x%X виходить за область custom-data 0x%X..0x%X -- відхилено" % (
+            addr, addr + n, FLASH_BASE, FLASH_BASE + MAX_BLOCK_ADDRESS))
     while pos < n:
         sector_base = ((addr + pos) // 4096) * 4096
         sector_end = sector_base + 4096

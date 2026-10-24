@@ -589,13 +589,14 @@ def test_full_snapshot():
     a[cl.VOICE_PROMPTS_RAW_START:cl.VOICE_PROMPTS_RAW_START + 4] = b"VPVP"
     # звичайний бекап: без додаткових частин
     d0, m0 = cl.backup_codeplug(cl.CpsLink(base.FakeRadio(a)), rng=random.Random(1), log=lambda *_: None)
-    check(m0["includes"] == ["eeprom", "flash"] and set(m0["parts"]) == {"eeprom", "flash"}, "за замовчуванням повного знімка немає")
+    # R30: звичайний бекап містить ще й область custom-data (customdata.bin); повного знімка (підказки, ключі AES) за замовчуванням нема
+    check(m0["includes"] == ["eeprom", "flash", "customData"] and set(m0["parts"]) == {"eeprom", "flash", "customData"}, "за замовчуванням повного знімка немає")
     with zipfile.ZipFile(io.BytesIO(d0)) as z:
-        check(sorted(z.namelist()) == ["eeprom.bin", "flash.bin", "manifest.json"], "у звичайному zip лише три файли")
+        check(sorted(z.namelist()) == ["customdata.bin", "eeprom.bin", "flash.bin", "manifest.json"], "у звичайному zip: три файли кодплага + область custom-data")
     # повний знімок
     radio = base.FakeRadio(a)
     d1, m1 = cl.backup_codeplug(cl.CpsLink(radio), rng=random.Random(1), log=lambda *_: None, full_snapshot=True)
-    check(m1["includes"] == ["eeprom", "flash", "voicePrompts", "aesKeys"], "маніфест позначає, що ввійшло: %r" % m1["includes"])
+    check(m1["includes"] == ["eeprom", "flash", "voicePrompts", "aesKeys", "customData"], "маніфест позначає, що ввійшло: %r" % m1["includes"])
     check(m1["restorable"] == ["eeprom", "flash"] and m1["parts"]["aesKeys"]["restorable"] is False, "відновлюються лише eeprom та flash")
     with zipfile.ZipFile(io.BytesIO(d1)) as z:
         check(z.read("aeskeys.bin")[:4] == b"KEY!" and len(z.read("aeskeys.bin")) == 1600, "aeskeys.bin: 16 записів по 100 Б")
