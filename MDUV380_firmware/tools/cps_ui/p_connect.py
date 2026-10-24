@@ -4,7 +4,6 @@ from tkinter import ttk
 
 import gui_theme as gt
 
-from .connection import BATTERY_NOTE
 from .panel import Panel
 
 
@@ -21,13 +20,13 @@ class ConnectionPanel(Panel):
         box.pack(fill="x", padx=12, pady=6)
         self.vals = {}
         for i, (k, label) in enumerate((("state", "Стан"), ("port", "Порт"), ("model", "Модель"), ("fw", "Версія прошивки"),
-                                        ("built", "Збірка прошивки"), ("battery", "Заряд акумулятора"))):
+                                        ("built", "Збірка прошивки"))):
             ttk.Label(box, text=label + ":", width=20).grid(row=i, column=0, sticky="w", padx=(8, 4), pady=2)
             v = ttk.Label(box, text="", wraplength=420, justify="left")
             v.grid(row=i, column=1, sticky="w", padx=4, pady=2)
             self.vals[k] = v
         box.columnconfigure(1, weight=1)
-        # значення переносяться за шириною рамки (на вузькому вікні довгий рядок про заряд не вилазить за край)
+        # значення переносяться за шириною рамки (на вузькому вікні довгий рядок не вилазить за край)
         box.bind("<Configure>", lambda e: [v.config(wraplength=max(160, e.width - 200)) for v in self.vals.values()])
         self.refresh_btn = ttk.Button(self, text="Оновити", command=lambda: self.shell.refresh_connection(force=True))
         self.refresh_btn.pack(anchor="w", padx=12, pady=6)
@@ -56,6 +55,5 @@ class ConnectionPanel(Panel):
         else:
             for k in ("model", "fw", "built"):
                 v[k].config(text="—", foreground=gt.P["fg"])
-        v["battery"].config(text=BATTERY_NOTE, foreground=gt.P["muted"])
         self.extra.config(text=("Порт знайдено, але версію прочитати не вдалося: %s" % c.error) if (c.found and c.error and not c.info)
                           else (c.error if (c.state == "absent" and c.error) else ""))

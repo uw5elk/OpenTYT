@@ -415,8 +415,9 @@ def test_gui():
             app.update()
         v = app.get_panel("viewer")
         check(v.viewer is None and "Відкрийте кодплаг" in v.placeholder.cget("text"), "перегляд без документа: підказка «Відкрийте кодплаг з рації або з бекапу»")
-        for key in ("csv", "basic", "aprs_slots"):
+        for key in ("csv", "basic", "aprs"):
             p = app.get_panel(key)
+            p = getattr(p, "station", p)         # APRS: підказка живе в блоці «Станція (слоти)»
             check(p.hint.winfo_manager() == "pack", "%s: підказка «Відкрийте кодплаг…» без документа" % key)
         check(str(app.get_panel("csv").csv_export_button.cget("state")) == "disabled" and str(app.get_panel("csv").csv_import_button.cget("state")) == "disabled",
               "CSV без документа: кнопки вимкнені")
@@ -451,8 +452,8 @@ def test_gui():
         check(app.doc_discard() and not app.doc.modified and bp.vars["callsign"].get() == "UR5ABC", "«Відкинути зміни»: зірочки нема, поле повернулось")
 
         # --- APRS-слоти: форма -> документ ---
-        app.show("aprs_slots")
-        ap = app.get_panel("aprs_slots")
+        app.show("aprs")
+        ap = app.get_panel("aprs").station
         app.update()
         check(len(ap.tree.get_children()) == 1 and ap.vars["name"].get() == "APRS", "APRS-слоти: список і форма з документа")
         ap.vars["comment"].set("Hello from test")

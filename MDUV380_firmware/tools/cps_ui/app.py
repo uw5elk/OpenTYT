@@ -30,7 +30,6 @@ from .connection import RadioConnection
 from .doc_actions import DocActions
 from .p_aes import AesPanel
 from .p_aprs import AprsPanel
-from .p_aprs_slots import AprsSlotsPanel
 from .p_backup import BackupPanel
 from .p_basic import BasicInfoPanel
 from .p_channels import ChannelsPanel
@@ -48,9 +47,9 @@ from .settings import Settings
 # Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
     ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
-    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, ChannelsPanel, ZonesPanel, TgListsPanel, AprsSlotsPanel,
+    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, ChannelsPanel, ZonesPanel, TgListsPanel, AprsPanel,
                                   CsvPanel]),
-    ("grp_settings", "Налаштування рації", [AprsPanel, AesPanel, RctlPanel]),
+    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel]),
 ]
 DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}
@@ -68,6 +67,7 @@ class CpsApp(DocActions, tk.Tk):
         self.build_info = read_build_info()
         self.conn = RadioConnection()
         self.busy = False
+        self.aes_slots = None         # {"occupied": (номери,)} після «Оновити список зайнятих слотів»; матеріалу ключів тут нема
         self._task = None
         self.init_document()
         self._panels = {}
@@ -483,6 +483,12 @@ class CpsApp(DocActions, tk.Tk):
         elif not on and self._progress_shown:
             self.progress.pack_forget()
             self._progress_shown = False
+
+    def on_aes_slots_changed(self):
+        """Головний потік: панель «AES-ключі» оновила список зайнятих слотів -- редактор каналу перемальовує підказки."""
+        for p in self._panels.values():
+            if hasattr(p, "on_aes_slots"):
+                p.on_aes_slots()
 
     def post(self, fn):
         """Виконати fn() у головному потоці (безпечно викликати з робочого)."""

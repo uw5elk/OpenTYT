@@ -89,7 +89,7 @@ def test_widget_tree():
         for key in app.section_keys():            # з відкритим документом: усі панелі й таблиці теж темні
             app.show(key)
             app.update()
-        app.get_panel("aprs_slots")._on_new()
+        app.get_panel("aprs").station._on_new()
         app.update()
         wins = [app]
         dlg, _r = gd._build(app, "Тест", "Рядок 1\nРядок 2", [("Так", True), ("Ні", False)], 1)
