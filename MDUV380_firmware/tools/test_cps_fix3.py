@@ -125,7 +125,14 @@ def test_gui():
         check(st.symbol_preview.cget("image") != "" and "авто" in st.symbol_info.cget("text").lower(), "V2.4: поруч із полями іконка й підпис: %s" % st.symbol_info.cget("text"))
         st.vars["icon"].set("34")
         _spin(app)
-        check("нема" in st.symbol_info.cget("text") and st.symbol_preview.cget("image") == "", "код без зображення: пояснено, іконки нема")
+        check("немає в наборі рації" in st.symbol_info.cget("text") and st.symbol_preview.cget("image") == "", "Y1.3: код без зображення: пояснено словами: %s" % st.symbol_info.cget("text"))
+        st.vars["icon"].set("0")
+        _spin(app)
+        check("не обрано" in st.symbol_info.cget("text"), "Y1.3: код 0 -- «Символ не обрано»")
+        # Y1.1: числових полів символу нема взагалі
+        num_entries = [w for w in _all(st.form) if w.winfo_class() == "TEntry" and str(w.cget("textvariable")) in (str(st.vars["icon_table"]), str(st.vars["icon"]))]
+        check(not num_entries and "icon" not in st.entries and "icon_table" not in st.entries, "Y1.1: у слоті нема полів вводу таблиці й символу")
+        check(any(w.winfo_class() == "TButton" and w.cget("text") == "Обрати символ..." for w in _all(st.form)), "Y1.1: лишилась кнопка «Обрати символ...»")
 
         # --- W1: сітка кладе в поля ті самі числа, що й ручний ввід ---
         def drive(table_radio, code, then="ok"):
@@ -186,6 +193,10 @@ def test_gui():
         st._on_apply()
         _spin(app)
         grid = dict(app.doc.image.aprs())[2]
+        # Z4: уся 64-байтова запис слота після вибору в сітці = запис, який дає той самий набір значень «вручну» (API без сітки)
+        base = app.doc.image
+        again = ced.apply_aprs_slot(base, 2, dict(ced.aprs_values(grid), icon_table="92", icon=str(ord("#")))).image
+        check(bytes(dict(again.aprs())[2]) == bytes(grid), "Z4: запис слота з сітки == запис із тих самих чисел без сітки (64 байти)")
         gv, mv = ced.aprs_values(grid), ced.aprs_values(manual)
         check((gv["icon_table"], gv["icon"]) == (mv["icon_table"], mv["icon"]) == ("92", str(ord("#"))),
               "W1: додаткова таблиця -- у записі ті самі числа, що при ручному вводі: %r / %r" % ((gv["icon_table"], gv["icon"]), (mv["icon_table"], mv["icon"])))

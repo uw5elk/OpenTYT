@@ -69,7 +69,8 @@ def basic_values(img):
         "dmr_id": cv.bcd_to_int(img.ee(cl.CP_ADDR_USER_DMRID, 4)),
         "line1": cv.decode_name_ex(img.ee(ADDR_BOOT_LINE1, BOOT_LINE_LEN))[0],
         "line2": cv.decode_name_ex(img.ee(ADDR_BOOT_LINE2, BOOT_LINE_LEN))[0],
-        "intro_text": img.ee(ADDR_BOOT_INTRO, 1)[0] == 1,
+        "intro_text": img.ee(ADDR_BOOT_INTRO, 1)[0] != 0,       # uiSplashScreen.c: bootScreenType == 0 -- картинка, будь-що інше -- текст
+        "intro_raw": img.ee(ADDR_BOOT_INTRO, 1)[0],
     }
 
 
@@ -97,8 +98,10 @@ def check_line(text):
     return out
 
 
-def apply_basic_info(base_img, callsign=None, dmr_id=None, line1=None, line2=None):
-    """Накласти на образ нові значення (None -- поле не чіпати; значення, що збігається з наявним, байтів не змінює)."""
+def apply_basic_info(base_img, callsign=None, dmr_id=None, line1=None, line2=None, intro_text=None):
+    """Накласти на образ нові значення (None -- поле не чіпати; значення, що збігається з наявним, байтів не змінює).
+    intro_text: True -- екран вітання текстом (байт 0x7518 = 1), False -- картинкою (0). Якщо в байті вже будь-яке ненульове значення
+    (прошивка читає його як «текст»), а просять «текст», байт не чіпається."""
     img = _copy(base_img)
     res = cc.ImportResult()
     problems = []
@@ -116,6 +119,10 @@ def apply_basic_info(base_img, callsign=None, dmr_id=None, line1=None, line2=Non
         else:
             img.set_ee(cl.CP_ADDR_USER_DMRID, bytes.fromhex("%08d" % dmr_id))
             res.changed.append(("Основна інформація", "DMR ID: %d -> %d" % (cur["dmr_id"], dmr_id)))
+    if intro_text is not None and bool(intro_text) != cur["intro_text"]:
+        img.set_ee(ADDR_BOOT_INTRO, bytes([1 if intro_text else 0]))
+        res.changed.append(("Основна інформація", "екран вітання: %s -> %s" % ("текст" if cur["intro_text"] else "картинка",
+                                                                         "текст" if intro_text else "картинка")))
     for key, addr, label in (("line1", ADDR_BOOT_LINE1, "рядок вітання 1"), ("line2", ADDR_BOOT_LINE2, "рядок вітання 2")):
         text = line1 if key == "line1" else line2
         if text is None or text == cur[key]:

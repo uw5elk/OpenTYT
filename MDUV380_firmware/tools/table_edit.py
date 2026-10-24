@@ -25,8 +25,8 @@ import contact_edit as ce  # noqa: E402
 
 TG_MAX = cv.RXGROUP_MAX_CONTACTS        # 32
 NAME_LEN = 16
-KIND_TITLES = {"contact": "Контакти", "tg": "TG-списки", "zone": "Зони", "channel": "Канали"}
-KIND_LABELS = {"contact": "контакт", "tg": "список прийому", "zone": "зона", "channel": "канал"}
+KIND_TITLES = {"contact": "Контакти", "tg": "TG-списки", "zone": "Зони", "channel": "Канали", "dtmf": "DTMF-контакти"}
+KIND_LABELS = {"contact": "контакт", "tg": "список прийому", "zone": "зона", "channel": "канал", "dtmf": "DTMF-контакт"}
 
 
 class TableEditError(cl.CpsError):
@@ -111,6 +111,8 @@ def entity_names(img, kind):
         return [(n, cc.readable_text(r[:16])) for n, r in img.channels()]
     if kind == "contact":
         return [(s, cc.readable_text(r[:16])) for s, r in img.contacts()]
+    if kind == "dtmf":
+        return [(s, cc.readable_text(r[:16])) for s, r in img.dtmf()]
     raise ValueError(kind)
 
 
@@ -141,6 +143,11 @@ def zones(img):
 
 def zone_limit(img):
     return img.zone_format()
+
+
+def dtmf_contacts(img):
+    """[(слот, назва, код)] DTMF-контактів у порядку кодплага (код -- у тому ж записі, що й у DTMF.csv)."""
+    return [(s, cc.readable_text(r[:16]), cc.dtmf_code_text(r[16:32])) for s, r in img.dtmf()]
 
 
 def contacts(img):
@@ -290,6 +297,10 @@ def rename_entity(img, kind, ident, name, dp):
         raise TableEditError(["назва: " + prob])
     if kind == "channel":
         return channel_edit(img, ident, {"Channel Name": name}, dp)
+    if kind == "dtmf":
+        hdr, rows = tables_of(img, dp)["dtmf"]
+        rows[_row_of(img, "dtmf", ident)][-1] = name
+        return _run(img, {"dtmf": (hdr, rows)}, dp)
     hdr, rows = tables_of(img, dp)[cfg["key"]]
     i = _row_of(img, kind, ident)
     rows[i][-1] = name
@@ -317,6 +328,8 @@ def duplicate_entity(img, kind, ident, dp, name=None):
         name = unique_copy_name(img, kind, dict(entity_names(img, kind))[ident])
     if kind == "channel":
         return channel_duplicate(img, ident, name, dp)
+    if kind == "dtmf":
+        return dtmf_add(img, name, dict((s, c) for s, _n, c in dtmf_contacts(img))[ident], dp)
     members = dict((i, m) for i, _n, m in (tg_lists(img) if kind == "tg" else zones(img)))
     return add_entity(img, kind, name, members[ident], dp)
 
@@ -364,6 +377,10 @@ def delete_entity(img, kind, ident, dp, cascade=False):
         del rows[_row_of(img, "tg", ident)]
         edits["tg_lists"] = (hdr, rows)
         _clear_channel_ref(img, T, edits, "TG List", lambda rec: rec[cc.O_GROUP] == n)
+    elif kind == "dtmf":
+        hdr, rows = T["dtmf"]
+        del rows[_row_of(img, "dtmf", ident)]
+        edits["dtmf"] = (hdr, rows)
     elif kind == "contact":
         hdr, rows = T["contacts"]
         del rows[_row_of(img, "contact", ident)]
@@ -394,6 +411,50 @@ def _clear_channel_ref(img, T, edits, col, pred):
         if rec[cc.O_MODE] != 0 and pred(rec):
             _set_cell(hdr, row, col, "None")
     edits["channels"] = (hdr, rows)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+#  DTMF-контакти (R-next, Y4): ім'я до 16 байтів + код до 16 знаків «0-9 A-D * #». Ті самі рядки, що в DTMF.csv; перевірка -- імпорту CSV.
+#  Єдине, що редактор додає: код не може бути порожнім (контакт без коду нічого не передасть) -- CSV-імпорт порожній код приймає.
+# ---------------------------------------------------------------------------------------------------------------------------------
+
+def dtmf_code_problem(text):
+    """Текст проблеми з кодом DTMF або None. Пробіли ігноруються, регістр не важливий (як в імпорті)."""
+    t = "".join((text or "").split())
+    if not t:
+        return "код порожній: потрібен хоч один знак (%s)" % cc.DTMF_ALPHABET
+    try:
+        cc._dtmf_parse(t)
+    except ValueError as e:
+        return str(e)
+    return None
+
+
+def _dtmf_norm(text):
+    return cc.dtmf_code_text(cc._dtmf_parse(text)) if text.strip() else ""
+
+
+def dtmf_add(img, name, code, dp):
+    """Новий DTMF-контакт. Слот вибирає імпорт (перший вільний, до 63)."""
+    prob = name_problem(img, "dtmf", name)
+    if prob:
+        raise TableEditError(["назва: " + prob])
+    prob = dtmf_code_problem(code)
+    if prob:
+        raise TableEditError(["код: " + prob])
+    hdr, rows = tables_of(img, dp)["dtmf"]
+    rows.append(["", _dtmf_norm(code), name])
+    return _run(img, {"dtmf": (hdr, rows)}, dp)
+
+
+def dtmf_set_code(img, slot, code, dp):
+    """Змінити код DTMF-контакту (назва і слот лишаються)."""
+    prob = dtmf_code_problem(code)
+    if prob:
+        raise TableEditError(["код: " + prob])
+    hdr, rows = tables_of(img, dp)["dtmf"]
+    rows[_row_of(img, "dtmf", slot)][1] = _dtmf_norm(code)
+    return _run(img, {"dtmf": (hdr, rows)}, dp)
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------

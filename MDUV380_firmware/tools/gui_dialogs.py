@@ -132,6 +132,53 @@ def name_dialog(parent, title, prompt, initial="", check=None, ok="Гаразд"
     return result["value"]
 
 
+def two_field_dialog(parent, title, prompt1, prompt2, check1, check2, initial1="", initial2="", ok="Гаразд"):
+    """Два рядки тексту (напр. назва й код) з живою перевіркою кожного (check(текст) -> None або текст проблеми). Кнопка неактивна, поки є
+    проблема в будь-якому. Повертає (текст1, текст2) або None (скасовано)."""
+    win = _small_window(parent, title)
+    result = {"value": None}
+    v1, v2 = tk.StringVar(value=initial1), tk.StringVar(value=initial2)
+    body = ttk.Frame(win)
+    body.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+    ttk.Label(body, text=prompt1).pack(anchor="w")
+    e1 = ttk.Entry(body, textvariable=v1, width=40)
+    e1.pack(fill="x", pady=4)
+    m1 = ttk.Label(body, text="", wraplength=380, justify="left")
+    m1.pack(anchor="w", pady=2)
+    ttk.Label(body, text=prompt2).pack(anchor="w", pady=(6, 0))
+    e2 = ttk.Entry(body, textvariable=v2, width=40)
+    e2.pack(fill="x", pady=4)
+    m2 = ttk.Label(body, text="", wraplength=380, justify="left")
+    m2.pack(anchor="w", pady=2)
+    bar = ttk.Frame(win)
+    bar.pack(fill="x", padx=12, pady=(4, 12))
+
+    def finish(value):
+        result["value"] = value
+        win.destroy()
+    ok_btn = ttk.Button(bar, text=ok, command=lambda: finish((v1.get(), v2.get())))
+    ok_btn.pack(side="right", padx=(8, 0))
+    ttk.Button(bar, text="Скасувати", command=lambda: finish(None)).pack(side="right")
+
+    def update(*_a):
+        g1, t1, c1 = _live_check(check1, v1.get())
+        g2, t2, c2 = _live_check(check2, v2.get())
+        m1.config(text=t1, foreground=c1)
+        m2.config(text=t2.replace("Назва підходить.", "Код підходить."), foreground=c2)
+        ok_btn.config(state="normal" if (g1 and g2) else "disabled")
+    v1.trace_add("write", update)
+    v2.trace_add("write", update)
+    update()
+    win.bind("<Return>", lambda _e: ok_btn.invoke() if str(ok_btn.cget("state")) == "normal" else None)
+    win.bind("<Escape>", lambda _e: finish(None))
+    win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+    e1.focus_set()
+    win.update_idletasks()
+    win.grab_set()
+    parent.wait_window(win)
+    return result["value"]
+
+
 def pick_dialog(parent, title, name_prompt, items, limit, check=None, ok="Створити", noun="елементів", initial=""):
     """Назва + вибір елементів (мінімум 1, не більше limit) зі списку items [(значення, підпис)]. Порядок результату -- як у списку.
     Повертає (назва, [значення]) або None."""

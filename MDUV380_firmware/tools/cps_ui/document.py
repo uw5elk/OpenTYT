@@ -28,6 +28,7 @@ import cps_csv as cc  # noqa: E402
 import cps_restore as cr  # noqa: E402
 import codeplug_view as cv  # noqa: E402
 import contact_edit as ce  # noqa: E402
+import general_edit as ge  # noqa: E402
 import codeplug_edit as ced  # noqa: E402
 
 ORIGIN_RADIO = "radio"
@@ -168,8 +169,12 @@ class Document:
         """Операції contact_edit (edit / add / delete). Помилка (ContactEditError) -- документ не змінено."""
         return self.apply(ce.apply_ops(self.image, ops))
 
-    def edit_basic(self, callsign=None, dmr_id=None, line1=None, line2=None):
-        return self.apply(ced.apply_basic_info(self.image, callsign, dmr_id, line1, line2))
+    def edit_basic(self, callsign=None, dmr_id=None, line1=None, line2=None, intro_text=None):
+        return self.apply(ced.apply_basic_info(self.image, callsign, dmr_id, line1, line2, intro_text))
+
+    def edit_general(self, **values):
+        """Загальні налаштування (пароль на старті, тривалості DTMF): general_edit.apply_general."""
+        return self.apply(ge.apply_general(self.image, **values))
 
     def edit_aprs_slot(self, slot, values):
         """slot=None -- новий слот у кінці."""

@@ -35,6 +35,9 @@
 #include "interfaces/gps.h"
 #if defined(ENABLE_AES)
 #include "functions/channelVox.h"   /* ui8: одна умова «VOX доступний» для показу й обробників */
+#if defined(APRS_R21_NAMES)
+#include "functions/aprs_rx_parse.h"   /* CC X1: aprsNameToDisplay() -- показ назви каналу, записаної CPS (GBK) або в UTF-8 */
+#endif
 #endif
 
 #if defined(CPU_MK22FN512VLL12)
@@ -185,6 +188,21 @@ menuStatus_t menuChannelDetails(uiEvent_t *ev, bool isFirstRun)
 	return menuChannelDetailsExitCode;
 }
 
+#if defined(APRS_R21_NAMES)
+/* CC X1: позиція курсора в ПОКАЗАНІЙ назві. channelName (сирі байти кодплуга) лишається буфером редагування, а на екран назва йде перекодованою
+ * (пара GBK 2 байти -> 1 літера cp1251): курсор мусить стояти після перекодованого префікса, а не після namePos сирих байтів. */
+static int chNameDisplayPos(void)
+{
+	char tmp[SCREEN_LINE_BUFFER_SIZE];
+	int n = MIN(namePos, 16);
+
+	memcpy(tmp, channelName, (size_t)n);
+	tmp[n] = 0;
+	aprsNameToDisplay(tmp);
+	return (int)strlen(tmp);
+}
+#endif
+
 static void updateCursor(bool moved)
 {
 	if (uiDataGlobal.currentSelectedChannelNumber != CH_DETAILS_VFO_CHANNEL)
@@ -194,7 +212,11 @@ static void updateCursor(bool moved)
 		switch (menuDataGlobal.currentItemIndex)
 		{
 		case CH_DETAILS_NAME:
+#if defined(APRS_R21_NAMES)
+			menuUpdateCursor(MIN(chNameDisplayPos(), 15), moved, true);
+#else
 			menuUpdateCursor(MIN(namePos, 15), moved, true);
+#endif
 			break;
 		}
 
@@ -361,6 +383,12 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 				{
 					case CH_DETAILS_NAME:
 						strncpy(rightSideVar, channelName, SCREEN_LINE_BUFFER_SIZE);
+#if defined(APRS_R21_NAMES)
+						/* CC X1: на екран -- перекодована копія (як на головному екрані, uiChannelMode.c), редагується далі сирий channelName;
+						 * байти, що йдуть у кодплаг (codeplugUtilConvertStringToBuf нижче), не змінюються */
+						rightSideVar[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
+						aprsNameToDisplay(rightSideVar);
+#endif
 					break;
 					case CH_DETAILS_MODE:
 						leftSide = currentLanguage->mode;
