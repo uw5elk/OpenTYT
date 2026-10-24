@@ -34,33 +34,17 @@ from .p_flash import FlashPanel
 from .p_rctl import RctlPanel
 from .p_screenshot import ScreenshotPanel
 from .p_viewer import ViewerPanel
-from .panel import Panel, ScrollFrame
+from .panel import ScrollFrame
 from .settings import Settings
 
 # Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
-    ("grp_radio", "Рація", "Підключення до рації, прошивка і знімок екрана.",
-     [ConnectionPanel, FlashPanel, ScreenshotPanel]),
-    ("grp_codeplug", "Кодплаг", "Бекап і відновлення, перегляд кодплага, обмін з CSV.",
-     [BackupPanel, ViewerPanel, CsvPanel]),
-    ("grp_settings", "Налаштування рації", "Параметри, що пишуться в рацію через USB: APRS, AES-ключі, віддалене керування.",
-     [AprsPanel, AesPanel, RctlPanel]),
+    ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
+    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, CsvPanel]),
+    ("grp_settings", "Налаштування рації", [AprsPanel, AesPanel, RctlPanel]),
 ]
 DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}
-
-
-class GroupPanel(Panel):
-    """Панель-вітрина групи дерева: короткий опис і кнопки переходу до розділів групи."""
-    scroll = False
-
-    def __init__(self, parent, shell, key, title, text, children):
-        super().__init__(parent, shell)
-        self.key = key
-        self.title = title
-        self.header(title, text)
-        for cls in children:
-            ttk.Button(self, text=cls.title, command=lambda k=cls.key: shell.show(k)).pack(anchor="w", padx=12, pady=3)
 
 
 class CpsApp(tk.Tk):
@@ -81,8 +65,8 @@ class CpsApp(tk.Tk):
         self._current = None
         self._normal_size = None
         self._defs = {}
-        for gkey, gtitle, gtext, classes in SECTIONS:
-            self._defs[gkey] = {"cls": None, "title": gtitle, "text": gtext, "children": classes}
+        for gkey, gtitle, classes in SECTIONS:
+            self._defs[gkey] = {"cls": None, "title": gtitle, "children": classes}
             for cls in classes:
                 self._defs[cls.key] = {"cls": cls, "title": cls.title, "group": gkey}
 
@@ -93,6 +77,8 @@ class CpsApp(tk.Tk):
         self._poll_id = self.after(50, self._poll_queue)
         start = self.settings.get("section")
         self.show(start if start in self._defs else DEFAULT_SECTION)
+        self._sash_done = False
+        self.bind("<Map>", self._on_first_map)
         if autoprobe:
             self.after(150, lambda: self.refresh_connection(force=False))
 
@@ -149,6 +135,13 @@ class CpsApp(tk.Tk):
         self.settings.set("zoomed", bool(self._is_maximized()))
         self.settings.set("section", self._current)
         self.settings.set("log_open", bool(self._log_open))
+        lw, lh = self._measure_sashes()
+        if lw and lw >= 120:
+            self.settings.set("left_width", lw)
+        if lh and lh >= 40:
+            self._log_h = lh
+        if self._log_h >= 40:
+            self.settings.set("log_height", int(self._log_h))
         return self.settings.save()
 
     def _on_close(self):
@@ -163,54 +156,60 @@ class CpsApp(tk.Tk):
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
+        style = ttk.Style(self)
+        style.configure("Sash", sashthickness=6, gripcount=0)
+        # Дерево зливається з лівою колонкою (без власної рамки й окремого тла): порожнє місце під пунктами не виглядає «коробкою».
+        style.configure("Nav.Treeview", rowheight=24, background=gt.P["bg"], fieldbackground=gt.P["bg"], bordercolor=gt.P["bg"],
+                        lightcolor=gt.P["bg"], darkcolor=gt.P["bg"], borderwidth=0)
+        style.map("Nav.Treeview", background=[("selected", gt.P["select_bg"])], foreground=[("selected", gt.P["select_fg"])])
+        style.layout("Nav.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
 
-        body = ttk.Frame(self)
-        body.grid(row=0, column=0, sticky="nsew")
-        body.columnconfigure(2, weight=1)
-        body.rowconfigure(0, weight=1)
+        # Вертикальна межа: зверху дерево + панель, знизу журнал (перетягується). Горизонтальна: дерево | панель (перетягується).
+        self.vpane = ttk.PanedWindow(self, orient="vertical")
+        self.vpane.grid(row=0, column=0, sticky="nsew")
+        self.hpane = ttk.PanedWindow(self.vpane, orient="horizontal")
+        self.vpane.add(self.hpane, weight=1)
 
-        left = ttk.Frame(body, width=300)
-        left.grid(row=0, column=0, sticky="ns")
-        left.grid_propagate(False)
+        left = ttk.Frame(self.hpane, width=int(self.settings.get("left_width", 300) or 300))
+        self.hpane.add(left, weight=0)
         ttk.Label(left, text=APP_TITLE, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 0))
         ttk.Label(left, text=self.build_info, foreground=gt.P["muted"], wraplength=270, justify="left").pack(anchor="w", padx=12)
         ttk.Label(left, text="Автор: UW5ELK", foreground=gt.P["muted"]).pack(anchor="w", padx=12, pady=(0, 8))
-        style = ttk.Style(self)
-        style.configure("Nav.Treeview", rowheight=28)
         self.tree = ttk.Treeview(left, show="tree", selectmode="browse", style="Nav.Treeview")
-        self.tree.column("#0", width=270, stretch=True)
-        self.tree.pack(fill="both", expand=True, padx=(8, 4), pady=(0, 8))
+        self.tree.column("#0", width=200, stretch=True)
+        self.tree.pack(fill="both", expand=True, padx=(8, 0), pady=0)
         self.tree.tag_configure("dim", foreground=gt.P["muted"])
-        for gkey, gtitle, _gtext, classes in SECTIONS:
+        for gkey, gtitle, classes in SECTIONS:
             self.tree.insert("", "end", iid=gkey, text=gtitle, open=True)
             for cls in classes:
                 self.tree.insert(gkey, "end", iid=cls.key, text=cls.title)
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
-        ttk.Separator(body, orient="vertical").grid(row=0, column=1, sticky="ns")
-        self.right = ttk.Frame(body)
-        self.right.grid(row=0, column=2, sticky="nsew")
+        self.right = ttk.Frame(self.hpane)
+        self.hpane.add(self.right, weight=1)
         self.right.columnconfigure(0, weight=1)
         self.right.rowconfigure(0, weight=1)
 
-        # журнал (згортається)
-        self.log_frame = ttk.Frame(self)
+        # журнал (згортається; висота за замовчуванням -- 4 рядки, межу можна тягнути)
+        self.log_frame = ttk.Frame(self.vpane)
         self.log_frame.columnconfigure(0, weight=1)
+        self.log_frame.rowconfigure(1, weight=1)
         head = ttk.Frame(self.log_frame)
-        head.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 0))
+        head.grid(row=0, column=0, sticky="ew", padx=8, pady=(2, 0))
         ttk.Label(head, text="Журнал").pack(side="left")
         self.clear_btn = ttk.Button(head, text="Очистити", command=self.clear_log)
         self.clear_btn.pack(side="right")
-        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=9, state="disabled", font=("Consolas", 9))
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=4, state="disabled", font=("Consolas", 9))
         gt.style_text(self.log_text)
-        self.log_text.grid(row=1, column=0, sticky="nsew", padx=8, pady=(2, 6))
+        self.log_text.grid(row=1, column=0, sticky="nsew", padx=8, pady=(2, 4))
         self._log_open = bool(self.settings.get("log_open", True))
+        self._log_h = int(self.settings.get("log_height", 0) or 0)
         if self._log_open:
-            self.log_frame.grid(row=1, column=0, sticky="ew")
+            self.vpane.add(self.log_frame, weight=0)
 
-        # рядок стану
+        # рядок стану: текст зліва; смужка прогресу з'являється ЛИШЕ на час операції; кнопка журналу справа
         bar = ttk.Frame(self)
-        bar.grid(row=2, column=0, sticky="ew")
+        bar.grid(row=1, column=0, sticky="ew")
         ttk.Separator(bar, orient="horizontal").pack(fill="x")
         inner = ttk.Frame(bar)
         inner.pack(fill="x", padx=8, pady=4)
@@ -218,9 +217,60 @@ class CpsApp(tk.Tk):
         self.status_label.pack(side="left")
         self.log_toggle = ttk.Button(inner, text="", command=self.toggle_log)
         self.log_toggle.pack(side="right")
-        self.progress = ttk.Progressbar(inner, mode="determinate", maximum=100, length=220)
-        self.progress.pack(side="right", padx=8)
+        self.progress = ttk.Progressbar(inner, mode="determinate", maximum=100, length=220)    # не пакується, доки нема операції
+        self._progress_shown = False
         self._update_log_toggle()
+
+    # --- межі панелей: збереження й відновлення ---------------------------------------------------
+
+    def _on_first_map(self, e):
+        """Межі панелей можна ставити лише коли вікно вже показано (до цього віджети мають розмір 1x1): одразу й ще раз за мить,
+        коли вікно встигло розгорнутись на весь екран."""
+        if e.widget is not self or self._sash_done:
+            return
+        self._sash_done = True
+        self.after_idle(self._restore_sashes)
+        self.after(250, self._restore_sashes)
+
+    def _restore_sashes(self):
+        """Після першого показу вікна: ширина лівої колонки й висота журналу з налаштувань (або типові)."""
+        try:
+            self.update_idletasks()
+            lw = self.settings.get("left_width")
+            if isinstance(lw, int) and lw >= 120:
+                self.hpane.sashpos(0, lw)
+            self._place_log_sash()
+        except tk.TclError:
+            pass
+
+    def _default_log_height(self):
+        return 100        # заголовок + 4 рядки
+
+    def _place_log_sash(self):
+        if not self._log_open:
+            return
+        try:
+            h = self.vpane.winfo_height()
+            if h <= 1:
+                return
+            want = self._log_h if self._log_h >= 40 else self._default_log_height()
+            self.vpane.sashpos(0, max(100, h - want))
+        except tk.TclError:
+            pass
+
+    def _measure_sashes(self):
+        """(ширина лівої колонки, висота журналу) за поточним положенням меж; None, якщо не виміряти."""
+        left_w = log_h = None
+        try:
+            left_w = int(self.hpane.sashpos(0))
+        except tk.TclError:
+            pass
+        if self._log_open:
+            try:
+                log_h = int(self.vpane.winfo_height() - self.vpane.sashpos(0))
+            except tk.TclError:
+                pass
+        return left_w, log_h
 
     # --- дерево і розділи -------------------------------------------------------------------
 
@@ -233,10 +283,7 @@ class CpsApp(tk.Tk):
         """Панель розділу (створюється при першому зверненні)."""
         if key not in self._panels:
             d = self._defs[key]
-            if d["cls"] is None:
-                panel = GroupPanel(self.right, self, key, d["title"], d["text"], d["children"])
-                host = panel
-            elif d["cls"].scroll:
+            if d["cls"].scroll:
                 host = ScrollFrame(self.right)
                 panel = d["cls"](host.inner, self)
                 panel.pack(fill="both", expand=True)
@@ -248,16 +295,28 @@ class CpsApp(tk.Tk):
         return self._panels[key]
 
     def show(self, key):
-        """Перейти до розділу (так само, як клацнути його в дереві)."""
-        if key not in self._defs:
-            key = DEFAULT_SECTION
+        """Перейти до розділу (так само, як клацнути його в дереві). Ключ групи веде до її ПЕРШОГО розділу."""
+        key = self._resolve(key)
         if self.tree.selection() != (key,):
             self.tree.selection_set(key)
         self.tree.see(key)
         self._show(key)
 
+    def _resolve(self, key):
+        """Група дерева -> її перший розділ (і розгортається); невідомий ключ -> стандартний розділ."""
+        if key not in self._defs:
+            return DEFAULT_SECTION
+        d = self._defs[key]
+        if d["cls"] is None:
+            self.tree.item(key, open=True)
+            return d["children"][0].key
+        return key
+
     def _show(self, key):
         if key not in self._defs:
+            return
+        if self._defs[key]["cls"] is None:       # клік по групі: розгорнути її й відкрити перший розділ
+            self.show(key)
             return
         panel = self.get_panel(key)
         if self._current is not None and self._current != key:
@@ -306,11 +365,17 @@ class CpsApp(tk.Tk):
         self.log_toggle.config(text="Сховати журнал" if self._log_open else "Показати журнал")
 
     def toggle_log(self):
-        self._log_open = not self._log_open
         if self._log_open:
-            self.log_frame.grid(row=1, column=0, sticky="ew")
+            _lw, lh = self._measure_sashes()
+            if lh and lh >= 40:
+                self._log_h = lh               # висота, яку лишив користувач, -- для наступного показу
+            self.vpane.forget(self.log_frame)
+            self._log_open = False
         else:
-            self.log_frame.grid_remove()
+            self._log_open = True
+            self.vpane.add(self.log_frame, weight=0)
+            self.update_idletasks()
+            self._place_log_sash()
         self._update_log_toggle()
         self.settings.set("log_open", self._log_open)
         self.settings.save()
@@ -320,6 +385,15 @@ class CpsApp(tk.Tk):
 
     def set_progress(self, value):
         self.progress["value"] = value
+
+    def _show_progress(self, on):
+        """Смужка прогресу видна лише під час операції (після завершення й після помилки ховається)."""
+        if on and not self._progress_shown:
+            self.progress.pack(side="right", padx=8)
+            self._progress_shown = True
+        elif not on and self._progress_shown:
+            self.progress.pack_forget()
+            self._progress_shown = False
 
     def post(self, fn):
         """Виконати fn() у головному потоці (безпечно викликати з робочого)."""
@@ -416,6 +490,7 @@ class CpsApp(tk.Tk):
         self._task = {"on_done": on_done, "fail_suffix": fail_suffix, "plain": plain_errors, "ok_status": ok_status, "quiet": quiet,
                       "reconnect_ms": reconnect_ms}
         self.progress["value"] = 0
+        self._show_progress(not quiet)
         self.set_status(status_text, "info")
         if not quiet:
             self.log("=" * 30)
@@ -445,6 +520,7 @@ class CpsApp(tk.Tk):
     def _on_task_done(self, ok, reason, result):
         t, self._task = self._task, None
         self.busy = False
+        self._show_progress(False)        # і після успіху, і після помилки
         if not ok and reason and "рацію не знайдено" in reason.lower():
             self.conn.mark_absent()
         self._refresh_all()

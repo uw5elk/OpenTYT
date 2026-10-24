@@ -41,15 +41,22 @@ class AprsPanel(Panel):
         ttk.Label(self, text=("Одне місце для кожного налаштування: позивний -- ім'я рації, бікон -- власний блок, станція -- розділ APRS у CSV. "
                               "Після запису перезапусти рацію."), wraplength=600, justify="left", foreground=gt.P["warn"]).pack(anchor="w", padx=12, pady=(0, 6))
 
-        who = ttk.LabelFrame(self, text="Позивний і приймач")
-        who.pack(fill="x", padx=12, pady=4)
+        # Рамки лежать у двох колонках, коли панель широка (>= 900 px), і одна під одною, коли вузька (_relayout).
+        self.cols = ttk.Frame(self)
+        self.cols.pack(fill="x", padx=12, pady=0)
+        self.col_a = ttk.Frame(self.cols)
+        self.col_b = ttk.Frame(self.cols)
+        self.cols.bind("<Configure>", self._relayout)
+        self._wide = None
+        who = ttk.LabelFrame(self.col_a, text="Позивний і приймач")
+        who.pack(fill="x", pady=4)
         self.vars["call"] = tk.StringVar()
         self._row(who, "Позивний (без SSID)", lambda f: ttk.Entry(f, textvariable=self.vars["call"], width=10))
         self.vars["sql"] = tk.StringVar(value="0")
         self._row(who, "Шумодав приймача APRS (0..21)", lambda f: ttk.Spinbox(f, from_=0, to=abc_.SQL_MAX, textvariable=self.vars["sql"], width=6))
 
-        bc = ttk.LabelFrame(self, text="Бікон")
-        bc.pack(fill="x", padx=12, pady=4)
+        bc = ttk.LabelFrame(self.col_a, text="Бікон")
+        bc.pack(fill="x", pady=4)
         self.vars["mode"] = tk.StringVar(value=abc_.MODE_NAMES[0])
         self._row(bc, "Режим", lambda f: ttk.Combobox(f, textvariable=self.vars["mode"], values=abc_.MODE_NAMES, state="readonly", width=14))
         self.vars["interval"] = tk.StringVar()
@@ -68,8 +75,8 @@ class AprsPanel(Panel):
         self.vars["bcnwin"] = tk.StringVar(value=abc_.BCNWIN_NAMES[0])
         self._row(bc, "Вікно маяків приймача", lambda f: ttk.Combobox(f, textvariable=self.vars["bcnwin"], values=abc_.BCNWIN_NAMES, state="readonly", width=14))
 
-        sm = ttk.LabelFrame(self, text="Розумний маяк")
-        sm.pack(fill="x", padx=12, pady=4)
+        sm = ttk.LabelFrame(self.col_b, text="Розумний маяк")
+        sm.pack(fill="x", pady=4)
         for key, label in (("slow", "Повільно, хв (1..100)"), ("fast", "Швидко, с (10..180)"), ("low", "Мала швидкість, км/год (2..30)"),
                            ("high", "Велика швидкість, км/год (2..90)"), ("angle", "Кут повороту, ° (5..90)"), ("slope", "Нахил повороту (1..255)"),
                            ("time", "Час повороту, с (5..180)")):
@@ -88,6 +95,23 @@ class AprsPanel(Panel):
         for b in (self.read_btn, self.write_beacon_btn, self.write_call_btn):
             self.reg(b)
         ttk.Label(self, text="Натисни «Прочитати з рації», щоб підтягнути поточні значення.", foreground=gt.P["info"]).pack(anchor="w", padx=12)
+
+    def _relayout(self, e):
+        wide = e.width >= 900
+        if wide == self._wide:
+            return
+        self._wide = wide
+        for w in (self.col_a, self.col_b):
+            w.grid_forget()
+        for c in (0, 1):
+            self.cols.columnconfigure(c, weight=1 if wide else 0)
+        if wide:
+            self.col_a.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+            self.col_b.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        else:
+            self.cols.columnconfigure(0, weight=1)
+            self.col_a.grid(row=0, column=0, sticky="nsew")
+            self.col_b.grid(row=1, column=0, sticky="nsew")
 
     def _apply_state(self, st):
         if st.get("call") is not None:

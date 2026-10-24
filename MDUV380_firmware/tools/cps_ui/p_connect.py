@@ -27,6 +27,8 @@ class ConnectionPanel(Panel):
             v.grid(row=i, column=1, sticky="w", padx=4, pady=2)
             self.vals[k] = v
         box.columnconfigure(1, weight=1)
+        # значення переносяться за шириною рамки (на вузькому вікні довгий рядок про заряд не вилазить за край)
+        box.bind("<Configure>", lambda e: [v.config(wraplength=max(160, e.width - 200)) for v in self.vals.values()])
         self.refresh_btn = ttk.Button(self, text="Оновити", command=lambda: self.shell.refresh_connection(force=True))
         self.refresh_btn.pack(anchor="w", padx=12, pady=6)
         self.reg(self.refresh_btn, radio=False)
