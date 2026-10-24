@@ -37,6 +37,9 @@ EXPECTED = [
 ]
 
 
+FIRST_OF = {"grp_radio": "conn", "grp_codeplug": "backup", "grp_settings": "aprs"}
+
+
 def check(cond, msg):
     if not cond:
         FAILS.append(msg)
@@ -49,6 +52,14 @@ def test_launcher_is_thin():
     check(len(src.splitlines()) < 80, "gui_flasher.py -- тонкий запуск (<80 рядків), зараз %d" % len(src.splitlines()))
     check("from cps_ui.app import" in src and "main()" in src, "gui_flasher.py імпортує cps_ui.app і викликає main()")
     check(not any(re.match(r"\s*class\s", l) for l in code), "у gui_flasher.py нема класів")
+
+
+def _spin(app, seconds=0.5):
+    """Прокрутити цикл подій (з паузами), щоб відпрацювали after()/after_idle()."""
+    end = time.time() + seconds
+    while time.time() < end:
+        app.update()
+        time.sleep(0.02)
 
 
 def _widgets(w):
@@ -94,7 +105,7 @@ def test_gui():
                 check(tree.parent(key) == parent, "дерево: %s лежить у %r" % (key, parent))
         all_items = list(tree.get_children()) + [c for g in tree.get_children() for c in tree.get_children(g)]
         check(len(all_items) == len(EXPECTED), "дерево: рівно %d пунктів (є %d)" % (len(EXPECTED), len(all_items)))
-        check(sum(len(s[3]) for s in SECTIONS) == 9, "SECTIONS: 9 панелей")
+        check(sum(len(s[2]) for s in SECTIONS) == 9, "SECTIONS: 9 панелей")
 
         # --- стан 1: рації нема ---
         app.conn.mark_absent()
@@ -102,10 +113,11 @@ def test_gui():
         for key, _t, _p in EXPECTED:
             app.show(key)
             app.update()
-            check(app.current_key == key, "вибір %s відкрив розділ" % key)
-            panel = app.get_panel(key)
-            check(panel.winfo_exists() and panel.winfo_ismapped(), "панель %s видима" % key)
-            others = [k for k in app._hosts if k != key and app._hosts[k].winfo_ismapped()]
+            want = FIRST_OF.get(key, key)           # Q2: ключ групи веде до її першого розділу
+            check(app.current_key == want, "вибір %s відкрив розділ %s (є %s)" % (key, want, app.current_key))
+            panel = app.get_panel(want)
+            check(panel.winfo_exists() and panel.winfo_ismapped(), "панель %s видима" % want)
+            others = [k for k in app._hosts if k != want and app._hosts[k].winfo_ismapped()]
             check(not others, "відкрита лише одна панель, а видно ще %s" % others)
         # дії, що потребують рації, вимкнені з поясненням
         for key in ("shot", "backup", "csv", "viewer", "aprs", "aes", "rctl"):
@@ -163,12 +175,15 @@ def test_gui():
         # --- фонове завдання: спільний журнал, блокування, повернення ---
         got = []
         app.clear_log()
-        ok = app.run_task(lambda: (print("рядок з потоку"), "результат")[1], "Тестове завдання...", on_done=got.append)
+        import threading
+        hold = threading.Event()
+        ok = app.run_task(lambda: (print("рядок з потоку"), hold.wait(5), "результат")[2], "Тестове завдання...", on_done=got.append)
         check(ok and app.busy, "завдання стартувало й виставило busy")
         check(not app.run_task(lambda: None, "друге"), "друге завдання під час першого відхилено (один USB)")
         app.show("shot"); app.update()
         check(str(app.get_panel("shot").shot_button.cget("state")) == "disabled", "під час завдання кнопки вимкнені")
         check("зачекай" in app.get_panel("shot").note.cget("text").lower(), "під час завдання є пояснення")
+        hold.set()
         for _ in range(100):
             app.update()
             if not app.busy:
@@ -199,6 +214,107 @@ def test_gui():
         finally:
             cn.cps.find_port = orig
 
+        # --- Q1: панель заповнює область на мінімальному й великому розмірі вікна ---
+        import test_cps_csv as tc
+        _spi = tc.make_fixture_spi()
+        _cp, _d = tc.codeplug_of(_spi)
+        app.get_panel("viewer").open_codeplug(_cp, "тест", writable=True)
+        leaf = [k for k in app.section_keys() if k not in FIRST_OF]
+        for (W, H) in ((760, 520), (1800, 1000)):
+            app.geometry("%dx%d" % (W, H))
+            for _ in range(4):
+                app.update()
+            rw, rh = app.right.winfo_width(), app.right.winfo_height()
+            check(rw >= W - 420 and rh >= H - 200, "Q1 %dx%d: область панелі велика (%dx%d)" % (W, H, rw, rh))
+            for key in leaf:
+                app.show(key)
+                for _ in range(3):
+                    app.update()
+                host = app._hosts[key]
+                check(host.winfo_width() >= rw - 2 and host.winfo_height() >= rh - 2,
+                      "Q1 %dx%d: %s заповнює область (%dx%d з %dx%d)" % (W, H, key, host.winfo_width(), host.winfo_height(), rw, rh))
+                pan = app.get_panel(key)
+                check(pan.winfo_width() >= rw - 24, "Q1 %dx%d: панель %s на всю ширину (%d з %d)" % (W, H, key, pan.winfo_width(), rw))
+                if key == "viewer":
+                    nb = app.get_panel("viewer").viewer.nb
+                    check(nb.winfo_width() >= 0.85 * rw and nb.winfo_height() >= 0.4 * rh,
+                          "Q1 %dx%d: таблиці перегляду займають область (%dx%d)" % (W, H, nb.winfo_width(), nb.winfo_height()))
+                if key == "aes" and W > 1000:
+                    ke = app.get_panel("aes").key_entry
+                    check(ke.winfo_width() >= 0.5 * rw, "Q1: поле ключа AES розтягується (%d з %d)" % (ke.winfo_width(), rw))
+            if W > 1000:
+                app.show("aprs")
+                for _ in range(3):
+                    app.update()
+                ap = app.get_panel("aprs")
+                check(ap._wide is True, "Q1: на широкому вікні APRS у двох колонках")
+                check(int(str(ap.note.cget("wraplength"))) > 700, "Q1: пояснення переносяться за шириною панелі (%s)" % ap.note.cget("wraplength"))
+            else:
+                app.show("aprs")
+                for _ in range(3):
+                    app.update()
+                check(app.get_panel("aprs")._wide is False, "Q1: на малому вікні APRS в одну колонку")
+        app.get_panel("viewer").close_viewer()
+        app.geometry("1000x700")
+        for _ in range(4):
+            app.update()
+        # Q6.1: дерево на всю висоту лівої колонки
+        left = app.tree.master
+        check(app.tree.winfo_y() + app.tree.winfo_height() >= left.winfo_height() - 2, "Q6.1: дерево тягнеться до низу лівої колонки")
+
+        # --- Q2: клік по групі в дереві відкриває перший розділ; кнопок-дублікатів дерева нема ---
+        for g, first in FIRST_OF.items():
+            tree.selection_set(g)
+            app.update()
+            check(app.current_key == first, "Q2: клік по групі %s відкрив %s (є %s)" % (g, first, app.current_key))
+            check(str(tree.item(g, "open")) in ("1", "True", "true"), "Q2: група %s розгорнута" % g)
+        titles = {t for _k, t, _p in EXPECTED}
+        dup = []
+        for key in app.section_keys():
+            if key in FIRST_OF:
+                continue
+            for w in _buttons(app.get_panel(key)):
+                if str(w.cget("text")) in titles and key != "shot":          # «Знімок екрана» у своїй панелі -- дія, а не перехід
+                    dup.append((key, str(w.cget("text"))))
+        check(not dup, "Q2: кнопок-дублікатів назв дерева нема: %r" % dup)
+
+        # --- Q5/Q4: смужка прогресу -- лише під час операції ---
+        app.update()
+        check(not app.progress.winfo_ismapped(), "Q5: у спокої смужки прогресу не видно")
+        status_children = [w for w in _widgets(app) if w.winfo_class() == "TEntry" and not str(w).startswith(str(app.right))]
+        check(not status_children, "Q4: у вікні поза панелями нема полів вводу без підпису: %r" % status_children)
+        gate = threading.Event()
+        app.run_task(lambda: gate.wait(5), "Тривала операція...")
+        app.update()
+        check(app.progress.winfo_ismapped(), "Q5: під час операції смужка видна")
+        check("Тривала операція" in app.status_label.cget("text"), "Q5: рядок стану каже, що відбувається")
+        gate.set()
+        for _ in range(200):
+            app.update()
+            if not app.busy:
+                break
+            time.sleep(0.02)
+        app.update()
+        check(not app.progress.winfo_ismapped(), "Q5: після завершення смужку сховано")
+        def boom():
+            raise RuntimeError("тестова помилка")
+        import tkinter.messagebox as mb
+        old_err = mb.showerror
+        mb.showerror = lambda *a, **k: None
+        try:
+            app.run_task(boom, "Операція з помилкою...", plain_errors=True)
+            app.update()
+            check(app.progress.winfo_ismapped(), "Q5: під час операції (що впаде) смужка видна")
+            for _ in range(200):
+                app.update()
+                if not app.busy:
+                    break
+                time.sleep(0.02)
+            app.update()
+        finally:
+            mb.showerror = old_err
+        check(not app.progress.winfo_ismapped(), "Q5: після помилки смужку теж сховано")
+
         # --- журнал згортається ---
         was = app._log_open
         app.toggle_log(); app.update()
@@ -209,13 +325,22 @@ def test_gui():
         # --- налаштування переживають перезапуск ---
         app.show("rctl")
         app.geometry("910x600")
+        for _ in range(4):
+            app.update()
+        app.vpane.sashpos(0, app.vpane.winfo_height() - 250)       # Q3.2: користувач потягнув межу журналу
+        app.hpane.sashpos(0, 380)                                   # Q6.2: і межу лівої колонки
         app.update()
         check(app.save_settings(), "налаштування записано")
+        check(app.settings.get("log_height") and abs(app.settings.get("log_height") - 250) <= 8, "Q3.2: висота журналу в налаштуваннях: %r" % app.settings.get("log_height"))
+        check(app.settings.get("left_width") and abs(app.settings.get("left_width") - 380) <= 4, "Q6.2: ширина колонки в налаштуваннях: %r" % app.settings.get("left_width"))
     finally:
         app.destroy()
     app2 = CpsApp(settings=Settings(spath), autoprobe=False)
     try:
-        app2.update()
+        _spin(app2)
+        lh2 = app2.vpane.winfo_height() - app2.vpane.sashpos(0)
+        check(abs(lh2 - 250) <= 8, "Q3.2: висота журналу відновлена після перезапуску (%d)" % lh2)
+        check(abs(app2.hpane.sashpos(0) - 380) <= 4, "Q6.2: ширина колонки відновлена після перезапуску (%d)" % app2.hpane.sashpos(0))
         check(app2.current_key == "rctl", "після перезапуску відкрито останній розділ: %r" % app2.current_key)
         check(app2.settings.get("width") == 910 and app2.settings.get("height") == 600, "розмір вікна запам'ятовано: %r" % ((app2.settings.get("width"), app2.settings.get("height")),))
         check(tuple(app2.geometry().split("+")[0].split("x")) == ("910", "600"), "вікно відкрилось 910x600: %s" % app2.geometry())
@@ -226,8 +351,12 @@ def test_gui():
         f.write("{не json")
     app3 = CpsApp(settings=Settings(spath), autoprobe=False)
     try:
-        app3.update()
+        app3.geometry("1000x700")
+        _spin(app3)
         check(app3.current_key == "conn", "зіпсовані налаштування: стандартний розділ")
+        lh3 = app3.vpane.winfo_height() - app3.vpane.sashpos(0)
+        check(60 <= lh3 <= 150 and lh3 < 0.25 * app3.winfo_height(), "Q3.1: типова висота журналу низька: %d з %d" % (lh3, app3.winfo_height()))
+        check(app3.log_text.cget("height") == 4, "Q3.1: журнал на 4 рядки")
     finally:
         app3.destroy()
 

@@ -48,6 +48,7 @@ class CodeplugViewer(ttk.Frame):
             if write_contacts is not None else "Лише перегляд: у рацію нічого не записується."),
             wraplength=760, justify="left")
         head.pack(fill="x", padx=10, pady=(8, 4))
+        head.bind("<Configure>", lambda e: head.config(wraplength=max(320, e.width - 8)))       # перенос за шириною панелі
 
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=10, pady=4)

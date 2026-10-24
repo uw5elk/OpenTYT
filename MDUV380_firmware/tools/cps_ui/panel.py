@@ -23,6 +23,31 @@ class Panel(ttk.Frame):
         self.shell = shell
         self._regs = []        # [(віджет, потребує рації, потребує розблокованого запису)]
         self.note = None
+        self._wrap_labels = None
+        self.bind("<Configure>", self._on_resize)
+
+    def _on_resize(self, e):
+        """Довгі підписи переносяться за шириною панелі (а не за фіксованими 600 px посеред порожнечі)."""
+        if e.widget is not self:
+            return
+        if self._wrap_labels is None:
+            self._wrap_labels = []
+            stack = list(self.winfo_children())
+            while stack:
+                w = stack.pop()
+                stack.extend(w.winfo_children())
+                if w.winfo_class() == "TLabel":
+                    try:
+                        if int(str(w.cget("wraplength"))) >= 500:       # лише довгі пояснення; вузькі підписи таблиць не чіпаємо
+                            self._wrap_labels.append(w)
+                    except (ValueError, Exception):  # noqa: BLE001
+                        pass
+        wl = max(320, e.width - 64)
+        for w in self._wrap_labels:
+            try:
+                w.config(wraplength=wl)
+            except Exception:  # noqa: BLE001 -- віджет міг бути знищений
+                pass
 
     # --- побудова ---
 
@@ -34,12 +59,23 @@ class Panel(ttk.Frame):
         self.make_note()     # причина вимкнення -- одразу під заголовком, а не внизу довгої панелі
 
     def make_note(self, parent=None):
-        """Рядок із причиною, чому дії вимкнені. Створюється один раз; текст оновлює refresh_state()."""
+        """Рядок із причиною, чому дії вимкнені. Створюється один раз; текст оновлює refresh_state(). Коли причини нема, рядок
+        не займає місця (ховається разом зі своїм контейнером)."""
         if self.note is not None:
             return self.note
-        self.note = ttk.Label(parent or self, text="", wraplength=640, justify="left", foreground=gt.P["warn"])
-        self.note.pack(anchor="w", padx=12, pady=(0, 4))
+        self._note_box = ttk.Frame(parent or self)
+        self._note_box.pack(anchor="w", fill="x")
+        self.note = ttk.Label(self._note_box, text="", wraplength=640, justify="left", foreground=gt.P["warn"])
         return self.note
+
+    def _set_note(self, text):
+        if self.note is None:
+            return
+        self.note.config(text=text)
+        if text:
+            self.note.pack(anchor="w", padx=12, pady=(0, 4))
+        else:
+            self.note.pack_forget()
 
     def reg(self, widget, radio=True, write=False):
         """Зареєструвати кнопку: потребує знайденої рації (radio) і/або розблокованого запису (write)."""
@@ -68,8 +104,7 @@ class Panel(ttk.Frame):
                 continue
             if reason and shown is None and reason != cps_rest.LOCKED_CAPTION:
                 shown = reason
-        if self.note is not None:
-            self.note.config(text=shown or "")
+        self._set_note(shown or "")
         self.after_refresh()
 
     def after_refresh(self):
@@ -99,11 +134,17 @@ class ScrollFrame(ttk.Frame):
             w.bind("<Enter>", self._bind_wheel)
             w.bind("<Leave>", self._unbind_wheel)
 
-    def _on_inner(self, _e):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    def _fit(self):
+        """Вміст займає всю ширину й, якщо коротший за область, усю висоту (тоді форми можуть розтягуватись); якщо вищий -- прокрутка."""
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        self.canvas.itemconfigure(self._win, width=w, height=max(h, self.inner.winfo_reqheight()))
+        self.canvas.configure(scrollregion=(0, 0, w, max(h, self.inner.winfo_reqheight())))
 
-    def _on_canvas(self, e):
-        self.canvas.itemconfigure(self._win, width=e.width)
+    def _on_inner(self, _e):
+        self._fit()
+
+    def _on_canvas(self, _e):
+        self._fit()
 
     def _bind_wheel(self, _e):
         self.canvas.bind_all("<MouseWheel>", self._wheel)
