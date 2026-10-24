@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Розділ «Налаштування рації → APRS: бікон і позивний» (APRS-unify L5.4): налаштування бікона (custom-data тип 14), шумодав
-приймача APRS (байт 4 блоку «Режиму APRS», тип 13) і позивний (ім'я рації, EEPROM 0x00E0). Те саме можна міняти з меню рації;
+приймача APRS (байт 4 блоку «Режиму APRS», тип 13). Позивний (ім'я рації, EEPROM 0x00E0) тут лише ПОКАЗУЄТЬСЯ: міняється він в одному
+місці -- «Кодплаг → Основна інформація» (CPS-fix2 S1) і потрапляє в рацію разом із кодплагом. Те саме можна міняти з меню рації;
 сховище одне. Станція (SSID, шляхи, символ, коментар, позиція...) -- у розділі «Кодплаг → APRS-слоти» (там працюють із документом кодплага). Рація має бути УВІМКНЕНА У
 ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU). Бікон рація підхоплює на старті -- після запису перезапусти її, інакше меню рації може записати
 поверх старі значення з пам'яті. Логіку перенесено з gui_flasher.AprsBeaconWindow без змін."""
@@ -11,8 +12,6 @@ import aprs_beacon_cfg as abc_
 import cps_link as cps
 import gui_theme as gt
 
-from .common import output_dir
-from .p_backup import close_quietly
 from .panel import Panel
 
 
@@ -38,8 +37,8 @@ class AprsPanel(Panel):
 
     def _build_ui(self):
         self.header("APRS: бікон і позивний")
-        ttk.Label(self, text=("Одне місце для кожного налаштування: позивний -- ім'я рації, бікон -- власний блок, станція -- «Кодплаг → APRS-слоти». "
-                              "Після запису перезапусти рацію."), wraplength=600, justify="left", foreground=gt.P["warn"]).pack(anchor="w", padx=12, pady=(0, 6))
+        ttk.Label(self, text=("Одне місце для кожного налаштування: позивний -- «Кодплаг → Основна інформація», бікон -- тут, станція -- «Кодплаг → APRS-слоти». "
+                              "Після запису бікона перезапусти рацію."), wraplength=600, justify="left", foreground=gt.P["warn"]).pack(anchor="w", padx=12, pady=(0, 6))
 
         # Рамки лежать у двох колонках, коли панель широка (>= 900 px), і одна під одною, коли вузька (_relayout).
         self.cols = ttk.Frame(self)
@@ -48,10 +47,16 @@ class AprsPanel(Panel):
         self.col_b = ttk.Frame(self.cols)
         self.cols.bind("<Configure>", self._relayout)
         self._wide = None
-        who = ttk.LabelFrame(self.col_a, text="Позивний і приймач")
-        who.pack(fill="x", pady=4)
+        who = ttk.LabelFrame(self.col_a, text="Позивний (лише перегляд) і приймач")
+        who.pack(fill="x", padx=0, pady=4)
         self.vars["call"] = tk.StringVar()
-        self._row(who, "Позивний (без SSID)", lambda f: ttk.Entry(f, textvariable=self.vars["call"], width=10))
+        self.vars["call_doc"] = tk.StringVar()
+        self.call_radio_label = self._row(who, "Позивний у рації", lambda f: ttk.Label(f, textvariable=self.vars["call"], width=12))
+        self.call_doc_label = self._row(who, "Позивний у документі", lambda f: ttk.Label(f, textvariable=self.vars["call_doc"], width=12))
+        self.call_note = ttk.Label(who, text="", wraplength=420, justify="left", foreground=gt.P["muted"])
+        self.call_note.pack(anchor="w", padx=8, pady=(0, 4))
+        link = ttk.Button(who, text="Змінити позивний: Кодплаг → Основна інформація", command=lambda: self.shell.show("basic"))
+        link.pack(anchor="w", padx=8, pady=(0, 6))
         self.vars["sql"] = tk.StringVar(value="0")
         self._row(who, "Шумодав приймача APRS (0..21)", lambda f: ttk.Spinbox(f, from_=0, to=abc_.SQL_MAX, textvariable=self.vars["sql"], width=6))
 
@@ -90,11 +95,10 @@ class AprsPanel(Panel):
         self.read_btn.pack(side="left")
         self.write_beacon_btn = ttk.Button(btn, text="Записати бікон і шумодав", command=self._on_write_beacon)
         self.write_beacon_btn.pack(side="left", padx=8)
-        self.write_call_btn = ttk.Button(btn, text="Записати позивний", command=self._on_write_call)
-        self.write_call_btn.pack(side="left")
-        for b in (self.read_btn, self.write_beacon_btn, self.write_call_btn):
+        for b in (self.read_btn, self.write_beacon_btn):
             self.reg(b)
         ttk.Label(self, text="Натисни «Прочитати з рації», щоб підтягнути поточні значення.", foreground=gt.P["info"]).pack(anchor="w", padx=12)
+        self.on_document_changed()
 
     def _relayout(self, e):
         wide = e.width >= 900
@@ -115,7 +119,9 @@ class AprsPanel(Panel):
 
     def _apply_state(self, st):
         if st.get("call") is not None:
-            self.vars["call"].set(st["call"])
+            self.vars["call"].set(st["call"] or "(не заданий)")
+            self._radio_call = st["call"]
+            self.on_document_changed()
         if st.get("sql") is not None:
             self.vars["sql"].set(str(st["sql"]))
         d = st.get("beacon")
@@ -152,6 +158,29 @@ class AprsPanel(Panel):
         abc_.mode_block_with_sql(None, sql)
         return d, sql
 
+    _radio_call = None      # позивний, прочитаний з рації кнопкою «Прочитати з рації» (None -- ще не читали)
+
+    def on_document_changed(self):
+        """Показати позивний документа поряд із прочитаним з рації і сказати, що саме потрапить у рацію (S1.2)."""
+        import codeplug_edit as ced
+        d = self.doc
+        if d is None:
+            self.vars["call_doc"].set("(документ не відкрито)")
+            self.call_note.config(text="Позивний у рації цією панеллю не змінюється. Його правлять у «Кодплаг → Основна інформація» (потрібен відкритий кодплаг).")
+            return
+        doc_call = ced.basic_values(d.image)["callsign"]
+        self.vars["call_doc"].set(doc_call or "(не заданий)")
+        if self._radio_call is None:
+            self.call_note.config(text="Натисни «Прочитати з рації», щоб порівняти позивний документа з позивним у рації.")
+        elif (self._radio_call or "") == (doc_call or ""):
+            self.call_note.config(text="Позивний у документі збігається з позивним у рації.")
+        else:
+            self.call_note.config(text="Різні позивні. У рацію потрапить позивний ДОКУМЕНТА (%s) -- разом із кодплагом, дією «Записати в рацію»; "
+                                       "позивний у рації (%s) буде замінено." % (doc_call or "порожній", self._radio_call or "порожній"),
+                                  foreground=gt.P["warn"])
+            return
+        self.call_note.config(foreground=gt.P["muted"])
+
     def _run(self, fn, text, reconnect_ms=None):
         self.shell.run_task(fn, text, plain_errors=True, reconnect_ms=reconnect_ms)
 
@@ -168,16 +197,6 @@ class AprsPanel(Panel):
             messagebox.showerror("Помилка", str(e))
             return
         self._run(lambda: self._write_worker(d, sql), "Записую...")
-
-    def _on_write_call(self):
-        if self.shell.busy:
-            return
-        try:
-            call = abc_.callsign_check(self.vars["call"].get())
-        except abc_.AprsCfgError as e:
-            messagebox.showerror("Помилка", str(e))
-            return
-        self._run(lambda: self._call_worker(call), "Записую позивний...", reconnect_ms=6000)
 
     def _connect(self):
         return cps.open_radio()
@@ -202,12 +221,3 @@ class AprsPanel(Panel):
             print("Перезапусти рацію, щоб вона підхопила новий бікон.")
         finally:
             ser.close()
-
-    def _call_worker(self, call):
-        ser = self._connect()
-        try:
-            res = abc_.callsign_to_radio(cps.CpsLink(ser), call, self.shell.confirm_from_worker,
-                                         progress=lambda p, t: print("{}% {}".format(p, t)), log=print, out_dir=output_dir())
-            print("Скасовано." if res.get("cancelled") else ("Позивний уже такий." if res.get("nothingToDo") else "Позивний записано й перевірено. Рація перезавантажується."))
-        finally:
-            close_quietly(ser)

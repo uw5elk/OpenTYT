@@ -253,9 +253,9 @@ if [ -z "$FILTER" ] || [[ "test_cps_csv" == *"$FILTER"* ]]; then
 	fi
 fi
 
-# R26 V2/V3 + APRS-unify L5.4 (бікон/шумодав/позивний з ПК): контакти-редактор, темна тема, tools/aprs_beacon_cfg.py; CPS-shell: tools/cps_ui (дерево розділів); CPS-doc: кодплаг як документ (test_cps_doc). Логіка й палітра -- у будь-якому python3; віджети Tk -- лише з tkinter + xvfb-run (інакше цю частину
+# R26 V2/V3 + APRS-unify L5.4 (бікон/шумодав/позивний з ПК): контакти-редактор, темна тема, tools/aprs_beacon_cfg.py; CPS-shell: tools/cps_ui (дерево розділів); CPS-doc: кодплаг як документ (test_cps_doc); CPS-fix2 + етап 3: редактори списків прийому, зон і каналів (test_cps_edit). Логіка й палітра -- у будь-якому python3; віджети Tk -- лише з tkinter + xvfb-run (інакше цю частину
 # тест сам пропускає й каже про це).
-for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc; do
+for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit; do
 	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
 		PYTK=""
 		for cand in python3 python3.12 python3.11 python3.10 python3.13; do

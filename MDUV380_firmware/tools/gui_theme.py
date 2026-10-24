@@ -197,3 +197,20 @@ def walk(widget):
     yield widget
     for ch in widget.winfo_children():
         yield from walk(ch)
+
+
+try:
+    from tkinter import ttk as _ttk
+except ImportError:          # хост без Tk: тема потрібна лише для розрахунків контрасту
+    _ttk = None
+
+if _ttk is not None:
+    class AutoScrollbar(_ttk.Scrollbar):
+        """Смуга прокрутки, що видима лише коли вміст не вміщується (CPS-fix2 S2). Розміщується через grid()."""
+
+        def set(self, lo, hi):
+            if float(lo) <= 0.0 and float(hi) >= 1.0:
+                self.grid_remove()
+            else:
+                self.grid()
+            super().set(lo, hi)

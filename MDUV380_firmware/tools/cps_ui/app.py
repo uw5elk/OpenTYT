@@ -33,19 +33,23 @@ from .p_aprs import AprsPanel
 from .p_aprs_slots import AprsSlotsPanel
 from .p_backup import BackupPanel
 from .p_basic import BasicInfoPanel
+from .p_channels import ChannelsPanel
 from .p_connect import ConnectionPanel
 from .p_csv import CsvPanel
 from .p_flash import FlashPanel
 from .p_rctl import RctlPanel
 from .p_screenshot import ScreenshotPanel
+from .p_tglists import TgListsPanel
 from .p_viewer import ViewerPanel
+from .p_zones import ZonesPanel
 from .panel import BUSY_REASON, HINT_NO_DOC, ScrollFrame
 from .settings import Settings
 
 # Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
     ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
-    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, AprsSlotsPanel, CsvPanel]),
+    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, ChannelsPanel, ZonesPanel, TgListsPanel, AprsSlotsPanel,
+                                  CsvPanel]),
     ("grp_settings", "Налаштування рації", [AprsPanel, AesPanel, RctlPanel]),
 ]
 DEFAULT_SECTION = "conn"
