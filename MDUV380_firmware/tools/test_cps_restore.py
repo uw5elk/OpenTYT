@@ -477,7 +477,9 @@ def test_names():
     check(info.decode_name is cv.decode_name and info.name_bytes is cv.name_bytes, "cps_backup_info використовує ту саму функцію")
     check(info.Codeplug is cv.Codeplug, "cps_backup_info використовує той самий розбір кодплага")
     here = os.path.dirname(os.path.abspath(__file__))
-    for fn in ("cps_backup_info.py", "cps_restore.py", "cps_link.py", "gui_flasher.py", "codeplug_viewer_gui.py"):
+    cps_ui_dir = os.path.join(here, "cps_ui")
+    cps_ui_files = [os.path.join("cps_ui", f) for f in sorted(os.listdir(cps_ui_dir))] if os.path.isdir(cps_ui_dir) else []
+    for fn in ["cps_backup_info.py", "cps_restore.py", "cps_link.py", "gui_flasher.py", "codeplug_viewer_gui.py"] + [f for f in cps_ui_files if f.endswith(".py")]:
         pth = os.path.join(here, fn)
         if os.path.exists(pth):
             src = open(pth, encoding="utf-8").read().lower()

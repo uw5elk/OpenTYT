@@ -15,7 +15,7 @@ def _build(parent, title, text, buttons, default_index, width=84, height=26):
     win = tk.Toplevel(parent)
     gt.style_window(win)
     win.title(title)
-    win.transient(parent)
+    win.transient(parent.winfo_toplevel())
     win.minsize(560, 320)
     result = {"value": None}
     body = ttk.Frame(win)

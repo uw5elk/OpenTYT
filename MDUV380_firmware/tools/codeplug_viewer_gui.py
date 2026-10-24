@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""codeplug_viewer_gui.py -- R25 W2: вікно перегляду кодплага (контакти, групи RX, зони, канали). ТІЛЬКИ ЧИТАННЯ.
+"""codeplug_viewer_gui.py -- R25 W2: перегляд кодплага (контакти, групи RX, зони, канали). ТІЛЬКИ ЧИТАННЯ (крім вкладки «Контакти» з рації).
+
+CPS-shell: тепер це ttk.Frame, що вбудовується в праву область (панель «Перегляд кодплага»), а не окреме Toplevel-вікно.
+Стару назву CodeplugViewerWindow лишено псевдонімом. Діалоги (ContactDialog, підтвердження) прив'язуються до верхнього вікна.
 
 Джерело -- уже розібраний codeplug_view.Codeplug (з бекап-файла або з прямого читання рації: це ті самі байти).
 Уся логіка (декодування назв, фільтри сміття) -- у codeplug_view.py; тут лише Tk. Назви показуються як рядки Unicode
@@ -22,15 +25,13 @@ _WIDTHS = {"№": 50, "Назва": 190, "TG / ID": 100, "Тип": 80, "Коду
            "Канали": 420, "RX, МГц": 100, "TX, МГц": 100, "Режим": 70}
 
 
-class CodeplugViewerWindow(tk.Toplevel):
-    def __init__(self, parent, codeplug, source_text, csv_dir, write_contacts=None):
-        """write_contacts(ops, window) -- обробник «Записати зміни в рацію» (редактор контактів, R26 V2); None -- вікно лише для перегляду
-        (так для перегляду бекап-файла: правки там вводити нема сенсу -- файл не рація)."""
+class CodeplugViewer(ttk.Frame):
+    def __init__(self, parent, codeplug, source_text, csv_dir, write_contacts=None, on_close=None):
+        """write_contacts(ops, viewer) -- обробник «Записати зміни в рацію» (редактор контактів, R26 V2); None -- лише перегляд
+        (так для перегляду бекап-файла: правки там вводити нема сенсу -- файл не рація).
+        on_close() -- що робити за кнопкою «Закрити» (панель прибирає перегляд); без нього перегляд просто знищується."""
         super().__init__(parent)
-        gt.style_window(self)
-        self.title("Кодплаг: " + source_text)
-        self.geometry("900x520")
-        self.minsize(640, 360)
+        self.on_close = on_close
         self.codeplug = codeplug
         self.csv_dir = csv_dir
         self.tables = codeplug.tables()
@@ -45,7 +46,7 @@ class CodeplugViewerWindow(tk.Toplevel):
             source_text, codeplug.manifest.get("createdUtc", "прямо з рації"), codeplug.callsign() or "(порожньо)", codeplug.dmr_id(),
             "Вкладка «Контакти» редагується; у рацію пишеться лише за кнопкою «Записати зміни в рацію...»."
             if write_contacts is not None else "Лише перегляд: у рацію нічого не записується."),
-            wraplength=860, justify="left")
+            wraplength=760, justify="left")
         head.pack(fill="x", padx=10, pady=(8, 4))
 
         self.nb = ttk.Notebook(self)
@@ -75,7 +76,13 @@ class CodeplugViewerWindow(tk.Toplevel):
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=10, pady=(0, 8))
         ttk.Button(bar, text="Зберегти цю таблицю в CSV...", command=self._export_csv).pack(side="left")
-        ttk.Button(bar, text="Закрити", command=self.destroy).pack(side="right")
+        ttk.Button(bar, text="Закрити", command=self._close).pack(side="right")
+
+    def _close(self):
+        if self.on_close is not None:
+            self.on_close()
+        else:
+            self.destroy()
 
     def current_table(self):
         idx = self.nb.index(self.nb.select())
@@ -83,7 +90,7 @@ class CodeplugViewerWindow(tk.Toplevel):
 
     def _export_csv(self):
         key, title, cols, rows = self.current_table()
-        path = filedialog.asksaveasfilename(parent=self, title="Зберегти таблицю «%s»" % title, defaultextension=".csv",
+        path = filedialog.asksaveasfilename(parent=self.winfo_toplevel(), title="Зберегти таблицю «%s»" % title, defaultextension=".csv",
                                             initialdir=self.csv_dir, initialfile="codeplug_%s.csv" % key,
                                             filetypes=[("CSV (UTF-8)", "*.csv")])
         if not path:
@@ -91,9 +98,9 @@ class CodeplugViewerWindow(tk.Toplevel):
         try:
             cv.write_csv(path, cols, rows)
         except OSError as e:
-            messagebox.showerror("Помилка", "Не вдалося зберегти файл:\n%s" % e, parent=self)
+            messagebox.showerror("Помилка", "Не вдалося зберегти файл:\n%s" % e, parent=self.winfo_toplevel())
             return
-        messagebox.showinfo("Готово", "Збережено (%d рядків):\n%s" % (len(rows), os.path.abspath(path)), parent=self)
+        messagebox.showinfo("Готово", "Збережено (%d рядків):\n%s" % (len(rows), os.path.abspath(path)), parent=self.winfo_toplevel())
 
 
     # =====================================================================================
@@ -171,7 +178,7 @@ class CodeplugViewerWindow(tk.Toplevel):
     def _on_edit_contact(self):
         key = self._selected_key()
         if key is None:
-            messagebox.showinfo("Змінити", "Спершу виділи контакт у таблиці.", parent=self)
+            messagebox.showinfo("Змінити", "Спершу виділи контакт у таблиці.", parent=self.winfo_toplevel())
             return
         virt = {k: (n, name, i, t) for (k, n, name, i, t, _e, _s) in self._virtual_contacts()}
         _n, name, ident, ctype = virt[key]
@@ -199,7 +206,7 @@ class CodeplugViewerWindow(tk.Toplevel):
     def _on_delete_contact(self):
         key = self._selected_key()
         if key is None:
-            messagebox.showinfo("Видалити", "Спершу виділи контакт у таблиці.", parent=self)
+            messagebox.showinfo("Видалити", "Спершу виділи контакт у таблиці.", parent=self.winfo_toplevel())
             return
         if key[0] == "add":
             adds = [o for o in self.ops if o["op"] == "add"]
@@ -207,7 +214,7 @@ class CodeplugViewerWindow(tk.Toplevel):
         else:
             slot = key[1]
             warn = ce.delete_warning(self.img, slot)
-            if warn and not gd.confirm_dialog(self, "Видалити контакт?", warn + "\n\nВсе одно додати видалення в чергу?",
+            if warn and not gd.confirm_dialog(self.winfo_toplevel(), "Видалити контакт?", warn + "\n\nВсе одно додати видалення в чергу?",
                                               yes="Додати в чергу", no="Скасувати"):
                 return
             orig = next(c for c in self.codeplug.contacts() if c[0] - 1 == slot)
@@ -225,6 +232,9 @@ class CodeplugViewerWindow(tk.Toplevel):
         self.write_contacts(list(self.ops), self)
 
 
+CodeplugViewerWindow = CodeplugViewer      # стара назва (тести, зовнішній код)
+
+
 class ContactDialog(tk.Toplevel):
     """Правка одного контакту: назва (з живим лічильником байтів), TG/ID, тип виклику. self.result = {name, id, type} або None."""
 
@@ -232,7 +242,7 @@ class ContactDialog(tk.Toplevel):
         super().__init__(parent)
         gt.style_window(self)
         self.title(title)
-        self.transient(parent)
+        self.transient(parent.winfo_toplevel())
         self.resizable(False, False)
         self.result = None
         self.name_var = tk.StringVar(value=name)
