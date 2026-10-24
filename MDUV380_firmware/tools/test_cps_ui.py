@@ -42,6 +42,7 @@ EXPECTED = [
     ("aes", "AES-ключі", "grp_settings"),
     ("rctl", "Віддалене керування (RCTL)", "grp_settings"),
     ("themes", "Теми екрана", "grp_settings"),
+    ("allsettings", "Усі налаштування", "grp_settings"),
 ]
 
 
@@ -114,7 +115,7 @@ def test_gui():
                 check(tree.parent(key) == parent, "дерево: %s лежить у %r" % (key, parent))
         all_items = list(tree.get_children()) + [c for g in tree.get_children() for c in tree.get_children(g)]
         check(len(all_items) == len(EXPECTED), "дерево: рівно %d пунктів (є %d)" % (len(EXPECTED), len(all_items)))
-        check(sum(len(s[2]) for s in SECTIONS) == 17, "SECTIONS: 17 панелей (R28: +теми екрана)")
+        check(sum(len(s[2]) for s in SECTIONS) == 18, "SECTIONS: 18 панелей (R28: +теми екрана, R30: +усі налаштування)")
 
         # --- стан 1: рації нема ---
         app.conn.mark_absent()

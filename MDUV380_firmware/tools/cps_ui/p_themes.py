@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """Розділ «Налаштування рації → Теми екрана» (R28): кольори екрана рації -- денна й нічна теми (по 32 кольори).
 
-ТЕМИ НЕ Є ЧАСТИНОЮ ДОКУМЕНТА КОДПЛАГА. Вони лежать в області custom-data SPI-флеша (блоки 4 і 5), поза EEPROM і поза діапазоном, який бекапить і
-відновлює cps_restore, тому «Записати в рацію» над документом теми не змінює. Панель працює як бікон APRS: «Прочитати з рації» і «Записати в рацію» --
+ТЕМИ НЕ Є ЧАСТИНОЮ ДОКУМЕНТА КОДПЛАГА. Вони лежать в області custom-data SPI-флеша (блоки 4 і 5), поза EEPROM і поза діапазоном, який відновлює
+cps_restore, тому «Записати в рацію» над документом теми не змінює (з R30 область custom-data входить у бекап окремим файлом і відновлюється
+окремим прапорцем -- див. «Бекап і відновлення»). Файл теми -- `.gtm` стокового CPS OpenGD77: рівно 64 байти, без заголовка (theme_edit.py). Панель працює як бікон APRS: «Прочитати з рації» і «Записати в рацію» --
 негайно, тим самим шляхом (custom_data.write_block + звірка читанням). Рація читає теми ЛИШЕ при вмиканні -- після запису її треба вимкнути й увімкнути.
 
 Усе, що не торкається рації (вибір кольорів, готові набори, «Скинути до стокової», файл теми, перегляд), працює й без підключеної рації, і без документа.
 Логіка (формат блока, стокові значення, набори, файл, перевірка читабельності, опис перегляду) -- у tools/theme_edit.py; тут лише вікно."""
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, colorchooser
 
@@ -88,8 +90,17 @@ class ThemesPanel(Panel):
         self.reg(self.write_btn)
         bar2 = ttk.Frame(left)
         bar2.pack(fill="x", padx=12, pady=(0, 4))
-        self.reset_btn = ttk.Button(bar2, text="Скинути до стокової", command=self._on_reset)
-        self.reset_btn.pack(side="left")
+        ttk.Label(bar2, text="Скинути до стокової:").pack(side="left")
+        self.reset_btn = ttk.Button(bar2, text="українська", command=self._on_reset)
+        self.reset_btn.pack(side="left", padx=(6, 0))
+        self.reset_classic_btn = ttk.Button(bar2, text="класична", command=self._on_reset_classic)
+        self.reset_classic_btn.pack(side="left", padx=6)
+        reset_note = ttk.Label(left, text=("Це дві гілки themeInitToDefaultValues() у прошивці: «українська» -- для української збірки, «класична» -- для збірок "
+                                           "іншими мовами. Тема, збережена в рації, перекриває вбудовану при кожному ввімкненні, тож стокова на твоїй рації може "
+                                           "бути з будь-якої гілки -- нижче видно, з якою вона збігається."),
+                               foreground=gt.P["muted"], wraplength=360, justify="left")
+        reset_note.pack(anchor="w", padx=12, pady=(0, 4))
+        self._wrap.append(reset_note)
         bar3 = ttk.Frame(left)
         bar3.pack(fill="x", padx=12, pady=(0, 4))
         self.save_btn = ttk.Button(bar3, text="Зберегти у файл...", command=self._on_save_file)
@@ -99,9 +110,11 @@ class ThemesPanel(Panel):
 
         self.info = ttk.Label(left, text="", foreground=gt.P["muted"], wraplength=360, justify="left")
         self.info.pack(anchor="w", padx=12)
+        self.match_label = ttk.Label(left, text="", foreground=gt.P["muted"], wraplength=360, justify="left")
+        self.match_label.pack(anchor="w", padx=12)
         self.warn_label = ttk.Label(left, text="", foreground=gt.P["warn"], wraplength=360, justify="left")
         self.warn_label.pack(anchor="w", padx=12)
-        self._wrap += [self.info, self.warn_label]
+        self._wrap += [self.info, self.match_label, self.warn_label]
         self.left_host.canvas.bind("<Configure>", self._on_left_width, add="+")
 
         lst = ttk.Frame(left)
@@ -205,6 +218,9 @@ class ThemesPanel(Panel):
             if self.touched[d]:
                 parts[-1] += " (є незаписані зміни)"
         self.info.config(text="Стан: " + "; ".join(parts) + ".")
+        mc = te.match_counts(self.colors[dt], dt)
+        self.match_label.config(text="Збіг зі стоковою (%s): українська %d з %d, класична %d з %d." % (
+            te.DAYTIME_NAMES[dt].lower() + " тема", mc["ua"], te.ITEM_COUNT, mc["classic"], te.ITEM_COUNT))
         weak = te.weak_pairs(self.colors[dt])
         if weak:
             self.warn_label.config(text="Слабкий контраст (%d): %s." % (len(weak), "; ".join(
@@ -292,7 +308,10 @@ class ThemesPanel(Panel):
                 return
 
     def _on_reset(self):
-        self.reset_to_stock()
+        self.reset_to_stock("ua")
+
+    def _on_reset_classic(self):
+        self.reset_to_stock("classic")
 
     def reset_to_stock(self, variant=te.DEFAULT_VARIANT):
         self.colors[self.dt] = te.stock_colors(self.dt, variant)
@@ -302,41 +321,69 @@ class ThemesPanel(Panel):
                      % (te.DAYTIME_NAMES[self.dt], te.VARIANT_NAMES[variant].lower()), "info")
 
     # --- файл ---------------------------------------------------------------------------------------
+    # Основний формат -- `.gtm` стокового CPS (рівно 64 байти). Другий варіант -- текстовий OpenTYT-theme-1 (розширення .txt).
+
+    GTM_TYPES = [("Тема CPS OpenGD77 (*.gtm)", "*.gtm"), ("Текстовий формат OpenTYT (*.txt)", "*.txt"), ("Усі файли", "*.*")]
+
+    @staticmethod
+    def is_text_path(path):
+        return path.lower().endswith(".txt")
 
     def save_file(self, path):
-        te.save_file(path, self.dt, self.colors[self.dt])
+        """Зберегти відкриту тему: *.txt -- текстовий формат OpenTYT, інакше -- .gtm (ті самі 64 байти, що пішли б у блок рації)."""
+        if self.is_text_path(path):
+            te.save_file(path, self.dt, self.colors[self.dt])
+        else:
+            te.save_gtm(path, self.colors[self.dt])
 
     def load_file(self, path):
-        """Завантажити файл у робочу копію; перемикає тему на ту, що в файлі. ThemeFileError -- пояснення для користувача."""
-        dt, cols = te.load_file(path)
-        self.daytime.set(dt)
+        """Завантажити файл у робочу копію. .gtm -- у ВІДКРИТУ тему (у файлі позначки день/ніч немає); *.txt -- у ту, що вказана в файлі
+        (перемикає). ThemeFileError/GtmError -- пояснення для користувача, кольори не змінюються. Повертає daytime, до якої застосовано."""
+        if self.is_text_path(path):
+            dt, cols = te.load_file(path)
+            self.daytime.set(dt)
+        else:
+            cols = te.load_gtm(path)
+            dt = self.dt
         self.colors[dt] = cols
         self.touched[dt] = True
         self._selected = None
         self._redraw()
+        print("Файл %s застосовано до %s теми." % (path, {"day": "денної", "night": "нічної"}[dt]))
         return dt
 
     def _on_save_file(self):
-        path = filedialog.asksaveasfilename(parent=self.shell, title="Зберегти тему у файл", defaultextension=".txt", initialdir=output_dir(),
-                                            initialfile="theme-%s.txt" % self.dt, filetypes=[("Файл теми OpenTYT", "*.txt"), ("Усі файли", "*.*")])
+        path = filedialog.asksaveasfilename(parent=self.shell, title="Зберегти тему у файл", defaultextension=te.GTM_EXT, initialdir=output_dir(),
+                                            initialfile=("d" if self.dt == "day" else "n") + te.GTM_EXT, filetypes=self.GTM_TYPES)
         if not path:
             return
         try:
             self.save_file(path)
-        except (OSError, te.ThemeFileError) as e:
+        except (OSError, te.ThemeFileError, ValueError) as e:
             messagebox.showerror("Теми екрана", "Не вдалося зберегти: %s" % e, parent=self.shell)
             return
         self._status("%s тему збережено: %s" % (te.DAYTIME_NAMES[self.dt], path), "ok")
 
     def _on_load_file(self):
-        path = filedialog.askopenfilename(parent=self.shell, title="Завантажити тему з файлу", initialdir=output_dir(),
-                                          filetypes=[("Файл теми OpenTYT", "*.txt"), ("Усі файли", "*.*")])
+        path = filedialog.askopenfilename(parent=self.shell, title="Завантажити тему з файлу", initialdir=output_dir(), filetypes=self.GTM_TYPES)
         if not path:
             return
+        if not self.is_text_path(path):
+            hint = te.gtm_name_hint(path)
+            if hint and hint != self.dt:
+                # лише підказка за ІМЕНЕМ файла: у самому .gtm день/ніч не позначено, тож вибору тут нема -- або в відкриту тему, або скасувати
+                if not gd.confirm_dialog(self.shell, "Файл схожий на іншу тему",
+                                         "Ім'я файла «%s» схоже на %s тему, а в панелі відкрита %s. У самому файлі .gtm день чи ніч не позначено, тож це лише "
+                                         "здогад за іменем.\n\nЗавантажити файл у відкриту %s тему?" % (
+                                             os.path.basename(path), "нічну" if hint == "night" else "денну", "нічна" if self.dt == "night" else "денна",
+                                             "нічну" if self.dt == "night" else "денну"),
+                                         yes="Завантажити у відкриту", no="Скасувати"):
+                    return
         try:
             dt = self.load_file(path)
-        except (OSError, te.ThemeFileError) as e:
-            messagebox.showerror("Теми екрана", "Файл не підійшов: %s" % e, parent=self.shell)
+        except (OSError, te.ThemeFileError, te.GtmError) as e:
+            extra = ("" if self.is_text_path(path) else " (Текстовий файл OpenTYT має мати розширення .txt.)")
+            messagebox.showerror("Теми екрана", "Файл не підійшов: %s%s" % (e, extra), parent=self.shell)
             return
         self._status("%s тему завантажено з файлу (ще не в рації)." % te.DAYTIME_NAMES[dt], "info")
 
