@@ -6,7 +6,7 @@
 
 ## Середовище власника (Богдан)
 - Працює з телефона: Android, Termux, bash. Репозиторій: ~/OpenGD77-AES256.
-- ARM-тулчейну локально немає; збирає лише GitHub Actions (uw5elk/OpenGD77-AES256-fork). gh CLI авторизований.
+- ARM-тулчейну локально немає; збирає лише GitHub Actions (uw5elk/OpenTYT). gh CLI авторизований.
 - /tmp недоступний, тимчасові файли в ~/. Немає iconv, xxd. Є git, gh, python3 (numpy, scipy).
 - Файли для передачі (бандли, .C16) лежать у /sdcard/Download/.
 - Прошивку тестує сам на реальній рації; результати повідомляє за номерами кроків TESTING.md.
