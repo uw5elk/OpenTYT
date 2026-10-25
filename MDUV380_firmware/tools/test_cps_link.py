@@ -405,7 +405,8 @@ def test_backup_info():
     check(info.decode_name(b"\xaf\xe6\xe0\xea\xff", "auto") == "Їжак", "auto: cp1251")
     check(info.decode_name(b"\xa7\xb1\xa7\xd1\xff", "cp1251") != "Па", "явний cp1251 не декодує GBK")
     check(info.decode_name(b"\xa7\xb1\xa7\xd1\xff", "gbk") == "Па", "явний gbk")
-    check(info.name_bytes(b"AB\xffCD") == b"AB", "назва обривається на 0xFF")
+    check(info.name_bytes(b"AB\xffCD") == b"AB\xffCD", "R34: внутрішній 0xFF -- літера (мала «я»), назва не обривається")
+    check(info.name_bytes(b"AB\xff\xff\xff") == b"AB" and info.name_bytes(b"AB\x00\x00") == b"AB", "R34: хвостові 0xFF і 0x00 відкидаються")
     check(info.bcd_to_int(bytes.fromhex("02504012")) == 2504012, "BCD")
     # CLI з файлом
     with tempfile.TemporaryDirectory() as d:

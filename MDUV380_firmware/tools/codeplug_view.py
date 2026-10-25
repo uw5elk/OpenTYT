@@ -8,7 +8,7 @@
 ЄДИНЕ МІСЦЕ ДЕКОДУВАННЯ НАЗВ (R25 W2.3): decode_name_ex() нижче -- нею користуються і вікно перегляду
 (gui_flasher.py), і скрипт cps_backup_info.py (R24 S3). Другої копії правил у проєкті нема.
 
-КОДУВАННЯ НАЗВ (docs/codeplug-encoding.md; 16 байтів, дописка 0xFF):
+КОДУВАННЯ НАЗВ (docs/codeplug-encoding.md; 16 байтів, дописка 0xFF; R34: хвіст 0x00 -- лише для назв, що закінчуються на «я», див. pad_name):
   * CPS від TYT пише GBK; кирилиця -- пари 0xA7 xx (xx = A1..C1 великі, D1..F1 малі);
   * назва, набрана на самій рації (R23 Y2), -- cp1251;
   * обидва бувають у ОДНОМУ кодплазі (контакт 1 «Папуга» -- GBK, контакт 2 «ЇЖАК ҐЄІіїєґ» -- cp1251).
@@ -42,13 +42,54 @@ CP_ADDR_ZONE_FORMAT_BYTE = 0x806F            # codeplugInitChannelsPerZone(): 0.
 # =========================================================================================
 
 def name_bytes(raw):
-    """Байти назви до першого 0xFF/0x00 (codeplugUtilConvertBufToString зупиняється на 0xFF)."""
-    out = bytearray()
-    for b in raw:
-        if b in (0xFF, 0x00):
-            break
-        out.append(b)
-    return bytes(out)
+    """Байти назви так, як їх бачить прошивка (R34 N2; codeplugUtilNameLen/codeplugUtilConvertBufToString у codeplug.c):
+    відкидаємо ХВОСТОВІ 0xFF (дописка), потім ХВОСТОВІ 0x00, далі рядок C -- до першого 0x00 всередині. Внутрішні й кінцеві-перед-нулями 0xFF
+    лишаються: це мала «я» (cp1251), раніше «Поляна» читалась як «Пол». Порядок «спершу 0xFF, потім 0x00» і без чергування: назва «Зоря» з хвостом 0x00
+    (З о р я 00 00 ...) зберігає свою «я».
+    Невизначеність формату (не вада коду): назва, що закінчується на «я» й записана з хвостом 0xFF (так пише стокова CPS, якби «я» була), невідрізнима від назви
+    без «я» -- «я» буде втрачено. Для назв, що пишемо ми, її знімає pad_name()."""
+    b = bytes(raw)
+    n = len(b)
+    while n > 0 and b[n - 1] == 0xFF:
+        n -= 1
+    while n > 0 and b[n - 1] == 0x00:
+        n -= 1
+    b = b[:n]
+    z = b.find(b"\x00")
+    return b if z < 0 else b[:z]
+
+
+# R34 N3: чим дописувати назву, що закінчується на 0xFF («я» в cp1251). True -- хвіст 0x00 (тоді кінцева «я» не плутається з допискою); False -- хвіст 0xFF, як завжди.
+# Прошивка має свій перемикач CODEPLUG_NAME_ZERO_TAIL (типово ВИМКНЕНО, бо чи читає стокова CPS TYT назву з хвостом 0x00, з коду не встановлюється -- крок CK3
+# у TESTING.md); цей стосується лише назв, ЩО ЗАКІНЧУЮТЬСЯ на «я»: решта пишеться з хвостом 0xFF байт-у-байт як стокова CPS, незалежно від значення.
+NAME_ZERO_TAIL = True
+
+
+def pad_name(raw, nbytes=16, fill=b"\xff"):
+    """Сирі байти назви -> поле рівно nbytes. Хвіст = fill (типово 0xFF); єдиний виняток -- назва, що закінчується на 0xFF, коли є місце для хвоста й
+    NAME_ZERO_TAIL: тоді хвіст 0x00 (R34 N3, відповідає codeplugUtilConvertStringToBuf за CODEPLUG_NAME_ZERO_TAIL). Порожня назва лишається всуціль fill:
+    прошивка вважає запис порожнім за name[0] == 0xFF."""
+    raw = bytes(raw[:nbytes])
+    if NAME_ZERO_TAIL and fill == b"\xff" and raw and raw[-1] == 0xFF and len(raw) < nbytes:
+        fill = b"\x00"
+    return raw.ljust(nbytes, fill)
+
+
+def name_tail_problem(raw, nbytes=16):
+    """Текст проблеми, якщо назва після запису pad_name() читалась би інакше, ніж задумано через кінцеву «я» без місця для хвоста (рівно nbytes байтів і
+    остання 0xFF); інакше None. Те, що решта літер читається однаково, перевіряє виклик (decode_name_ex(pad_name(raw)))."""
+    raw = bytes(raw)
+    if raw and raw[-1] == 0xFF and len(raw) >= nbytes:
+        return "назва займає всі %d байтів і закінчується на малу «я»: рація не відрізнить її від дописки й покаже без останньої літери -- скоротіть на одну літеру" % nbytes
+    return None
+
+
+def name_first_problem(raw):
+    """Назва, що починається з малої «я» (байт 0xFF), -- у прошивці запис вважається ПОРОЖНІМ (name[0] == 0xFF: codeplugInitContactsCache, DTMF, APRS)."""
+    raw = bytes(raw)
+    if raw and raw[0] == 0xFF:
+        return "назва не може починатися з малої «я»: прошивка вважає запис з першим байтом 0xFF порожнім"
+    return None
 
 
 def gbk_cyrillic_pair(raw):

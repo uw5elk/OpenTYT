@@ -90,9 +90,10 @@ def check_line(text):
     if len(raw) > BOOT_LINE_LEN:
         out["message"] = "на %d байт(ів) довше за ліміт %d (кодування %s)" % (len(raw) - BOOT_LINE_LEN, BOOT_LINE_LEN, enc)
         return out
-    back = cv.decode_name_ex(raw)[0]
-    if back != text:
-        out["message"] = "після запису читалась би як «%s» -- змініть літери" % back
+    tail = cv.name_tail_problem(raw, BOOT_LINE_LEN)
+    back = cv.decode_name_ex(cv.pad_name(raw, BOOT_LINE_LEN))[0]          # R34: так, як лежатиме в кодплазі (з хвостом)
+    if tail or back != text:
+        out["message"] = tail or ("після запису читалась би як «%s» -- змініть літери" % back)
         return out
     out.update(ok=True, message="кодування %s, залишилось %d байт(ів)" % (enc, BOOT_LINE_LEN - len(raw)))
     return out
@@ -131,7 +132,7 @@ def apply_basic_info(base_img, callsign=None, dmr_id=None, line1=None, line2=Non
         if not chk["ok"]:
             problems.append("%s: %s" % (label, chk["message"]))
             continue
-        img.set_ee(addr, chk["raw"].ljust(BOOT_LINE_LEN, b"\xff"))
+        img.set_ee(addr, cv.pad_name(chk["raw"], BOOT_LINE_LEN))
         res.changed.append(("Основна інформація", "%s: «%s» -> «%s»" % (label, cur[key], text)))
         if chk["raw"] and any(ch in text for ch in "іїєґІЇЄҐ") and cc.encode_new_name(text)[1] == "cp1251":
             if cc.CP1251_WARNING not in res.warnings:

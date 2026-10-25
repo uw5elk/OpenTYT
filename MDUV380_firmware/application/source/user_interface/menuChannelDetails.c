@@ -1895,7 +1895,14 @@ static bool saveChanges(uiEvent_t *ev)
 
 	if (uiDataGlobal.currentSelectedChannelNumber != CH_DETAILS_VFO_CHANNEL)
 	{
-		codeplugUtilConvertStringToBuf(channelName, (char *)&tmpChannel.name, 16);
+#if defined(APRS_R21_NAMES)
+		/* R34: назву, яку не редагували, не переписуємо -- її байти (хвіст 0xFF або 0x00, мала «я» наприкінці) лишаються, як у кодплазі. Раніше codeplugUtilConvertBufToString
+		 * псував tmpChannel.name, і цей запис був обов'язковий; тепер читання буфер не змінює. */
+		if (codeplugUtilNameBufEqualsString((const char *)&tmpChannel.name, channelName, 16) == false)
+#endif
+		{
+			codeplugUtilConvertStringToBuf(channelName, (char *)&tmpChannel.name, 16);
+		}
 	}
 
 	memcpy(currentChannelData, &tmpChannel, CODEPLUG_CHANNEL_DATA_STRUCT_SIZE); // Leave channel's NOT_IN_CODEPLUG_flag out of the copy

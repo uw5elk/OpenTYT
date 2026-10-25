@@ -93,7 +93,7 @@ def name_problem(img, kind, name, exclude=None):
     name = name if name is not None else ""
     if not name.strip():
         return "назва порожня"
-    chk = ce.check_name(name)
+    chk = ce.check_name(name, first_ff_empty=(kind in ("contact", "dtmf")))
     if not chk["ok"]:
         return chk["message"]
     for ident, nm in entity_names(img, kind):
