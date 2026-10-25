@@ -625,6 +625,12 @@ def test_z7(app, mk):
                 spin(app, 2.0)          # розкладка ще могла встигати; звітуємо лише про те, що не минуло
                 continue
             for w in bad:
+                stack = [w.inner]
+                while stack:
+                    g = stack.pop()
+                    stack.extend(g.winfo_children())
+                    if g.winfo_reqwidth() > w.avail_width() - 60:
+                        print("  широкий:", str(g).replace(".!cpsapp", "")[-40:], g.winfo_class(), g.winfo_reqwidth(), g.winfo_width(), "wl=", g.cget("wraplength") if g.winfo_class() == "TLabel" else "-", g.cget("text")[:30] if g.winfo_class() == "TLabel" else "")
                 wide.append("%s %s (вміст просить %d, видно %d)" % (k, str(w).replace(".!cpsapp", "")[-50:], w.inner.winfo_reqwidth(), w.avail_width()))
             break
     check(not wide, "Z7/B1: 1920x1080 -- горизонтальна смуга є в панелях: %r" % sorted(set(wide)))

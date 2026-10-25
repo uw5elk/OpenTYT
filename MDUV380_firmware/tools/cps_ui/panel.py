@@ -90,7 +90,15 @@ class Panel(ttk.Frame):
         left = self.winfo_rootx()
         for w in self.wrap_labels():
             try:
-                indent = max(0, w.winfo_rootx() - left) if w.winfo_ismapped() else 0
+                if w.winfo_ismapped():
+                    indent = max(0, w.winfo_rootx() - left)
+                    w._wrap_indent = indent
+                else:
+                    # відступ непоказаного підпису виміряти не можна: беремо останній відомий (або типовий) і уточнюємо, щойно підпис з'явиться
+                    indent = getattr(w, "_wrap_indent", 2 * gt.PAD)
+                    if not getattr(w, "_wrap_map_bound", False):
+                        w._wrap_map_bound = True
+                        w.bind("<Map>", lambda _e: self.after_idle(self.rewrap), add="+")
                 room = avail
                 nested = self._nested_host(w)
                 if nested is not None:
