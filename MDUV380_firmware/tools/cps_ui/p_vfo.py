@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Розділ «Кодплаг → VFO A / VFO B» (R-next, Y5): перегляд і правка VFO документа. Поля -- ті ж колонки, що й у каналу (без назви, номера й прапорців зон).
-Показуються значення, ЗБЕРЕЖЕНІ в кодплузі: рація читає їх з кодплага при вмиканні, а записує назад лише при вимкненні, тож живий VFO рації може відрізнятись.
+Показуються значення, ЗБЕРЕЖЕНІ в кодплазі: рація читає їх з кодплага при вмиканні, а записує назад лише при вимкненні, тож живий VFO рації може відрізнятись.
 Запис у рацію -- звичайна дія «Записати в рацію» (cps_restore), після неї рація перезавантажується без збереження пам'яті й бере VFO з кодплага (див. vfo_edit.py)."""
 import tkinter as tk
 from tkinter import ttk
@@ -27,7 +27,7 @@ class VfoPanel(Panel):
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
         self.dp = cc.system_decimal_point()
-        self.header("VFO A / VFO B", "Частоти й режим VFO, збережені в кодплузі. Рація читає їх при вмиканні, а живий VFO записує в кодплаг лише при "
+        self.header("VFO A / VFO B", "Частоти й режим VFO, збережені в кодплазі. Рація читає їх при вмиканні, а живий VFO записує в кодплаг лише при "
                                       "вимкненні -- тому тут те, що збережено, а не те, що рація має в пам'яті зараз. Зміни потрапляють у документ; "
                                       "рація змінюється лише за дією «Записати в рацію».")
         self.hint = ttk.Label(self, text=HINT_NO_DOC, foreground=gt.P["muted"])
@@ -133,7 +133,7 @@ class VfoPanel(Panel):
         finally:
             self._loading = False
         if vals["freq_ok"]:
-            self.state_label.config(text="%s: значення збережені в кодплузі." % ve.VFO_NAMES[n], foreground=gt.P["muted"])
+            self.state_label.config(text="%s: значення збережені в кодплазі." % ve.VFO_NAMES[n], foreground=gt.P["muted"])
             self.init_button.pack_forget()
             if not self.box.winfo_manager():
                 self.box.pack(fill="x", pady=4, after=self.state_label)
@@ -142,7 +142,7 @@ class VfoPanel(Panel):
         else:
             for w in (self.box, self.info, self.bar):          # сміття в полях не показуємо: лишається пояснення й кнопка заповнення
                 w.pack_forget()
-            self.state_label.config(text=("%s у кодплузі порожній або з частотою поза діапазонами рації (RX %s, TX %s). Рація при вмиканні замінить його значеннями "
+            self.state_label.config(text=("%s у кодплазі порожній або з частотою поза діапазонами рації (RX %s, TX %s). Рація при вмиканні замінить його значеннями "
                                           "за замовчуванням. Можна заповнити типовими значеннями тут." % (ve.VFO_NAMES[n], vals["Rx Frequency"], vals["Tx Frequency"])),
                                     foreground=gt.P["warn"])
             self.init_button.pack(anchor="w", pady=(0, 4), after=self.state_label)

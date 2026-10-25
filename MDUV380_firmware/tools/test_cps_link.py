@@ -340,7 +340,7 @@ def test_manifest_and_zip():
     check(all(q[0] in (1, 2, 9) for q in radio.requests), "лише області FLASH/EEPROM/RADIO_INFO")
     nflash = len([q for q in radio.requests if q[0] == 1])
     neep = len([q for q in radio.requests if q[0] == 2])
-    # R30: флеш = 80 КБ кодплуга + 64 КБ області custom-data (по 1 КБ на запит) + по 3 блоки самоперевірки для кожної з двох частин
+    # R30: флеш = 80 КБ кодплага + 64 КБ області custom-data (по 1 КБ на запит) + по 3 блоки самоперевірки для кожної з двох частин
     # R31: + таблиця ключів AES 1600 Б = 2 запити по 1 КБ і 1 блок самоперевірки
     check(neep == 128 + 3 and nflash == 80 + 64 + 3 + 3 + 2 + 1, "запитів: EEPROM %d, флеш %d" % (neep, nflash))
     # те саме читання двічі -- ті самі SHA-256 (BK8 на моделі)
