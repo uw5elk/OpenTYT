@@ -15,6 +15,7 @@ import gui_dialogs as gd
 import gui_theme as gt
 import sat_tle as st
 
+from .layout import FitTable
 from .common import output_dir
 from .panel import Panel
 
@@ -98,13 +99,10 @@ class SatellitesPanel(Panel):
         self.dn_btn.pack(side="left", padx=4)
         self.state_label = ttk.Label(box, text="Рацію ще не читали.", foreground=gt.P["muted"], wraplength=640, justify="left")
         self.state_label.pack(anchor="w", padx=8, pady=(0, 2))
-        cols = ("n", "name", "epoch", "age", "inc", "period", "freq")
-        self.slot_tree = ttk.Treeview(box, columns=cols, show="headings", height=8, selectmode="browse")
-        for c, t, w in (("n", "№", 34), ("name", "Назва", 90), ("epoch", "Епоха", 90), ("age", "Вік, дн.", 70), ("inc", "Нахил, °", 70), ("period", "Період, хв", 80),
-                        ("freq", "Частоти", 240)):
-            self.slot_tree.heading(c, text=t)
-            self.slot_tree.column(c, width=w, anchor="w", stretch=(c == "freq"))
-        self.slot_tree.pack(fill="x", padx=8, pady=4)
+        slot_tbl = FitTable(box, [("n", "№", 34, 0), ("name", "Назва", 90, 0), ("epoch", "Епоха", 90, 0), ("age", "Вік, дн.", 70, 0), ("inc", "Нахил, °", 70, 0),
+                                  ("period", "Період, хв", 80, 0), ("freq", "Частоти", 240, 1)], height=8)
+        self.slot_tree = slot_tbl.tree
+        slot_tbl.pack(fill="x", padx=8, pady=4)
         self.slot_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_slot_selected())
         self.stale_label = ttk.Label(box, text="", foreground=gt.P["warn"], wraplength=640, justify="left")
         self.stale_label.pack(anchor="w", padx=8)
@@ -153,15 +151,10 @@ class SatellitesPanel(Panel):
         self.counts_label.pack(anchor="w", padx=8, pady=2)
         body = ttk.Frame(sel)
         body.pack(fill="both", expand=True, padx=8, pady=4)
-        self.tle_tree = ttk.Treeview(body, columns=("name", "short", "norad", "epoch", "age", "note"), show="headings", height=9, selectmode="extended")
-        for c, t, w in (("name", "Назва у файлі", 200), ("short", "На рації", 80), ("norad", "NORAD", 60), ("epoch", "Епоха", 90), ("age", "Вік, дн.", 60),
-                        ("note", "Зауваження", 200)):
-            self.tle_tree.heading(c, text=t)
-            self.tle_tree.column(c, width=w, anchor="w", stretch=(c == "note"))
-        sb = ttk.Scrollbar(body, orient="vertical", command=self.tle_tree.yview)
-        self.tle_tree.configure(yscrollcommand=sb.set)
-        self.tle_tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="left", fill="y")
+        tle_tbl = FitTable(body, [("name", "Назва у файлі", 200, 0), ("short", "На рації", 80, 0), ("norad", "NORAD", 60, 0), ("epoch", "Епоха", 90, 0),
+                                  ("age", "Вік, дн.", 60, 0), ("note", "Зауваження", 200, 1)], height=9, selectmode="extended")
+        self.tle_tree = tle_tbl.tree
+        tle_tbl.pack(fill="both", expand=True)
         self.tle_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_counts())
         bar2 = ttk.Frame(sel)
         bar2.pack(fill="x", padx=8, pady=(2, 8))

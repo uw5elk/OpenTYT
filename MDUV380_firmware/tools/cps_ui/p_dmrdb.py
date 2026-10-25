@@ -14,6 +14,7 @@ import cps_link as cps
 import dmr_db as db
 import gui_theme as gt
 
+from .layout import FitTable, combo_width
 from .common import output_dir
 from .panel import Panel
 
@@ -53,6 +54,7 @@ class DmrDbPanel(Panel):
         row = ttk.Frame(src)
         row.pack(fill="x", padx=8, pady=(6, 2))
         self.src_box = ttk.Combobox(row, textvariable=self.src_var, values=[s[0] for s in SOURCES], state="readonly", width=42)
+        combo_width(self.src_box, minimum=42)
         self.src_box.pack(side="left")
         self.src_box.bind("<<ComboboxSelected>>", self._on_source_changed)
         ttk.Entry(row, textvariable=self.url_var, width=60).pack(side="left", padx=8, fill="x", expand=True)
@@ -110,14 +112,11 @@ class DmrDbPanel(Panel):
         self.shown_label.pack(side="left", padx=8)
         body = ttk.Frame(tbl)
         body.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.tree = ttk.Treeview(body, columns=("id", "call", "text"), show="headings", height=12, selectmode="browse")
-        for col, title, width in (("id", "DMR ID", 90), ("call", "Позивний", 120), ("text", "Текст у записі (що покаже рація)", 360)):
+        tbl = FitTable(body, [("id", "DMR ID", 90, 0), ("call", "Позивний", 120, 0), ("text", "Текст у записі (що покаже рація)", 360, 1)], height=12)
+        self.tree = tbl.tree
+        for col, title, _w, _wt in tbl.tree.fit_spec:
             self.tree.heading(col, text=title, command=lambda c=col: self._sort_by(c))
-            self.tree.column(col, width=width, anchor="w", stretch=(col == "text"))
-        sb = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="left", fill="y")
+        tbl.pack(fill="both", expand=True)
         self.table_all = []             # [(id, позивний, текст)] -- усе, що піде в рацію
         self.table_view = []            # відфільтроване й відсортоване
         self.table_sort = ("id", False)

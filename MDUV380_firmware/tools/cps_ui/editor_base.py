@@ -13,18 +13,19 @@ import gui_dialogs as gd
 import gui_theme as gt
 import table_edit as te
 
+from .layout import FitTable, equal_buttons
 from .panel import HINT_NO_DOC, Panel
 
 
 class EditorPanel(Panel):
     """Нащадок задає: kind, title, hint_text, columns, entities(img), build_form(parent), load_form(), ask_new(img)."""
-    scroll = False
+    scroll = True
     doc_panel = True
     kind = ""                       # tg / zone / channel
     noun = "запис"                  # «список прийому», «зона», «канал»
     columns = ()                    # [(id, заголовок, ширина, розтягувати?)]
     hint_text = ""
-    list_width = 330
+    list_width = 330                # (застаріле: тепер ширина списку -- межа PanedWindow; лишається для сумісності)
 
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
@@ -37,29 +38,20 @@ class EditorPanel(Panel):
         self.hint = ttk.Label(self, text=HINT_NO_DOC, foreground=gt.P["muted"])
         self.msg = ttk.Label(self, text="", wraplength=640, justify="left")
         self.body = ttk.Frame(self)
-        self.msg.pack(anchor="w", fill="x", padx=12, pady=(0, 4))
-        self.body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
-        left = ttk.Frame(self.body, width=self.list_width)
-        left.pack(side="left", fill="y", padx=(0, 10))
-        left.pack_propagate(False)
+        self.msg.pack(anchor="w", fill="x", padx=gt.PAD, pady=(0, 4))
+        self.body.pack(fill="both", expand=True, padx=gt.PAD, pady=(0, gt.GAP))
+        # R36 B2: список і форма розділені межею, яку можна тягнути (подвійне клацання -- типове положення, положення запам'ятовується)
+        self.pane = ttk.PanedWindow(self.body, orient="horizontal")
+        self.pane.pack(fill="both", expand=True)
+        left = ttk.Frame(self.pane)
         self.left = left
-        self._left_w = self.list_width
-        self.body.bind("<Configure>", self._on_body_resize)
         ttk.Label(left, text="Фільтр за назвою:").pack(anchor="w")
         ttk.Entry(left, textvariable=self._filter).pack(fill="x", pady=(0, 4))
         self._filter.trace_add("write", lambda *_: self._fill_list())
-        tf = ttk.Frame(left)
-        tf.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(tf, columns=[c[0] for c in self.columns], show="headings", selectmode="browse", height=10)
-        for cid, text, width, stretch in self.columns:
-            self.tree.heading(cid, text=text)
-            self.tree.column(cid, width=width, anchor="w", stretch=stretch)
-        vs = gt.AutoScrollbar(tf, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vs.set)
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        vs.grid(row=0, column=1, sticky="ns")
-        tf.rowconfigure(0, weight=1)
-        tf.columnconfigure(0, weight=1)
+        spec = [(cid, text, width, 1 if stretch else 0) for cid, text, width, stretch in self.columns]
+        self.table = FitTable(left, spec, height=10)
+        self.tree = self.table.tree
+        self.table.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.count_label = ttk.Label(left, text="", foreground=gt.P["muted"])
         self.count_label.pack(anchor="w", pady=2)
@@ -69,23 +61,35 @@ class EditorPanel(Panel):
         self.btn_dup = ttk.Button(bars, text="Дублювати", command=self._on_dup)
         self.btn_ren = ttk.Button(bars, text="Перейменувати...", command=self._on_rename)
         self.btn_del = ttk.Button(bars, text="Видалити...", command=self._on_delete)
+        equal_buttons(self.btn_add, self.btn_dup, self.btn_ren, self.btn_del)
         for i, b in enumerate((self.btn_add, self.btn_dup, self.btn_ren, self.btn_del)):
             b.grid(row=i // 2, column=i % 2, sticky="ew", padx=2, pady=2)
             self.reg(b, radio=False, doc=True)
-        bars.columnconfigure(0, weight=1)
-        bars.columnconfigure(1, weight=1)
-        self.right = ttk.Frame(self.body)
-        self.right.pack(side="left", fill="both", expand=True)
+        bars.columnconfigure(0, weight=1, uniform="btn")
+        bars.columnconfigure(1, weight=1, uniform="btn")
+        self._bars = bars
+        self.right = ttk.Frame(self.pane)
+        self.pane.add(left, weight=0)
+        self.pane.add(self.right, weight=1)
+        self.right.bind("<Configure>", self._on_right_resize)
         self.build_form(self.right)
+        self.shell.register_pane(self.key, self.pane, default=self._default_left, min_first=self._min_left, min_second=lambda: 320)
         self.on_document_changed()
 
-    def _on_body_resize(self, e):
-        """Вузьке вікно: список стає вужчим, а форма перелаштовується (relayout) -- нічого не вилазить за край."""
-        w = 210 if e.width < 760 else self.list_width
-        if w != self._left_w:
-            self._left_w = w
-            self.left.config(width=w)
-        self.relayout(max(200, e.width - w - 10))
+    def _on_right_resize(self, e):
+        """Права частина (форма) змінила ширину -- від руху межі чи вікна: форма перелаштовується, довгі підписи переносяться за її шириною."""
+        self.relayout(max(200, e.width))
+        self.rewrap()
+
+    def _min_left(self):
+        """Найменша ширина списку: дві кнопки в ряд і стовпці без обрізання заголовків (довгі значення прокручуються)."""
+        heads = sum(max(w, 40) for _c, _t, w, _s in self.columns)
+        return max(self._bars.winfo_reqwidth(), min(heads + 24, 330))
+
+    def _default_left(self):
+        """Типова ширина списку: стовпці за вмістом (але від 260 до 460 px)."""
+        nat = sum(self.tree.required().values()) + 24
+        return max(260, min(460, nat))
 
     def relayout(self, form_width):
         """Нащадки перелаштовують форму під доступну ширину."""
@@ -122,13 +126,13 @@ class EditorPanel(Panel):
             self._fill_list()                  # R33: без документа в схованій таблиці не лишаються рядки попереднього
             self.body.pack_forget()
             self.msg.pack_forget()
-            self.hint.pack(anchor="w", padx=12, pady=(0, 4), after=self._note_box)
+            self.hint.pack(anchor="w", padx=gt.PAD, pady=(0, 4), after=self._note_box)
             self.clear_form()
             return
         self.hint.pack_forget()
         if not self.body.winfo_manager():
-            self.msg.pack(anchor="w", fill="x", padx=12, pady=(0, 4))
-            self.body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+            self.msg.pack(anchor="w", fill="x", padx=gt.PAD, pady=(0, 4))
+            self.body.pack(fill="both", expand=True, padx=gt.PAD, pady=(0, gt.GAP))
         self._fill_list()
         self.load_form()
 
@@ -278,7 +282,7 @@ class MembersEditor(EditorPanel):
         raise NotImplementedError
 
     def build_form(self, parent):
-        self.title_label = ttk.Label(parent, text="", font=("Segoe UI", 11, "bold"))
+        self.title_label = ttk.Label(parent, text="", font=("Segoe UI", 11, "bold"), wraplength=380, justify="left")
         self.title_label.pack(anchor="w", pady=(0, 2))
         self.counter = ttk.Label(parent, text="")
         self.counter.pack(anchor="w", pady=(0, 6))
@@ -298,6 +302,7 @@ class MembersEditor(EditorPanel):
         self.btn_up = ttk.Button(self._mid, text="Вгору ↑", command=lambda: self._on_move(-1))
         self.btn_down = ttk.Button(self._mid, text="Вниз ↓", command=lambda: self._on_move(1))
         self._mid_buttons = (self.btn_in, self.btn_out, self.btn_up, self.btn_down)
+        equal_buttons(*self._mid_buttons)
         self._filter_fr = ttk.Frame(cols)
         ttk.Label(self._filter_fr, text="Фільтр:").pack(side="left")
         ttk.Entry(self._filter_fr, textvariable=self._avail_filter).pack(side="left", fill="x", expand=True, padx=4)

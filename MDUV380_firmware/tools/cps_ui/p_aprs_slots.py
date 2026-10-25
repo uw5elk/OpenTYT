@@ -14,6 +14,7 @@ import gui_dialogs as gd
 import gui_theme as gt
 import table_edit as te
 
+from .layout import FitTable
 from .panel import HINT_NO_DOC
 
 TEXT_FIELDS = (("name", "Назва (до 8 байтів)", 12), ("ssid", "SSID (0..15)", 5), ("via1", "Via 1", 8), ("via1_ssid", "Via 1 SSID (0..15)", 5),
@@ -45,11 +46,9 @@ class StationBlock(ttk.LabelFrame):
         top = ttk.Frame(self)
         top.pack(fill="x", padx=8, pady=4)
         self._top = top
-        self.tree = ttk.Treeview(top, columns=("n", "name", "comment"), show="headings", selectmode="browse", height=5)
-        for c, t, w in (("n", "№", 40), ("name", "Назва", 140), ("comment", "Коментар", 300)):
-            self.tree.heading(c, text=t)
-            self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(side="left", fill="x", expand=True)
+        tbl = FitTable(top, [("n", "№", 40, 0), ("name", "Назва", 140, 0), ("comment", "Коментар", 300, 1)], height=5)
+        self.tree = tbl.tree
+        tbl.pack(side="left", fill="x", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         side = ttk.Frame(top)
         side.pack(side="left", padx=8, anchor="n")

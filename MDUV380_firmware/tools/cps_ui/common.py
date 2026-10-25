@@ -5,10 +5,6 @@ import os
 import sys
 from pathlib import Path
 
-import tkinter as tk
-
-import gui_theme as gt
-
 CONFIG_FILENAME = str(Path.home() / ".gd77firmwareloader.ini")
 ZADIG_URL = "https://zadig.akeo.ie/"
 APP_TITLE = "TYT MD-UV390UKR"
@@ -69,57 +65,11 @@ def output_dir():
 
 
 def enable_entry_clipboard(entry):
-    """Вмикає копіювання/вставляння/вирізання в текстовому полі Tkinter так, щоб воно ГАРАНТОВАНО працювало на Windows з
-    українською (чи будь-якою нелатинською) розкладкою клавіатури.
-
-    Проблема, яку це виправляє: стандартні прив'язки Ctrl+C/Ctrl+V у Tk на Windows спрацьовують за КОДОМ СИМВОЛУ, який дає
-    поточна розкладка для фізичної клавіші -- а не за самою фізичною клавішею. З українською розкладкою фізична клавіша «V»
-    видає не 'v', а кирилицю («м»), тому Ctrl+V не розпізнається як вставляння і поле здається «заблокованим для вставки».
-    Пункту контекстного меню (по правій кнопці миші) в ttk.Entry також немає за замовчуванням.
-
-    Рішення -- два незалежні шляхи:
-      1) контекстне меню правої кнопки миші (Вирізати/Копіювати/Вставити/Виділити все) -- клік не залежить від розкладки;
-      2) прив'язка по event.keycode (апаратний код фізичної клавіші), а не по event.keysym: Ctrl+V/C/X/A спрацьовують
-         незалежно від розкладки. Коди клавіш однакові на Windows (VK_*) і на X11/Linux (evdev) для QWERTY-сумісної клавіатури.
-    """
-    menu = tk.Menu(entry, tearoff=0)
-    gt.style_menu(menu)
-    menu.add_command(label="Вирізати", command=lambda: entry.event_generate("<<Cut>>"))
-    menu.add_command(label="Копіювати", command=lambda: entry.event_generate("<<Copy>>"))
-    menu.add_command(label="Вставити", command=lambda: entry.event_generate("<<Paste>>"))
-    menu.add_separator()
-    menu.add_command(label="Виділити все", command=lambda: entry.selection_range(0, "end"))
-
-    def _show_context_menu(event):
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
-
-    entry.bind("<Button-3>", _show_context_menu)
-
-    KEYCODES_PASTE = (86, 118, 47, 55)
-    KEYCODES_COPY = (67, 99, 54, 25)
-    KEYCODES_CUT = (88, 120, 53, 45)
-    KEYCODES_SELECT_ALL = (65, 97, 38, 24)
-
-    def _on_ctrl_key(event):
-        kc = event.keycode
-        if kc in KEYCODES_PASTE:
-            entry.event_generate("<<Paste>>")
-            return "break"
-        if kc in KEYCODES_COPY:
-            entry.event_generate("<<Copy>>")
-            return "break"
-        if kc in KEYCODES_CUT:
-            entry.event_generate("<<Cut>>")
-            return "break"
-        if kc in KEYCODES_SELECT_ALL:
-            entry.selection_range(0, "end")
-            return "break"
-        return None
-
-    entry.bind("<Control-Key>", _on_ctrl_key)
+    """Сумісність зі старими викликами. З R36 копіювання/вставляння/вирізання за КОДОМ фізичної клавіші (незалежно від розкладки) і контекстне
+    меню працюють для ВСІХ полів і таблиць разом: одна глобальна прив'язка на класи віджетів (gui_clipboard.py). Тут лише гарантуємо, що вона
+    ввімкнена (повторний виклик нічого не робить), -- окремих прив'язок на поле більше нема, щоб меню й дії не спрацьовували двічі."""
+    import gui_clipboard
+    gui_clipboard.install(entry)
 
 
 class QueueWriter:

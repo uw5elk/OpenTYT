@@ -13,6 +13,7 @@ import cps_link as cps
 import gui_dialogs as gd
 import gui_theme as gt
 
+from .layout import FitTable
 from .panel import Panel
 
 NO_MELODY = "(без заставки і мелодії)"
@@ -76,12 +77,9 @@ class MelodyPanel(Panel):
         self.skip_check = ttk.Checkbutton(ed, text="Без заставки і мелодії (рація при вмиканні нічого не показує й не грає)", variable=self.skip_var, command=self._on_skip_toggled)
         self.skip_check.pack(anchor="w", padx=8, pady=(4, 2))
 
-        cols = ("n", "note", "hz", "ms")
-        self.tree = ttk.Treeview(ed, columns=cols, show="headings", height=9, selectmode="browse")
-        for c, t, w in (("n", "№", 40), ("note", "Нота", 120), ("hz", "Частота, Гц", 100), ("ms", "Тривалість, мс", 110)):
-            self.tree.heading(c, text=t)
-            self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="x", padx=8, pady=4)
+        tbl = FitTable(ed, [("n", "№", 40, 0), ("note", "Нота", 120, 1), ("hz", "Частота, Гц", 100, 0), ("ms", "Тривалість, мс", 110, 0)], height=9)
+        self.tree = tbl.tree
+        tbl.pack(fill="x", padx=8, pady=4)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._on_selected())
         self.total_label = ttk.Label(ed, text="")
         self.total_label.pack(anchor="w", padx=8)
