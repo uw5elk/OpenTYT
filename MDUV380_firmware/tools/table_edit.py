@@ -150,6 +150,12 @@ def dtmf_contacts(img):
     return [(s, cc.readable_text(r[:16]), cc.dtmf_code_text(r[16:32])) for s, r in img.dtmf()]
 
 
+def codeplug_counts(img):
+    """[(підпис, кількість)] записів кодплага, які бачить рація (для підсумку в «Основній інформації»)."""
+    return [("контактів", len(list(img.contacts()))), ("списків прийому", len(list(img.groups()))), ("зон", len(list(img.zones()))),
+            ("каналів", len(list(img.channels()))), ("APRS-слотів", len(list(img.aprs()))), ("DTMF-контактів", len(list(img.dtmf())))]
+
+
 def contacts(img):
     """[(номер, назва, ID, тип)]: усе, що треба для переліку «доступних» контактів."""
     return [(s + 1, cc.readable_text(r[:16]), cv.bcd_to_int(r[16:20]), cc.CALL_TYPE_NAMES.get(r[20], "Group")) for s, r in img.contacts()]
@@ -296,7 +302,7 @@ def add_entity(img, kind, name, numbers, dp):
 
 
 def rename_entity(img, kind, ident, name, dp):
-    cfg = _CFG.get(kind)
+    cfg = _CFG.get(kind) or ({"key": "contacts"} if kind == "contact" else None)
     prob = name_problem(img, kind, name, exclude=ident)
     if prob:
         raise TableEditError(["назва: " + prob])
@@ -335,6 +341,8 @@ def duplicate_entity(img, kind, ident, dp, name=None):
         return channel_duplicate(img, ident, name, dp)
     if kind == "dtmf":
         return dtmf_add(img, name, dict((s, c) for s, _n, c in dtmf_contacts(img))[ident], dp)
+    if kind == "contact":
+        return contact_duplicate(img, ident, name, dp)
     members = dict((i, m) for i, _n, m in (tg_lists(img) if kind == "tg" else zones(img)))
     return add_entity(img, kind, name, members[ident], dp)
 
@@ -481,6 +489,75 @@ def dtmf_set_code(img, slot, code, dp):
     hdr, rows = tables_of(img, dp)["dtmf"]
     rows[_row_of(img, "dtmf", slot)][1] = _dtmf_norm(code)
     return _run(img, {"dtmf": (hdr, rows)}, dp)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+#  Контакти (R33, Q1): розділ «Кодплаг → Контакти» править ті самі рядки Contacts.csv і проганяє їх через імпорт CSV, як усі інші редактори.
+#  Колонки Contacts.csv: Contact Name, ID, ID Type, TS Override, <читабельна назва>. TS Override редактор не змінює (лише зберігає при копіюванні).
+# ---------------------------------------------------------------------------------------------------------------------------------
+
+CONTACT_TYPE_NAMES = dict(cc.CALL_TYPE_NAMES)          # 0 Group / 1 Private / 2 All Call -- як у Contacts.csv
+
+
+def contact_rows(img):
+    """[(слот, назва, ID, тип 0..2, TS Override-текст)] -- повний вигляд контактів для редактора."""
+    out = []
+    for s, r in img.contacts():
+        ts = "Disabled" if r[23] & 0x01 else str(((r[23] & 0x02) >> 1) + 1)
+        out.append((s, cc.readable_text(r[:16]), cv.bcd_to_int(r[16:20]), r[20] if r[20] in CONTACT_TYPE_NAMES else 0, ts))
+    return out
+
+
+def contact_id_problem(text):
+    """Текст проблеми з TG / ID або None (0..16777215, як у contact_edit.parse_id)."""
+    try:
+        ce.parse_id(text)
+    except ValueError as e:
+        return str(e)
+    return None
+
+
+def contact_add(img, name, ident, ctype, dp, ts="Disabled"):
+    """Новий контакт: назва, TG/ID, тип виклику 0/1/2. Слот вибирає імпорт (перший вільний)."""
+    prob = name_problem(img, "contact", name)
+    if prob:
+        raise TableEditError(["назва: " + prob])
+    prob = contact_id_problem(str(ident))
+    if prob:
+        raise TableEditError(["TG / ID: " + prob])
+    if ctype not in CONTACT_TYPE_NAMES:
+        raise TableEditError(["тип виклику: 0 (група), 1 (приват) або 2 (всім)"])
+    hdr, rows = tables_of(img, dp)["contacts"]
+    rows.append(["", str(int(ident)), CONTACT_TYPE_NAMES[ctype], ts, name])
+    return _run(img, {"contacts": (hdr, rows)}, dp)
+
+
+def contact_set(img, slot, ident=None, ctype=None, dp=None):
+    """Змінити TG/ID і/або тип виклику контакту (назва лишається; її змінює rename_entity)."""
+    dp = dp or cc.system_decimal_point()
+    hdr, rows = tables_of(img, dp)["contacts"]
+    row = rows[_row_of(img, "contact", slot)]
+    if ident is not None:
+        prob = contact_id_problem(str(ident))
+        if prob:
+            raise TableEditError(["TG / ID: " + prob])
+        row[1] = str(int(ident))
+    if ctype is not None:
+        if ctype not in CONTACT_TYPE_NAMES:
+            raise TableEditError(["тип виклику: 0 (група), 1 (приват) або 2 (всім)"])
+        row[2] = CONTACT_TYPE_NAMES[ctype]
+    return _run(img, {"contacts": (hdr, rows)}, dp)
+
+
+def contact_duplicate(img, slot, name, dp):
+    """Копія контакту з новою назвою (ID, тип і TS Override ті самі)."""
+    prob = name_problem(img, "contact", name)
+    if prob:
+        raise TableEditError(["назва: " + prob])
+    hdr, rows = tables_of(img, dp)["contacts"]
+    src = rows[_row_of(img, "contact", slot)]
+    rows.append(["", src[1], src[2], src[3], name])
+    return _run(img, {"contacts": (hdr, rows)}, dp)
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------

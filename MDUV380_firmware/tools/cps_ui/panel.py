@@ -54,9 +54,11 @@ class Panel(ttk.Frame):
 
     # --- побудова ---
 
-    def header(self, text, hint=None):
-        """Заголовок панелі + необов'язковий пояснювальний рядок."""
+    def header(self, text, hint=None, purpose=None):
+        """Заголовок панелі + необов'язковий пояснювальний рядок. purpose (R33 Q4) -- один рядок «Для чого цей розділ» (не плутати схожі розділи)."""
         ttk.Label(self, text=text, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
+        if purpose:
+            ttk.Label(self, text="Для чого: " + purpose, wraplength=640, justify="left").pack(anchor="w", padx=12, pady=(0, 4))
         if hint:
             ttk.Label(self, text=hint, wraplength=640, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=12, pady=(0, 6))
         self.make_note()     # причина вимкнення -- одразу під заголовком, а не внизу довгої панелі

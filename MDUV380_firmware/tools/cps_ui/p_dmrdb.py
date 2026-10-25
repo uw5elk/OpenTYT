@@ -17,8 +17,12 @@ import gui_theme as gt
 from .common import output_dir
 from .panel import Panel
 
-SOURCES = [("Radioid.net (users.json)", db.RADIOID_JSON_URL), ("Radioid.net (user.csv, адресу не перевірено)", db.RADIOID_CSV_URL),
-           ("HamDigital (адресу вкажи сам)", ""), ("Інша адреса", "")]
+SOURCES = [("ContactLists GD77, увесь світ (формат перевірено)", db.CONTACTLISTS_URL),
+           ("Radioid.net users.json (НЕ ПЕРЕВІРЕНО)", db.RADIOID_JSON_URL),
+           ("Radioid.net user.csv (НЕ ПЕРЕВІРЕНО)", db.RADIOID_CSV_URL),
+           ("Інша адреса", "")]
+BATCH = 400                    # скільки рядків таблиці вставляємо за один крок (вікно не підвисає: між кроками обробляються події)
+SEARCH_DELAY_MS = 250
 
 
 class DmrDbPanel(Panel):
@@ -54,13 +58,19 @@ class DmrDbPanel(Panel):
         ttk.Entry(row, textvariable=self.url_var, width=60).pack(side="left", padx=8, fill="x", expand=True)
         row2 = ttk.Frame(src)
         row2.pack(fill="x", padx=8, pady=(2, 6))
+        self.probe_btn = ttk.Button(row2, text="Перевірити джерело", command=self._on_probe)
+        self.probe_btn.pack(side="left")
+        self.reg(self.probe_btn, radio=False)
         self.net_btn = ttk.Button(row2, text="Завантажити з мережі у файл...", command=self._on_download)
-        self.net_btn.pack(side="left")
+        self.net_btn.pack(side="left", padx=8)
         self.reg(self.net_btn, radio=False)
         self.open_btn = ttk.Button(row2, text="Відкрити файл з диска (CSV, JSON)...", command=self._on_open_source)
         self.open_btn.pack(side="left", padx=8)
         self.reg(self.open_btn, radio=False)
-        ttk.Label(src, text="Мережа вмикається лише цією кнопкою; завантажене лягає у файл, який ти обереш, у репозиторії нічого не кешується. Мережі нема -- відкрий файл, завантажений вручну.",
+        ttk.Label(src, text=("Мережа вмикається лише кнопками «Перевірити джерело» (запитує перші ~2 КБ і показує, що прийшло) та «Завантажити з мережі» (весь файл у обране тобою місце); "
+                             "у репозиторії нічого не кешується. Мережі нема -- відкрий файл, завантажений вручну. ContactLists -- файл на весь світ, тож обов'язково залиш регіон (початок DMR ID). "
+                             "HamDigital: прямої адреси у відкритому доступі нема -- потрібен власний обліковий запис на amateurradio.digital (реєстрація й щорічний внесок); "
+                             "завантаж файл звідти вручну й відкрий його кнопкою «Відкрити файл з диска»."),
                   wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 2))
         self.src_label = ttk.Label(src, text="Файл не відкрито.", foreground=gt.P["muted"], wraplength=600, justify="left")
         self.src_label.pack(anchor="w", padx=8, pady=(0, 6))
@@ -84,6 +94,37 @@ class DmrDbPanel(Panel):
         self.reg(self.count_btn, radio=False)
         self.summary = ttk.Label(flt, text="", wraplength=600, justify="left")
         self.summary.pack(anchor="w", padx=8, pady=(0, 6))
+
+        tbl = ttk.LabelFrame(self, text="Список, що піде в рацію (усі записи)")
+        tbl.pack(fill="both", expand=True, padx=12, pady=6)
+        self.counts_label = ttk.Label(tbl, text="Тисни «Порахувати» -- тут з'явиться повний список.", wraplength=600, justify="left")
+        self.counts_label.pack(anchor="w", padx=8, pady=(6, 2))
+        srow = ttk.Frame(tbl)
+        srow.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Label(srow, text="Пошук (ID або позивний):").pack(side="left")
+        self.search_var = tk.StringVar(value="")
+        self.search_entry = ttk.Entry(srow, textvariable=self.search_var, width=24)
+        self.search_entry.pack(side="left", padx=8)
+        self.search_var.trace_add("write", self._on_search_changed)
+        self.shown_label = ttk.Label(srow, text="", foreground=gt.P["muted"])
+        self.shown_label.pack(side="left", padx=8)
+        body = ttk.Frame(tbl)
+        body.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.tree = ttk.Treeview(body, columns=("id", "call", "text"), show="headings", height=12, selectmode="browse")
+        for col, title, width in (("id", "DMR ID", 90), ("call", "Позивний", 120), ("text", "Текст у записі (що покаже рація)", 360)):
+            self.tree.heading(col, text=title, command=lambda c=col: self._sort_by(c))
+            self.tree.column(col, width=width, anchor="w", stretch=(col == "text"))
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        self.table_all = []             # [(id, позивний, текст)] -- усе, що піде в рацію
+        self.table_view = []            # відфільтроване й відсортоване
+        self.table_sort = ("id", False)
+        self.table_gen = 0              # номер поточного наповнення (старі кроки after() самі припиняються)
+        self.table_filling = False
+        self.table_after = None
+        self.search_after = None
 
         rad = ttk.LabelFrame(self, text="3. Рація")
         rad.pack(fill="x", padx=12, pady=6)
@@ -156,7 +197,29 @@ class DmrDbPanel(Panel):
                                                                          ", є колонка дати активності" if s.has_date else ", колонки дати активності нема")
                               + ("\nРозпізнано: %s." % s.describe() if s.columns else "")
                               + ("\n" + "; ".join(s.notes) + "." if s.notes else ""))
-        self.summary.config(text="Тисни «Порахувати», щоб побачити, скільки записів вийде.")
+        cap = db.capacity(db.rec_len_for(int(self.chars_var.get())))
+        self.summary.config(text="У файлі %d записів; в область №1 вміщується %d (запис %d Б). %s" % (
+            len(s.rows), cap, db.rec_len_for(int(self.chars_var.get())),
+            "Тисни «Порахувати» -- побачиш, скільки лишиться після фільтрів і що саме запишеться." if len(s.rows) <= cap else
+            "Файл БІЛЬШИЙ за місткість -- обов'язково задай регіон (початок DMR ID) або ліміт і тисни «Порахувати»."))
+        self._clear_table("Тисни «Порахувати» -- тут з'явиться повний список.")
+
+    # --- перевірка джерела (P2.2) ----------------------------------------------------------------
+
+    def _on_probe(self):
+        if self.shell.busy:
+            return
+        url = self.url_var.get().strip()
+        if not url:
+            messagebox.showinfo("База позивних", "Вкажи адресу в полі поряд з вибором джерела.", parent=self.shell)
+            return
+        self.shell.run_task(lambda: db.probe_url(url), "Перевіряю джерело (перші ~2 КБ)...", plain_errors=True,
+                            on_done=lambda res: self._probe_done(url, res), ok_status="Джерело перевірено.")
+
+    def _probe_done(self, url, res):
+        text = "Джерело: %s\n%s" % (url, db.probe_text(res))
+        self.src_label.config(text=text)
+        print(text)
 
     # --- відбір ----------------------------------------------------------------------------------
 
@@ -182,11 +245,89 @@ class DmrDbPanel(Panel):
             return
         self.job = job
         self.image = None
-        text = job.summary()
-        pv = job.preview()
-        if pv:
-            text += "\nНа екрані рації виглядатиме так (перші записи):\n  " + "\n  ".join(pv)
-        self.summary.config(text=text)
+        self.summary.config(text=job.summary())
+        self.show_table(job.table_rows(), job.counts_line() + ("\n" + job.dropped_text() if job.dropped else ""))
+
+    # --- таблиця всіх записів (P4) ---------------------------------------------------------------
+
+    def _clear_table(self, text):
+        self.table_gen += 1
+        self.table_filling = False
+        self.table_all, self.table_view = [], []
+        self.tree.delete(*self.tree.get_children())
+        self.counts_label.config(text=text)
+        self.shown_label.config(text="")
+
+    def show_table(self, rows, counts_text):
+        """Показати ВСІ записи, що підуть у рацію. rows -- [(ID, позивний, текст)]. Наповнення порціями (BATCH рядків за крок), вікно не підвисає."""
+        self.table_all = list(rows)
+        self.counts_label.config(text=counts_text)
+        self._refilter()
+
+    def _query(self):
+        return self.search_var.get().strip()
+
+    def _refilter(self):
+        q = self._query().upper()
+        rows = self.table_all
+        if q:
+            rows = [r for r in rows if q in str(r[0]) or q in r[1].upper()]
+        col, rev = self.table_sort
+        idx = {"id": 0, "call": 1, "text": 2}[col]
+        if col == "id":
+            rows = sorted(rows, key=lambda r: r[0], reverse=rev)
+        else:
+            rows = sorted(rows, key=lambda r: (r[idx].upper(), r[0]), reverse=rev)
+        self.table_view = rows
+        self._fill_tree()
+
+    def _fill_tree(self):
+        self.table_gen += 1
+        gen = self.table_gen
+        if self.table_after is not None:
+            try:
+                self.after_cancel(self.table_after)
+            except Exception:  # noqa: BLE001
+                pass
+            self.table_after = None
+        self.tree.delete(*self.tree.get_children())
+        self.table_filling = True
+        self._fill_step(gen, 0)
+
+    def _fill_step(self, gen, pos):
+        if gen != self.table_gen:                  # почалось нове наповнення -- це старе припиняємо
+            return
+        chunk = self.table_view[pos:pos + BATCH]
+        for r in chunk:
+            self.tree.insert("", "end", values=r)
+        pos += len(chunk)
+        total, allrows = len(self.table_view), len(self.table_all)
+        self.shown_label.config(text="показано %d з %d" % (pos, total) + (" (відібрано пошуком з %d)" % allrows if total != allrows else ""))
+        if pos < total:
+            self.table_after = self.after(1, lambda: self._fill_step(gen, pos))
+        else:
+            self.table_filling = False
+            self.table_after = None
+
+    def _on_search_changed(self, *_a):
+        if self.search_after is not None:
+            try:
+                self.after_cancel(self.search_after)
+            except Exception:  # noqa: BLE001
+                pass
+        self.search_after = self.after(SEARCH_DELAY_MS, self._do_search)
+
+    def _do_search(self):
+        self.search_after = None
+        self._refilter()
+
+    def _sort_by(self, col):
+        cur, rev = self.table_sort
+        self.table_sort = (col, (not rev) if cur == col else False)
+        names = {"id": "DMR ID", "call": "Позивний", "text": "Текст у записі (що покаже рація)"}
+        for c, t in names.items():
+            self.tree.heading(c, text=t + ((" \u25bc" if self.table_sort[1] else " \u25b2") if c == col else ""))
+        self._refilter()
 
     # --- запис -----------------------------------------------------------------------------------
 
@@ -195,7 +336,12 @@ class DmrDbPanel(Panel):
             return self.image
         if self.job is None:
             self.job = self.make_job()
-        return self.job.image()
+        if self.job.dropped:
+            # P4.3: більше, ніж вміщується -- пишемо перші за ID, і користувач має це підтвердити словами
+            if not messagebox.askyesno("База позивних", "Усі відібрані записи в область №1 не вміщуються.\n\n%s\n%s\n\nЗаписати вміщуване?" % (
+                    self.job.counts_line(), self.job.dropped_text()), parent=self.shell):
+                raise db.DbError("запис скасовано: набір більший за місткість")
+        return self.job.image(truncate=True)
 
     def _on_write(self):
         if self.shell.busy:
@@ -297,3 +443,4 @@ class DmrDbPanel(Panel):
             text += "\nЗаписати в рацію не можна: " + "; ".join(bad)
         text += "".join("\n" + w for w in img.warnings)
         self.summary.config(text=text)
+        self.show_table([(rid, "", t) for rid, t in img.records], "У образі з файла %s: записів %d (позивний окремо не зберігається -- лише текст запису)." % (self.image_name, img.count))

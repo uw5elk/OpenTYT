@@ -119,6 +119,7 @@ class EditorPanel(Panel):
         d = self.doc
         if d is None:
             self.sel = None
+            self._fill_list()                  # R33: без документа в схованій таблиці не лишаються рядки попереднього
             self.body.pack_forget()
             self.msg.pack_forget()
             self.hint.pack(anchor="w", padx=12, pady=(0, 4), after=self._note_box)

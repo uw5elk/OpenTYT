@@ -50,7 +50,9 @@ class BackupPanel(Panel):
         self.custom_var = tk.BooleanVar(value=True)             # R32 T2.3: область custom-data в архіві (типово УВІМКНЕНО; вимкнена -- бекап швидший)
         self.keys_restore_var = tk.BooleanVar(value=False)      # R31 K3.1: відновити також ключі AES (типово ВИМКНЕНО)
         self.header("Бекап і відновлення", "Бекап читає кодплаг із рації й зберігає його в .zip у теці MD-UV390UKR (у домашній теці). "
-                                           "Рація має бути у звичайному режимі (не в DFU).")
+                                           "Рація має бути у звичайному режимі (не в DFU).",
+                    purpose="повна копія кодплага (канали, зони, контакти...) у .zip, щоб повернути рацію до цього стану; окремо від «Усі налаштування», "
+                            "які переносять лише область custom-data.")
 
         box = ttk.LabelFrame(self, text="Бекап (лише читання)")
         box.pack(fill="x", padx=12, pady=6)
@@ -68,9 +70,9 @@ class BackupPanel(Panel):
         self.keys_note.pack(anchor="w", padx=8, pady=(0, 8))
         self._update_keys_note()
 
-        view = ttk.LabelFrame(self, text="Перегляд і правка бекапу")
+        view = ttk.LabelFrame(self, text="Відкрити бекап для перегляду й правки")
         view.pack(fill="x", padx=12, pady=6)
-        self.view_file_button = ttk.Button(view, text="Відкрити бекап у перегляді...", command=self._on_view_file_clicked)
+        self.view_file_button = ttk.Button(view, text="Відкрити бекап як документ...", command=self._on_view_file_clicked)
         self.view_file_button.pack(anchor="w", padx=8, pady=8)
         self.reg(self.view_file_button, radio=False)        # файл читається з диска, рація не потрібна
 
@@ -181,7 +183,7 @@ class BackupPanel(Panel):
         if self.shell.busy:
             return
         if self.shell.doc_open_file():
-            self.shell.show("viewer")
+            self.shell.show("basic")
 
     # --- відновлення (ЗАПИС у рацію) ---
 

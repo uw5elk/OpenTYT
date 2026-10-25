@@ -102,6 +102,10 @@ def test_widget_tree():
         holder.grid(row=3, column=0)
         cb = ttk.Combobox(holder, values=("а", "б"), state="readonly")
         cb.pack()
+        # R33: розділ «Перегляд кодплага» (єдине місце з Notebook) прибрано, тож вкладки перевіряємо власним зразком, щоб стиль TNotebook лишався під контролем
+        nb = ttk.Notebook(holder)
+        nb.add(ttk.Frame(nb), text="Вкладка")
+        nb.pack()
         app.update()
         pop = app.tk.call("ttk::combobox::PopdownWindow", str(cb))
         lb_bg = str(app.tk.call(str(pop) + ".f.l", "cget", "-background"))

@@ -27,6 +27,7 @@ import re
 import struct
 import time
 import unicodedata
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -46,7 +47,8 @@ DEFAULT_TEXT_CHARS = 16                                # 12 Б стиснуто�
 TEXT_CHARS_CHOICES = (16, 20, 24)
 PART_KEY = "dmrIdDb"
 PART_FILE = "dmriddb.bin"
-RADIOID_JSON_URL = "https://database.radioid.net/static/users.json"   # адреса з конфіга стороннього застосунку (Russell-KV4S/DMR.UserDB.RadioConverter); поля JSON тут не перевірено
+CONTACTLISTS_URL = "https://raw.githubusercontent.com/ContactLists/NORMAL-ContactLists/master/RADIODDITY/GD77/GD77_WW_default.csv"   # R33: формат перевірено завантаженням 2026-10-25 (за брифом): Radio ID,Callsign,Name,Nickname,City,State,Country,Remarks
+RADIOID_JSON_URL = "https://database.radioid.net/static/users.json"   # адреса з конфіга стороннього застосунку (Russell-KV4S/DMR.UserDB.RadioConverter); НЕ перевірено -- є кнопка «Перевірити джерело»
 RADIOID_CSV_URL = "https://radioid.net/static/user.csv"               # з пам'яті, НЕ перевірено; якщо не відкривається -- візьми JSON або скачай файл вручну
 COLUMN_NAMES = ("callsign", "first", "last", "city", "state", "country")
 COLUMN_TITLES = {"callsign": "позивний", "first": "ім'я", "last": "прізвище", "city": "місто", "state": "область", "country": "країна"}
@@ -486,6 +488,96 @@ def parse_source(raw, name=""):
     return Source(rows, skipped, has_date, name, notes, columns)
 
 
+def _partial_json_items(text):
+    """Повні об'єкти зі шматка JSON-списку (початок файла, обірваний посередині): те, що вдалося прочитати до першого обриву."""
+    start = text.find("[")
+    if start < 0:
+        return []
+    dec = json.JSONDecoder()
+    items, pos = [], start + 1
+    while True:
+        while pos < len(text) and text[pos] in " \t\r\n,":
+            pos += 1
+        if pos >= len(text) or text[pos] != "{":
+            break
+        try:
+            obj, pos = dec.raw_decode(text, pos)
+        except ValueError:
+            break
+        items.append(obj)
+    return items
+
+
+def probe_bytes(raw):
+    """P2.2: що можна сказати про джерело за його ПОЧАТКОМ (кілька КБ). Повертає словник:
+    head -- перші три рядки як є; ok -- розбір впізнав колонки; rows -- скільки повних записів у шматку; columns -- опис; notes; why -- чому ні."""
+    text = decode_bytes(raw) if isinstance(raw, (bytes, bytearray)) else raw
+    res = {"head": first_lines(text) if not (isinstance(raw, (bytes, bytearray)) and b"\x00" in raw[:4096]) else "  (бінарні дані: %s)" % bytes(raw[:32]).hex(),
+           "ok": False, "rows": 0, "columns": "", "notes": [], "why": ""}
+    stripped = text.lstrip()
+    try:
+        if stripped[:1] in "[{":
+            items = _partial_json_items(stripped)
+            if not items:
+                res["why"] = "у початку JSON нема жодного повного запису (можливо, записи завеликі для шматка в 2 КБ)"
+                return res
+            src = parse_source(json.dumps(items), "probe")
+        else:
+            cut = text if text.endswith("\n") else text[:text.rfind("\n") + 1]     # остання рядок могла обірватись -- відкидаємо
+            if not cut.strip():
+                res["why"] = "у початку файла нема жодного повного рядка"
+                return res
+            src = parse_source(cut, "probe")
+    except DbError as e:
+        res["why"] = str(e).split("\n")[0]
+        return res
+    res.update(ok=True, rows=len(src.rows), columns=src.describe(), notes=list(src.notes))
+    if not src.rows:
+        res["why"] = "заголовок впізнано, але повних рядків даних у початку файла нема"
+    return res
+
+
+def probe_url(url, nbytes=2048, timeout=30):
+    """P2.2: запит ЛИШЕ початку файла (Range + читання не більше `nbytes`), без завантаження всього. Викликається за явним натисканням.
+    Повертає словник probe_bytes + status, contentType, size (з заголовків), error."""
+    if not url.lower().startswith(("http://", "https://")):
+        raise DbError("адреса має починатися з http:// або https://")
+    req = urllib.request.Request(url, headers={"User-Agent": "OpenTYT-CPS/R33", "Range": "bytes=0-%d" % (nbytes - 1)})
+    out = {"status": None, "contentType": "", "size": "", "error": ""}
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(nbytes)
+            out["status"] = getattr(resp, "status", None)
+            out["contentType"] = resp.headers.get("Content-Type", "")
+            cr = resp.headers.get("Content-Range", "")
+            out["size"] = cr.split("/")[-1] if "/" in cr else (resp.headers.get("Content-Length") or "")
+    except urllib.error.HTTPError as e:
+        out.update(status=e.code, contentType=e.headers.get("Content-Type", "") if e.headers else "")
+        raw = e.read(nbytes)
+        out["error"] = "сервер відповів кодом %s" % e.code
+    except (urllib.error.URLError, OSError) as e:
+        raise DbError("з'єднатися не вдалося: %s" % getattr(e, "reason", e))
+    res = probe_bytes(raw)
+    res.update(out)
+    return res
+
+
+def probe_text(res):
+    """Людський текст за результатом probe_url / probe_bytes."""
+    lines = []
+    if res.get("status") is not None:
+        lines.append("Відповідь: код %s%s%s." % (res["status"], (", тип " + res["contentType"]) if res.get("contentType") else "",
+                                                 (", розмір файла %s Б" % res["size"]) if res.get("size") else ""))
+    lines.append("Початок файла (перші три рядки):\n" + res["head"])
+    if res["ok"] and not res["why"]:
+        lines.append("Розбір ПІДХОДИТЬ: у початку %d повних записів; %s." % (res["rows"], res["columns"]))
+        if res["notes"]:
+            lines.append("; ".join(res["notes"]) + ".")
+    else:
+        lines.append("Розбір НЕ розпізнає цей початок: %s." % (res["why"] or "невідома причина"))
+    return "\n".join(lines)
+
+
 def read_source_file(path):
     with open(path, "rb") as f:
         raw = f.read()
@@ -595,8 +687,9 @@ def apply_filters(rows, prefixes=(), max_inactive_days=None, limit=None, today=N
 
 
 class Job:
-    """Усе, що панель показує до запису: скільки відібрано й скільки вміститься (D3.3)."""
+    """Усе, що панель показує до запису: скільки в файлі, скільки відібрано, скільки вміститься й скільки буде записано (D3.3, R33 P1.3/P4.3)."""
     def __init__(self, source, prefixes, max_inactive_days, limit, columns, text_chars, today=None):
+        self.file_rows = len(source.rows)
         self.rows, self.info = apply_filters(source.rows, prefixes, max_inactive_days, limit, today, source.has_date)
         self.columns = columns
         self.text_chars = text_chars
@@ -604,29 +697,59 @@ class Job:
         self.cap = capacity(self.rec_len)
         self.selected = len(self.rows)
         self.fits = self.selected <= self.cap
+        self.written = min(self.selected, self.cap)          # рядки відсортовані за ID: що не влізло -- ОСТАННІ за ID
+        self.dropped = self.selected - self.written
 
-    def records(self):
-        return [(r["id"], compose(r, self.columns)) for r in self.rows]
+    def records(self, truncate=False):
+        rows = self.rows[:self.written] if truncate else self.rows
+        return [(r["id"], compose(r, self.columns)) for r in rows]
+
+    def stored_text(self, text):
+        """Те, що справді ляже в запис і що рація покаже: текст обрізано до довжини запису."""
+        return decompress_text(compress_text(text, self.rec_len - 3))
 
     def preview(self, n=5):
-        return ["%d  %s" % (rid, decompress_text(compress_text(t, self.rec_len - 3))) for rid, t in self.records()[:n]]
+        return ["%d  %s" % (rid, self.stored_text(t)) for rid, t in self.records()[:n]]
+
+    def table_rows(self):
+        """Усі записи, що підуть у рацію (P4.1): [(ID, позивний з файла, текст у записі)] -- рівно min(відібрано, місткість), за зростанням ID."""
+        return [(r["id"], r.get("callsign") or "", self.stored_text(compose(r, self.columns))) for r in self.rows[:self.written]]
+
+    def counts(self):
+        return {"file": self.file_rows, "filtered": self.selected, "cap": self.cap, "written": self.written, "dropped": self.dropped}
+
+    def counts_line(self):
+        """Один рядок над таблицею (P4.3)."""
+        return "У файлі %d, після фільтрів %d, влізе %d, буде записано %d." % (self.file_rows, self.selected, self.cap, self.written)
+
+    def dropped_text(self):
+        """Слова про те, що відкинеться, коли відібрано більше, ніж влізе (порожньо, якщо все влазить)."""
+        if not self.dropped:
+            return ""
+        first_dropped = self.rows[self.written]["id"]
+        return ("Не вміщається %d записів: у рацію потраплять перші %d за зростанням ID (до %d включно); відкинуться ОСТАННІ за ID (від %d до %d)."
+                % (self.dropped, self.written, self.rows[self.written - 1]["id"] if self.written else 0, first_dropped, self.rows[-1]["id"]))
 
     def summary(self):
         i = self.info
-        lines = ["У файлі рядків: %d; відкинуто: хибний ID %d, дублікатів %d, не з обраних регіонів %d, неактивних %d, понад ліміт %d." % (
-            i["input"], i["badId"], i["dups"], i["region"], i["inactive"], i["limited"]),
-            "Після фільтрів: %d записів. У область №1 вміщується: %d (запис %d Б)." % (self.selected, self.cap, self.rec_len)]
+        lines = [self.counts_line(),
+                 "Відкинуто фільтрами: хибний ID %d, дублікатів %d, не з обраних регіонів %d, неактивних %d, понад ліміт %d." % (
+                     i["badId"], i["dups"], i["region"], i["inactive"], i["limited"]),
+                 "Запис %d Б; у область №1 вміщується %d." % (self.rec_len, self.cap)]
         if i["inactiveUnavailable"]:
             lines.append("УВАГА: у файлі нема колонки з датою активності -- фільтр бездіяльності НЕ застосовано.")
         if not self.fits:
-            lines.append("НЕ ВМІЩУЄТЬСЯ: на %d записів більше. Звузь фільтри або задай ліміт записів -- у область №2 пишу не буду (там таблиця ключів AES)." %
-                         (self.selected - self.cap))
+            lines.append("НЕ ВМІЩУЄТЬСЯ: на %d записів більше. %s Звуж фільтри або задай ліміт записів. У область №2 пишу не буду (там таблиця ключів AES)."
+                         % (self.selected - self.cap, self.dropped_text()))
         return "\n".join(lines)
 
-    def image(self):
-        if not self.fits:
+    def image(self, truncate=False):
+        """Образ для запису. Без truncate, якщо не вміщується, -- DbError. З truncate=True (панель питає підтвердження словами) -- перші `cap` за ID."""
+        if not self.fits and not truncate:
             raise DbError("відібрано %d записів, а вміщується %d" % (self.selected, self.cap))
-        return build_image(self.records(), self.text_chars)
+        if not self.written:
+            raise DbError("після фільтрів не лишилось жодного запису -- писати нічого")
+        return build_image(self.records(truncate=truncate), self.text_chars)
 
 
 # ---------------------------------------------------------------------------------------------

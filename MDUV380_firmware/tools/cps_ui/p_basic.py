@@ -8,6 +8,7 @@ import aprs_beacon_cfg as abc_
 import codeplug_edit as ced
 import contact_edit as ce
 import gui_theme as gt
+import table_edit as te
 
 from .panel import HINT_NO_DOC, Panel
 
@@ -57,6 +58,13 @@ class BasicInfoPanel(Panel):
         self.intro_box.bind("<<ComboboxSelected>>", lambda _e: self._validate())
         self.intro_label = ttk.Label(self.box, text=INTRO_NOTE, foreground=gt.P["muted"], wraplength=560, justify="left")
         self.intro_label.pack(anchor="w", padx=8, pady=(2, 6))
+        # R33 Q2: підсумок кодплага (раніше його показував «Перегляд кодплага», чиї таблиці дублювали окремі розділи)
+        self.sum_box = ttk.LabelFrame(self, text="Склад кодплага")
+        self.sum_box.pack(fill="x", padx=12, pady=6)
+        self.sum_status = ttk.Label(self.sum_box, text="", wraplength=600, justify="left")
+        self.sum_status.pack(anchor="w", padx=8, pady=(6, 2))
+        self.sum_counts = ttk.Label(self.sum_box, text="", wraplength=600, justify="left", foreground=gt.P["muted"])
+        self.sum_counts.pack(anchor="w", padx=8, pady=(0, 6))
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=12, pady=6)
         self.apply_button = ttk.Button(bar, text="Застосувати до документа", command=self._on_apply)
@@ -71,7 +79,18 @@ class BasicInfoPanel(Panel):
 
     # --- вміст ---
 
+    def _fill_summary(self):
+        d = self.doc
+        if d is None:
+            self.sum_status.config(text="Кодплаг не відкрито.")
+            self.sum_counts.config(text="")
+            return
+        self.sum_status.config(text=d.status_text())
+        self.sum_counts.config(text="У кодплазі: " + ", ".join("%s %d" % (n, c) for n, c in te.codeplug_counts(d.image))
+                               + ". Кожен вид правиться у своєму розділі дерева.")
+
     def on_document_changed(self):
+        self._fill_summary()
         d = self.doc
         if d is None:
             self.hint.pack(anchor="w", padx=12, pady=(0, 4), after=self._note_box)

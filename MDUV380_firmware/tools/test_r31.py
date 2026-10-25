@@ -628,7 +628,7 @@ def test_sources_and_filters():
     # лічильники до запису
     job = db.Job(src, ["255"], None, None, ["callsign", "first"], 16)
     s = job.summary()
-    check(job.selected == 4 and job.fits and job.cap == 17475 and "Після фільтрів: 4 записів" in s and "17475" in s, "D3.3: лічильники ДО запису: відібрано 4, вміщується 17475: %s" % s.replace("\n", " | "))
+    check(job.selected == 4 and job.fits and job.cap == 17475 and "після фільтрів 4, влізе 17475, буде записано 4" in s and "17475" in s, "D3.3: лічильники ДО запису: відібрано 4, вміщується 17475: %s" % s.replace("\n", " | "))
     check(job.preview()[0] == "2550001  UR1AAA Ivan", "D3.3: попередній перегляд показує те, що побачить рація")
     big = db.Source([{"id": i, "callsign": "UR", "first": "", "last": "", "city": "", "state": "", "country": "", "date": None} for i in range(1, 17480)], 0, False)
     jb = db.Job(big, [], None, None, ["callsign"], 16)
@@ -924,7 +924,11 @@ def test_gui():
         _wait_idle(app)
         check(dp.source is not None and "рядків з ID: 8" in dp.src_label.cget("text"), "D2.2/Z1: локальний файл відкрито: %s" % dp.src_label.cget("text"))
         dp._on_count()
-        check("Після фільтрів: 4 записів" in dp.summary.cget("text") and "17475" in dp.summary.cget("text") and "UR1AAA Ivan" in dp.summary.cget("text"), "D3.3/Z1: лічильники й перегляд до запису: %s" % dp.summary.cget("text").replace("\n", " | "))
+        while dp.table_filling:
+            app.update()
+        tv = [dp.tree.item(i, "values") for i in dp.tree.get_children()]
+        check("після фільтрів 4" in dp.summary.cget("text") and "17475" in dp.summary.cget("text") and any("UR1AAA Ivan" in str(v[2]) for v in tv),
+              "D3.3/Z1 (R33: список у таблиці): лічильники й перегляд до запису: %s" % dp.summary.cget("text").replace("\n", " | "))
         dp.limit_var.set("x")
         n_err = len(errors)
         dp._on_count()
