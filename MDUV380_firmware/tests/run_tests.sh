@@ -175,6 +175,15 @@ if [ -z "$FILTER" ] || [[ "check_ccm_init" == *"$FILTER"* ]]; then
 	fi
 fi
 
+if [ -z "$FILTER" ] || [[ "check_terminology" == *"$FILTER"* ]]; then
+	# R32 T1: у текстах і коді інструментів немає застарілих форм термінів (список -- на початку tools/check_terminology.py); прошивку й languages/ не чіпає
+	if out="$(python3 "$TESTS_DIR/../tools/check_terminology.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            check_terminology (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        check_terminology (python)"; printf '%s\n' "$out" | tail -20
+	fi
+fi
+
 if [ -z "$FILTER" ] || [[ "aprs_icons_gen" == *"$FILTER"* ]]; then
 	# R20 Ж2: tools/aprs_icons.txt коректний (24x24, без дублікатів/поодиноких пікселів, назви збігаються з aprsmode_ua.h), а aprs_icons.c і docs/aprs-icons.md не застаріли
 	if out="$(python3 "$TESTS_DIR/../tools/aprs_icons_gen.py" --check 2>&1)"; then
@@ -253,9 +262,9 @@ if [ -z "$FILTER" ] || [[ "test_cps_csv" == *"$FILTER"* ]]; then
 	fi
 fi
 
-# R26 V2/V3 + APRS-unify L5.4 (бікон/шумодав/позивний з ПК): контакти-редактор, темна тема, tools/aprs_beacon_cfg.py; CPS-shell: tools/cps_ui (дерево розділів); CPS-doc: кодплаг як документ (test_cps_doc); CPS-fix2 + етап 3: редактори списків прийому, зон і каналів (test_cps_edit); CPS-fix3: сітка символів APRS, злита панель APRS, ключ AES у каналі (test_cps_fix3); R-next: загальні налаштування, VFO, DTMF (test_rnext); R28: теми екрана рації й каскадне видалення APRS-слота (test_r28); R30: файл теми .gtm, область custom-data у бекапі/відновленні/файлі налаштувань (test_r30); R31: ключі AES у бекапі/відновленні, база позивних DMR ID, охоронець меж запису (test_r31). Логіка й палітра -- у будь-якому python3; віджети Tk -- лише з tkinter + xvfb-run (інакше цю частину
+# R26 V2/V3 + APRS-unify L5.4 (бікон/шумодав/позивний з ПК): контакти-редактор, темна тема, tools/aprs_beacon_cfg.py; CPS-shell: tools/cps_ui (дерево розділів); CPS-doc: кодплаг як документ (test_cps_doc); CPS-fix2 + етап 3: редактори списків прийому, зон і каналів (test_cps_edit); CPS-fix3: сітка символів APRS, злита панель APRS, ключ AES у каналі (test_cps_fix3); R-next: загальні налаштування, VFO, DTMF (test_rnext); R28: теми екрана рації й каскадне видалення APRS-слота (test_r28); R30: файл теми .gtm, область custom-data у бекапі/відновленні/файлі налаштувань (test_r30); R31: ключі AES у бекапі/відновленні, база позивних DMR ID, охоронець меж запису (test_r31); R32: перевірка термінології, розбір джерел бази з tools/testdata, виміри фаз запису й передача образу в страхову копію, склад архіву (test_r32). Логіка й палітра -- у будь-якому python3; віджети Tk -- лише з tkinter + xvfb-run (інакше цю частину
 # тест сам пропускає й каже про це).
-for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31; do
+for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32; do
 	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
 		PYTK=""
 		for cand in python3 python3.12 python3.11 python3.10 python3.13; do

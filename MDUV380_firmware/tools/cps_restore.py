@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """cps_restore.py -- R25 W1: ВІДНОВЛЕННЯ кодплага з бекапу (.zip з tools/cps_link.py) у рацію.
 
-*** ЦЕ ПЕРША ФУНКЦІЯ ПРОШИВАЛЬНИКА, ЯКА ПИШЕ В КОДПЛУГ РАЦІЇ. *** Увесь запис 'X' зібрано в цьому файлі (cps_link.py
+*** ЦЕ ПЕРША ФУНКЦІЯ ПРОШИВАЛЬНИКА, ЯКА ПИШЕ В КОДПЛАГ РАЦІЇ. *** Увесь запис 'X' зібрано в цьому файлі (cps_link.py
 лишається суто читальним). Лише стандартна бібліотека + pyserial (через cps_link.open_radio).
 
 БЛОКУВАННЯ (W1.11): RESTORE_UNLOCKED = False, доки Богдан не підтвердить BK8 (два підряд бекапи з однаковим SHA-256).
@@ -39,6 +39,7 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cps_link as cl  # noqa: E402
+import phase_timing  # noqa: E402
 import codeplug_view as cv  # noqa: E402
 
 # *** Зняти блокування = змінити False на True окремим однорядковим комітом, коли Богдан підтвердить BK8. ***
@@ -224,7 +225,7 @@ def confirm_text(manifest, bk_ee, bk_fl, info, plan, safety_path, zip_path, titl
     mr = manifest["radio"]
     rng = cl.flash_backup_range()
     lines = [
-        title or "ВІДНОВЛЕННЯ КОДПЛУГА -- рація буде ПЕРЕЗАПИСАНА.",
+        title or "ВІДНОВЛЕННЯ КОДПЛАГА -- рація буде ПЕРЕЗАПИСАНА.",
         "",
         "Файл: %s" % os.path.basename(zip_path),
         "Бекап створено: %s UTC" % manifest.get("createdUtc", "?"),
@@ -244,6 +245,7 @@ def confirm_text(manifest, bk_ee, bk_fl, info, plan, safety_path, zip_path, titl
         "",
         "Страхова копія ПОТОЧНОГО стану рації вже збережена:",
         "  %s" % safety_path,
+        "УВАГА: у страховій копії є ключі шифрування AES (секрет) і область custom-data, як у звичайному бекапі: не пересилай її нікому.",
         "",
         "Не вимикай рацію і не виймай кабель, доки не з'явиться підсумок. Після запису рація перезавантажиться.",
         "Відновити?",
@@ -343,13 +345,19 @@ def safety_backup_path(zip_path, now=None):
 
 
 def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=time.time, now=None, post_reset=True,
-                     title=None, extra_lines=None):
+                     title=None, extra_lines=None, prefetched=None, phases=None):
     """Відновити кодплаг рації з бекапу `zip_path`.
 
     confirm(text, plan) -> bool викликається ПІСЛЯ всіх перевірок і страхового бекапу, ПЕРЕД першим записом.
     progress(percent, text). Повертає словник-підсумок; при відхиленні -- RestoreRefused (нічого не записано),
-    при обриві -- RestoreInterrupted (стан невизначений), при розбіжності перевірки -- RestoreVerifyFailed."""
+    при обриві -- RestoreInterrupted (стан невизначений), при розбіжності перевірки -- RestoreVerifyFailed.
+
+    R32 T2: кожна фаза міряється (`phase_timing.Phases`; час, запити, КіБ) і йде в журнал та в підсумок ключем "phases". `phases` -- спільний
+    лічильник від виклику, що вже міряв свою фазу (свіже читання перед записом); `prefetched=(eeprom, flash)` -- щойно зроблене свіже читання
+    рації: страхова копія бере з нього EEPROM і флеш, а не читає їх вдруге (самоперевірка випадкових блоків лишається -- вона ж і ловить
+    застаріле). Страхова копія й звірка після запису НЕ скасовуються."""
     t0 = clock()
+    ph = phases if phases is not None else phase_timing.Phases(link, clock)
 
     def prog(pct, text):
         if progress:
@@ -360,13 +368,14 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
 
     # --- W1.4 + W1.3: файл і рація (нічого не пишемо) ---
     prog(0, "Перевіряю файл бекапу...")
-    manifest, bk_ee, bk_fl = load_backup_for_restore(zip_path)
-    prog(2, "Перевіряю рацію...")
-    try:
-        info = link.radio_info()
-    except cl.CpsError as e:
-        raise RestoreRefused("не вдалося зв'язатися з рацією (%s). Нічого не записано." % e)
-    check_radio(info, manifest)
+    with ph.phase("перевірка файла і рації"):
+        manifest, bk_ee, bk_fl = load_backup_for_restore(zip_path)
+        prog(2, "Перевіряю рацію...")
+        try:
+            info = link.radio_info()
+        except cl.CpsError as e:
+            raise RestoreRefused("не вдалося зв'язатися з рацією (%s). Нічого не записано." % e)
+        check_radio(info, manifest)
     log("Рація: прошивка %s; бекап з прошивки %s." % (info["gitRevision"], manifest["radio"].get("gitRevision")))
 
     # --- W1.5: страхова копія ---
@@ -378,23 +387,27 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
     def back_prog(pct, text):
         prog(3 + pct * 0.32, "Страхова копія: " + text)
 
-    try:
-        data, bmanifest = cl.backup_codeplug(link, back_prog, log=log)
-    except cl.CpsError as e:
-        raise RestoreRefused("не вдалося зробити страхову копію поточного стану рації (%s). Нічого не записано." % e)
-    try:
-        with open(safety, "xb") as f:
-            f.write(data)
-        _m, cur_ee, cur_fl = cl.read_backup_zip(safety)
-        with open(safety, "rb") as f:
-            if f.read() != data:
-                raise cl.CpsError("записаний файл відрізняється від прочитаного")
-    except (OSError, cl.CpsError) as e:
+    # R32 T4.2: страхова копія -- це той самий бекап, що й звичайний, тож у ній є таблиця ключів AES (секрет). Кажемо про це тут, де вона створюється.
+    log("УВАГА: страхова копія міститиме ключі шифрування AES (і область custom-data), як і звичайний бекап. Зберігай її так само обережно, не пересилай.")
+    with ph.phase("страхова копія") as rec:
         try:
-            os.unlink(safety)
-        except OSError:
-            pass
-        raise RestoreRefused("не вдалося зберегти й перевірити страхову копію %s: %s. Нічого не записано." % (safety, e))
+            data, bmanifest = cl.backup_codeplug(link, back_prog, log=log, prefetched=prefetched)
+        except cl.CpsError as e:
+            raise RestoreRefused("не вдалося зробити страхову копію поточного стану рації (%s). Нічого не записано." % e)
+        rec["note"] = "EEPROM і флеш взято зі свіжого читання" if prefetched is not None else "усе прочитано знову"
+        try:
+            with open(safety, "xb") as f:
+                f.write(data)
+            _m, cur_ee, cur_fl = cl.read_backup_zip(safety)
+            with open(safety, "rb") as f:
+                if f.read() != data:
+                    raise cl.CpsError("записаний файл відрізняється від прочитаного")
+        except (OSError, cl.CpsError) as e:
+            try:
+                os.unlink(safety)
+            except OSError:
+                pass
+            raise RestoreRefused("не вдалося зберегти й перевірити страхову копію %s: %s. Нічого не записано." % (safety, e))
     log("Страхова копія збережена й перевірена: %s" % safety)
 
     # --- план і підтвердження (W1.6) ---
@@ -402,29 +415,33 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
     if not plan.sectors:
         prog(100, "Рація вже містить цей кодплаг")
         log("Усі сектори збігаються з бекапом (крім калібрування й квіккеїв) -- записувати нічого.")
+        log(ph.summary())
         return {"cancelled": False, "nothingToDo": True, "sectorsWritten": 0, "sectorsTotal": plan.total_sectors,
-                "safetyCopy": safety, "seconds": round(clock() - t0, 1)}
+                "safetyCopy": safety, "seconds": round(clock() - t0, 1), "phases": ph.as_list()}
     text = confirm_text(manifest, bk_ee, bk_fl, info, plan, safety, zip_path, title, extra_lines)
     if not confirm(text, plan):
         log("Скасовано користувачем; рація не змінена. Страхова копія лишилась: %s" % safety)
-        return {"cancelled": True, "safetyCopy": safety, "seconds": round(clock() - t0, 1)}
+        log(ph.summary())
+        return {"cancelled": True, "safetyCopy": safety, "seconds": round(clock() - t0, 1), "phases": ph.as_list()}
 
     # --- запис (W1.7: лише сектори з плану, тобто лише в межах eeprom/flash із маніфесту) ---
     _send_c(link, 0)       # показати на рації екран CPS (як робить справжній CPS перед записом)
     t_write = clock()
     n = len(plan.sectors)
-    for k, (label, raw_addr, sec) in enumerate(plan.sectors):
-        prog(35 + 35.0 * k / n, "Пишу сектор %d з %d (%s, 0x%X)..." % (k + 1, n, label, raw_addr))
-        try:
-            write_sector(link, raw_addr, sec, log)
-        except (_XSilent, _XRefused) as e:
-            raise RestoreInterrupted(
-                "ЗАПИС ОБІРВАНО на секторі %d з %d (%s, адреса 0x%X): %s.\n"
-                "Кодплаг рації тепер у НЕВИЗНАЧЕНОМУ стані: частина секторів уже з бекапу, частина ще ні.\n"
-                "Страхова копія стану ДО відновлення: %s\n"
-                "Що робити: вимкни й увімкни рацію (щоб скинути її внутрішній стан запису), перевір кабель і ПОВТОРИ відновлення з ТИМ САМИМ "
-                "файлом %s. Якщо рація не вмикається нормально -- відновлення зі страхової копії робиться так само."
-                % (k + 1, n, label, raw_addr, e, safety, os.path.basename(zip_path)))
+    with ph.phase("запис секторів") as wrec:
+        wrec["note"] = "%d з %d секторів" % (n, plan.total_sectors)
+        for k, (label, raw_addr, sec) in enumerate(plan.sectors):
+            prog(35 + 35.0 * k / n, "Пишу сектор %d з %d (%s, 0x%X)..." % (k + 1, n, label, raw_addr))
+            try:
+                write_sector(link, raw_addr, sec, log)
+            except (_XSilent, _XRefused) as e:
+                raise RestoreInterrupted(
+                    "ЗАПИС ОБІРВАНО на секторі %d з %d (%s, адреса 0x%X): %s.\n"
+                    "Кодплаг рації тепер у НЕВИЗНАЧЕНОМУ стані: частина секторів уже з бекапу, частина ще ні.\n"
+                    "Страхова копія стану ДО відновлення: %s\n"
+                    "Що робити: вимкни й увімкни рацію (щоб скинути її внутрішній стан запису), перевір кабель і ПОВТОРИ відновлення з ТИМ САМИМ "
+                    "файлом %s. Якщо рація не вмикається нормально -- відновлення зі страхової копії робиться так само."
+                    % (k + 1, n, label, raw_addr, e, safety, os.path.basename(zip_path)))
     log("Записано секторів: %d з %d, %.1f с." % (n, plan.total_sectors, clock() - t_write))
 
     # --- W1.8: перечитати все й звірити ---
@@ -432,10 +449,11 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
         prog(70 + pct * 0.29, "Перевіряю: " + text)
 
     try:
-        rb_ee = link.read(cl.CPS_ACCESS_EEPROM, 0, cl.EEPROM_BACKUP_LEN,
-                          lambda d_, t_: ver_prog(50.0 * d_ / t_, "EEPROM %d%%" % (100 * d_ // t_)))
-        rb_fl = link.read(cl.CPS_ACCESS_FLASH, plan.raw_flash_start, len(plan.want_fl),
-                          lambda d_, t_: ver_prog(50.0 + 50.0 * d_ / t_, "флеш %d%%" % (100 * d_ // t_)))
+        with ph.phase("перечитування для звірки"):
+            rb_ee = link.read(cl.CPS_ACCESS_EEPROM, 0, cl.EEPROM_BACKUP_LEN,
+                              lambda d_, t_: ver_prog(50.0 * d_ / t_, "EEPROM %d%%" % (100 * d_ // t_)))
+            rb_fl = link.read(cl.CPS_ACCESS_FLASH, plan.raw_flash_start, len(plan.want_fl),
+                              lambda d_, t_: ver_prog(50.0 + 50.0 * d_ / t_, "флеш %d%%" % (100 * d_ // t_)))
     except cl.CpsError as e:
         raise RestoreInterrupted(
             "ЗАПИС ЗАВЕРШЕНО, але перечитати рацію для перевірки не вдалося: %s.\n"
@@ -463,9 +481,10 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
     if post_reset:
         _send_c(link, 6, POST_RESTORE_SUB)
     prog(100, "Готово")
+    log(ph.summary())
     return {"cancelled": False, "nothingToDo": False, "sectorsWritten": n, "sectorsTotal": plan.total_sectors, "safetyCopy": safety,
             "sha256Eeprom": sha_ee_got, "sha256Flash": sha_fl_got, "unverified": UNVERIFIED_TEXT, "flashMatchesManifest": sha_fl_got == manifest["parts"]["flash"]["sha256"],
-            "writeSeconds": round(clock() - t_write, 1), "seconds": round(clock() - t0, 1)}
+            "writeSeconds": round(clock() - t_write, 1), "seconds": round(clock() - t0, 1), "phases": ph.as_list()}
 
 
 # =========================================================================================

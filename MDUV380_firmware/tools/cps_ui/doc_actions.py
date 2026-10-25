@@ -13,6 +13,7 @@ import cps_csv as cc
 import cps_link as cps
 import cps_restore as cps_rest
 import gui_dialogs as gd
+import phase_timing
 
 from . import document as D
 from .common import APP_TITLE, output_dir
@@ -194,11 +195,14 @@ class DocActions:
             reason = d.write_block_reason(info)
             if reason:
                 raise cps.CpsError("{} Нічого не записано.".format(reason))
-            fresh, share = None, 0
+            fresh, share, prefetched = None, 0, None
+            ph = phase_timing.Phases(link)
             if d.origin == D.ORIGIN_RADIO:
                 print("Читаю свіжий стан рації: на нього накладуться лише ваші зміни, а не весь застарілий образ.")
-                cp, _m = cpview.codeplug_from_radio(link, lambda p, t: self.cps_progress(int(p * 0.25), t))
+                with ph.phase("свіже читання рації"):
+                    cp, _m = cpview.codeplug_from_radio(link, lambda p, t: self.cps_progress(int(p * 0.25), t))
                 fresh = cc.Image.from_codeplug(cp)
+                prefetched = (cp.eeprom, cp.flash)      # R32 T2.2: страхова копія візьме звідси EEPROM і флеш, а не читатиме їх вдруге
                 share = 25
             res, conflicts = d.write_image(fresh)
             if conflicts:
@@ -206,7 +210,7 @@ class DocActions:
             out = cc.write_image_via_restore(
                 link, res, self.confirm_from_worker, lambda p, t: self.cps_progress(share + int(p * (100 - share) / 100.0), t), log=print,
                 title=WRITE_TITLE, out_dir=output_dir(), zip_prefix="codeplug_document-write",
-                note="Образ, зібраний із документа кодплага. Це те, що буде записано.")
+                note="Образ, зібраний із документа кодплага. Це те, що буде записано.", prefetched=prefetched, phases=ph)
             out["written_image"] = res.image
             return out
         finally:

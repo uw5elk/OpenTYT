@@ -153,7 +153,9 @@ class DmrDbPanel(Panel):
         self.job = None
         s = self.source
         self.src_label.config(text="Файл: %s -- рядків з ID: %d%s%s." % (label, len(s.rows), (", пропущено нерозпізнаних: %d" % s.skipped) if s.skipped else "",
-                                                                         ", є колонка дати активності" if s.has_date else ", колонки дати активності нема"))
+                                                                         ", є колонка дати активності" if s.has_date else ", колонки дати активності нема")
+                              + ("\nРозпізнано: %s." % s.describe() if s.columns else "")
+                              + ("\n" + "; ".join(s.notes) + "." if s.notes else ""))
         self.summary.config(text="Тисни «Порахувати», щоб побачити, скільки записів вийде.")
 
     # --- відбір ----------------------------------------------------------------------------------
