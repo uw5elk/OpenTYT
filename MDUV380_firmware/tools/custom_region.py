@@ -82,12 +82,23 @@ class SettingsFileError(cl.CpsError):
 def type_name(t):
     if t in BLOCK_TYPES:
         return BLOCK_TYPES[t][0]
+    if t >= 0x7E000000 and t < 0x7E000000 + 0x100000:
+        return "ВИЛУЧЕНО_%d" % (t - 0x7E000000)
     return "ТИП_%d" % t
+
+
+RETIRED_BASE = 0x7E000000           # R35: вилучений блок (custom_data.retire_block): тип = RETIRED_BASE + колишній тип; прошивка його пропускає
+
+
+def is_retired(t):
+    return RETIRED_BASE <= t < RETIRED_BASE + 0x100000
 
 
 def type_title(t):
     if t in BLOCK_TYPES:
         return BLOCK_TYPES[t][1]
+    if is_retired(t):
+        return "Вилучений блок (було: %s)" % type_title(t - RETIRED_BASE)
     return "Невідомий блок (тип %d)" % t
 
 
@@ -162,7 +173,7 @@ def parse_region(data):
             r.problems.append("блок типу %d у зсуві %d має довжину %d, що виходить за область -- розбір зупинено" % (dtype, addr, dlen))
             r.end = addr
             return r
-        if dtype in seen:
+        if dtype in seen and not is_retired(dtype):
             r.problems.append("тип %d зустрівся двічі (зсув %d) -- прошивка бачить лише перший" % (dtype, addr))
         else:
             seen.add(dtype)
@@ -186,7 +197,9 @@ def has_secret(type_, payload):
 
 
 def default_selected(block, include_state=False):
-    """Що застосовувати типово: налаштування й дані; НЕ стан (RCTL_STATE) і НЕ блок із ключовим матеріалом."""
+    """Що застосовувати типово: налаштування й дані; НЕ стан (RCTL_STATE), НЕ блок із ключовим матеріалом і НЕ вилучений блок (R35)."""
+    if is_retired(block.type):
+        return False
     if block.kind == "state" and not include_state:
         return False
     if block.secret:
