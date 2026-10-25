@@ -22,6 +22,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
 import cps_link as cps
+import custom_compact
+import custom_data
 import gui_clipboard
 import gui_dialogs as gd
 import gui_theme as gt
@@ -76,6 +78,7 @@ class CpsApp(DocActions, tk.Tk):
         self.minsize(760, 520)
         self.settings = settings or Settings()
         self.queue = queue.Queue()
+        custom_data.ROOM_HOOK = self._room_hook          # R37 U3: нестача місця в області custom-data -> пропозиція ущільнення замість глухої помилки
         self.backend = load_usb_backend()
         self.build_info = read_build_info()
         self.conn = RadioConnection()
@@ -560,6 +563,8 @@ class CpsApp(DocActions, tk.Tk):
         self._poll_id = self.after(50, self._poll_queue)
 
     def destroy(self):
+        if getattr(custom_data.ROOM_HOOK, "__self__", None) is self:
+            custom_data.ROOM_HOOK = None
         try:
             self.after_cancel(self._poll_id)
         except (AttributeError, tk.TclError):
@@ -567,6 +572,12 @@ class CpsApp(DocActions, tk.Tk):
         super().destroy()
 
     # --- підтвердження з робочого потоку ----------------------------------------------------------
+
+    def _room_hook(self, ser, data_type, new_len):
+        """Для custom_data.write_block (робочий потік): місця для нового блока нема -> запропонувати ущільнення області й виконати його."""
+        from .common import output_dir
+        return custom_compact.ensure_room(ser, data_type, new_len, confirm=self.confirm_from_worker, safety_dir=output_dir(),
+                                          progress=self.cps_progress, log=print)
 
     def confirm_from_worker(self, text, _plan=None):
         """Викликається з робочого потоку: питання показує головний потік, цей потік чекає на відповідь."""

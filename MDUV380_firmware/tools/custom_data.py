@@ -90,14 +90,49 @@ def flash_write_span(ser, addr, data):
         pos += chunk_len
 
 
+# R37: необов'язковий обробник «не вистачає місця»: функція(ser, data_type, new_len) -> True, якщо місце з'явилось (після ущільнення області), або RuntimeError
+# з поясненням. Ставить GUI (cps_ui/app.py), бо лише він може спитати користувача; без нього write_block повертає пояснення з числами.
+ROOM_HOOK = None
+
+
+def _magic_ok(ser):
+    try:
+        return _read_region(ser, 0, 8) == REGION_MAGIC
+    except Exception:  # noqa: BLE001 -- помилка читання -> вважаємо, що області нема (тоді запис і так не піде)
+        return False
+
+
+def _no_room_text(ser, data_type, new_len):
+    """Пояснення, чому блок не вміщається, з числами, прочитаними з області (довго лише на цьому, аварійному шляху)."""
+    import cps_link
+    import custom_compact as cc
+    import custom_region as cr
+    try:
+        data = cr.read_radio_region(cps_link.CpsLink(ser))
+        rc = cc.room_check(data, data_type, new_len)
+        return rc.text + " Розділ «Усі налаштування» -> «Ущільнити область» прибирає вилучені блоки й звільняє місце."
+    except Exception:  # noqa: BLE001
+        return "немає вільного місця в області custom-data (потрібно %d Б даних + %d Б заголовка)" % (new_len, HDR_LEN)
+
+
 def write_block(ser, data_type, payload):
     """Записати/оновити один custom-data блок типу data_type з вмістом payload.
     Дозволяє лише запис ТІЄЇ Ж довжини в існуючий блок (як і прошивка) або створення
     нового блоку в першому вільному слоті. Повертає (True, "") або (False, "причина")."""
     new_len = len(payload)
     kind, addr, existLen = find_or_alloc_block(ser, data_type, new_len)
+    if kind is None and _magic_ok(ser):
+        # R37 U3: область є, але новий блок не вміщається -- замість глухої помилки: ущільнення (якщо воно допоможе) або пояснення з числами
+        if ROOM_HOOK is not None:
+            try:
+                if ROOM_HOOK(ser, data_type, new_len):
+                    kind, addr, existLen = find_or_alloc_block(ser, data_type, new_len)
+            except RuntimeError as e:
+                return False, str(e)
+        if kind is None:
+            return False, _no_room_text(ser, data_type, new_len)
     if kind is None:
-        return False, "регіон не в форматі OpenGD77, або немає вільного місця в custom-data"
+        return False, "регіон не в форматі OpenGD77 (немає заголовка), тож записати блок нікуди"
     if kind == "existing" and existLen != new_len:
         return False, ("існуючий блок типу %d має іншу довжину (%d, а не %d) -- "
                         "прошивка так само забороняє міняти довжину блоку" % (data_type, existLen, new_len))

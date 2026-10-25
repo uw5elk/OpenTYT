@@ -337,7 +337,13 @@ def test_radio_io():
     big = [(1, b"\x00" * (0x10000 - 12 - 8 - 20))]
     f = FakeFlash(blocks=big).install()
     try:
-        check(th.read_theme(None, "day")[0] == th.ST_NOREGION, "IO: область повна -> ST_NOREGION")
+        # R37: область є, але вільних 20 Б -- це «блока нема» (читання місця не потребує), а не «області нема»; нестача місця вилазить лише при записі
+        check(th.read_theme(None, "day")[0] == th.ST_ABSENT, "IO: область майже повна -> читання каже ST_ABSENT (область є, блока нема)")
+        try:
+            th.write_theme(None, "day", cols_d)
+            check(False, "IO: запис у майже повну область мав відмовити")
+        except RuntimeError as e:
+            check("місця" in str(e), "IO: відмова записати у майже повну область пояснена словами про місце: %s" % e)
     finally:
         f.uninstall()
 

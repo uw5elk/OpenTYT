@@ -5,15 +5,20 @@
 «Зберегти всі налаштування у файл» читає область з рації (лише читання) і пише JSON-файл OpenTYT-settings-1 (кожен блок з SHA-256).
 «Завантажити з файлу» показує блоки з файла з прапорцями: що застосувати. Типово НЕ позначені: лічильники RCTL (RCTL_STATE -- стан прошивки, а не налаштування)
 і блок AES із ключовим матеріалом. «Записати вибране в рацію» пише блок за блоком (custom_data.write_block + звірка читанням); збій на блоці зупиняє решту.
-Усе записане в область не стосується кодплага (документ не змінюється). Логіка -- у tools/custom_region.py; тут лише вікно."""
+Усе записане в область не стосується кодплага (документ не змінюється). Логіка -- у tools/custom_region.py; тут лише вікно.
+
+R37: блок «Стан області» -- скільки зайнято, скільки вільно, скільки займають вилучені (retire) блоки (числа читаються з області рації); кнопка «Ущільнити область»
+(страхова копія -> безпечний запис -> звірка; tools/custom_compact.py) і «Відновити область зі страхової копії...»."""
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import cps_link as cps
+import custom_compact as cc
 import custom_region as cr
 import gui_theme as gt
 
 from .common import output_dir
+from .layout import FlowFrame, equal_buttons
 from .panel import Panel
 
 
@@ -42,6 +47,31 @@ class AllSettingsPanel(Panel):
         self.load_btn = ttk.Button(bar, text="Завантажити з файлу...", command=self._on_load)
         self.load_btn.pack(side="left", padx=8)
         self.reg(self.load_btn, radio=False)          # файл читається з диска, рація не потрібна
+
+        # R37: стан області custom-data й ущільнення
+        box = ttk.LabelFrame(self, text="Стан області custom-data в рації (64 КіБ на всі блоки разом)")
+        box.pack(fill="x", padx=12, pady=(4, 4))
+        self.state_label = ttk.Label(box, text="Стан ще не прочитано: натисни «Показати стан області» (рація читається, нічого не пишеться).", wraplength=600,
+                                     justify="left")
+        self.state_label.pack(anchor="w", padx=8, pady=(6, 2))
+        self.state_warn = ttk.Label(box, text="", foreground=gt.P["warn"], wraplength=600, justify="left")
+        self.state_warn.pack(anchor="w", padx=8, pady=(0, 2))
+        sbar = FlowFrame(box)
+        sbar.pack(fill="x", padx=8, pady=(2, 4))
+        self.state_btn = ttk.Button(sbar, text="Показати стан області", command=self._on_state)
+        self.compact_btn = ttk.Button(sbar, text="Ущільнити область", command=self._on_compact)
+        self.safety_btn = ttk.Button(sbar, text="Відновити область зі страхової копії...", command=self._on_restore_safety)
+        equal_buttons(self.state_btn, self.compact_btn)
+        for b in (self.state_btn, self.compact_btn, self.safety_btn):
+            sbar.add(b)
+        self.reg(self.state_btn)
+        self.reg(self.compact_btn, radio=True, write=True)
+        self.reg(self.safety_btn, radio=True, write=True)
+        ttk.Label(box, text=("Вилучення блока (картинка, мелодія) лише ховає його від рації, а місце не звільняє: область 64 КіБ поступово заповнюється. «Ущільнити область» "
+                             "збирає живі блоки підряд і викидає вилучені. Перед записом зберігається страхова копія ВСІЄЇ області у файл (без успішної копії запис не "
+                             "починається); запис іде так, що обірваний запис рація прочитає як «області нема» (типові налаштування), а не як покручений вміст; після запису "
+                             "область перечитується й звіряється байт у байт, а рація перезавантажується."),
+                  wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
         self.file_label = ttk.Label(self, text="Файл не завантажено.", foreground=gt.P["muted"], wraplength=600, justify="left")
         self.file_label.pack(anchor="w", padx=12, pady=(2, 2))
@@ -161,3 +191,70 @@ class AllSettingsPanel(Panel):
     def _show_done(res):
         failed = bool(res.get("result") and res["result"].get("failed"))
         (messagebox.showerror if failed else messagebox.showinfo)("Усі налаштування", res["text"])
+
+    # --- R37: стан області й ущільнення ------------------------------------------------------------------
+
+    def _read_prog(self, done, total):
+        self.shell.cps_progress(100.0 * done / max(1, total), "Читаю область з рації...")
+
+    def _on_state(self):
+        if self.shell.busy:
+            return
+        self.shell.run_task(self.state_worker, "Читаю область custom-data...", plain_errors=True, on_done=self.show_state, ok_status="Стан області прочитано.")
+
+    def state_worker(self):
+        ser = cps.open_radio()
+        try:
+            return cr.read_radio_region(cps.CpsLink(ser), self._read_prog)
+        finally:
+            ser.close()
+
+    def show_state(self, data):
+        """Показати стан області (байти з рації)."""
+        lines = cc.state_text(data).split("\n")
+        warn = [l for l in lines if l.startswith("УВАГА")]
+        self.state_label.config(text="\n".join(l for l in lines if not l.startswith("УВАГА")))
+        self.state_warn.config(text="\n".join(warn))
+
+    def _on_compact(self):
+        if self.shell.busy:
+            return
+        self.shell.run_task(self.compact_worker, "Ущільнюю область custom-data...", plain_errors=True, on_done=self._show_compacted, ok_status="Готово.",
+                            reconnect_ms=6000)
+
+    def compact_worker(self):
+        ser = cps.open_radio()
+        try:
+            return cc.compact_region(cps.CpsLink(ser), self.shell.confirm_from_worker, output_dir(), progress=self.shell.cps_progress, log=print)
+        finally:
+            try:
+                ser.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _show_compacted(self, res):
+        failed = not res.get("ok", True)
+        if res.get("plan") is not None and res.get("ok") and not res.get("cancelled"):
+            self.state_label.config(text="Щойно ущільнено. Натисни «Показати стан області», щоб побачити поточні числа після перезавантаження рації.")
+            self.state_warn.config(text="")
+        (messagebox.showerror if failed else messagebox.showinfo)("Ущільнення області", res["text"], parent=self.shell)
+
+    def _on_restore_safety(self):
+        if self.shell.busy:
+            return
+        path = filedialog.askopenfilename(parent=self.shell, title="Страхова копія області custom-data", initialdir=output_dir(),
+                                          filetypes=[("Страхова копія області (*.bin)", "*.bin"), ("Усі файли", "*.*")])
+        if not path:
+            return
+        self.shell.run_task(lambda: self.restore_safety_worker(path), "Повертаю область зі страхової копії...", plain_errors=True, on_done=self._show_compacted,
+                            ok_status="Готово.", reconnect_ms=6000)
+
+    def restore_safety_worker(self, path):
+        ser = cps.open_radio()
+        try:
+            return cc.restore_safety_copy(cps.CpsLink(ser), path, self.shell.confirm_from_worker, progress=self.shell.cps_progress, log=print)
+        finally:
+            try:
+                ser.close()
+            except Exception:  # noqa: BLE001
+                pass

@@ -504,7 +504,7 @@ def read_theme(ser, daytime):
     """-> (стан, кольори|None). Для ST_ABSENT/ST_NOREGION кольорів нема (використайте stock_colors); для ST_BADLEN -- перші 64 байти, якщо є."""
     import custom_data as cd
     dtype = TYPE_OF[daytime]
-    kind, addr, ln = cd.find_or_alloc_block(ser, dtype, BLOCK_LEN)
+    kind, addr, ln = cd.find_or_alloc_block(ser, dtype, 0)
     if kind is None:
         return ST_NOREGION, None
     if kind == "empty":
