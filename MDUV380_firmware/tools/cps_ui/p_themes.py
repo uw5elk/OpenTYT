@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Розділ «Налаштування рації → Теми екрана» (R28): кольори екрана рації -- денна й нічна теми (по 32 кольори).
+"""Розділ «Налаштування рації → Теми» (R28): кольори екрана рації -- денна й нічна теми (по 32 кольори).
 
 ТЕМИ НЕ Є ЧАСТИНОЮ ДОКУМЕНТА КОДПЛАГА. Вони лежать в області custom-data SPI-флеша (блоки 4 і 5), поза EEPROM і поза діапазоном, який відновлює
 cps_restore, тому «Записати в рацію» над документом теми не змінює (з R30 область custom-data входить у бекап окремим файлом і відновлюється
@@ -15,17 +15,19 @@ from tkinter import ttk, filedialog, messagebox, colorchooser
 import cps_link as cps
 import gui_dialogs as gd
 import gui_theme as gt
+import screen_sim as sim
 import theme_edit as te
 
 from .common import output_dir
 from .panel import Panel, ScrollFrame
 
-PREVIEW_SCALE = 1.0
+PREVIEW_SCALES = (4, 5)          # цілий масштаб без згладжування (PhotoImage.zoom -- найближчий піксель)
+PREVIEW_SCALE = 4
 
 
 class ThemesPanel(Panel):
     key = "themes"
-    title = "Теми екрана"
+    title = "Теми"
     scroll = False          # список кольорів має власну прокрутку, перегляд лишається на місці
 
     def __init__(self, parent, shell):
@@ -52,7 +54,7 @@ class ThemesPanel(Panel):
         self.left_host = ScrollFrame(self)
         self.left_host.grid(row=0, column=0, sticky="nsew")
         left = self.left_host.inner
-        ttk.Label(left, text="Теми екрана", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
+        ttk.Label(left, text="Теми", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
         self._wrap = []
         hint = ttk.Label(left, text=("Кольори екрана рації: денна й нічна теми. Тема живе не в кодплазі, а в окремій області флеша рації, тому «Записати в рацію» "
                               "тут змінює рацію одразу, окремо від кодплага. Рація читає тему лише при вмиканні: після запису вимкни її й увімкни, а до того не "
@@ -137,20 +139,31 @@ class ThemesPanel(Panel):
 
         right = ttk.Frame(self)
         right.grid(row=0, column=1, sticky="n", padx=(6, 12), pady=(10, 0))
-        self.canvases = {}
-        for n, (skey, stitle) in enumerate(te.PREVIEW_SCREENS):
-            cell = ttk.Frame(right)
-            cell.grid(row=n // 2, column=n % 2, padx=4, pady=3, sticky="n")
-            ttk.Label(cell, text=stitle, foreground=gt.P["muted"]).pack(anchor="w")
-            cv = tk.Canvas(cell, width=int(te.SCREEN_W * PREVIEW_SCALE), height=int(te.SCREEN_H * PREVIEW_SCALE), highlightthickness=1,
-                           highlightbackground=gt.P["muted"])
-            cv.pack()
-            cv._data_colour = True          # перегляд екрана рації малює кольори теми, а не оформлення вікна
-            cv.bind("<Button-1>", lambda e, c=cv: self._on_preview_click(c, e))
-            self.canvases[skey] = cv
-        ttk.Label(right, text=("Перегляд ПРИБЛИЗНИЙ: розташування й шрифти не збігаються з рацією піксель-у-піксель, але кожен елемент має той самий колір "
-                               "і те саме тло. Клацни елемент -- у списку підсвітиться його колір."),
-                  foreground=gt.P["muted"], wraplength=int(te.SCREEN_W * PREVIEW_SCALE * 2) + 10, justify="left").grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=4)
+        # один великий екран + перемикач екранів; рендер точний (screen_sim/screen_views), масштаб цілий, без згладжування
+        self._screens = te.preview_screens()
+        self.screen_var = tk.StringVar(value=self._screens[0][0])
+        self.scale_var = tk.IntVar(value=PREVIEW_SCALE)
+        self._display = None
+        self._img = None
+        bar = ttk.Frame(right)
+        bar.pack(fill="x", padx=4)
+        ttk.Label(bar, text="Екран:").pack(side="left")
+        self.screen_combo = ttk.Combobox(bar, state="readonly", width=26, values=[t for _k, t in self._screens])
+        self.screen_combo.current(0)
+        self.screen_combo.pack(side="left", padx=4)
+        self.screen_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_screen_change())
+        for n in PREVIEW_SCALES:
+            ttk.Radiobutton(bar, text="x%d" % n, value=n, variable=self.scale_var, command=self._on_scale).pack(side="left", padx=2)
+        self.canvas = tk.Canvas(right, width=sim.W * PREVIEW_SCALE, height=sim.H * PREVIEW_SCALE, highlightthickness=1, highlightbackground=gt.P["muted"])
+        self.canvas.pack(padx=4, pady=4)
+        self.canvas._data_colour = True          # перегляд екрана рації малює кольори теми, а не оформлення вікна
+        self.canvas.bind("<Button-1>", self._on_preview_click)
+        self.hit_label = ttk.Label(right, text="", foreground=gt.P["muted"], wraplength=sim.W * PREVIEW_SCALE, justify="left")
+        self.hit_label.pack(anchor="w", padx=4)
+        ttk.Label(right, text=("Екран малюється тим самим кодом розкладки, що й прошивка (шрифти, координати, порядок малювання); дані на ньому -- приклад. "
+                               "Клацни піксель -- у списку підсвітиться колір, що його фарбує. Те, що залежить від стану рації й тут не показано, "
+                               "перелічено в TESTING.md (блок CJ)."),
+                  foreground=gt.P["muted"], wraplength=sim.W * PREVIEW_SCALE, justify="left").pack(anchor="w", padx=4, pady=4)
 
     def _on_left_width(self, e):
         wl = max(240, e.width - 40)
@@ -185,29 +198,28 @@ class ThemesPanel(Panel):
         self._draw_previews()
         self._refresh_texts()
 
+    def _screen_key(self):
+        i = self.screen_combo.current()
+        return self._screens[max(0, i)][0]
+
+    def _on_screen_change(self):
+        self._display = None
+        self._draw_previews()
+
+    def _on_scale(self):
+        self._draw_previews()
+
     def _draw_previews(self):
-        cols = self.colors[self.dt]
-        s = PREVIEW_SCALE
-        for skey, cv in self.canvases.items():
-            cv.delete("all")
-            for op in te.preview_ops(skey):
-                kind = op[0]
-                if kind == "text":
-                    _k, x, y, txt, item, size, tag = op
-                    cv.create_text(x * s, y * s, anchor="nw", text=txt, fill=te.to_hex(cols[te.INDEX[item]]), tags=(tag,),
-                                   font=("Courier", -max(7, int(size * s * 0.95)), "bold"))
-                    continue
-                _k, x0, y0, x1, y1, item, tag = op
-                colour = te.to_hex(cols[te.INDEX[item]])
-                if kind == "rect":
-                    cv.create_rectangle(x0 * s, y0 * s, x1 * s, y1 * s, fill=colour, outline=colour, tags=(tag,))
-                elif kind == "line":
-                    cv.create_line(x0 * s, y0 * s, x1 * s, y1 * s, fill=colour, width=max(1, int(s)), tags=(tag,))
-                elif kind == "oval":
-                    if item == "FG_POLAR_DRAWING":
-                        cv.create_oval(x0 * s, y0 * s, x1 * s, y1 * s, outline=colour, width=max(1, int(s)), tags=(tag,))
-                    else:
-                        cv.create_oval(x0 * s, y0 * s, x1 * s, y1 * s, fill=colour, outline=colour, tags=(tag,))
+        """Малює вибраний екран поточними кольорами: буфер зберігає індекси елементів, тож перемальовується лише палітра."""
+        if self._display is None:
+            self._display = te.render_preview(self._screen_key())
+        n = int(self.scale_var.get())
+        img = tk.PhotoImage(width=sim.W, height=sim.H)
+        img.put(" ".join(sim.render_rows(self._display, self.colors[self.dt])), to=(0, 0))
+        self._img = img.zoom(n, n) if n > 1 else img
+        self.canvas.config(width=sim.W * n, height=sim.H * n)
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor="nw", image=self._img)
 
     def _refresh_texts(self):
         dt = self.dt
@@ -269,13 +281,15 @@ class ThemesPanel(Panel):
         else:
             self._redraw()
 
-    def _on_preview_click(self, canvas, event):
-        ids = canvas.find_overlapping(event.x, event.y, event.x, event.y)
-        if not ids:
+    def _on_preview_click(self, event):
+        if self._display is None:
             return
-        tags = [t for t in canvas.gettags(ids[-1]) if t in te.INDEX]
-        if tags:
-            self.select_item(te.INDEX[tags[0]])
+        n = int(self.scale_var.get())
+        item = sim.hit_item(self._display, event.x // n, event.y // n)
+        if item is None:
+            return
+        self.hit_label.config(text="Піксель (%d, %d): %s" % (event.x // n, event.y // n, te.ITEMS[item][1]))
+        self.select_item(item)
 
     def select_item(self, index):
         """Підсвітити колір у списку й прокрутити до нього."""
@@ -360,7 +374,7 @@ class ThemesPanel(Panel):
         try:
             self.save_file(path)
         except (OSError, te.ThemeFileError, ValueError) as e:
-            messagebox.showerror("Теми екрана", "Не вдалося зберегти: %s" % e, parent=self.shell)
+            messagebox.showerror("Теми", "Не вдалося зберегти: %s" % e, parent=self.shell)
             return
         self._status("%s тему збережено: %s" % (te.DAYTIME_NAMES[self.dt], path), "ok")
 
@@ -383,7 +397,7 @@ class ThemesPanel(Panel):
             dt = self.load_file(path)
         except (OSError, te.ThemeFileError, te.GtmError) as e:
             extra = ("" if self.is_text_path(path) else " (Текстовий файл OpenTYT має мати розширення .txt.)")
-            messagebox.showerror("Теми екрана", "Файл не підійшов: %s%s" % (e, extra), parent=self.shell)
+            messagebox.showerror("Теми", "Файл не підійшов: %s%s" % (e, extra), parent=self.shell)
             return
         self._status("%s тему завантажено з файлу (ще не в рації)." % te.DAYTIME_NAMES[dt], "info")
 
@@ -431,11 +445,11 @@ class ThemesPanel(Panel):
             return
         plan = self.write_plan()
         if not plan:
-            messagebox.showinfo("Теми екрана", "Немає що записувати: кольори не змінені. Змініть колір, застосуйте набір або завантажте файл.", parent=self.shell)
+            messagebox.showinfo("Теми", "Немає що записувати: кольори не змінені. Змініть колір, застосуйте набір або завантажте файл.", parent=self.shell)
             return
         for dt in plan:
             if self.radio_state[dt] in (te.ST_NOREGION, te.ST_BADLEN):
-                messagebox.showerror("Теми екрана", "%s тему записати не можна: %s." % (te.DAYTIME_NAMES[dt], te.STATE_TEXT[self.radio_state[dt]]), parent=self.shell)
+                messagebox.showerror("Теми", "%s тему записати не можна: %s." % (te.DAYTIME_NAMES[dt], te.STATE_TEXT[self.radio_state[dt]]), parent=self.shell)
                 return
         lines = ["У рацію буде записано: %s." % ", ".join(te.DAYTIME_NAMES[d].lower() for d in plan), ""]
         for dt in plan:

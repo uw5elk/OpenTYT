@@ -722,9 +722,9 @@ def test_gui():
         _spin(app, 8)
         check(host.inner.winfo_reqheight() <= host.canvas.winfo_height() and not host.vbar.winfo_manager(), "S2: те саме вікно, що виросло, -- смуга зникла")
         # таблиці перегляду: смуга лише коли рядків більше, ніж місця
-        app.show("viewer")
+        app.show("contacts")
         _spin(app, 6)
-        tree = app.get_panel("viewer").viewer.trees["contacts"]
+        tree = app.get_panel("contacts").tree
         parent = tree.master
         vs = [w for w in parent.winfo_children() if w.winfo_class() == "TScrollbar" and str(w.cget("orient")) == "vertical"][0]
         check(vs.winfo_manager() == "" or len(tree.get_children()) > 10, "S2: таблиця з кількома рядками -- смуги нема")

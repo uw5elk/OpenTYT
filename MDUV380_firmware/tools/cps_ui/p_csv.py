@@ -26,8 +26,8 @@ class CsvPanel(Panel):
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
         self.csv_session = cps_csv.Session()      # R26: «про cp1251 вже попередили» -- один раз за сеанс
-        self.header("CSV", "Обмін відкритого кодплага з CSV у форматі OpenGD77 CPS. Працює з документом (кодплаг відкривається з рації "
-                           "або з бекапу над розділами); рація тут не чіпається.")
+        self.header("CSV", "Обмін відкритого кодплага з CSV у форматі OpenGD77 CPS -- для масових правок у таблиці; точкові -- у відповідних розділах. "
+                           "Працює з документом (кодплаг відкривається з рації або з бекапу над розділами); рація тут не чіпається.")
         self.hint = ttk.Label(self, text=HINT_NO_DOC, foreground=gt.P["muted"])
 
         ex = ttk.LabelFrame(self, text="Експорт (лише читання)")

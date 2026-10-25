@@ -456,64 +456,30 @@ def load_file(path):
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------
-#  Попередній перегляд: ОПИС малюнка (без Tk). Екран рації 160x128; кольори -- ключі елементів теми. Наближений: розташування й шрифти
-#  не збігаються піксель-у-піксель із прошивкою, але кожен елемент теми намальовано тим самим кольором і на тому самому тлі.
+#  Попередній перегляд (R33): ТОЧНИЙ піксель-у-піксель рендер екрана рації -- screen_sim.py (дисплейний рівень прошивки) і screen_views.py
+#  (екрани). Тут лише тонкі обгортки для панелі й тестів; сам рендер не залежить від Tk.
 # ---------------------------------------------------------------------------------------------------------------------------------
 SCREEN_W, SCREEN_H = 160, 128
-PREVIEW_SCREENS = (("channel", "Канал"), ("menu", "Меню"), ("alert", "Сповіщення і передача"), ("splash", "Заставка й супутники"))
 
 
-def preview_ops(screen):
-    """[(вид, ...)]: ("rect", x0, y0, x1, y1, fill_item, tag), ("line", x0, y0, x1, y1, item, tag), ("oval", x0, y0, x1, y1, item, tag),
-    ("text", x, y, рядок, item, розмір_px, tag). tag -- ключ елемента, який змінить клацання (для вибору рядка в списку)."""
-    R = lambda x0, y0, x1, y1, fill, tag=None: ("rect", x0, y0, x1, y1, fill, tag or fill)           # noqa: E731
-    L = lambda x0, y0, x1, y1, item: ("line", x0, y0, x1, y1, item, item)                              # noqa: E731
-    T = lambda x, y, s, item, size=10: ("text", x, y, s, item, size, item)                             # noqa: E731
-    if screen == "channel":
-        return [R(0, 0, 160, 128, "BG"),
-                R(0, 0, 160, 14, "BG_HEADER_TEXT"), T(3, 2, "DMR", "FG_HEADER_TEXT"), T(40, 2, "10W", "FG_HEADER_TEXT"), T(122, 2, "87%", "FG_HEADER_TEXT"),
-                L(0, 15, 160, 15, "FG_DECORATION"),
-                T(3, 19, "Київ-ретр.", "FG_CHANNEL_NAME", 14),
-                T(3, 38, "TG 91 Всесвіт", "FG_CHANNEL_CONTACT", 11), T(3, 51, "DB:91  Ct:--", "FG_CHANNEL_CONTACT_INFO", 9),
-                T(3, 64, "Зона: Київ", "FG_ZONE_NAME", 10),
-                T(3, 77, "RX 438.8000", "FG_RX_FREQ", 12), T(3, 91, "TX 431.2000", "FG_TX_FREQ", 12),
-                T(104, 77, "CC1", "FG_CSS_SQL_VALUES", 10), T(104, 91, "TS2", "FG_CSS_SQL_VALUES", 10),
-                L(0, 106, 160, 106, "FG_DECORATION"),
-                T(3, 109, "S", "FG_DEFAULT", 10),
-                R(14, 111, 92, 123, "FG_RSSI_BAR"), R(92, 111, 126, 123, "FG_RSSI_BAR_S9P")]
-    if screen == "menu":
-        return [R(0, 0, 160, 128, "BG"),
-                R(0, 0, 160, 14, "BG_MENU_NAME"), T(4, 2, "Опції", "FG_MENU_NAME"), L(0, 15, 160, 15, "FG_DECORATION"),
-                T(4, 19, "Яскравість", "FG_MENU_ITEM"), T(118, 19, "5", "FG_OPTIONS_VALUE"),
-                R(0, 32, 160, 46, "BG_MENU_ITEM_SELECTED"), T(4, 34, "Підсвітка", "BG"), T(118, 34, "10 с", "BG"),
-                T(4, 49, "Тон клавіш", "FG_MENU_ITEM"), T(118, 49, "Так", "FG_OPTIONS_VALUE"),
-                T(4, 64, "Контакт: ", "FG_MENU_ITEM"), T(4, 82, "Введення: AB_", "FG_TEXT_INPUT"),
-                L(0, 100, 160, 100, "FG_DECORATION"), T(4, 106, "Звичайний текст", "FG_DEFAULT")]
-    if screen == "alert":
-        return [R(0, 0, 160, 128, "BG"),
-                R(0, 0, 160, 14, "BG_HEADER_TEXT"), T(3, 2, "TX", "FG_HEADER_TEXT"), T(110, 2, "00:12", "FG_TX_COUNTER"),
-                T(4, 20, "Передача", "FG_TX_COUNTER", 12),
-                R(14, 38, 146, 108, "BG_NOTIFICATION"), L(14, 38, 146, 38, "FG_DECORATION"), L(14, 108, 146, 108, "FG_DECORATION"),
-                L(14, 38, 14, 108, "FG_DECORATION"), L(146, 38, 146, 108, "FG_DECORATION"),
-                T(22, 46, "Сповіщення", "FG_NOTIFICATION"), T(22, 62, "Увага: батарея", "FG_WARNING_NOTIFICATION"),
-                T(22, 78, "Помилка: канал", "FG_ERROR_NOTIFICATION"), R(22, 94, 100, 102, "FG_NOTIFICATION")]
-    if screen == "splash":
-        return [R(0, 0, 160, 128, "BG"),
-                R(0, 0, 160, 50, "BG_SPLASHSCREEN"), T(30, 14, "OpenTYT", "FG_SPLASHSCREEN", 16),
-                ("oval", 6, 56, 62, 112, "FG_POLAR_DRAWING", "FG_POLAR_DRAWING"), ("oval", 22, 72, 46, 96, "FG_POLAR_DRAWING", "FG_POLAR_DRAWING"),
-                ("oval", 30, 80, 36, 86, "FG_SATELLITE_COLOUR", "FG_SATELLITE_COLOUR"), ("oval", 14, 64, 20, 70, "FG_SATELLITE_COLOUR", "FG_SATELLITE_COLOUR"),
-                T(74, 58, "GPS 08", "FG_GPS_NUMBER", 10),
-                R(74, 74, 86, 110, "FG_GPS_COLOUR"), R(90, 86, 102, 110, "FG_GPS_COLOUR"),
-                R(110, 80, 122, 110, "FG_BD_COLOUR"), R(126, 92, 138, 110, "FG_BD_COLOUR")]
-    raise KeyError(screen)
+def preview_screens():
+    """[(ключ, назва)] екранів передпоказу в порядку перемикача."""
+    import screen_views as sv
+    return [(k, t) for k, t, _f in sv.SCREENS]
+
+
+def render_preview(screen, colors=None):
+    """screen_sim.Display з намальованим екраном (кольори не потрібні: буфер зберігає індекси елементів теми)."""
+    import screen_views as sv
+    return sv.render(screen)
 
 
 def preview_items_covered():
-    """Усі елементи теми, що трапляються в попередньому перегляді (тест вимагає, щоб це були всі 32)."""
+    """Усі елементи теми, що трапляються хоч на одному екрані передпоказу (тест вимагає, щоб це були всі 32)."""
     seen = set()
-    for key, _t in PREVIEW_SCREENS:
-        for op in preview_ops(key):
-            seen.add(op[5] if op[0] in ("rect", "line", "oval") else op[4])
+    for key, _t in preview_screens():
+        for i in set(render_preview(key).px):
+            seen.add(KEYS[i])
     return seen
 
 

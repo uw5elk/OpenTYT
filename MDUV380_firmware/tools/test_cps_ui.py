@@ -28,12 +28,12 @@ EXPECTED = [
     ("shot", "Знімок екрана", "grp_radio"),
     ("grp_codeplug", "Кодплаг", ""),
     ("backup", "Бекап і відновлення", "grp_codeplug"),
-    ("viewer", "Перегляд кодплага", "grp_codeplug"),
     ("basic", "Основна інформація", "grp_codeplug"),
     ("general", "Загальні налаштування", "grp_codeplug"),
     ("channels", "Канали", "grp_codeplug"),
     ("vfo", "VFO A / VFO B", "grp_codeplug"),
     ("zones", "Зони", "grp_codeplug"),
+    ("contacts", "Контакти", "grp_codeplug"),
     ("tglists", "Списки прийому", "grp_codeplug"),
     ("dtmf", "DTMF-контакти", "grp_codeplug"),
     ("aprs", "APRS", "grp_codeplug"),
@@ -41,7 +41,7 @@ EXPECTED = [
     ("grp_settings", "Налаштування рації", ""),
     ("aes", "AES-ключі", "grp_settings"),
     ("rctl", "Віддалене керування (RCTL)", "grp_settings"),
-    ("themes", "Теми екрана", "grp_settings"),
+    ("themes", "Теми", "grp_settings"),
     ("allsettings", "Усі налаштування", "grp_settings"),
     ("dmrdb", "База позивних", "grp_settings"),
 ]
@@ -261,10 +261,6 @@ def test_gui():
                       "Q1 %dx%d: %s заповнює область (%dx%d з %dx%d)" % (W, H, key, host.winfo_width(), host.winfo_height(), rw, rh))
                 pan = app.get_panel(key)
                 check(pan.winfo_width() >= rw - 24, "Q1 %dx%d: панель %s на всю ширину (%d з %d)" % (W, H, key, pan.winfo_width(), rw))
-                if key == "viewer":
-                    nb = app.get_panel("viewer").viewer.nb
-                    check(nb.winfo_width() >= 0.85 * rw and nb.winfo_height() >= 0.4 * rh,
-                          "Q1 %dx%d: таблиці перегляду займають область (%dx%d)" % (W, H, nb.winfo_width(), nb.winfo_height()))
                 if key == "aes" and W > 1000:
                     ke = app.get_panel("aes").key_entry
                     check(ke.winfo_width() >= 0.5 * rw, "Q1: поле ключа AES розтягується (%d з %d)" % (ke.winfo_width(), rw))

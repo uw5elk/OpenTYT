@@ -34,7 +34,7 @@ class TgListsPanel(MembersEditor):
     def ask_new(self, img):
         items = self.candidates(img)
         if not items:
-            self.show_message("У кодплазі нема контактів -- спершу додайте контакт у «Перегляд кодплага → Контакти».", "err")
+            self.show_message("У кодплазі нема контактів -- спершу додайте контакт у «Кодплаг → Контакти».", "err")
             return None
         got = gd.pick_dialog(self.shell, "Новий список прийому", "Назва списку:", items, te.TG_MAX,
                              check=lambda t: te.name_problem(img, "tg", t), ok="Створити", noun="контактів")

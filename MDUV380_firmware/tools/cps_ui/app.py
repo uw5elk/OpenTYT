@@ -45,7 +45,7 @@ from .p_screenshot import ScreenshotPanel
 from .p_tglists import TgListsPanel
 from .p_themes import ThemesPanel
 from .p_vfo import VfoPanel
-from .p_viewer import ViewerPanel
+from .p_contacts import ContactsPanel
 from .p_zones import ZonesPanel
 from .panel import BUSY_REASON, HINT_NO_DOC, ScrollFrame
 from .settings import Settings
@@ -53,7 +53,7 @@ from .settings import Settings
 # Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
     ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
-    ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, VfoPanel, ZonesPanel, TgListsPanel,
+    ("grp_codeplug", "Кодплаг", [BackupPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, VfoPanel, ZonesPanel, ContactsPanel, TgListsPanel,
                                   DtmfPanel, AprsPanel, CsvPanel]),
     ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel, AllSettingsPanel, DmrDbPanel]),
 ]

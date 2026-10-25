@@ -222,10 +222,9 @@ def test_ready_sets():
     check(abs(th.contrast(0x0000, 0xFFFF) - 21.0) < 1e-6, "контраст чорного й білого = 21:1")
     # перегляд покриває всі 32 елементи, кожен -- відомий ключ
     check(th.preview_items_covered() == set(th.KEYS), "T3: перегляд малює кожен із 32 елементів теми (бракує: %r)" % (sorted(set(th.KEYS) - th.preview_items_covered()),))
-    for skey, _t in th.PREVIEW_SCREENS:
-        for op in th.preview_ops(skey):
-            x0, y0 = op[1], op[2]
-            check(0 <= x0 <= th.SCREEN_W and 0 <= y0 <= th.SCREEN_H, "T3: %s: елемент у межах екрана 160x128: %r" % (skey, op[:3]))
+    for skey, _t in th.preview_screens():
+        d = th.render_preview(skey)
+        check(len(d.px) == th.SCREEN_W * th.SCREEN_H and max(d.px) < th.ITEM_COUNT, "T3: %s: буфер 160x128, індекси елементів у межах 0..31" % skey)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -497,7 +496,7 @@ def test_gui():
         check(type(p).__name__ == "ThemesPanel" and "themes" in dict((c.key, c) for _g, _t, cl_ in __import__("cps_ui.app", fromlist=["SECTIONS"]).SECTIONS for c in cl_),
               "Z1: панель «Теми екрана» є в SECTIONS")
         check(len(p._rows) == 32 and all(r["hex"].cget("text").startswith("#") for r in p._rows), "Z1: у списку 32 кольори з hex")
-        check(all(len(cv.find_all()) > 5 for cv in p.canvases.values()) and len(p.canvases) == 4, "Z1: усі 4 екрани перегляду намальовано")
+        check(p._img is not None and len(p._screens) >= 6, "Z1: екран перегляду намальовано, у перемикачі кілька екранів (%d)" % len(p._screens))
         check(str(p.write_btn.cget("state")) == "disabled" and str(p.read_btn.cget("state")) == "disabled", "Z1: без рації читання/запис вимкнені")
         check(str(p.save_btn.cget("state")) != "disabled" and str(p.reset_btn.cget("state")) != "disabled", "Z1: файл і «Скинути» працюють без рації")
         check(p.dt == "night" and p.colors["night"] == th.stock_colors("night"), "Z1: початково нічна тема стокова")
@@ -521,17 +520,19 @@ def test_gui():
         check(p._rows[1]["swatch"].cget("bg").upper() == th.to_hex(want) and p._rows[1]["mark"].cget("text") == "●", "T2: зразок оновлено, є позначка «змінено»")
         check(asked and "Тло екрана" in asked[0]["title"] and asked[0]["color"] == th.to_hex(th.stock_colors("night")[1]), "T2: вибирач відкрито з поточним кольором і назвою елемента")
         # перегляд змінився: фон екрана «Канал» має новий колір
-        cv = p.canvases["channel"]
-        fills = {cv.itemcget(i, "fill").upper() for i in cv.find_withtag("BG")}
-        check(th.to_hex(want) in fills, "T3: перегляд перемальовано новим кольором тла")
+        n = int(p.scale_var.get())
+        px = p._img.get(80 * n, 100 * n)
+        check("#%02X%02X%02X" % tuple(px) == th.to_hex(want), "T3: перегляд перемальовано новим кольором тла: %r" % (px,))
         # скасований вибирач нічого не міняє
         colorchooser.askcolor = lambda **k: (None, None)
         before = list(p.colors["night"])
         p._on_pick(5)
         check(p.colors["night"] == before, "T2: «Скасувати» у вибирачі колір не змінює")
         # клацання по перегляду підсвічує рядок
-        bb = p.canvases["channel"].bbox("FG_CHANNEL_NAME")
-        p._on_preview_click(p.canvases["channel"], Ev((bb[0] + bb[2]) // 2, (bb[1] + bb[3]) // 2))
+        d0 = p._display
+        idx = d0.px.index(th.INDEX["FG_CHANNEL_NAME"])
+        n = int(p.scale_var.get())
+        p._on_preview_click(Ev((idx % th.SCREEN_W) * n + n // 2, (idx // th.SCREEN_W) * n + n // 2))
         check(p._selected == th.INDEX["FG_CHANNEL_NAME"], "T3: клацання по назві каналу в перегляді вибирає її колір у списку")
 
         # готовий набір
@@ -543,7 +544,9 @@ def test_gui():
         # «Скинути до стокової»
         p._on_reset()
         check(p.colors["night"] == th.stock_colors("night") and p.touched["night"], "T2: «Скинути до стокової» повертає значення прошивки (і позначає як незаписане)")
-        check(len(p.canvases["menu"].find_all()) > 5, "T3: перегляд меню на місці")
+        p.screen_combo.current([k for k, _t in p._screens].index("menu"))
+        p._on_screen_change()
+        check(th.INDEX["BG_MENU_ITEM_SELECTED"] in set(p._display.px), "T3: перемикач екранів: у меню є виділений пункт")
 
         # файл: зберегти -> змінити -> завантажити -> те саме
         p.apply_set("night_red")

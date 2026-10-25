@@ -413,9 +413,7 @@ def test_gui():
         for key in app.section_keys():
             app.show(key)
             app.update()
-        v = app.get_panel("viewer")
-        check(v.viewer is None and "Відкрийте кодплаг" in v.placeholder.cget("text"), "перегляд без документа: підказка «Відкрийте кодплаг з рації або з бекапу»")
-        for key in ("csv", "basic", "aprs"):
+        for key in ("csv", "basic", "aprs", "contacts"):
             p = app.get_panel(key)
             p = getattr(p, "station", p)         # APRS: підказка живе в блоці «Станція (слоти)»
             check(p.hint.winfo_manager() == "pack", "%s: підказка «Відкрийте кодплаг…» без документа" % key)
@@ -434,9 +432,9 @@ def test_gui():
         for key in app.section_keys():
             app.show(key)
             app.update()
-        check(len(app.get_panel("viewer").viewer.contact_tree.get_children()) == 4, "перегляд показує контакти з документа")
-        nb_titles = [app.get_panel("viewer").viewer.nb.tab(t, "text") for t in app.get_panel("viewer").viewer.nb.tabs()]
-        check(len(nb_titles) == 6 and nb_titles[4].startswith("APRS") and nb_titles[5].startswith("DTMF"), "перегляд має шість вкладок, зокрема APRS і DTMF: %r" % nb_titles)
+        check(len(app.get_panel("contacts").tree.get_children()) == 4, "розділ «Контакти» показує контакти з документа")
+        sc = app.get_panel("basic").sum_counts.cget("text")
+        check("контактів 4" in sc and "APRS-слотів" in sc and "DTMF-контактів" in sc, "R33 Q2: «Основна інформація» показує склад кодплага: %r" % sc)
 
         # --- BY2: правка -> зірочка -> «Відкинути зміни» ---
         app.show("basic")
@@ -484,10 +482,11 @@ def test_gui():
         cp_.csv_decimal_var.set("кома")
         res = cp_.import_folder(csvdir)
         check(res is not None and res.any_change() and any(c[2] == 31337 for c in app.doc.view().contacts()), "CSV імпортовано у документ")
-        app.show("viewer")
+        app.show("contacts")
         app.update()
-        ids = [str(app.get_panel("viewer").viewer.contact_tree.item(i)["values"][2]) for i in app.get_panel("viewer").viewer.contact_tree.get_children()]
-        check("31337" in ids, "таблиця перегляду оновилась одразу після імпорту: %r" % ids)
+        ctree = app.get_panel("contacts").tree
+        ids = [str(ctree.item(i)["values"][2]) for i in ctree.get_children()]
+        check("31337" in ids, "таблиця контактів оновилась одразу після імпорту: %r" % ids)
 
         # --- BY7: питання про незбережені зміни ---
         asked = []
@@ -567,7 +566,7 @@ def test_gui():
         for key in app.section_keys():
             app.show(key)
             app.update()
-        check(app.title() == "TYT MD-UV390UKR" and app.get_panel("viewer").viewer is None, "документ закрито: порожні панелі з підказкою")
+        check(app.title() == "TYT MD-UV390UKR" and not app.get_panel("contacts").tree.get_children(), "документ закрито: порожні панелі з підказкою")
         check(not errors, "несподіваних вікон помилок не було: %r" % (errors,))
     finally:
         (mb.showinfo, mb.showerror, gd.confirm_dialog, gd.choice_dialog, gd.text_dialog, filedialog.askopenfilename, filedialog.asksaveasfilename) = orig[:7]
