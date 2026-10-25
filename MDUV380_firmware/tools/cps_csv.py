@@ -130,7 +130,8 @@ def readable_text(raw16):
 
 
 def pad16(b):
-    return bytes(b[:16]).ljust(16, b"\xff")
+    """Сирі байти назви -> 16 байтів. R34: хвіст 0xFF, а для назви, що закінчується на «я» (0xFF), -- 0x00 (codeplug_view.pad_name)."""
+    return cv.pad_name(b, 16)
 
 
 def encode_new_name(text, session=None):
@@ -1048,8 +1049,9 @@ class _Imp:
         self.res.warnings.append(text)
 
     # --- вибір назви (V1.3) ---
-    def pick_name(self, fname, line, c, r, old_raw, nbytes, fill=b"\xff"):
-        """Повертає сирі байти назви (рівно nbytes) або None (проблему записано). Без змін -> old_raw як є."""
+    def pick_name(self, fname, line, c, r, old_raw, nbytes, fill=b"\xff", first_ff_empty=False):
+        """Повертає сирі байти назви (рівно nbytes) або None (проблему записано). Без змін -> old_raw як є.
+        R34: first_ff_empty -- запис, який прошивка вважає порожнім за першим байтом 0xFF (контакти, DTMF): назва не може починатися з малої «я»."""
         c = c or None            # порожня сумісна клітинка = «не задано» (нові рядки людина заповнює лише читабельною)
         r = r or None
         if old_raw is not None:
@@ -1077,8 +1079,9 @@ class _Imp:
             except ValueError as e:
                 self.problem(fname, line, "назва «%s»: %s" % (text, e))
                 return None
-            if readable_text(raw) != text:
-                self.problem(fname, line, "назва «%s» не читається однаково після запису (декодується як «%s») -- змініть літери" % (text, readable_text(raw)))
+            probe = raw if len(raw) > nbytes else cv.pad_name(raw, nbytes, fill)       # R34: читаємо так, як лежатиме в кодплазі (з хвостом)
+            if readable_text(probe) != text:
+                self.problem(fname, line, "назва «%s» не читається однаково після запису (декодується як «%s») -- змініть літери" % (text, readable_text(probe)))
                 return None
             if enc == "cp1251" and any(ch in text for ch in "іїєґІЇЄҐ"):
                 if self.session is None or not self.session.warned_cp1251:
@@ -1096,7 +1099,12 @@ class _Imp:
             self.problem(fname, line, "назва «%s» займає %d байтів, дозволено %d (зайве: %d).%s" % (
                 text, len(raw), nbytes, len(raw) - nbytes, hint))
             return None
-        return raw.ljust(nbytes, fill)
+        if fill == b"\xff":
+            for msg in (cv.name_tail_problem(raw, nbytes), cv.name_first_problem(raw) if first_ff_empty else None):
+                if msg:
+                    self.problem(fname, line, "назва «%s»: %s" % (text, msg))
+                    return None
+        return cv.pad_name(raw, nbytes, fill)
 
     # --- посилання за назвами (V1.6) ---
     def lookup(self, kind, text):
@@ -1209,7 +1217,7 @@ def _sec_contacts(s, tab):
     oldrec = dict(s.old.contacts())
     for (ln, row), slot, (c, r) in zip(tab.rows, slots, keys):
         old = oldrec.get(slot) if slot is not None else None
-        raw = s.pick_name(f, ln, c, r, old[:16] if old else None, 16)
+        raw = s.pick_name(f, ln, c, r, old[:16] if old else None, 16, first_ff_empty=True)
         if raw is None:
             continue
         rec = bytearray(old) if old else bytearray(b"\xff" * 16 + bytes(8))
@@ -1447,7 +1455,7 @@ def _sec_dtmf(s, tab):
     free_pool = sorted(gone)
     for (ln, row), slot, (c, r) in zip(tab.rows, slots, keys):
         old = oldrec.get(slot) if slot is not None else None
-        raw = s.pick_name(f, ln, c, r, old[:16] if old else None, 16)
+        raw = s.pick_name(f, ln, c, r, old[:16] if old else None, 16, first_ff_empty=True)
         if raw is None:
             continue
         rec = bytearray(old) if old else bytearray(b"\xff" * 32)

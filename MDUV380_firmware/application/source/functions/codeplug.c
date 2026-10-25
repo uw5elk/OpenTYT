@@ -255,6 +255,47 @@ uint16_t codeplugIntToCSS(uint16_t tone)
 	return ((tone == 0x0) ? CODEPLUG_CSS_TONE_NONE : tone);
 }
 
+#if defined(APRS_R21_NAMES)
+/* R34 N2: довжина назви в 16-байтовому (або 8-байтовому) полі кодплага. Спершу відкидаємо ХВОСТОВІ 0xFF (дописка, яку пише стокова CPS і яку пишемо ми), потім
+ * хвостові 0x00 (так записує назву codeplugUtilConvertStringToBuf за CODEPLUG_NAME_ZERO_TAIL і так лишає її OpenGD77 CPS). Порядок саме такий і без чергування:
+ * назва «Зоря» з хвостом 0x00 -- це З о р я 00 00 ..., її кінцеве 0xFF (мала «я» в cp1251) стоїть ПЕРЕД нулями і лишається літерою.
+ * Внутрішні 0xFF (мала «я» посеред назви, «Поляна») не чіпаємо -- раніше КОЖЕН 0xFF ставав нулем і назва обрізалась до «Пол». */
+static int codeplugUtilNameLen(const char *buf, int len)
+{
+	int n = len;
+
+	while ((n > 0) && (((uint8_t)buf[n - 1]) == 0xFF))
+	{
+		n--;
+	}
+	while ((n > 0) && (buf[n - 1] == 0x00))
+	{
+		n--;
+	}
+	return n;
+}
+
+bool codeplugUtilNameBufEqualsString(const char *codeplugBuf, const char *str, int len)
+{
+	int n = codeplugUtilNameLen(codeplugBuf, len);
+
+	return ((int)strlen(str) == n) && (memcmp(codeplugBuf, str, (size_t)n) == 0);
+}
+
+/* R34 N2.2: вхідний буфер НЕ змінюється (стокова версія записувала нуль замість кожного 0xFF у сам codeplugBuf, тобто псувала живі currentChannelData,
+ * currentContactData, currentZone). Виняток -- виклики з outBuf == codeplugBuf (читання позивного й рядків вітання на місці): там буфер і є результатом, у ньому
+ * після назви лишаються нулі. outBuf має вміщати len + 1 байтів. */
+void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len)
+{
+	int n = codeplugUtilNameLen(codeplugBuf, len);
+
+	if (outBuf != codeplugBuf)
+	{
+		memcpy(outBuf, codeplugBuf, (size_t)n);
+	}
+	memset(&outBuf[n], 0, (size_t)(len - n) + 1U);
+}
+#else
 void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len)
 {
 	for(int i = 0; i < len; i++)
@@ -267,6 +308,7 @@ void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len)
 	}
 	outBuf[len] = 0;
 }
+#endif
 
 #if defined(APRS_R21_NAMES)
 void codeplugUtilConvertBufToDisplayString(char *codeplugBuf, char *outBuf, int len)
@@ -276,6 +318,25 @@ void codeplugUtilConvertBufToDisplayString(char *codeplugBuf, char *outBuf, int 
 }
 #endif
 
+#if defined(APRS_R21_NAMES) && defined(CODEPLUG_NAME_ZERO_TAIL)
+/* R34 N3: назва, що ЗАКІНЧУЄТЬСЯ на 0xFF (мала «я» cp1251: «Зоря», «Надія»), з хвостом 0xFF невідрізнима від дописки -- читання обрізало б останню літеру.
+ * Для такої назви хвіст -- 0x00. Усі інші назви (а також порожня: прошивка вважає запис порожнім за name[0] == 0xFF, codeplug.c, menuContactDetails.c,
+ * uiTxTgPcContactOwnId.c) пишемо як раніше, з хвостом 0xFF -- байт-у-байт те, що пише стокова CPS. Вузьке правило свідомо: стокова CPS з хвостом 0x00
+ * не перевірялась (крок CK3), тож не підставляємо його там, де без нього можна обійтися. Ввімкнено лише з CODEPLUG_NAME_ZERO_TAIL (codeplug.h). */
+void codeplugUtilConvertStringToBuf(char *inBuf, char *outBuf, int len)
+{
+	int n = 0;
+	uint8_t pad;
+
+	while ((n < len) && (inBuf[n] != 0x00))
+	{
+		n++;
+	}
+	pad = ((n > 0) && (n < len) && (((uint8_t)inBuf[n - 1]) == 0xFF)) ? 0x00 : 0xFF;
+	memset(outBuf, pad, (size_t)len);
+	memcpy(outBuf, inBuf, (size_t)n);
+}
+#else
 void codeplugUtilConvertStringToBuf(char *inBuf, char *outBuf, int len)
 {
 	memset(outBuf,0xff,len);
@@ -288,6 +349,7 @@ void codeplugUtilConvertStringToBuf(char *inBuf, char *outBuf, int len)
 		outBuf[i] = inBuf[i];
 	}
 }
+#endif
 
 void codeplugZonesInitCache(void)
 {

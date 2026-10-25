@@ -31,9 +31,15 @@ class ContactEditError(cl.CpsError):
     pass
 
 
-def check_name(text):
-    """Перевірка назви для вікна: {ok, raw, enc, nbytes, remaining, message}. Живий лічильник «байтів залишилось»."""
-    out = {"ok": False, "raw": b"", "enc": "", "nbytes": 0, "remaining": NAME_LIMIT, "message": ""}
+ZERO_TAIL_WARNING = ("назва закінчується на малу «я» (0xFF): її записано з хвостом 0x00, прошивка читає її повністю; але збереження цього запису кнопками рації "
+                     "у збірці без CODEPLUG_NAME_ZERO_TAIL відріже «я», а стокова CPS з таким хвостом не перевірялась")
+
+
+def check_name(text, first_ff_empty=True):
+    """Перевірка назви для вікна: {ok, raw, enc, nbytes, remaining, message, warning}. Живий лічильник «байтів залишилось».
+    R34: читаємо назву так, як вона лежатиме в кодплазі (codeplug_view.pad_name), тож мала «я» наприкінці не відсікається; назва рівно на 16 байтів із «я» наприкінці
+    відхиляється (хвоста нема); first_ff_empty -- назва не може починатися з малої «я» (контакти й DTMF: прошивка вважає запис з першим байтом 0xFF порожнім)."""
+    out = {"ok": False, "raw": b"", "enc": "", "nbytes": 0, "remaining": NAME_LIMIT, "message": "", "warning": ""}
     if not text:
         out["message"] = "назва порожня"
         return out
@@ -46,11 +52,19 @@ def check_name(text):
     if len(raw) > NAME_LIMIT:
         out["message"] = "на %d байт(ів) довше за ліміт %d (кодування %s)" % (len(raw) - NAME_LIMIT, NAME_LIMIT, enc)
         return out
-    if cv.decode_name_ex(raw)[0] != text:
-        out["message"] = "після запису читалась би як «%s» -- змініть літери" % cv.decode_name_ex(raw)[0]
+    msg = cv.name_tail_problem(raw, NAME_LIMIT) or (cv.name_first_problem(raw) if first_ff_empty else None)
+    if msg:
+        out["message"] = msg
+        return out
+    back = cv.decode_name_ex(cv.pad_name(raw, NAME_LIMIT))[0]
+    if back != text:
+        out["message"] = "після запису читалась би як «%s» -- змініть літери" % back
         return out
     out["ok"] = True
     out["message"] = "кодування %s, залишилось %d байт(ів)" % (enc, NAME_LIMIT - len(raw))
+    if raw[-1:] == b"\xff":
+        out["warning"] = ZERO_TAIL_WARNING
+        out["message"] += "; " + ZERO_TAIL_WARNING
     return out
 
 
@@ -132,7 +146,7 @@ def apply_ops(base_img, ops):
                 if not chk["ok"]:
                     problems.append("контакт №%d: назва «%s»: %s" % (slot + 1, op["name"], chk["message"]))
                     continue
-                new[:16] = chk["raw"].ljust(NAME_LIMIT, b"\xff")
+                new[:16] = cv.pad_name(chk["raw"], NAME_LIMIT)
                 what.append("назва")
                 if chk["enc"] == "cp1251" and any(ch in op["name"] for ch in "іїєґІЇЄҐ"):
                     res.warnings.append(cc.CP1251_WARNING)
@@ -160,7 +174,7 @@ def apply_ops(base_img, ops):
             if not clean:
                 res.warnings.append("усі вільні слоти контактів чимось згадані -- новий контакт №%d може «ожити» у старому посиланні" % (slot + 1))
             rec = bytearray(b"\xff" * 16 + bytes(8))
-            rec[:16] = chk["raw"].ljust(NAME_LIMIT, b"\xff")
+            rec[:16] = cv.pad_name(chk["raw"], NAME_LIMIT)
             rec[16:20] = bytes.fromhex("%08d" % op["id"])
             rec[20] = op["type"]
             rec[22] = 0xFF                    # як menuContactDetails.c для нового контакту
