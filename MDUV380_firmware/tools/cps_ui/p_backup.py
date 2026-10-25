@@ -6,8 +6,10 @@ from tkinter import ttk, filedialog, messagebox
 
 import cps_link as cps
 import cps_restore as cps_rest
+import aes_keys_backup as akb
 import custom_region as cr
 import gui_theme as gt
+import restore_extras as rx
 
 from .common import output_dir
 from .panel import Panel
@@ -44,6 +46,8 @@ class BackupPanel(Panel):
         self.full_snapshot_var = tk.BooleanVar(value=False)
         self.region_var = tk.BooleanVar(value=False)            # R30: відновити також область custom-data (типово ВИМКНЕНО)
         self.region_state_var = tk.BooleanVar(value=False)      # R30: разом з лічильниками RCTL (стан; типово вимкнено)
+        self.keys_var = tk.BooleanVar(value=True)               # R31 K2.3: ключі AES в архіві (типово УВІМКНЕНО)
+        self.keys_restore_var = tk.BooleanVar(value=False)      # R31 K3.1: відновити також ключі AES (типово ВИМКНЕНО)
         self.header("Бекап і відновлення", "Бекап читає кодплаг із рації й зберігає його в .zip у теці MD-UV390UKR (у домашній теці). "
                                            "Рація має бути у звичайному режимі (не в DFU).")
 
@@ -52,7 +56,12 @@ class BackupPanel(Panel):
         self.backup_button = ttk.Button(box, text="Бекап кодплага", command=self._on_backup_clicked)
         self.backup_button.pack(anchor="w", padx=8, pady=(8, 4))
         self.reg(self.backup_button)
-        ttk.Checkbutton(box, text="повний знімок (+ голосові підказки і ключі AES)", variable=self.full_snapshot_var).pack(anchor="w", padx=8, pady=(0, 8))
+        ttk.Checkbutton(box, text="повний знімок (+ голосові підказки, ключі AES і база позивних)", variable=self.full_snapshot_var,
+                        command=self._update_keys_note).pack(anchor="w", padx=8, pady=(0, 2))
+        ttk.Checkbutton(box, text="включити ключі AES (секрет)", variable=self.keys_var, command=self._update_keys_note).pack(anchor="w", padx=8, pady=(0, 2))
+        self.keys_note = ttk.Label(box, text="", wraplength=600, justify="left")
+        self.keys_note.pack(anchor="w", padx=8, pady=(0, 8))
+        self._update_keys_note()
 
         view = ttk.LabelFrame(self, text="Перегляд і правка бекапу")
         view.pack(fill="x", padx=12, pady=6)
@@ -69,6 +78,12 @@ class BackupPanel(Panel):
         self.region_check.pack(anchor="w", padx=8, pady=(0, 2))
         self.region_state_check = ttk.Checkbutton(rest, text="разом з лічильниками RCTL (стан прошивки, не налаштування)", variable=self.region_state_var)
         self.region_state_check.pack(anchor="w", padx=28, pady=(0, 2))
+        self.keys_check = ttk.Checkbutton(rest, text="відновити також ключі AES (перезапише слоти, які є в архіві; перед записом покажу, які саме)",
+                                          variable=self.keys_restore_var)
+        self.keys_check.pack(anchor="w", padx=8, pady=(0, 2))
+        self.keys_only_button = ttk.Button(rest, text="Відновити лише ключі AES...", command=self._on_restore_keys_clicked)
+        self.keys_only_button.pack(anchor="w", padx=8, pady=(4, 2))
+        self.reg(self.keys_only_button, radio=True, write=True)
         self.region_only_button = ttk.Button(rest, text="Відновити лише область custom-data...", command=self._on_restore_region_clicked)
         self.region_only_button.pack(anchor="w", padx=8, pady=(4, 4))
         self.reg(self.region_only_button, radio=True, write=True)
@@ -84,14 +99,40 @@ class BackupPanel(Panel):
 
     # --- бекап ---
 
+    def keys_note_text(self):
+        """K2.2 / K4.1: одним рядком, що буде (або не буде) в архіві."""
+        full, keys = bool(self.full_snapshot_var.get()), bool(self.keys_var.get())
+        if keys and full:
+            return "Архів міститиме ключі шифрування AES (секрет), голосові підказки та базу позивних."
+        if keys:
+            return "Архів міститиме ключі шифрування AES -- зберігай його як секрет. Голосових підказок у ньому не буде."
+        if full:
+            return "Архів НЕ міститиме ключів AES; голосові підказки та базу позивних міститиме."
+        return "Архів НЕ містить ключів AES і голосових підказок -- ним можна ділитися."
+
+    def _update_keys_note(self):
+        self.keys_note.config(text=self.keys_note_text())
+
     def _on_backup_clicked(self):
         full = bool(self.full_snapshot_var.get())
-        self.shell.run_task(lambda: self._backup_worker(full), "Читаю кодплаг з рації (бекап)...")
+        keys = bool(self.keys_var.get())
+        self.shell.run_task(lambda: self._backup_worker(full, keys), "Читаю кодплаг з рації (бекап)...", on_done=self._show_backup_done)
 
-    def _backup_worker(self, full_snapshot=False):
+    @staticmethod
+    def _show_backup_done(paths):
+        """Підсумок бекапу з рядком про ключі (K2.2 / K4.1)."""
+        path, keys = paths[0], paths[1] if len(paths) > 1 else None
+        tail = ""
+        if keys is True:
+            tail = "\n\nАрхів містить ключі шифрування AES -- зберігай його як секрет."
+        elif keys is False:
+            tail = "\n\nАрхів НЕ містить ключів AES і голосових підказок."
+        messagebox.showinfo("Готово", "Збережено:\n" + path + tail)
+
+    def _backup_worker(self, full_snapshot=False, aes_keys=True):
         ser = cps.open_radio()
         try:
-            data, manifest = cps.backup_codeplug(cps.CpsLink(ser), self.shell.cps_progress, full_snapshot=full_snapshot)
+            data, manifest = cps.backup_codeplug(cps.CpsLink(ser), self.shell.cps_progress, full_snapshot=full_snapshot, aes_keys=aes_keys)
         finally:
             ser.close()
         path = cps.unique_path(output_dir(), cps.timestamp_name("codeplug_backup", ".zip"))
@@ -108,9 +149,12 @@ class BackupPanel(Panel):
                 cd_part["length"], cd_part["sha256"], ", ".join("{} ({} Б)".format(b["name"], b["length"]) for b in cd_part["blocks"]) or "жодного"))
             if any(b.get("secret") for b in cd_part["blocks"]):
                 print("УВАГА: у блоці AES є ключовий матеріал -- зберігай файл як секрет.")
-        if full_snapshot:
-            print("ПОВНИЙ ЗНІМОК: у файлі ключі AES -- зберігай його як секрет.")
-        return [path]
+        k_part = manifest["parts"].get(akb.PART_KEY)
+        if k_part:
+            print("УВАГА: архів містить ключі шифрування AES (слоти: {}) -- зберігай його як секрет.".format(akb.slots_text(k_part["occupiedSlots"])))
+        else:
+            print("Архів не містить ключів AES{}.".format("" if full_snapshot else " і голосових підказок"))
+        return [path, bool(k_part) if (k_part or not full_snapshot) else None]
 
     # --- перегляд бекапу: відкривається як ДОКУМЕНТ (тим самим, що й «Відкрити з бекапу» над розділами) ---
 
@@ -131,7 +175,8 @@ class BackupPanel(Panel):
             return
         with_region = bool(self.region_var.get())
         include_state = with_region and bool(self.region_state_var.get())
-        self.shell.run_task(lambda: self._restore_worker(path, with_region, include_state), "Відновлюю кодплаг...", on_done=self._show_restore_done,
+        with_keys = bool(self.keys_restore_var.get())
+        self.shell.run_task(lambda: self._restore_worker(path, with_region, include_state, with_keys), "Відновлюю кодплаг...", on_done=self._show_restore_done,
                             fail_suffix="\n\nСтан рації описано вище. Не вимикай програму, поки не прочитаєш повідомлення.",
                             reconnect_ms=6000)
 
@@ -139,6 +184,35 @@ class BackupPanel(Panel):
         show_restore_result(out["codeplug"])
         if out.get("region") is not None:
             self._show_region_result(out["region"])
+        if out.get("keys") is not None:
+            self._show_keys_result(out["keys"])
+        elif out.get("keysNote"):
+            messagebox.showinfo("Ключі AES", out["keysNote"])
+
+    @staticmethod
+    def _show_keys_result(res):
+        if res.get("absent"):
+            messagebox.showinfo("Ключі AES", res["text"])
+        else:
+            tail = ("\n\nСтрахова копія таблиці ключів до запису (секретна):\n{}".format(res["safetyCopy"])) if res.get("safetyCopy") else ""
+            failed = bool(res.get("result") and res["result"].get("failed"))
+            (messagebox.showerror if failed else messagebox.showinfo)("Ключі AES", res["text"] + tail)
+
+    def _on_restore_keys_clicked(self):
+        if self.shell.busy or not cps_rest.RESTORE_UNLOCKED:
+            return
+        path = filedialog.askopenfilename(title="Бекап, з якого відновити ключі AES", initialdir=output_dir(), filetypes=[("Бекап кодплага (.zip)", "*.zip")])
+        if not path:
+            return
+        self.shell.run_task(lambda: self._restore_keys_worker(path), "Відновлюю ключі AES...", on_done=self._show_keys_result,
+                            fail_suffix="\n\nЗаписані слоти лишаються записаними; решту не чіпали.", plain_errors=True, reconnect_ms=6000)
+
+    def _restore_keys_worker(self, path):
+        ser = cps.open_radio()
+        try:
+            return akb.restore_keys(cps.CpsLink(ser), path, self.shell.confirm_from_worker, progress=self.shell.cps_progress, log=print)
+        finally:
+            close_quietly(ser)
 
     @staticmethod
     def _show_region_result(res):
@@ -168,10 +242,10 @@ class BackupPanel(Panel):
         finally:
             close_quietly(ser)
 
-    def _restore_worker(self, path, with_region=False, include_state=False):
+    def _restore_worker(self, path, with_region=False, include_state=False, with_keys=False):
         ser = cps.open_radio()
         try:
-            return cr.restore_codeplug_and_region(cps.CpsLink(ser), path, self.shell.confirm_from_worker, self.shell.cps_progress, log=print,
-                                                  with_region=with_region, include_state=include_state)
+            return rx.restore_codeplug_and_extras(cps.CpsLink(ser), path, self.shell.confirm_from_worker, self.shell.cps_progress, log=print,
+                                                  with_region=with_region, include_state=include_state, with_keys=with_keys)
         finally:
             close_quietly(ser)

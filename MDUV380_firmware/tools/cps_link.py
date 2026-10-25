@@ -96,6 +96,8 @@ FULL_SNAPSHOT_PARTS = (
     # ключ у manifest["parts"], файл у zip, початок, довжина
     ("voicePrompts", "voiceprompts.bin", VOICE_PROMPTS_RAW_START, VOICE_PROMPTS_RAW_END - VOICE_PROMPTS_RAW_START),
     ("aesKeys", "aeskeys.bin", AES_KEYS_RAW_START, AES_KEYS_RAW_LEN),
+    # R31 D5: база позивних DMR ID, область №1 (DMRID_MEMORY_LOCATION_1 = 0x30000 + FLASH_ADDRESS_OFFSET, 0x40000 Б). У звичайний бекап не входить.
+    ("dmrIdDb", "dmriddb.bin", 0x30000 + FLASH_ADDRESS_OFFSET, 0x40000),
 )
 
 
@@ -394,7 +396,7 @@ def verify_random_blocks(link, area, start, data, count=3, rng=None):
     return bad
 
 
-def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_blocks, now_utc=None, extras=None, region=None):
+def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_blocks, now_utc=None, extras=None, region=None, keys=None):
     """extras -- {ключ частини: (файл, початок, дані)} для повного знімка (W3.2); у маніфесті їх позначено
     `includes` і `restorable` (відновлюються лише eeprom та flash)."""
     now_utc = now_utc or datetime.datetime.now(datetime.timezone.utc)
@@ -420,8 +422,9 @@ def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_b
             m["parts"][key] = {"file": fname, "area": CPS_ACCESS_FLASH, "start": start, "length": len(data), "sha256": sha256(data),
                                "restorable": False}
             m["includes"].append(key)
-        m["note"] = ("Лише читання; у рацію нічого не записувалось. ПОВНИЙ ЗНІМОК: додатково голосові підказки та таблиця ключів AES "
-                     "(SPI 0xD9F9C) -- містить секретні ключі, зберігай файл як секрет. Відновлення цих двох ділянок не реалізовано.")
+        names = {"voicePrompts": "голосові підказки", "aesKeys": "таблиця ключів AES (SPI 0xD9F9C, секрет)", "dmrIdDb": "база позивних DMR ID (область №1)"}
+        m["note"] = ("Лише читання; у рацію нічого не записувалось. ПОВНИЙ ЗНІМОК: додатково " + ", ".join(names.get(k, k) for k in extras)
+                     + ". Голосові підказки з архіву не відновлюються; ключі AES відновлює окремий прапорець, базу позивних -- панель «База позивних».")
     if region is not None:
         # R30: область custom-data (теми, SMS, RCTL, APRS...) -- окремий файл у архіві. cps_restore її не відновлює (restorable лишається [eeprom, flash]);
         # відновлює custom_region.restore_region окремим прапорцем.
@@ -432,6 +435,17 @@ def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_b
                       "особисті%s." % (custom_region.REGION_RAW_START, custom_region.REGION_RAW_END - 1, custom_region.PART_FILE,
                                        ", а блок AES може містити ключовий матеріал -- зберігай файл як секрет"
                                        if m["parts"][custom_region.PART_KEY].get("blocks") and any(b.get("secret") for b in m["parts"][custom_region.PART_KEY]["blocks"]) else ""))
+    if keys is not None:
+        # R31: таблиця ключів AES -- окремий файл (секрет); у маніфесті лише НОМЕРИ зайнятих слотів. Той самий запис і для повного знімка.
+        import aes_keys_backup
+        m["parts"][aes_keys_backup.PART_KEY] = aes_keys_backup.manifest_part(keys)
+        if aes_keys_backup.PART_KEY not in m["includes"]:
+            m["includes"].append(aes_keys_backup.PART_KEY)
+        m["note"] = m["note"].replace(" Таблиця ключів AES (SPI 0xD9F9C...) у звичайний бекап не входить.", "")
+        m["note"] += (" Таблицю ключів AES (SPI 0x%X..0x%X) додано окремим файлом %s: слоти %s -- архів містить ключі шифрування, зберігай його як секрет."
+                      % (aes_keys_backup.KEYS_START, aes_keys_backup.KEYS_START + aes_keys_backup.KEYS_LEN - 1, aes_keys_backup.PART_FILE,
+                         aes_keys_backup.slots_text(m["parts"][aes_keys_backup.PART_KEY]["occupiedSlots"])))
+    m["containsSecrets"] = "aesKeys" in m["parts"] or any(b.get("secret") for b in (m["parts"].get("customData") or {}).get("blocks", []))
     return m
 
 
@@ -478,17 +492,22 @@ def read_backup_zip(source):
     return manifest, eeprom, flash
 
 
-def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False, custom_data=True):
+def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False, custom_data=True, aes_keys=True):
     """Прочитати EEPROM і флеш-частину кодплуга, самоперевірити й зібрати .zip.
     full_snapshot=True (R25 W3.2) -- додатково голосові підказки і таблицю ключів AES (за замовчуванням ВИМКНЕНО).
     progress(percent, text). Повертає (zip_bytes, manifest). При невдалій самоперевірці -- BackupInvalid."""
     started = clock()
     rng_range = flash_backup_range()
     flash_len = rng_range["length"]
-    extra_len = sum(p[3] for p in FULL_SNAPSHOT_PARTS) if full_snapshot else 0
+    import aes_keys_backup
+    # R31: aes_keys=False -- ключів AES в архіві нема і в повному знімку теж
+    snap_parts = [p for p in FULL_SNAPSHOT_PARTS if aes_keys or p[0] != aes_keys_backup.PART_KEY] if full_snapshot else []
+    extra_len = sum(p[3] for p in snap_parts)
+    keys_alone = bool(aes_keys) and not full_snapshot        # у повному знімку таблиця вже читається як частина знімка
+    keys_len = aes_keys_backup.KEYS_LEN if keys_alone else 0
     import custom_region
     region_len = custom_region.REGION_LEN if custom_data else 0
-    total = EEPROM_BACKUP_LEN + flash_len + extra_len + region_len
+    total = EEPROM_BACKUP_LEN + flash_len + extra_len + region_len + keys_len
     verify_cost = 6 * CHUNK
 
     def step(done_before):
@@ -510,11 +529,15 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
         # R30: область custom-data -- ПІСЛЯ флешу, ДО повного знімка (прогрес рахується в тому ж порядку)
         log("Область custom-data: сирі 0x%X .. 0x%X (%d КБ)." % (custom_region.REGION_RAW_START, custom_region.REGION_RAW_END, region_len // 1024))
         region = read_part(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region_len, step(EEPROM_BACKUP_LEN + flash_len))
+    keys = None
+    if keys_alone:
+        log("Таблиця ключів AES: сирі 0x%X .. 0x%X (%d Б) -- секрет." % (aes_keys_backup.KEYS_START, aes_keys_backup.KEYS_START + keys_len, keys_len))
+        keys = read_part(link, CPS_ACCESS_FLASH, aes_keys_backup.KEYS_START, keys_len, step(EEPROM_BACKUP_LEN + flash_len + region_len))
     extras = {}
     extra_files = {}
     if full_snapshot:
         done_before = EEPROM_BACKUP_LEN + flash_len + region_len
-        for key, fname, start, length in FULL_SNAPSHOT_PARTS:
+        for key, fname, start, length in snap_parts:
             log("Повний знімок: %s -- сирі 0x%X .. 0x%X (%d Б)." % (key, start, start + length, length))
             data = read_part(link, CPS_ACCESS_FLASH, start, length, step(done_before))
             done_before += length
@@ -531,15 +554,20 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
         bad_x += ["область custom-data 0x%X" % a for a in verify_random_blocks(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region, 3, rng)]
     for key, (_fname, start, data) in extras.items():
         bad_x += ["%s 0x%X" % (key, a) for a in verify_random_blocks(link, CPS_ACCESS_FLASH, start, data, 3, rng)]
+    if keys is not None:
+        bad_x += ["таблиця ключів 0x%X" % a for a in verify_random_blocks(link, CPS_ACCESS_FLASH, aes_keys_backup.KEYS_START, keys, 1, rng)]
     if bad or bad_f or bad_x:
         where = ", ".join(["EEPROM 0x%X" % a for a in bad] + ["флеш 0x%X" % a for a in bad_f] + bad_x)
         raise BackupInvalid("самоперевірка не пройшла: повторне читання блоку дало інші байти (%s). Бекап НЕ збережено. "
                             "Рація могла записувати налаштування під час читання -- спробуй ще раз, не торкаючись кнопок." % where)
 
     finished = clock()
-    manifest = build_manifest(info, eeprom, flash, rng_range, started, finished, 3, now_utc, extras or None, region)
+    keys_data = keys if keys is not None else (extras[aes_keys_backup.PART_KEY][2] if aes_keys_backup.PART_KEY in extras else None)
+    manifest = build_manifest(info, eeprom, flash, rng_range, started, finished, 3, now_utc, extras or None, region, keys_data)
     if region is not None:
         extra_files[custom_region.PART_FILE] = region
+    if keys is not None:
+        extra_files[aes_keys_backup.PART_FILE] = keys
     if progress:
         progress(100, "Готово")
     return make_zip(eeprom, flash, manifest, extra_files), manifest
@@ -560,7 +588,8 @@ def main(argv=None):
     b = sub.add_parser("backup", help="бекап кодплуга -> .zip")
     b.add_argument("--port")
     b.add_argument("--outdir", default=".")
-    b.add_argument("--full", action="store_true", help="повний знімок: ще й голосові підказки та ключі AES (секретно!)")
+    b.add_argument("--full", action="store_true", help="повний знімок: ще й голосові підказки, ключі AES (секретно!) і базу позивних")
+    b.add_argument("--no-keys", action="store_true", help="R31: не включати ключі AES в архів (щоб ним можна було поділитися)")
     a = ap.parse_args(argv)
 
     ser = open_radio(a.port)
@@ -576,7 +605,7 @@ def main(argv=None):
                 if pct != last[0] and pct % 5 == 0:
                     last[0] = pct
                     print("%3d%%  %s" % (pct, text))
-            data, manifest = backup_codeplug(link, prog, full_snapshot=a.full)
+            data, manifest = backup_codeplug(link, prog, full_snapshot=a.full, aes_keys=not a.no_keys)
             os.makedirs(a.outdir, exist_ok=True)
             path = unique_path(a.outdir, timestamp_name("codeplug_backup", ".zip"))
             with open(path, "wb") as f:
