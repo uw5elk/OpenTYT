@@ -52,6 +52,13 @@ CONTRAST_PAIRS = [
 
 P = PALETTE
 
+# R36 B4: ОДНА шкала відступів на все вікно. Усі нові відступи -- кратні GAP; не писати у віджетах «магічні» числа, брати звідси.
+GAP = 8                # проміжок між сусідніми елементами однієї групи (кнопки в рядку, підпис і поле)
+PAD = 12               # поле панелі зліва/справа (заголовки, форми, таблиці)
+SECTION_GAP = 10       # проміжок між блоками панелі по вертикалі
+BTN_EXTRA = 2          # запас у «символах» до найдовшого підпису кнопок групи, коли їм задають однакову ширину
+SASH = 6               # товщина рухомої межі між частинами вікна, px
+
 
 def _lum(h):
     h = h.lstrip("#")
@@ -158,7 +165,8 @@ def apply(root):
         st.configure(name, background=P["accent"], troughcolor=P["field"], bordercolor=P["border"], lightcolor=P["accent"],
                      darkcolor=P["accent"])
     st.configure("TPanedwindow", background=P["bg"])
-    st.configure("Sash", background=P["border"], bordercolor=P["border"])
+    st.configure("Sash", background=P["border"], bordercolor=P["border"], sashthickness=SASH, gripcount=0)
+    st.map("Sash", background=[("active", P["accent"])])
 
 
 def style_window(win):

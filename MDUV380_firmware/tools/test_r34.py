@@ -255,8 +255,9 @@ def test_tools():
         c = ce.check_name(nm)
         check(c["ok"], "Z5: check_name приймає «%s»: %s" % (nm, c["message"]))
     c = ce.check_name("Надія")
-    check(c["warning"] and "0x00" in c["message"] and "CODEPLUG_NAME_ZERO_TAIL" in c["message"], "N4.2: для назви на «я» (cp1251) є попередження, що саме й чому: %s" % c["message"])
+    check(c["ok"] and not c["warning"] and "CODEPLUG_NAME_ZERO_TAIL" not in c["message"] and "не перевірялась" not in c["message"], "R36 A4: застереження про хвіст 0x00 для назви на «я» знято: %s" % c["message"])
     check(not ce.check_name("Поляна")["warning"], "N4.2: «Поляна» (GBK, без 0xFF) -- без попередження")
+    check(not hasattr(ce, "ZERO_TAIL_WARNING"), "R36 A4: константу застереження прибрано")
     c = ce.check_name("Україна моя і твоя")                           # 16 байтів, cp1251, закінчується на «я»
     t16 = "Абвгдежзиклмнопя"                                         # 16 символів cp1251? GB2312 прийме «Абв...» -- беремо українську літеру для cp1251
     t16 = "Іабвгдежзиклмноя"
@@ -330,8 +331,54 @@ def test_tools():
         check(nm == "Київська моя", "Z5: канал «Київська моя» (cp1251, «я» наприкінці): %r" % nm)
 
 
+def test_flag_enabled():
+    """R36 A1-A2: прапорець справді ввімкнено в codeplug.h; діє лише в користувацькій українській збірці (APRS_R21_NAMES), у типовій збірці код стоковий."""
+    hdr = open(os.path.join(APP, "include", "functions", "codeplug.h"), encoding="utf-8", errors="replace").read()
+    check(re.search(r"^#define CODEPLUG_NAME_ZERO_TAIL 1\s*$", hdr, re.M) is not None, "R36 A1: у codeplug.h є активний #define CODEPLUG_NAME_ZERO_TAIL 1")
+    src = open(CODEPLUG_C, encoding="utf-8", errors="replace").read()
+    users = [i for i, ln in enumerate(src.split("\n"), 1) if "CODEPLUG_NAME_ZERO_TAIL" in ln and "defined(CODEPLUG_NAME_ZERO_TAIL)" in ln]
+    check(len(users) == 1 and "defined(APRS_R21_NAMES)" in src.split("\n")[users[0] - 1], "R36 A1: у codeplug.c прапорець використовується один раз і лише разом з APRS_R21_NAMES (рядки %s)" % users)
+    others = []
+    for dp_, _d, fs in os.walk(os.path.join(APP, "source")):
+        for f in fs:
+            if f.endswith((".c", ".h")) and f != "codeplug.c":
+                if "CODEPLUG_NAME_ZERO_TAIL" in open(os.path.join(dp_, f), encoding="utf-8", errors="replace").read():
+                    others.append(f)
+    check(not others, "R36 A1: прапорець не згадується в інших файлах прошивки: %s" % others)
+    inc = ["-I" + os.path.join(APP, "include")]
+    probe = os.path.join(tempfile.mkdtemp(prefix="r36_"), "p.c")
+    open(probe, "w").write('#include "functions/codeplug.h"\n')
+    conf = {"типова (без дефайнів)": [], "українська з AES і APRS RX": ["-DLANGUAGE_BUILD_UKRAINIAN", "-DENABLE_APRS_RX", "-DENABLE_AES"]}
+    for name, flags in conf.items():
+        try:
+            r = subprocess.run(["gcc", "-E", "-dM"] + flags + inc + [probe], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print("ПРОПУЩЕНО (gcc):", e)
+            return
+        if r.returncode != 0:
+            print("ПРОПУЩЕНО (gcc не прочитав заголовок):", r.stderr[:200])
+            return
+        has_names = "#define APRS_R21_NAMES" in r.stdout
+        check(has_names == bool(flags), "R36 A2: збірка «%s»: APRS_R21_NAMES %s" % (name, "визначено" if has_names else "НЕ визначено"))
+    # збірка, що повторює виробничу (header-прапорець + APRS_R21_NAMES): запис «Зоря» -> хвіст 0x00, порожня -- 0xFF
+    check(c_write("r21zt", cp("Зоря")) == cp("Зоря") + b"\x00" * 12 and c_write("r21zt", b"") == b"\xff" * 16, "R36 A2: виробничий варіант: «Зоря» -> хвіст 0x00; порожня назва -> усі 0xFF")
+    # вузьке правило: хвіст 0x00 лише для непорожньої, що закінчується на 0xFF і має місце для хвоста
+    rnd = random.Random(36)
+    bad = 0
+    for _ in range(300):
+        n = rnd.randrange(0, 17)
+        raw = bytes(rnd.choice([0xFF, 0xC0, 0x41, 0xE0, 0xA7, 0x20]) for _ in range(n))
+        raw = raw.replace(b"\x00", b"A")
+        w = c_write("r21zt", raw)
+        want = raw + (b"\x00" if (raw and raw[-1] == 0xFF and len(raw) < 16) else b"\xff") * (16 - len(raw))
+        if w != want:
+            bad += 1
+    check(bad == 0, "R36 A2: 300 випадкових назв: хвіст 0x00 лише для непорожньої, що закінчується на 0xFF й має місце; решта -- 0xFF (розбіжностей %d)" % bad)
+    check(c_read("r21zt", b"\xff" * 16)[0] == b"" and c_write("r21zt", b"") != b"\x00" * 16, "R36 A2: порожній запис (усі 0xFF) читається порожнім; порожню назву хвостом 0x00 не пишемо")
+
+
 def main():
-    for fn in (test_firmware, test_tools):
+    for fn in (test_firmware, test_tools, test_flag_enabled):
         n0 = len(FAILS)
         try:
             fn()

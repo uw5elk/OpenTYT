@@ -31,8 +31,9 @@ class ContactEditError(cl.CpsError):
     pass
 
 
-ZERO_TAIL_WARNING = ("назва закінчується на малу «я» (0xFF): її записано з хвостом 0x00, прошивка читає її повністю; але збереження цього запису кнопками рації "
-                     "у збірці без CODEPLUG_NAME_ZERO_TAIL відріже «я», а стокова CPS з таким хвостом не перевірялась")
+# R36: застереження про назви на малу «я» знято -- стокова TYT CPS читає назву з хвостом 0x00 нормально (перевірено на залізі 2026-10-25), а прошивка з
+# CODEPLUG_NAME_ZERO_TAIL (увімкнено) пише такий хвіст і при збереженні кнопками. Лишились відмови, що йдуть з формату: назва рівно на 16 байтів із «я» наприкінці
+# (хвоста нема) і контакт/DTMF з «я» на початку (запис з першим байтом 0xFF прошивка вважає порожнім).
 
 
 def check_name(text, first_ff_empty=True):
@@ -62,9 +63,6 @@ def check_name(text, first_ff_empty=True):
         return out
     out["ok"] = True
     out["message"] = "кодування %s, залишилось %d байт(ів)" % (enc, NAME_LIMIT - len(raw))
-    if raw[-1:] == b"\xff":
-        out["warning"] = ZERO_TAIL_WARNING
-        out["message"] += "; " + ZERO_TAIL_WARNING
     return out
 
 

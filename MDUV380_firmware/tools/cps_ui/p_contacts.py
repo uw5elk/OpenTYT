@@ -12,6 +12,7 @@ import gui_theme as gt
 import table_edit as te
 
 from .editor_base import EditorPanel
+from .layout import FlowFrame
 
 
 class ContactsPanel(EditorPanel):
@@ -33,16 +34,21 @@ class ContactsPanel(EditorPanel):
         self.form_title.pack(anchor="w", pady=(0, 6))
         box = ttk.LabelFrame(parent, text="TG / ID і тип виклику")
         box.pack(fill="x", padx=(0, 8))
-        row = ttk.Frame(box)
-        row.pack(fill="x", padx=8, pady=6)
-        ttk.Label(row, text="TG / ID:").pack(side="left")
-        self.id_entry = ttk.Entry(row, textvariable=self.id_var, width=12)
-        self.id_entry.pack(side="left", padx=(4, 12))
-        ttk.Label(row, text="Тип:").pack(side="left")
-        self.type_box = ttk.Combobox(row, textvariable=self.type_var, values=list(ce.CALL_TYPE_LABELS.values()), state="readonly", width=9)
+        row = FlowFrame(box)
+        row.pack(fill="x", padx=gt.PAD - 4, pady=6)
+        id_pair = ttk.Frame(row)
+        ttk.Label(id_pair, text="TG / ID:").pack(side="left")
+        self.id_entry = ttk.Entry(id_pair, textvariable=self.id_var, width=12)
+        self.id_entry.pack(side="left", padx=(4, 0))
+        type_pair = ttk.Frame(row)
+        ttk.Label(type_pair, text="Тип:").pack(side="left")
+        labels = list(ce.CALL_TYPE_LABELS.values())
+        self.type_box = ttk.Combobox(type_pair, textvariable=self.type_var, values=labels, state="readonly", width=max(len(x) for x in labels) + 4)
         self.type_box.pack(side="left", padx=4)
         self.apply_btn = ttk.Button(row, text="Застосувати", command=self.commit)
-        self.apply_btn.pack(side="left", padx=8)
+        row.add(id_pair)
+        row.add(type_pair)
+        row.add(self.apply_btn)
         self.info = ttk.Label(box, text="", wraplength=420, justify="left", foreground=gt.P["muted"])
         self.info.pack(anchor="w", padx=8, pady=(0, 6))
         self.id_entry.bind("<Return>", lambda _e: self.commit())

@@ -19,9 +19,10 @@ import screen_sim as sim
 import theme_edit as te
 
 from .common import output_dir
+from .layout import FlowFrame, equal_buttons
 from .panel import Panel, ScrollFrame
 
-PREVIEW_SCALES = (4, 5)          # цілий масштаб без згладжування (PhotoImage.zoom -- найближчий піксель)
+PREVIEW_SCALES = (2, 3, 4, 5)    # цілий масштаб без згладжування (PhotoImage.zoom -- найближчий піксель); 4 і 5 -- лише якщо вміщуються (R36)
 PREVIEW_SCALE = 4
 
 
@@ -47,80 +48,90 @@ class ThemesPanel(Panel):
     # --- побудова ---------------------------------------------------------------------------------
 
     def _build_ui(self):
-        # ліворуч -- усе керування й список кольорів (прокручується разом), праворуч -- перегляд, який лишається на місці, коли гортаєш список
-        self.columnconfigure(0, weight=1)
-        self.columnconfigure(1, weight=0)
-        self.rowconfigure(0, weight=1)
-        self.left_host = ScrollFrame(self)
-        self.left_host.grid(row=0, column=0, sticky="nsew")
+        # R36: ліворуч -- керування й список кольорів (прокручується), праворуч -- перегляд екрана (теж у власній прокрутці); між ними рухома межа.
+        # Керування має мінімальну ширину (LEFT_MIN): перегляд його не «з'їдає» -- замість цього масштаб перегляду зменшується (_fit_scale),
+        # а якщо не вміщується й найменший, перегляд прокручується.
+        self.pane = ttk.PanedWindow(self, orient="horizontal")
+        self.pane.pack(fill="both", expand=True)
+        self.left_host = ScrollFrame(self.pane)
+        self.right_host = ScrollFrame(self.pane)
+        self.pane.add(self.left_host, weight=0)          # керування не ростуть разом із вікном: зайве місце отримує перегляд
+        self.pane.add(self.right_host, weight=1)
         left = self.left_host.inner
-        ttk.Label(left, text="Теми", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
+        ttk.Label(left, text="Теми", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=gt.PAD, pady=(10, 2))
         self._wrap = []
         hint = ttk.Label(left, text=("Кольори екрана рації: денна й нічна теми. Тема живе не в кодплазі, а в окремій області флеша рації, тому «Записати в рацію» "
                               "тут змінює рацію одразу, окремо від кодплага. Рація читає тему лише при вмиканні: після запису вимкни її й увімкни, а до того не "
                               "міняй тему з меню рації -- воно записало б поверх свої значення з пам'яті."),
                   wraplength=360, justify="left", foreground=gt.P["muted"])
-        hint.pack(anchor="w", padx=12, pady=(0, 6))
+        hint.pack(anchor="w", padx=gt.PAD, pady=(0, 6))
         self._wrap.append(hint)
         self.make_note(left)
+        self._wrap.append(self.note)
         top = ttk.Frame(left)
-        top.pack(fill="x", padx=12, pady=(0, 4))
+        top.pack(fill="x", padx=gt.PAD, pady=(0, 4))
         ttk.Label(top, text="Тема:").pack(side="left")
         for dt in te.DAYTIMES:
-            ttk.Radiobutton(top, text=te.DAYTIME_NAMES[dt], value=dt, variable=self.daytime, command=self._on_daytime).pack(side="left", padx=(8, 0))
+            ttk.Radiobutton(top, text=te.DAYTIME_NAMES[dt], value=dt, variable=self.daytime, command=self._on_daytime).pack(side="left", padx=(gt.GAP, 0))
         sets = ttk.Frame(left)
-        sets.pack(fill="x", padx=12, pady=(0, 2))
+        sets.pack(fill="x", padx=gt.PAD, pady=(0, 2))
         ttk.Label(sets, text="Набір:").pack(side="left")
         self.set_var = tk.StringVar()
-        self.set_combo = ttk.Combobox(sets, textvariable=self.set_var, state="readonly", width=26)
-        self.set_combo.pack(side="left", padx=6)
+        self.set_combo = ttk.Combobox(sets, textvariable=self.set_var, state="readonly", width=22)
+        self.set_combo.pack(side="left", padx=6, fill="x", expand=True)
         self.set_combo.bind("<<ComboboxSelected>>", lambda _e: self._show_set_desc())
-        sets2 = ttk.Frame(left)
-        sets2.pack(fill="x", padx=12, pady=(0, 2))
+        sets2 = FlowFrame(left)
+        sets2.pack(fill="x", padx=gt.PAD, pady=(0, 2))
         self.set_btn = ttk.Button(sets2, text="Застосувати набір", command=self._on_apply_set)
-        self.set_btn.pack(side="left")
-        self.set_desc = ttk.Label(sets2, text="", foreground=gt.P["muted"], wraplength=200, justify="left")
-        self.set_desc.pack(side="left", padx=8)
+        sets2.add(self.set_btn)
+        self.set_desc = ttk.Label(left, text="", foreground=gt.P["muted"], wraplength=340, justify="left")
+        self.set_desc.pack(anchor="w", padx=gt.PAD, pady=(0, 2))
+        self._wrap.append(self.set_desc)
 
-        bar = ttk.Frame(left)
-        bar.pack(fill="x", padx=12, pady=(6, 2))
+        bar = FlowFrame(left)
+        bar.pack(fill="x", padx=gt.PAD, pady=(6, 2))
         self.read_btn = ttk.Button(bar, text="Прочитати з рації", command=self._on_read)
-        self.read_btn.pack(side="left")
         self.write_btn = ttk.Button(bar, text="Записати в рацію", command=self._on_write)
-        self.write_btn.pack(side="left", padx=6)
+        equal_buttons(self.read_btn, self.write_btn)
+        bar.add(self.read_btn)
+        bar.add(self.write_btn)
         self.reg(self.read_btn)
         self.reg(self.write_btn)
-        bar2 = ttk.Frame(left)
-        bar2.pack(fill="x", padx=12, pady=(0, 4))
-        ttk.Label(bar2, text="Скинути до стокової:").pack(side="left")
+        ttk.Label(left, text="Скинути до стокової:").pack(anchor="w", padx=gt.PAD, pady=(gt.GAP, 0))
+        bar2 = FlowFrame(left)
+        bar2.pack(fill="x", padx=gt.PAD, pady=(0, 4))
         self.reset_btn = ttk.Button(bar2, text="українська", command=self._on_reset)
-        self.reset_btn.pack(side="left", padx=(6, 0))
         self.reset_classic_btn = ttk.Button(bar2, text="класична", command=self._on_reset_classic)
-        self.reset_classic_btn.pack(side="left", padx=6)
+        equal_buttons(self.reset_btn, self.reset_classic_btn)
+        bar2.add(self.reset_btn)
+        bar2.add(self.reset_classic_btn)
         reset_note = ttk.Label(left, text=("Це дві гілки themeInitToDefaultValues() у прошивці: «українська» -- для української збірки, «класична» -- для збірок "
                                            "іншими мовами. Тема, збережена в рації, перекриває вбудовану при кожному ввімкненні, тож стокова на твоїй рації може "
                                            "бути з будь-якої гілки -- нижче видно, з якою вона збігається."),
                                foreground=gt.P["muted"], wraplength=360, justify="left")
-        reset_note.pack(anchor="w", padx=12, pady=(0, 4))
+        reset_note.pack(anchor="w", padx=gt.PAD, pady=(0, 4))
         self._wrap.append(reset_note)
-        bar3 = ttk.Frame(left)
-        bar3.pack(fill="x", padx=12, pady=(0, 4))
+        bar3 = FlowFrame(left)
+        bar3.pack(fill="x", padx=gt.PAD, pady=(0, 4))
         self.save_btn = ttk.Button(bar3, text="Зберегти у файл...", command=self._on_save_file)
-        self.save_btn.pack(side="left")
         self.load_btn = ttk.Button(bar3, text="Завантажити з файлу...", command=self._on_load_file)
-        self.load_btn.pack(side="left", padx=6)
+        equal_buttons(self.save_btn, self.load_btn)
+        bar3.add(self.save_btn)
+        bar3.add(self.load_btn)
 
         self.info = ttk.Label(left, text="", foreground=gt.P["muted"], wraplength=360, justify="left")
-        self.info.pack(anchor="w", padx=12)
+        self.info.pack(anchor="w", padx=gt.PAD)
         self.match_label = ttk.Label(left, text="", foreground=gt.P["muted"], wraplength=360, justify="left")
-        self.match_label.pack(anchor="w", padx=12)
+        self.match_label.pack(anchor="w", padx=gt.PAD)
         self.warn_label = ttk.Label(left, text="", foreground=gt.P["warn"], wraplength=360, justify="left")
-        self.warn_label.pack(anchor="w", padx=12)
+        self.warn_label.pack(anchor="w", padx=gt.PAD)
         self._wrap += [self.info, self.match_label, self.warn_label]
-        self.left_host.canvas.bind("<Configure>", self._on_left_width, add="+")
+        for w in self._wrap:
+            w._fixed_wrap = True          # переносом керує _on_left_width (за шириною лівої частини), а не загальне правило Panel
+        self.left_host.width_listeners.append(self._on_left_width)
 
         lst = ttk.Frame(left)
-        lst.pack(fill="x", padx=12, pady=6)
+        lst.pack(fill="x", padx=gt.PAD, pady=6)
         for i, (key, name, desc) in enumerate(te.ITEMS):
             row = ttk.Frame(lst)
             row.pack(fill="x", pady=1)
@@ -137,36 +148,78 @@ class ThemesPanel(Panel):
                 w.bind("<Button-1>", lambda _e, i=i: self._on_pick(i))
             self._rows.append({"row": row, "name": nm, "swatch": sw, "hex": hx, "mark": mk, "desc": desc})
 
-        right = ttk.Frame(self)
-        right.grid(row=0, column=1, sticky="n", padx=(6, 12), pady=(10, 0))
+        right = self.right_host.inner
         # один великий екран + перемикач екранів; рендер точний (screen_sim/screen_views), масштаб цілий, без згладжування
         self._screens = te.preview_screens()
         self.screen_var = tk.StringVar(value=self._screens[0][0])
         self.scale_var = tk.IntVar(value=PREVIEW_SCALE)
+        self._pref_scale = PREVIEW_SCALE          # масштаб, який вибрав користувач; діючий (scale_var) може бути меншим, якщо місця бракує
         self._display = None
         self._img = None
-        bar = ttk.Frame(right)
-        bar.pack(fill="x", padx=4)
-        ttk.Label(bar, text="Екран:").pack(side="left")
+        bar = FlowFrame(right)
+        bar.pack(fill="x", padx=4, pady=(10, 0))
+        lab = ttk.Label(bar, text="Екран:")
         self.screen_combo = ttk.Combobox(bar, state="readonly", width=26, values=[t for _k, t in self._screens])
         self.screen_combo.current(0)
-        self.screen_combo.pack(side="left", padx=4)
         self.screen_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_screen_change())
+        bar.add(lab)
+        bar.add(self.screen_combo)
+        self.scale_radios = {}
+        scales = ttk.Frame(right)
+        scales.pack(anchor="w", padx=4)
+        ttk.Label(scales, text="Масштаб:").pack(side="left")
         for n in PREVIEW_SCALES:
-            ttk.Radiobutton(bar, text="x%d" % n, value=n, variable=self.scale_var, command=self._on_scale).pack(side="left", padx=2)
+            rb = ttk.Radiobutton(scales, text="x%d" % n, value=n, variable=self.scale_var, command=self._on_scale)
+            rb.pack(side="left", padx=2)
+            self.scale_radios[n] = rb
         self.canvas = tk.Canvas(right, width=sim.W * PREVIEW_SCALE, height=sim.H * PREVIEW_SCALE, highlightthickness=1, highlightbackground=gt.P["muted"])
-        self.canvas.pack(padx=4, pady=4)
+        self.canvas.pack(padx=4, pady=4, anchor="nw")
         self.canvas._data_colour = True          # перегляд екрана рації малює кольори теми, а не оформлення вікна
         self.canvas.bind("<Button-1>", self._on_preview_click)
         self.hit_label = ttk.Label(right, text="", foreground=gt.P["muted"], wraplength=sim.W * PREVIEW_SCALE, justify="left")
         self.hit_label.pack(anchor="w", padx=4)
-        ttk.Label(right, text=("Екран малюється тим самим кодом розкладки, що й прошивка (шрифти, координати, порядок малювання); дані на ньому -- приклад. "
-                               "Клацни піксель -- у списку підсвітиться колір, що його фарбує. Те, що залежить від стану рації й тут не показано, "
-                               "перелічено в TESTING.md (блок CJ)."),
-                  foreground=gt.P["muted"], wraplength=sim.W * PREVIEW_SCALE, justify="left").pack(anchor="w", padx=4, pady=4)
+        self.preview_note = ttk.Label(right, text=("Екран малюється тим самим кодом розкладки, що й прошивка (шрифти, координати, порядок малювання); дані на ньому -- приклад. "
+                                                   "Клацни піксель -- у списку підсвітиться колір, що його фарбує. Те, що залежить від стану рації й тут не показано, "
+                                                   "перелічено в TESTING.md (блок CJ)."),
+                                      foreground=gt.P["muted"], wraplength=sim.W * PREVIEW_SCALE, justify="left")
+        self.preview_note.pack(anchor="w", padx=4, pady=4)
+        for w in (self.hit_label, self.preview_note):
+            w._fixed_wrap = True
+        self.right_host.width_listeners.append(lambda _w: self._fit_scale())
+        self.shell.register_pane("themes", self.pane, default=self._default_left, min_first=self._min_left, min_second=lambda: 200)
 
-    def _on_left_width(self, e):
-        wl = max(240, e.width - 40)
+    LEFT_MIN = 340
+    LEFT_MAX = 520
+    RIGHT_PAD = 2 * gt.PAD
+
+    def _min_left(self):
+        """Керування не вужчі за LEFT_MIN і не вужчі за те, що вимагають його віджети (але й не ширші за LEFT_MAX)."""
+        return max(self.LEFT_MIN, min(self.LEFT_MAX, self.left_host.inner.winfo_reqwidth() + max(1, self.left_host.vbar.winfo_reqwidth())))
+
+    def _default_left(self):
+        """Типове положення межі: перегляду віддається стільки, щоб улізло бажаний масштаб (але керування не вужчі за мінімум)."""
+        total = max(1, self.pane.winfo_width())
+        want_right = sim.W * self._pref_scale + self.RIGHT_PAD + gt.SASH
+        return max(self._min_left(), min(self.LEFT_MAX, total - want_right))
+
+    def _fit_scale(self):
+        """Діючий масштаб перегляду: вибраний користувачем, якщо вміщується у праву частину, інакше найбільший, що вміщується (не менше найменшого)."""
+        if self.right_host.canvas.winfo_width() <= 1:
+            return                    # ще не показано: розмір невідомий (масштаб лишається вибраним)
+        avail = self.right_host.avail_width() - self.RIGHT_PAD
+        fits = [n for n in PREVIEW_SCALES if sim.W * n <= avail]
+        want = self._pref_scale if self._pref_scale in fits else (max(fits) if fits else min(PREVIEW_SCALES))
+        for n, rb in self.scale_radios.items():
+            try:
+                rb.config(state="normal" if n in fits or n == want else "disabled")
+            except tk.TclError:
+                pass
+        if int(self.scale_var.get()) != want:
+            self.scale_var.set(want)
+        self._draw_previews()
+
+    def _on_left_width(self, avail):
+        wl = max(200, avail - 2 * gt.PAD - 8)
         for w in self._wrap:
             try:
                 w.config(wraplength=wl)
@@ -207,7 +260,8 @@ class ThemesPanel(Panel):
         self._draw_previews()
 
     def _on_scale(self):
-        self._draw_previews()
+        self._pref_scale = int(self.scale_var.get())
+        self._fit_scale()
 
     def _draw_previews(self):
         """Малює вибраний екран поточними кольорами: буфер зберігає індекси елементів, тож перемальовується лише палітра."""
@@ -220,6 +274,8 @@ class ThemesPanel(Panel):
         self.canvas.config(width=sim.W * n, height=sim.H * n)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self._img)
+        for w in (self.hit_label, self.preview_note):
+            w.config(wraplength=sim.W * n)
 
     def _refresh_texts(self):
         dt = self.dt

@@ -14,6 +14,7 @@ import cps_link as cps
 import gui_theme as gt
 import voice_prompts as vp
 
+from .layout import FitTable
 from .common import output_dir
 from .panel import Panel
 
@@ -75,15 +76,10 @@ class VoicePanel(Panel):
         ttk.Checkbutton(top, text="лише наявні фрази", variable=self.only_present, command=self._redraw).pack(side="left")
         self.list_btn = ttk.Button(top, text="Зберегти перелік у файл...", command=self._on_save_list)
         self.list_btn.pack(side="left", padx=12)
-        cols = ("n", "label", "off", "len", "frames", "note")
-        self.tree = ttk.Treeview(lst, columns=cols, show="headings", height=14, selectmode="browse")
-        for c, t, w in (("n", "№", 44), ("label", "Призначення", 220), ("off", "Зміщення", 80), ("len", "Довжина, Б", 90), ("frames", "Кадрів", 60), ("note", "Примітка", 200)):
-            self.tree.heading(c, text=t)
-            self.tree.column(c, width=w, anchor="w", stretch=(c == "note"))
-        sb = ttk.Scrollbar(lst, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=(2, 8))
-        sb.pack(side="left", fill="y", pady=(2, 8))
+        tbl = FitTable(lst, [("n", "№", 44, 0), ("label", "Призначення", 220, 0), ("off", "Зміщення", 80, 0), ("len", "Довжина, Б", 90, 0), ("frames", "Кадрів", 60, 0),
+                             ("note", "Примітка", 200, 1)], height=14)
+        self.tree = tbl.tree
+        tbl.pack(fill="both", expand=True, padx=(8, 8), pady=(2, 8))
 
     # --- вигляд -----------------------------------------------------------------------------------
 

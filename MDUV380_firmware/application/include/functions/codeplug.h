@@ -495,9 +495,10 @@ void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len);
 /* R21 З3: те саме, але для ПОКАЗУ: ім'я в UTF-8 (кирилиця з CPS) перекодовується в cp1251 шрифта (aprsNameToDisplay). Кодплаг не переписується. Потоки
  * редагування й запису (codeplugUtilConvertStringToBuf) беруть сирі байти -- їх не чіпати. Лише користувацька українська збірка (APRS_R21_NAMES); інакше -- псевдонім (байт-у-байт стоковий, diag теж). */
 /* R34: назви з маленькою «я» (0xFF у cp1251). Читання відкидає лише ХВОСТОВІ 0xFF (потім хвостові 0x00) і не змінює вхідний буфер (codeplug.c).
- * CODEPLUG_NAME_ZERO_TAIL -- запис назви, що закінчується на 0xFF, з хвостом 0x00 (інакше кінцева «я» читалась би як дописка). ТИПОВО ВИМКНЕНО: чи читає стокова CPS TYT
- * назву з хвостом 0x00, з коду не встановлюється (крок CK3 у TESTING.md). Вмикати прибиранням коментаря або `-DCODEPLUG_NAME_ZERO_TAIL=1` після перевірки на залізі. */
-/* #define CODEPLUG_NAME_ZERO_TAIL 1 */
+ * CODEPLUG_NAME_ZERO_TAIL -- запис назви, що закінчується на 0xFF, з хвостом 0x00 (інакше кінцева «я» читалась би як дописка). R36: УВІМКНЕНО -- на залізі
+ * 2026-10-25 стокова TYT CPS нормально читає канал, записаний з хвостом 0x00 (крок CK3). Діє лише разом з APRS_R21_NAMES (користувацька українська збірка);
+ * правило вузьке: хвіст 0x00 лише для НЕПОРОЖНЬОЇ назви, що закінчується на 0xFF і має місце для хвоста, решта (і порожня) -- 0xFF, як стокова CPS. */
+#define CODEPLUG_NAME_ZERO_TAIL 1
 #if defined(APRS_R21_NAMES)
 bool codeplugUtilNameBufEqualsString(const char *codeplugBuf, const char *str, int len);   /* R34: назва в полі кодплага == рядок str (без зміни буфера) */
 void codeplugUtilConvertBufToDisplayString(char *codeplugBuf, char *outBuf, int len);

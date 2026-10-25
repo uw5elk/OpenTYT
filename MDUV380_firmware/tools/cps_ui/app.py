@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
 import cps_link as cps
+import gui_clipboard
 import gui_dialogs as gd
 import gui_theme as gt
 
@@ -51,6 +52,7 @@ from .p_voice import VoicePanel
 from .p_vfo import VfoPanel
 from .p_contacts import ContactsPanel
 from .p_zones import ZonesPanel
+from .layout import PaneMemory
 from .panel import BUSY_REASON, HINT_NO_DOC, ScrollFrame
 from .settings import Settings
 
@@ -69,6 +71,7 @@ class CpsApp(DocActions, tk.Tk):
     def __init__(self, settings=None, autoprobe=True):
         super().__init__()
         gt.apply(self)            # темна тема -- до створення будь-яких віджетів
+        gui_clipboard.install(self)    # R36 B3: Ctrl+C/V/X/A за кодом клавіші в усіх полях і таблицях + контекстні меню (до створення віджетів)
         self.title(APP_TITLE)
         self.minsize(760, 520)
         self.settings = settings or Settings()
@@ -84,6 +87,7 @@ class CpsApp(DocActions, tk.Tk):
         self._hosts = {}
         self._current = None
         self._normal_size = None
+        self._panes = {}                 # R36 B2: назва -> PaneMemory (межі всередині панелей; положення зберігаються в налаштуваннях)
         self._defs = {}
         for gkey, gtitle, classes in SECTIONS:
             self._defs[gkey] = {"cls": None, "title": gtitle, "children": classes}
@@ -163,6 +167,8 @@ class CpsApp(DocActions, tk.Tk):
             self._log_h = lh
         if self._log_h >= 40:
             self.settings.set("log_height", int(self._log_h))
+        for pm in self._panes.values():
+            pm.store(self.settings)
         return self.settings.save()
 
     def _on_close(self):
@@ -180,7 +186,7 @@ class CpsApp(DocActions, tk.Tk):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         style = ttk.Style(self)
-        style.configure("Sash", sashthickness=6, gripcount=0)
+        style.configure("Sash", sashthickness=gt.SASH, gripcount=0)
         # Дерево зливається з лівою колонкою (без власної рамки й окремого тла): порожнє місце під пунктами не виглядає «коробкою».
         style.configure("Nav.Treeview", rowheight=24, background=gt.P["bg"], fieldbackground=gt.P["bg"], bordercolor=gt.P["bg"],
                         lightcolor=gt.P["bg"], darkcolor=gt.P["bg"], borderwidth=0)
@@ -230,6 +236,10 @@ class CpsApp(DocActions, tk.Tk):
         self._log_h = int(self.settings.get("log_height", 0) or 0)
         if self._log_open:
             self.vpane.add(self.log_frame, weight=0)
+        # R36 B2: подвійне клацання по межі повертає типове положення; мінімуми не дають стиснути частини до нечитабельності
+        self.pane_tree = PaneMemory(self.hpane, "tree", default=lambda: 300, min_first=lambda: 160, min_second=lambda: 360)
+        self.pane_log = PaneMemory(self.vpane, "log", default=lambda: max(100, self.vpane.winfo_height() - self._default_log_height()),
+                                   min_first=lambda: 160, min_second=lambda: 40)
 
         # рядок стану: текст зліва; смужка прогресу з'являється ЛИШЕ на час операції; кнопка журналу справа
         bar = ttk.Frame(self)
@@ -297,6 +307,21 @@ class CpsApp(DocActions, tk.Tk):
             except tk.TclError:
                 pass
         return left_w, log_h
+
+    def register_pane(self, name, pane, default, min_first=None, min_second=None, request=True):
+        """R36 B2: межа всередині панелі. Положення береться з налаштувань (або типове) щойно панель показано, подвійне клацання по межі повертає
+        типове, а при закритті програми положення записується (save_settings). Повертає PaneMemory."""
+        pm = PaneMemory(pane, name, default, min_first, min_second, request=request)
+        self._panes[name] = pm
+        pm.update_request()
+
+        def _try(_e=None):
+            if not pm.restored:
+                pm.restore(self.settings)
+        pane.bind("<Map>", lambda e: pane.after_idle(_try) if e.widget is pane else None, add="+")
+        pane.bind("<Configure>", lambda e: _try() if e.widget is pane else None, add="+")
+        pane.after(250, _try)
+        return pm
 
     # --- панель документа -------------------------------------------------------------------
 

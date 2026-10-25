@@ -116,8 +116,13 @@ class AprsPanel(Panel):
         ttk.Label(radio_box, text="Натисни «Прочитати з рації», щоб підтягнути поточні значення.", foreground=gt.P["info"]).pack(anchor="w", padx=8, pady=(0, 6))
         self.on_document_changed()
 
-    def _relayout(self, e):
-        wide = e.width >= 900
+    def on_avail(self, avail):
+        """Дві колонки лише коли ВИДИМА ширина панелі вміщує обидві (за шириною розтягнутого вмісту рахувати не можна -- він сам росте від двох колонок)."""
+        self._relayout(None, avail)
+
+    def _relayout(self, e, avail=None):
+        avail = avail or self.avail_width()
+        wide = avail >= 960
         if wide == self._wide:
             return
         self._wide = wide

@@ -12,6 +12,7 @@ import gui_theme as gt
 import table_edit as te
 
 from .editor_base import EditorPanel
+from .layout import FlowFrame
 
 
 class DtmfPanel(EditorPanel):
@@ -32,12 +33,12 @@ class DtmfPanel(EditorPanel):
         self.form_title.pack(anchor="w", pady=(0, 6))
         box = ttk.LabelFrame(parent, text="Код")
         box.pack(fill="x", padx=(0, 8))
-        row = ttk.Frame(box)
-        row.pack(fill="x", padx=8, pady=6)
+        row = FlowFrame(box)
+        row.pack(fill="x", padx=gt.PAD - 4, pady=6)
         self.code_entry = ttk.Entry(row, textvariable=self.code_var, width=24)
-        self.code_entry.pack(side="left")
         self.code_apply = ttk.Button(row, text="Застосувати код", command=self.commit_code)
-        self.code_apply.pack(side="left", padx=8)
+        row.add(self.code_entry)
+        row.add(self.code_apply)
         self.code_info = ttk.Label(box, text="", wraplength=420, justify="left", foreground=gt.P["muted"])
         self.code_info.pack(anchor="w", padx=8, pady=(0, 6))
         self.code_entry.bind("<Return>", lambda _e: self.commit_code())
