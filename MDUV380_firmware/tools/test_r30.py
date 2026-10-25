@@ -239,7 +239,7 @@ def test_backup_contains_region():
     spi_a = new_spi_with(1)
     path, data, manifest = mk_zip(spi_a)
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        check(sorted(z.namelist()) == ["customdata.bin", "eeprom.bin", "flash.bin", "manifest.json"], "W2: у .zip є окремий файл області")
+        check(sorted(z.namelist()) == ["aeskeys.bin", "customdata.bin", "eeprom.bin", "flash.bin", "manifest.json"], "W2: у .zip є окремий файл області (і, з R31, ключів)")
         raw = z.read("customdata.bin")
     check(raw == region_of(spi_a), "W2/Z3: customdata.bin == область з рації байт-в-байт")
     p = manifest["parts"]["customData"]
@@ -272,8 +272,8 @@ def test_backup_contains_region():
     _p, _d, mm = mk_zip(spi)
     check(any(b.get("secret") for b in mm["parts"]["customData"]["blocks"]) and "секрет" in mm["note"], "W2: ключовий матеріал в AES-блоці позначено в маніфесті й примітці")
     # без області: старий формат
-    _p2, d2, m2 = mk_zip(spi_a, custom_data=False)
-    check("customData" not in m2["parts"] and m2["includes"] == ["eeprom", "flash"], "Z4: custom_data=False дає архів у старому форматі")
+    _p2, d2, m2 = mk_zip(spi_a, custom_data=False, aes_keys=False)
+    check("customData" not in m2["parts"] and m2["includes"] == ["eeprom", "flash"], "Z4: custom_data=False, aes_keys=False дає архів у старому форматі")
 
 
 def run_restore(radio, path, **kw):

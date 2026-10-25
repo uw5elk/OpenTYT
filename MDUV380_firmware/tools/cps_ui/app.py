@@ -30,6 +30,7 @@ from .connection import RadioConnection
 from .doc_actions import DocActions
 from .p_aes import AesPanel
 from .p_allsettings import AllSettingsPanel
+from .p_dmrdb import DmrDbPanel
 from .p_aprs import AprsPanel
 from .p_backup import BackupPanel
 from .p_basic import BasicInfoPanel
@@ -54,7 +55,7 @@ SECTIONS = [
     ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
     ("grp_codeplug", "Кодплаг", [BackupPanel, ViewerPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, VfoPanel, ZonesPanel, TgListsPanel,
                                   DtmfPanel, AprsPanel, CsvPanel]),
-    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel, AllSettingsPanel]),
+    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel, AllSettingsPanel, DmrDbPanel]),
 ]
 DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}

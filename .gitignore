@@ -9,3 +9,4 @@ __pycache__/
 *.pyc
 MDUV380_firmware/tests/.build/
 MDUV380_firmware/tools/ui1_preview.png
+FETCH_HEAD
