@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """general_edit.py -- R-next / Y2: «Кодплаг → Загальні налаштування». ЛОГІКА без Tk і без рації.
 
-Тут лише те, що є в кодплузі І справді читається прошивкою. Перелік складено з коду прошивки, а не з пам'яті:
+Тут лише те, що є в кодплазі І справді читається прошивкою. Перелік складено з коду прошивки, а не з пам'яті:
 
   * пароль на старті: codeplug.c codeplugGetPasswordPin() читає 6 байтів від 0x7519; біт 0 першого байта -- «пароль увімкнено»; цифри PIN --
     3 байти BCD від 0x751C (старший ніббл першим), ніббл 0xF обриває PIN; uiSplashScreen.c питає PIN при кожному вмиканні;
@@ -76,7 +76,7 @@ def pin_encode(digits):
 
 def general_values(img):
     """Поточні значення: {pwd_enable, pwd_pin, pwd_pin_odd, dtmf_*: int}. pwd_enable -- «рація справді питатиме PIN»: біт 0 УВІМКНЕНО І в PIN є хоч одна цифра
-    (codeplugGetPasswordPin повертає довжину 0, а uiSplashScreen тоді PIN не питає; у порожньому кодплузі 0x7519 = 0xFF, тобто біт піднято, але PIN нема)."""
+    (codeplugGetPasswordPin повертає довжину 0, а uiSplashScreen тоді PIN не питає; у порожньому кодплазі 0x7519 = 0xFF, тобто біт піднято, але PIN нема)."""
     pin, odd = pin_decode(img.ee(ADDR_PWD_PIN, PIN_BYTES))
     out = {"pwd_enable": bool(img.ee(ADDR_PWD_FLAGS, 1)[0] & 1) and bool(pin), "pwd_pin": pin, "pwd_pin_odd": odd}
     for key, addr, *_rest in DTMF_FIELDS:
@@ -105,14 +105,14 @@ def check_values(v, keys=None):
 
 def apply_general(base_img, **values):
     """Накласти значення (ключі -- як у general_values; відсутній ключ -- поле не чіпати). Байти, що не змінилися, не чіпаються.
-    PIN при вимкненому паролі й `pwd_pin=None` не змінюється; при `pwd_pin_odd` у кодплузі PIN лишається, доки його явно не задано."""
+    PIN при вимкненому паролі й `pwd_pin=None` не змінюється; при `pwd_pin_odd` у кодплазі PIN лишається, доки його явно не задано."""
     img = cc.Image(base_img.eeprom, base_img.flash, base_img.base)
     res = cc.ImportResult()
     cur = general_values(img)
     new = dict(cur)
     new.update({k: v for k, v in values.items() if k in cur and k != "pwd_pin_odd"})
     pin_given = "pwd_pin" in values
-    # перевіряються лише змінені поля: у порожньому кодплузі байти DTMF = 0xFF (поза межами), і це не заважає змінити, скажімо, пароль
+    # перевіряються лише змінені поля: у порожньому кодплазі байти DTMF = 0xFF (поза межами), і це не заважає змінити, скажімо, пароль
     touched = [k for k, _a, *_r in DTMF_FIELDS if new[k] != cur[k]]
     problems = check_values(new if pin_given else dict(new, pwd_pin="1"), keys=touched)
     if not pin_given and new["pwd_enable"] and not cur["pwd_enable"] and (not cur["pwd_pin"] or cur["pwd_pin_odd"]):

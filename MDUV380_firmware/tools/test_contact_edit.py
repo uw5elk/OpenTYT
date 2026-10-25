@@ -75,7 +75,7 @@ def test_apply_ops():
     res = ce.apply_ops(base_img, [{"op": "add", "name": "Одеса", "id": 2550, "type": 0}])
     check(len(res.added) == 1, "додано контакт")
     slots = {s_: r for s_, r in res.image.contacts()}
-    check(len(slots) == len(base_img.contacts()) + 1, "у кодплузі на один контакт більше")
+    check(len(slots) == len(base_img.contacts()) + 1, "у кодплазі на один контакт більше")
     free_slot = [s_ for s_ in slots if s_ not in dict(base_img.contacts())][0]
     check(free_slot == 3, "перший вільний слот, на який ніхто не посилається: %d" % free_slot)
     rec = slots[free_slot]
@@ -124,7 +124,7 @@ def test_radio_flow():
         t = texts[0]
         for frag in ("ЗМІНА КОНТАКТІВ", "ВИДАЛЯЄТЬСЯ", "Ukraine", "Дракон", "Одеса", "pre-restore"):
             check(frag in t, "діалог містить «%s»" % frag)
-        check(all(0x9B <= s_ < 0xAF for s_ in radio.commits), "записано лише сектори флеш-кодплуга: %r" % radio.commits)
+        check(all(0x9B <= s_ < 0xAF for s_ in radio.commits), "записано лише сектори флеш-кодплага: %r" % radio.commits)
         cp2, _ = cv.codeplug_from_radio(cl.CpsLink(tr.FakeRadioX(radio.spi), retries=0))
         names = {c[0]: c[1] for c in cp2.contacts()}
         check(names.get(1) == "Дракон" and 3 not in names and any(v == "Одеса" for v in names.values()), "у рації: %r" % names)

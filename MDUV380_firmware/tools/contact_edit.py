@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""contact_edit.py -- R26 V2: правка контактів кодплуга (назва, TG/ID, тип виклику; додати; видалити). ЛОГІКА без Tk.
+"""contact_edit.py -- R26 V2: правка контактів кодплага (назва, TG/ID, тип виклику; додати; видалити). ЛОГІКА без Tk.
 
-Зміни НЕ пишуться «знімком»: вікно перегляду збирає СПИСОК ОПЕРАЦІЙ, а на «Записати» ми заново читаємо ПОТОЧНИЙ кодплуг рації,
+Зміни НЕ пишуться «знімком»: вікно перегляду збирає СПИСОК ОПЕРАЦІЙ, а на «Записати» ми заново читаємо ПОТОЧНИЙ кодплаг рації,
 перевіряємо, що змінюваний контакт ще той самий (назва збігається з тією, що бачив користувач), накладаємо операції й пишемо
 ТІЄЮ САМОЮ дорогою, що відновлення з бекапу (cps_csv.write_image_via_restore -> cps_restore.restore_codeplug: страхова копія,
 діалог зі списком змін, лише відмінні сектори, перечитування, SHA-256, C 6 1). Заблоковано тією ж RESTORE_UNLOCKED.
@@ -11,7 +11,7 @@
   {"op": "edit",   "slot": i, "expect_name": сирі 16 байтів, "name": текст|None, "id": int|None, "type": 0|1|2|None}
   {"op": "add",    "name": текст, "id": int, "type": 0|1|2}
   {"op": "delete", "slot": i, "expect_name": сирі 16 байтів}
-slot -- 0-based слот контакту (номер у кодплузі = slot + 1). Порожній запис = name[0] == 0xFF (codeplugInitContactsCache).
+slot -- 0-based слот контакту (номер у кодплазі = slot + 1). Порожній запис = name[0] == 0xFF (codeplugInitContactsCache).
 """
 import os
 import sys
@@ -113,7 +113,7 @@ def apply_ops(base_img, ops):
             slot = op["slot"]
             rec = contacts.get(slot)
             if rec is None or cv.name_bytes(rec[:16]) != cv.name_bytes(op["expect_name"]):
-                problems.append("контакт №%d у рації вже не такий, яким його бачив перегляд (змінено або видалено) -- прочитайте кодплуг ще раз"
+                problems.append("контакт №%d у рації вже не такий, яким його бачив перегляд (змінено або видалено) -- прочитайте кодплаг ще раз"
                                 % (slot + 1))
                 continue
         if kind == "delete":
@@ -187,7 +187,7 @@ EDIT_TITLE = "ЗМІНА КОНТАКТІВ -- рація буде ПЕРЕЗА�
 
 
 def apply_to_radio(link, ops, confirm, progress=None, log=print, out_dir=".", now=None, clock=None, post_reset=True):
-    """Прочитати поточний кодплуг рації, накласти операції, записати через шлях відновлення з бекапу."""
+    """Прочитати поточний кодплаг рації, накласти операції, записати через шлях відновлення з бекапу."""
     import time as _t
     clock = clock or _t.time
 
@@ -195,7 +195,7 @@ def apply_to_radio(link, ops, confirm, progress=None, log=print, out_dir=".", no
         if progress:
             progress(max(0, min(100, int(pct))), text)
 
-    prog(0, "Читаю поточний кодплуг рації...")
+    prog(0, "Читаю поточний кодплаг рації...")
     cp, _m = cv.codeplug_from_radio(link, lambda p, t: prog(p * 0.25, t))
     res = apply_ops(cc.Image.from_codeplug(cp), ops)
     if not res.any_change():

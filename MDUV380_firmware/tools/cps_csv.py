@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""cps_csv.py -- R26 V1: обмін кодплуга з рації з CSV у форматі OpenGD77 CPS (Channels / Contacts / TG_Lists / Zones / APRS / DTMF).
+"""cps_csv.py -- R26 V1: обмін кодплага з рації з CSV у форматі OpenGD77 CPS (Channels / Contacts / TG_Lists / Zones / APRS / DTMF).
 
-Експорт ЛИШЕ ЧИТАЄ. Імпорт будує новий образ кодплуга в пам'яті, нічого не пише сам: у рацію він іде ТІЄЮ САМОЮ дорогою,
+Експорт ЛИШЕ ЧИТАЄ. Імпорт будує новий образ кодплага в пам'яті, нічого не пише сам: у рацію він іде ТІЄЮ САМОЮ дорогою,
 що й відновлення з бекапу (tools/cps_restore.py: страхова копія -> діалог зі списком змін -> лише відмінні сектори ->
 перечитування -> SHA-256 -> C 6 1). Окремого «швидкого запису» нема.
 
 ФОРМАТ (claude/cps-csv-format.md у проєкті): роздільник `;`, CRLF, UTF-8 без BOM, частоти з табуляцією попереду
 (`\\t446,00625`), десяткова ознака -- кома АБО крапка (читаємо обидві; пишемо за системною локаллю або за явним параметром).
 
-КИРИЛИЦЯ (V1.2). CPS бере сирі 16 байтів назви з кодплуга, читає їх як Latin-1 і пише в CSV у UTF-8. Тому «Папуга»
-(в кодплузі GBK `A7 B1 A7 D1 ...`) у CSV виглядає як `§±§Ñ§á§å§Ô§Ñ`. Це оборотно: `поле.encode('latin-1')` -> сирі байти.
+КИРИЛИЦЯ (V1.2). CPS бере сирі 16 байтів назви з кодплага, читає їх як Latin-1 і пише в CSV у UTF-8. Тому «Папуга»
+(в кодплазі GBK `A7 B1 A7 D1 ...`) у CSV виглядає як `§±§Ñ§á§å§Ô§Ñ`. Це оборотно: `поле.encode('latin-1')` -> сирі байти.
 Ми пишемо ту саму «сумісну» колонку (CPS її читає) і додаємо в кінець рядка колонку `Name (readable)` з читабельною назвою
 (через єдину codeplug_view.decode_name_ex). Правила імпорту назви:
   * сумісна колонка -- джерело істини, коли її змінено (або коли рядок новий і колонки не збігаються);
@@ -22,7 +22,7 @@
 
 ПОВНА ОБОРОТНІСТЬ (T1). Імпорт міняє поле запису лише тоді, коли текст у CSV відрізняється від того, що експортується з
 наявного запису (поля, яких у CSV нема -- VFO-зсув, STE, «roaming» тощо -- не чіпаються взагалі). Тож
-експорт -> імпорт без правок повертає кодплуг байт-у-байт, навіть із сміттям у неописаних полях.
+експорт -> імпорт без правок повертає кодплаг байт-у-байт, навіть із сміттям у неописаних полях.
 
 Значення полів каналу (потужність, шумодав, TA, координати), яких у проєктному документі нема в прикладах, ВИВЕДЕНО З КОДУ
 ПРОШИВКИ (codeplug.c / menuChannelDetails.c), а не з зразка CPS -- кроки BM1/BM9/BM10. Нерозпізнане значення «м'якої»
@@ -56,7 +56,7 @@ APRS_HDR = ["APRS config Name", "SSID", "Via1", "Via1 SSID", "Via2", "Via2 SSID"
             "Use position", "Latitude", "Longitude", "TX Frequency", "Transmit QSY", "Baud rate setting"]
 DTMF_HDR = ["Contact Name", "Code"]
 
-# --- адреси (codeplug.c; кодплугові, без FLASH_ADDRESS_OFFSET) ---
+# --- адреси (codeplug.c; кодплагові, без FLASH_ADDRESS_OFFSET) ---
 ADDR_APRS = 0x1588            # CODEPLUG_ADDR_APRS_CONFIGS
 APRS_SIZE = 64                # CODEPLUG_APRS_CONFIG_DATA_STRUCT_SIZE
 APRS_MAX = 8                  # codeplugAPRSInitCache(): while (aprsIdx <= 8)
@@ -198,11 +198,11 @@ def parse_bool(text):
 
 
 # =========================================================================================
-#  Образ кодплуга
+#  Образ кодплага
 # =========================================================================================
 
 class Image:
-    """Змінюваний образ: EEPROM (адреси кодплуга) і флеш-частина (адреси кодплуга від flash_cp_start)."""
+    """Змінюваний образ: EEPROM (адреси кодплага) і флеш-частина (адреси кодплага від flash_cp_start)."""
 
     def __init__(self, eeprom, flash, flash_cp_start):
         self.eeprom = bytearray(eeprom)
@@ -222,13 +222,13 @@ class Image:
     def fl(self, a, n):
         o = a - self.base
         if o < 0 or o + n > len(self.flash):
-            raise CsvError("адреса кодплуга 0x%X поза флеш-частиною образу" % a)
+            raise CsvError("адреса кодплага 0x%X поза флеш-частиною образу" % a)
         return bytes(self.flash[o:o + n])
 
     def set_fl(self, a, b):
         o = a - self.base
         if o < 0 or o + len(b) > len(self.flash):
-            raise CsvError("адреса кодплуга 0x%X поза флеш-частиною образу" % a)
+            raise CsvError("адреса кодплага 0x%X поза флеш-частиною образу" % a)
         self.flash[o:o + len(b)] = b
 
     # --- канали ---
@@ -983,7 +983,7 @@ class ImportResult:
             lines += ["  - " + w for w in self.warnings[:limit]]
             lines.append("")
         if not lines:
-            lines = ["Змін у кодплузі немає."]
+            lines = ["Змін у кодплазі немає."]
         return lines[:-1] if lines and lines[-1] == "" else lines
 
     def summary(self):
@@ -1509,7 +1509,7 @@ def _sec_tg_lists(s, tab):
         if vals is None:
             continue
         if not vals:
-            s.warn("TG-список «%s» порожній -- рація такі не показує, його не буде в кодплузі." % readable_text(raw))
+            s.warn("TG-список «%s» порожній -- рація такі не показує, його не буде в кодплазі." % readable_text(raw))
             if old:
                 gone = list(gone) + [slot]
             continue
@@ -1690,7 +1690,7 @@ def _sec_zones(s, tab):
         if vals is None:
             continue
         if not vals:
-            s.warn("Зона «%s» порожня -- рація таких не використовує, її не буде в кодплузі." % readable_text(raw))
+            s.warn("Зона «%s» порожня -- рація таких не використовує, її не буде в кодплазі." % readable_text(raw))
             if old is not None and bit not in gone:
                 gone.append(bit)
             continue
@@ -1801,7 +1801,7 @@ def dry_run(base_zip_or_cp, directory, dp=None, session=None):
 
 def import_to_radio(link, directory, confirm, progress=None, log=print, session=None, dp=None, out_dir=None, now=None,
                     clock=time.time, post_reset=True):
-    """Прочитати CSV з `directory`, прочитати ПОТОЧНИЙ кодплуг рації, побудувати новий образ і записати його через
+    """Прочитати CSV з `directory`, прочитати ПОТОЧНИЙ кодплаг рації, побудувати новий образ і записати його через
     cps_restore.restore_codeplug (страхова копія -> діалог -> лише відмінні сектори -> перечитування -> SHA-256 -> C 6 1).
     Помилка CSV -> CsvImportRefused ДО будь-якого запису (і до страхової копії). out_dir -- де лежатиме файл «що записали»
     (codeplug_csv-import_*.zip) і страхова копія; типово -- тека з CSV."""
@@ -1813,13 +1813,13 @@ def import_to_radio(link, directory, confirm, progress=None, log=print, session=
     tables = read_dir(directory)
     if not tables:
         raise CsvError("у теці %s немає жодного з файлів: %s" % (directory, ", ".join(FILE_NAMES.values())))
-    prog(0, "Читаю поточний кодплуг рації...")
+    prog(0, "Читаю поточний кодплаг рації...")
     cp, _m = cv.codeplug_from_radio(link, lambda p, t: prog(p * 0.25, t))
     prog(26, "Розбираю CSV...")
     res = import_csv(cp, tables, dp, session)
     if not res.any_change():
-        prog(100, "Змін у кодплузі немає")
-        log("CSV не відрізняється від кодплуга рації -- записувати нічого.")
+        prog(100, "Змін у кодплазі немає")
+        log("CSV не відрізняється від кодплага рації -- записувати нічого.")
         return {"cancelled": False, "nothingToDo": True, "sectorsWritten": 0, "report": res}
     out = write_image_via_restore(link, res, confirm, progress=lambda p, t: prog(27 + p * 0.73, t), log=log, now=now, clock=clock,
                                   post_reset=post_reset, title=IMPORT_TITLE, out_dir=out_dir or directory, zip_prefix="codeplug_csv-import",
@@ -1858,7 +1858,7 @@ def write_image_via_restore(link, res, confirm, progress=None, log=print, now=No
 
 def main(argv=None):
     import argparse
-    ap = argparse.ArgumentParser(description="R26: CSV-обмін кодплуга (формат OpenGD77 CPS).")
+    ap = argparse.ArgumentParser(description="R26: CSV-обмін кодплага (формат OpenGD77 CPS).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("export", help="експорт шести CSV (ЛИШЕ читає)")
     e.add_argument("--backup", help="бекап .zip (інакше -- читання з рації)")

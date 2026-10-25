@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """cps_link.py -- R24: ЧИТАННЯ з рації за CPS-протоколом прошивки (usb_com.c, cpsHandleReadCommand):
-знімок екрана (CPS_ACCESS_DISPLAY_BUFFER) і бекап кодплуга (EEPROM + флеш) у один .zip.
+знімок екрана (CPS_ACCESS_DISPLAY_BUFFER) і бекап кодплага (EEPROM + флеш) у один .zip.
 
 *** У ЦЬОМУ ФАЙЛІ НЕМАЄ ЖОДНОГО ЗАПИСУ В РАЦІЮ. *** Лише запити 'R'. Відновлення з бекапу (запис 'X') -- окремий
 файл tools/cps_restore.py (R25); так видно одним поглядом, який код уміє писати.
@@ -17,7 +17,7 @@
 чекає до кінця тайм-ауту порту.
 
 ОБЛАСТІ (area):
-    1  CPS_ACCESS_FLASH           сирі адреси SPI-флеша (кодплуг: FLASH_ADDRESS_OFFSET 0x20000 + адреса з codeplug.c)
+    1  CPS_ACCESS_FLASH           сирі адреси SPI-флеша (кодплаг: FLASH_ADDRESS_OFFSET 0x20000 + адреса з codeplug.c)
     2  CPS_ACCESS_EEPROM          емульований EEPROM = SPI-флеш від 0 (MDUV380_EMULATED_EEPROM_ADDRESS_OFFSET = 0)
     6  CPS_ACCESS_DISPLAY_BUFFER  екранний буфер: 160x128 x 2 байти
     9  CPS_ACCESS_RADIO_INFO      structVersion, radioType, gitRevision, buildDateTime, flashId, features
@@ -61,7 +61,7 @@ DISPLAY_W = 160
 DISPLAY_H = 128
 DISPLAY_BYTES = DISPLAY_W * DISPLAY_H * 2     # 40960
 
-# --- кодплуг (константи з codeplug.c / codeplug.h; число поруч -- звідки воно) ---------
+# --- кодплаг (константи з codeplug.c / codeplug.h; число поруч -- звідки воно) ---------
 FLASH_ADDRESS_OFFSET = 0x20000                # codeplug.h: FLASH_ADDRESS_OFFSET (128 * 1024) для MDUV380
 SECTOR = 4096
 EEPROM_BACKUP_LEN = 0x20000                   # весь емульований EEPROM (розмір експорту .g77)
@@ -112,7 +112,7 @@ class BackupInvalid(CpsError):
 def flash_backup_range():
     """Межі флеш-частини бекапу, ОБЧИСЛЕНІ з констант codeplug.c (не вгадані).
 
-    Флеш-кодплуг -- безперервна ділянка від заголовка першого флеш-банку каналів до кінця таблиці RX-груп:
+    Флеш-кодплаг -- безперервна ділянка від заголовка першого флеш-банку каналів до кінця таблиці RX-груп:
       банки каналів 1..7 : від CODEPLUG_ADDR_CHANNEL_HEADER_FLASH, кожен 16 + 128*56 = 7184 Б (16-байтова
                            маска «в роботі» + 128 каналів), банк 0 живе в EEPROM;
       контакти           : від CODEPLUG_ADDR_CONTACTS, 1024 * 24 Б;
@@ -369,7 +369,7 @@ def take_screenshot(link, directory, diagnostic=False, progress=None, now=None, 
 
 
 # =========================================================================================
-#  S2. Бекап кодплуга
+#  S2. Бекап кодплага
 # =========================================================================================
 
 def sha256(data):
@@ -471,7 +471,7 @@ def read_backup_zip(source):
             eeprom = z.read("eeprom.bin")
             flash = z.read("flash.bin")
     except (zipfile.BadZipFile, KeyError, ValueError) as e:
-        raise CpsError("це не бекап кодплуга або файл пошкоджено: %s" % e)
+        raise CpsError("це не бекап кодплага або файл пошкоджено: %s" % e)
     try:
         parts = manifest["parts"]
         checks = [("eeprom", eeprom), ("flash", flash)]
@@ -493,7 +493,7 @@ def read_backup_zip(source):
 
 
 def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False, custom_data=True, aes_keys=True):
-    """Прочитати EEPROM і флеш-частину кодплуга, самоперевірити й зібрати .zip.
+    """Прочитати EEPROM і флеш-частину кодплага, самоперевірити й зібрати .zip.
     full_snapshot=True (R25 W3.2) -- додатково голосові підказки і таблицю ключів AES (за замовчуванням ВИМКНЕНО).
     progress(percent, text). Повертає (zip_bytes, manifest). При невдалій самоперевірці -- BackupInvalid."""
     started = clock()
@@ -579,13 +579,13 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
 
 def main(argv=None):
     import argparse
-    ap = argparse.ArgumentParser(description="R24: знімок екрана і бекап кодплуга (лише читання).")
+    ap = argparse.ArgumentParser(description="R24: знімок екрана і бекап кодплага (лише читання).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("screenshot", help="знімок екрана рації -> PNG")
     s.add_argument("--port")
     s.add_argument("--outdir", default=".")
     s.add_argument("--diag", action="store_true", help="додатково зберегти інший порядок байтів і сирий буфер")
-    b = sub.add_parser("backup", help="бекап кодплуга -> .zip")
+    b = sub.add_parser("backup", help="бекап кодплага -> .zip")
     b.add_argument("--port")
     b.add_argument("--outdir", default=".")
     b.add_argument("--full", action="store_true", help="повний знімок: ще й голосові підказки, ключі AES (секретно!) і базу позивних")

@@ -220,7 +220,7 @@ class Document:
         rng = cl.flash_backup_range()
         ee, fl = bytes(self.image.eeprom), bytes(self.image.flash)
         if len(ee) != cl.EEPROM_BACKUP_LEN or len(fl) != rng["length"]:
-            raise DocumentError("розмір образу (%d + %d Б) не відповідає відомому кодплугу (%d + %d Б) -- зберігати не можна"
+            raise DocumentError("розмір образу (%d + %d Б) не відповідає відомому кодплагу (%d + %d Б) -- зберігати не можна"
                                 % (len(ee), len(fl), cl.EEPROM_BACKUP_LEN, rng["length"]))
         info = dict(self.manifest.get("radio") or {})
         now = time.time()

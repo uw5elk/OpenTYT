@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""cps_backup_info.py -- R24 S3: друкує людською мовою зміст бекапу кодплуга (.zip з tools/cps_link.py).
+"""cps_backup_info.py -- R24 S3: друкує людською мовою зміст бекапу кодплага (.zip з tools/cps_link.py).
 
 ТІЛЬКИ ЧИТАЄ ФАЙЛ. До рації не торкається, pyserial не потрібен.
 
     python3 cps_backup_info.py codeplug_backup_20261017_120000.zip [--names 15] [--encoding auto|gbk|cp1251] [--raw]
 
 Що друкує: прошивку з маніфесту, позивний і DMR ID, кількість зон / каналів / контактів / груп, назви перших
-контактів, груп і зон. Назви в кодплузі -- 16 байтів, дописка 0xFF; CPS від TYT пише їх у GBK (кирилиця -- пари
+контактів, груп і зон. Назви в кодплазі -- 16 байтів, дописка 0xFF; CPS від TYT пише їх у GBK (кирилиця -- пари
 A7 xx, docs/codeplug-encoding.md), а назви, набрані на самій рації, -- у cp1251. Режим `auto` вгадує так: якщо в
 назві є пара A7 xx з діапазону кирилиці GBK -- декодує як GBK, інакше -- як cp1251.
 """
@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cps_link as cl  # noqa: E402
 
 
-# Усе декодування назв і розбір кодплуга -- у codeplug_view.py (R25 W2.3: одна спільна реалізація для цього скрипта й вікна перегляду).
+# Усе декодування назв і розбір кодплага -- у codeplug_view.py (R25 W2.3: одна спільна реалізація для цього скрипта й вікна перегляду).
 from codeplug_view import (Codeplug, CALL_TYPES, bcd_to_int, decode_name, decode_name_ex, name_bytes,  # noqa: E402,F401
                            gbk_cyrillic_pair as _gbk_cyrillic_pair, popcount_bytes)
 
@@ -65,7 +65,7 @@ def describe(manifest, eeprom, flash, names=10, enc="auto", raw=False, out=print
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="R24 S3: що лежить у бекапі кодплуга (лише читання файла).")
+    ap = argparse.ArgumentParser(description="R24 S3: що лежить у бекапі кодплага (лише читання файла).")
     ap.add_argument("zip")
     ap.add_argument("--names", type=int, default=10, help="скільки перших зон/контактів/груп показати")
     ap.add_argument("--encoding", choices=("auto", "gbk", "cp1251"), default="auto")

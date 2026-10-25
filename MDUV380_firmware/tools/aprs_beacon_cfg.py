@@ -3,7 +3,7 @@
 """aprs_beacon_cfg.py -- APRS-unify (L5): налаштування бікона, шумодав приймача APRS і ПОЗИВНИЙ з ПК.
 
 Одне джерело істини для кожного налаштування (див. STATUS.md, блок BT):
-  * позивний                      -- ім'я рації в кодплузі, EEPROM 0x00E0 (8 байтів, дописка 0xFF). Пишеться шляхом відновлення з бекапу
+  * позивний                      -- ім'я рації в кодплазі, EEPROM 0x00E0 (8 байтів, дописка 0xFF). Пишеться шляхом відновлення з бекапу
                                      (як редактор контактів), бо CPS-запис «EEPROM» на STM32 -- порожня команда;
   * налаштування стокового бікона -- custom-data блок типу 14 (CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG), 16 байтів, ОСНОВНЕ сховище:
                                      на старті прошивка переносить блок у nonVolatileSettings (aprsBeaconCfgBoot()), меню рації пише його назад;
@@ -154,7 +154,7 @@ def callsign_decode(b):
 
 
 def apply_callsign(base_img, text):
-    """Накласти позивний на образ кодплуга (cps_csv.Image). Повертає cps_csv.ImportResult (як у contact_edit.apply_ops)."""
+    """Накласти позивний на образ кодплага (cps_csv.Image). Повертає cps_csv.ImportResult (як у contact_edit.apply_ops)."""
     import cps_csv as cc
     img = cc.Image(base_img.eeprom, base_img.flash, base_img.base)
     res = cc.ImportResult()
@@ -171,7 +171,7 @@ CALLSIGN_TITLE = "ЗМІНА ПОЗИВНОГО -- рація буде ПЕРЕ�
 
 
 def callsign_to_radio(link, text, confirm, progress=None, log=print, out_dir=".", now=None, clock=None, post_reset=True):
-    """Прочитати поточний кодплуг рації, змінити позивний, записати шляхом відновлення з бекапу (страхова копія, підтвердження, перевірка)."""
+    """Прочитати поточний кодплаг рації, змінити позивний, записати шляхом відновлення з бекапу (страхова копія, підтвердження, перевірка)."""
     import time as _t
     import codeplug_view as cv
     import cps_csv as cc
@@ -182,7 +182,7 @@ def callsign_to_radio(link, text, confirm, progress=None, log=print, out_dir="."
         if progress:
             progress(max(0, min(100, int(pct))), t)
 
-    prog(0, "Читаю поточний кодплуг рації...")
+    prog(0, "Читаю поточний кодплаг рації...")
     cp, _m = cv.codeplug_from_radio(link, lambda p, t: prog(p * 0.25, t))
     res = apply_callsign(cc.Image.from_codeplug(cp), text)
     if not res.any_change():
@@ -268,7 +268,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--show", action="store_true", help="прочитати поточний стан")
     ap.add_argument("--set", action="append", default=[], metavar="КЛЮЧ=ЗНАЧЕННЯ", help="змінити поле бікона або sql (можна кілька разів)")
-    ap.add_argument("--callsign", default=None, help="новий позивний (запис кодплуга шляхом відновлення з бекапу, з підтвердженням)")
+    ap.add_argument("--callsign", default=None, help="новий позивний (запис кодплага шляхом відновлення з бекапу, з підтвердженням)")
     ap.add_argument("--port", default=None)
     a = ap.parse_args(argv)
 

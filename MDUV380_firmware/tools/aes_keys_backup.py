@@ -95,7 +95,7 @@ def read_backup_keys(source):
                 return None
             data = z.read(part["file"])
     except (zipfile.BadZipFile, KeyError, ValueError, OSError) as e:
-        raise cl.CpsError("це не бекап кодплуга або файл пошкоджено: %s" % e)
+        raise cl.CpsError("це не бекап кодплага або файл пошкоджено: %s" % e)
     if len(data) != part.get("length") or sha256(data) != part.get("sha256"):
         raise cl.CpsError("таблиця ключів AES у бекапі пошкоджена (довжина або SHA-256 не збігаються з маніфестом)")
     if part.get("start") != KEYS_START or len(data) != KEYS_LEN:

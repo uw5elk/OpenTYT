@@ -199,7 +199,7 @@ if [ -z "$FILTER" ] || [[ "test_aprs_capture aprs_offline" == *"$FILTER"* ]]; th
 	fi
 fi
 
-# R24: знімок екрана і бекап кодплуга (tools/cps_link.py, tools/cps_backup_info.py) -- підставна «рація», лише стандартна бібліотека.
+# R24: знімок екрана і бекап кодплага (tools/cps_link.py, tools/cps_backup_info.py) -- підставна «рація», лише стандартна бібліотека.
 if [ -z "$FILTER" ] || [[ "test_cps_link" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_link.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_cps_link (python)"
@@ -235,7 +235,7 @@ if [ -z "$FILTER" ] || [[ "test_le_bit21" == *"$FILTER"* ]]; then
 	fi
 fi
 
-# R25: відновлення кодплуга (tools/cps_restore.py) і перегляд (tools/codeplug_view.py) -- підставна «рація» з X 1/2/3.
+# R25: відновлення кодплага (tools/cps_restore.py) і перегляд (tools/codeplug_view.py) -- підставна «рація» з X 1/2/3.
 if [ -z "$FILTER" ] || [[ "test_cps_restore" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_restore.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_cps_restore (python)"
@@ -244,7 +244,7 @@ if [ -z "$FILTER" ] || [[ "test_cps_restore" == *"$FILTER"* ]]; then
 	fi
 fi
 
-# R26: CSV-обмін кодплуга (tools/cps_csv.py) -- оборотність байт-у-байт, кирилиця, кома/крапка, відмови до запису, імпорт через шлях відновлення.
+# R26: CSV-обмін кодплага (tools/cps_csv.py) -- оборотність байт-у-байт, кирилиця, кома/крапка, відмови до запису, імпорт через шлях відновлення.
 if [ -z "$FILTER" ] || [[ "test_cps_csv" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_csv.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_cps_csv (python)"

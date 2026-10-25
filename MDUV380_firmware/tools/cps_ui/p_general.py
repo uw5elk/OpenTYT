@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Розділ «Кодплаг → Загальні налаштування» (R-next, Y2): лише те, що є в кодплузі І справді читається прошивкою -- пароль на старті (прапорець +
+"""Розділ «Кодплаг → Загальні налаштування» (R-next, Y2): лише те, що є в кодплазі І справді читається прошивкою -- пароль на старті (прапорець +
 PIN) і тривалості DTMF. Решта 40-байтового блоку «загальних налаштувань» прошивка OpenGD77 не читає, тому тут її нема (див. general_edit.py).
 Зміни лягають у документ (зірочка в заголовку вікна); у рацію -- лише дією «Записати в рацію»."""
 import tkinter as tk
@@ -133,7 +133,7 @@ class GeneralPanel(Panel):
                     self.infos[key].config(text=bad[key], foreground=gt.P["err"])
                     ok_all = False
                 else:
-                    note = ("PIN у кодплузі нестандартний -- задайте новий, щоб його замінити." if self._odd and not pin_touched
+                    note = ("PIN у кодплазі нестандартний -- задайте новий, щоб його замінити." if self._odd and not pin_touched
                             else ("до %d цифр" % ge.PIN_DIGITS_MAX))
                     self.infos[key].config(text=note, foreground=gt.P["muted"])
                 continue
@@ -142,7 +142,7 @@ class GeneralPanel(Panel):
                 self.infos[key].config(text=bad[key], foreground=gt.P["err"])
                 ok_all = False
             elif key in bad_stored and form[key] == cur[key]:
-                self.infos[key].config(text="у кодплузі %d -- поза межами прошивки; не змінено, задайте своє" % cur[key], foreground=gt.P["warn"])
+                self.infos[key].config(text="у кодплазі %d -- поза межами прошивки; не змінено, задайте своє" % cur[key], foreground=gt.P["warn"])
             else:
                 x, mult, unit = form[key], fld[5], fld[6]
                 if mult:

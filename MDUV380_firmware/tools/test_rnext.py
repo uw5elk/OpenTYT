@@ -124,7 +124,7 @@ def test_general():
     check(not ge.apply_general(new, pwd_enable=True, pwd_pin="4321", dtmf_rate=4).changed and diff_addrs(new, ge.apply_general(new).image) == [], "те саме -> байтів не змінює")
     check(refused(ge.apply_general, new, dtmf_rate=0) is not None and refused(ge.apply_general, new, dtmf_tail=11) is not None, "швидкість 0 / хвіст 11 відхилено")
     check(refused(ge.apply_general, img, pwd_enable=True) is not None, "увімкнути пароль без PIN -- відмова")
-    # поле поза межами в кодплузі не заважає змінити пароль (перевіряються лише змінені поля)
+    # поле поза межами в кодплазі не заважає змінити пароль (перевіряються лише змінені поля)
     check(ge.apply_general(img, pwd_enable=True, pwd_pin="1").image.eeprom[0x7519] & 1 == 1, "255 у швидкості не блокує зміну пароля")
     rows = ge.field_table()
     check(len(rows) == 7 and all(len(r) == 4 for r in rows) and "0x1475" in rows[5][1], "таблиця поле -> адреса -> діапазон: 7 рядків")
