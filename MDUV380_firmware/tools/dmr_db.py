@@ -23,6 +23,7 @@ import io
 import json
 import os
 import random
+import re
 import struct
 import time
 import unicodedata
@@ -303,74 +304,186 @@ def parse_date(v):
     return None
 
 
-def _row_from(get):
+# --- T3 (R32): розбір, терпимий до назв колонок; колонку знаходимо ЗА ЗМІСТОМ, якщо за іменем не вийшло -------------------------------------
+RE_DMR_ID = re.compile(r"^\d{7}$")                                                     # DMR ID за змістом: рівно 7 цифр
+RE_CALLSIGN = re.compile(r"^[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,3}[A-Z](?:[-/][A-Z0-9]{1,4})?$")   # позивний за змістом: префікс, цифра, суфікс
+SAMPLE_ROWS = 300                                                                       # скільки перших рядків дивимось, щоб вгадати колонки
+SHOW_LINES = 3                                                                          # скільки перших рядків файла показуємо, коли не розпізнано
+ORDER_AFTER_CALLSIGN = ("first", "last", "city", "state", "country")                    # порядок Radioid після позивного (лише коли заголовка нема)
+FIELD_TITLES = {"id": "DMR ID", "callsign": "позивний", "first": "ім'я", "last": "прізвище", "city": "місто", "state": "область", "country": "країна",
+                "date": "остання активність"}
+_NORM_CACHE = {}
+
+
+def _normc(k):
+    v = _NORM_CACHE.get(k)
+    if v is None:
+        v = _NORM_CACHE[k] = _norm(k)
+    return v
+
+
+def first_lines(text, n=SHOW_LINES, width=160):
+    """Перші `n` рядків тексту для повідомлення про помилку (довгі обрізаються)."""
+    out = []
+    for i, line in enumerate(text.splitlines()[:n], 1):
+        line = line.rstrip()
+        out.append("  %d: %s" % (i, (line[:width] + "…") if len(line) > width else line))
+    return "\n".join(out) if out else "  (файл порожній)"
+
+
+def _unrecognized(raw, text, why):
+    """DbError з поясненням і перевіркою «що саме прийшло» (T3.2): перші три рядки файла, а не лише «не знайдено колонки»."""
+    hint = ""
+    if isinstance(raw, (bytes, bytearray)) and b"\x00" in raw[:4096]:
+        hint = " Схоже на бінарний файл, а не на текст (CSV/JSON)."
+        shown = "  (перші байти: %s)" % bytes(raw[:32]).hex()
+    else:
+        shown = first_lines(text)
+        if text.lstrip()[:1] == "<":
+            hint = " Схоже на веб-сторінку (HTML), а не на базу -- можливо, сервер віддав сторінку помилки."
+    return DbError("Файл не розпізнано: %s.%s Ось що прийшло (перші рядки):\n%s" % (why, hint, shown))
+
+
+def _map_by_name(names):
+    """names -- список нормалізованих назв колонок -> {поле: індекс}. Одна колонка не може бути двома полями."""
+    out, used = {}, set()
+    for field, keys in (("id", ID_KEYS),) + tuple(KEYS_BY_COL.items()):
+        for k in keys:
+            if k in names and names.index(k) not in used:
+                out[field] = names.index(k)
+                used.add(names.index(k))
+                break
+    return out
+
+
+def _detect_by_content(sample, mapped, headerless):
+    """Доповнює `mapped` колонками, знайденими за змістом, і повертає пояснення (список рядків). `sample` -- рядки-списки."""
+    notes = []
+    ncols = max((len(r) for r in sample), default=0)
+
+    def col(i):
+        return [r[i].strip() for r in sample if i < len(r) and r[i].strip()]
+
+    def pick(pred, need, skip):
+        best = None
+        for i in range(ncols):
+            if i in skip:
+                continue
+            vals = col(i)
+            if not vals:
+                continue
+            frac = sum(1 for v in vals if pred(v)) / float(len(vals))
+            if frac >= need and (best is None or frac > best[0]):
+                best = (frac, i)
+        return best[1] if best else None
+
+    if "id" not in mapped:
+        i = pick(lambda v: bool(RE_DMR_ID.match(v)), 0.9, set(mapped.values()))
+        if i is not None:
+            mapped["id"] = i
+            notes.append("колонку з DMR ID знайдено за змістом (7-значні числа): колонка %d" % (i + 1))
+    if "id" in mapped and "callsign" not in mapped:
+        i = pick(lambda v: bool(RE_CALLSIGN.match(v.upper())), 0.8, set(mapped.values()))
+        if i is not None:
+            mapped["callsign"] = i
+            notes.append("колонку з позивним знайдено за змістом: колонка %d" % (i + 1))
+    if headerless and "callsign" in mapped:
+        nxt = mapped["callsign"] + 1
+        for f in ORDER_AFTER_CALLSIGN:
+            if f not in mapped and nxt < ncols and nxt not in mapped.values():
+                mapped[f] = nxt
+                notes.append("%s: колонка %d (за порядком Radioid; заголовка в файлі нема)" % (FIELD_TITLES[f], nxt + 1))
+            nxt += 1
+    return notes
+
+
+def _make_row(get):
     try:
-        rid = int(str(get(ID_KEYS) or "").strip())
+        rid = int(str(get("id") or "").strip())
     except ValueError:
         return None
-    return {"id": rid, "callsign": str(get(KEYS_BY_COL["callsign"]) or "").strip(), "first": str(get(KEYS_BY_COL["first"]) or "").strip(),
-            "last": str(get(KEYS_BY_COL["last"]) or "").strip(), "city": str(get(KEYS_BY_COL["city"]) or "").strip(),
-            "state": str(get(KEYS_BY_COL["state"]) or "").strip(), "country": str(get(KEYS_BY_COL["country"]) or "").strip(),
-            "date": parse_date(get(KEYS_BY_COL["date"]))}
+    r = {"id": rid}
+    for f in ("callsign", "first", "last", "city", "state", "country"):
+        r[f] = " ".join(str(get(f) or "").split())            # зайві пробіли всередині й по краях -- прибрати
+    r["date"] = parse_date(get("date"))
+    return r
 
 
 class Source:
-    """Рядки з файла + що в ньому розпізнано."""
-    def __init__(self, rows, skipped, has_date, name=""):
+    """Рядки з файла + що в ньому розпізнано (notes -- як саме знайдено колонки, columns -- поле -> опис колонки)."""
+    def __init__(self, rows, skipped, has_date, name="", notes=None, columns=None):
         self.rows, self.skipped, self.has_date, self.name = rows, skipped, has_date, name
+        self.notes = list(notes or [])
+        self.columns = dict(columns or {})
+
+    def describe(self):
+        return "; ".join("%s -- %s" % (FIELD_TITLES[f], self.columns[f]) for f in FIELD_TITLES if f in self.columns)
 
 
 def parse_source(raw, name=""):
-    """CSV (з рядком заголовка) або JSON (список або {"users":[...]} / {"result":[...]}) -> Source. DbError, якщо ID-колонки не знайдено."""
+    """CSV (з заголовком або без) чи JSON (список або {"users":[...]}/{"result":[...]}) -> Source. Колонки шукаємо за назвою, а якщо не вийшло --
+    за змістом (7-значний DMR ID, позивний). Нерозпізнаний файл -> DbError з першими трьома рядками файла."""
     text = decode_bytes(raw) if isinstance(raw, (bytes, bytearray)) else raw
     stripped = text.lstrip()
     rows, skipped = [], 0
-    has_date = False
     if stripped[:1] in "[{":
         try:
             doc = json.loads(stripped)
         except ValueError as e:
-            raise DbError("файл схожий на JSON, але не читається: %s" % e)
+            raise _unrecognized(raw, text, "файл схожий на JSON, але не читається (%s)" % e)
         items = doc if isinstance(doc, list) else next((doc[k] for k in ("users", "result", "results", "data") if isinstance(doc.get(k), list)), None)
         if items is None:
-            raise DbError("у JSON не знайдено списку користувачів (очікувалось поле users/result)")
+            raise _unrecognized(raw, text, "у JSON не знайдено списку користувачів (очікувалось поле users/result)")
+        keys = []
+        for it in items[:SAMPLE_ROWS]:
+            if isinstance(it, dict):
+                for k in it:
+                    if k not in keys:
+                        keys.append(k)
+        names = [_normc(k) for k in keys]
+        mapped = _map_by_name(names)
+        sample = [[("" if it.get(k) is None else str(it.get(k))) for k in keys] for it in items[:SAMPLE_ROWS] if isinstance(it, dict)]
+        notes = _detect_by_content(sample, mapped, headerless=False)
+        if "id" not in mapped:
+            raise _unrecognized(raw, text, "у записах JSON не знайдено поля з DMR ID (поля: %s)" % (", ".join(keys[:12]) or "нема"))
+        field_key = {f: keys[i] for f, i in mapped.items()}
         for it in items:
             if not isinstance(it, dict):
                 skipped += 1
                 continue
-            low = {_norm(k): v for k, v in it.items()}
-            r = _row_from(lambda keys, low=low: next((low[k] for k in keys if k in low and low[k] not in (None, "")), None))
+            r = _make_row(lambda f, it=it: it.get(field_key[f]) if f in field_key else None)
             if r is None:
                 skipped += 1
                 continue
-            has_date = has_date or r["date"] is not None
             rows.append(r)
+        columns = {f: "поле «%s»" % k for f, k in field_key.items()}
     else:
-        sample = text[:4096]
         try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+            dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
         except csv.Error:
             dialect = csv.excel
-        rd = csv.reader(io.StringIO(text), dialect)
-        header = None
-        for rec in rd:
-            if not rec or not any(c.strip() for c in rec):
-                continue
-            header = [_norm(c) for c in rec]
-            break
-        if header is None or not any(k in header for k in ID_KEYS):
-            raise DbError("у файлі не знайдено колонки з DMR ID (очікувались заголовки на зразок RADIO_ID, DMR_ID, ID). Заголовок: %s" % (header or "порожній"))
-        for rec in rd:
-            if not rec or not any(c.strip() for c in rec):
-                continue
-            low = {header[i]: rec[i] for i in range(min(len(header), len(rec)))}
-            r = _row_from(lambda keys, low=low: next((low[k] for k in keys if k in low and low[k] not in (None, "")), None))
+        matrix = [rec for rec in csv.reader(io.StringIO(text), dialect) if rec and any(c.strip() for c in rec)]
+        if not matrix:
+            raise _unrecognized(raw, text, "файл порожній або не містить таблиці")
+        first = [c.strip() for c in matrix[0]]
+        headerless = any(RE_DMR_ID.match(c) for c in first)              # у першому рядку вже є 7-значний ID -- це дані, а не заголовок
+        if headerless:
+            names, data = [], matrix
+        else:
+            names, data = [_norm(c) for c in first], matrix[1:]
+        mapped = _map_by_name(names)
+        notes = _detect_by_content(data[:SAMPLE_ROWS], mapped, headerless)
+        if "id" not in mapped:
+            raise _unrecognized(raw, text, "не знайдено колонки з DMR ID ні за назвою (RADIO_ID, DMR_ID, ID ...), ні за змістом (7-значні числа)")
+        for rec in data:
+            r = _make_row(lambda f, rec=rec: rec[mapped[f]] if f in mapped and mapped[f] < len(rec) else None)
             if r is None:
                 skipped += 1
                 continue
-            has_date = has_date or r["date"] is not None
             rows.append(r)
-    return Source(rows, skipped, has_date, name)
+        columns = {f: ("колонка %d" % (i + 1)) + (" «%s»" % first[i] if not headerless and i < len(first) and first[i] else "") for f, i in mapped.items()}
+    has_date = any(r["date"] is not None for r in rows)
+    return Source(rows, skipped, has_date, name, notes, columns)
 
 
 def read_source_file(path):

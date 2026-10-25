@@ -1,0 +1,11 @@
+RADIO_ID,CALLSIGN,FIRST_NAME,LAST_NAME,CITY,STATE,COUNTRY
+2550001,UR1AAA,Ivan,Petrenko,Kyiv,Kyiv,Ukraine
+2550002,UR2BBB,Olena,Koval,Lviv,Lviv,Ukraine
+2550003,UR3CCC,Taras,Shevchenko,Kaniv,Cherkasy,Ukraine
+2550104,UT4DDD,Maria,Bondar,Odesa,Odesa,Ukraine
+2559999,UR9ZZZ,,,Kharkiv,Kharkiv,Ukraine
+2600001,SP1PL,Jan,Kowalski,Warsaw,Mazowieckie,Poland
+2620002,DL2XYZ,Hans,Mueller,Berlin,Berlin,Germany
+3100001,K1USA,John,Smith,Boston,MA,United States
+3100002,W2NYC,Mary,Jones,New York,NY,United States
+2300003,OK1CZ,Petr,Novak,Praha,Praha,Czech Republic

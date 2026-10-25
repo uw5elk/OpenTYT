@@ -182,6 +182,7 @@ class CpsLink:
     def __init__(self, ser, retries=2):
         self.ser = ser
         self.retries = retries
+        self.stats = {"requests": 0, "bytes": 0}     # R32 T2.1: скільки запитів читання пройшло і скільки байтів віддала рація (для phase_timing)
 
     def _read_exact(self, n):
         buf = b""
@@ -222,7 +223,10 @@ class CpsLink:
         last = None
         for _attempt in range(self.retries + 1):
             try:
-                return self._request_once(area, address, length, exact)
+                body = self._request_once(area, address, length, exact)
+                self.stats["requests"] += 1
+                self.stats["bytes"] += len(body)
+                return body
             except CpsError as e:
                 last = e
                 if "відмовила" in str(e):
@@ -492,9 +496,13 @@ def read_backup_zip(source):
     return manifest, eeprom, flash
 
 
-def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False, custom_data=True, aes_keys=True):
+def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False, custom_data=True, aes_keys=True,
+                    prefetched=None):
     """Прочитати EEPROM і флеш-частину кодплага, самоперевірити й зібрати .zip.
     full_snapshot=True (R25 W3.2) -- додатково голосові підказки і таблицю ключів AES (за замовчуванням ВИМКНЕНО).
+    prefetched=(eeprom, flash) (R32 T2.2) -- ці дві частини вже щойно прочитані (свіже читання перед записом): вдруге
+    їх не читаємо, а самоперевірка все одно перечитує випадкові блоки й порівнює з ними -- тож якщо рація за цей час змінилась, буде
+    BackupInvalid, а не тихо застарілий бекап. Довжини мають збігатися з тим, що читає цей бекап.
     progress(percent, text). Повертає (zip_bytes, manifest). При невдалій самоперевірці -- BackupInvalid."""
     started = clock()
     rng_range = flash_backup_range()
@@ -522,24 +530,40 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
     log("EEPROM: 0x0 .. 0x%X (%d КБ)." % (EEPROM_BACKUP_LEN, EEPROM_BACKUP_LEN // 1024))
     log("Флеш: сирі 0x%X .. 0x%X (%d КБ). %s" % (rng_range["raw_start"], rng_range["raw_end"], flash_len // 1024, rng_range["derivation"]))
 
-    eeprom = read_part(link, CPS_ACCESS_EEPROM, 0, EEPROM_BACKUP_LEN, step(0))
-    flash = read_part(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash_len, step(EEPROM_BACKUP_LEN))
+    import phase_timing
+    ph = phase_timing.Phases(link, clock)         # R32 T2.1: час, запити й КіБ по частинах -- видно, що з галочок скільки коштує
+    if prefetched is not None:
+        eeprom, flash = bytes(prefetched[0]), bytes(prefetched[1])
+        if len(eeprom) != EEPROM_BACKUP_LEN or len(flash) != flash_len:
+            raise CpsError("передане щойно прочитане має інші довжини (EEPROM %d, флеш %d), ніж потрібно (%d і %d)"
+                           % (len(eeprom), len(flash), EEPROM_BACKUP_LEN, flash_len))
+        log("EEPROM і флеш беру з щойно зробленого читання (вдруге не читаю); далі -- самоперевірка випадкових блоків.")
+        if progress:
+            progress(int(100.0 * (EEPROM_BACKUP_LEN + flash_len) / (total + verify_cost)), "EEPROM і флеш уже прочитано")
+    else:
+        with ph.phase("EEPROM"):
+            eeprom = read_part(link, CPS_ACCESS_EEPROM, 0, EEPROM_BACKUP_LEN, step(0))
+        with ph.phase("флеш-кодплаг"):
+            flash = read_part(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash_len, step(EEPROM_BACKUP_LEN))
     region = None
     if custom_data:
         # R30: область custom-data -- ПІСЛЯ флешу, ДО повного знімка (прогрес рахується в тому ж порядку)
         log("Область custom-data: сирі 0x%X .. 0x%X (%d КБ)." % (custom_region.REGION_RAW_START, custom_region.REGION_RAW_END, region_len // 1024))
-        region = read_part(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region_len, step(EEPROM_BACKUP_LEN + flash_len))
+        with ph.phase("область custom-data"):
+            region = read_part(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region_len, step(EEPROM_BACKUP_LEN + flash_len))
     keys = None
     if keys_alone:
         log("Таблиця ключів AES: сирі 0x%X .. 0x%X (%d Б) -- секрет." % (aes_keys_backup.KEYS_START, aes_keys_backup.KEYS_START + keys_len, keys_len))
-        keys = read_part(link, CPS_ACCESS_FLASH, aes_keys_backup.KEYS_START, keys_len, step(EEPROM_BACKUP_LEN + flash_len + region_len))
+        with ph.phase("ключі AES"):
+            keys = read_part(link, CPS_ACCESS_FLASH, aes_keys_backup.KEYS_START, keys_len, step(EEPROM_BACKUP_LEN + flash_len + region_len))
     extras = {}
     extra_files = {}
     if full_snapshot:
         done_before = EEPROM_BACKUP_LEN + flash_len + region_len
         for key, fname, start, length in snap_parts:
             log("Повний знімок: %s -- сирі 0x%X .. 0x%X (%d Б)." % (key, start, start + length, length))
-            data = read_part(link, CPS_ACCESS_FLASH, start, length, step(done_before))
+            with ph.phase("знімок: " + key):
+                data = read_part(link, CPS_ACCESS_FLASH, start, length, step(done_before))
             done_before += length
             extras[key] = (fname, start, data)
             extra_files[fname] = data
@@ -547,21 +571,23 @@ def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None
     if progress:
         progress(int(100.0 * total / (total + verify_cost)), "Самоперевірка: перечитую випадкові блоки...")
     rng = rng or random.SystemRandom()
-    bad = verify_random_blocks(link, CPS_ACCESS_EEPROM, 0, eeprom, 3, rng)
-    bad_f = verify_random_blocks(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash, 3, rng)
     bad_x = []
-    if region is not None:
-        bad_x += ["область custom-data 0x%X" % a for a in verify_random_blocks(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region, 3, rng)]
-    for key, (_fname, start, data) in extras.items():
-        bad_x += ["%s 0x%X" % (key, a) for a in verify_random_blocks(link, CPS_ACCESS_FLASH, start, data, 3, rng)]
-    if keys is not None:
-        bad_x += ["таблиця ключів 0x%X" % a for a in verify_random_blocks(link, CPS_ACCESS_FLASH, aes_keys_backup.KEYS_START, keys, 1, rng)]
+    with ph.phase("самоперевірка"):
+        bad = verify_random_blocks(link, CPS_ACCESS_EEPROM, 0, eeprom, 3, rng)
+        bad_f = verify_random_blocks(link, CPS_ACCESS_FLASH, rng_range["raw_start"], flash, 3, rng)
+        if region is not None:
+            bad_x += ["область custom-data 0x%X" % a for a in verify_random_blocks(link, CPS_ACCESS_FLASH, custom_region.REGION_RAW_START, region, 3, rng)]
+        for key, (_fname, start, data) in extras.items():
+            bad_x += ["%s 0x%X" % (key, a) for a in verify_random_blocks(link, CPS_ACCESS_FLASH, start, data, 3, rng)]
+        if keys is not None:
+            bad_x += ["таблиця ключів 0x%X" % a for a in verify_random_blocks(link, CPS_ACCESS_FLASH, aes_keys_backup.KEYS_START, keys, 1, rng)]
     if bad or bad_f or bad_x:
         where = ", ".join(["EEPROM 0x%X" % a for a in bad] + ["флеш 0x%X" % a for a in bad_f] + bad_x)
         raise BackupInvalid("самоперевірка не пройшла: повторне читання блоку дало інші байти (%s). Бекап НЕ збережено. "
                             "Рація могла записувати налаштування під час читання -- спробуй ще раз, не торкаючись кнопок." % where)
 
     finished = clock()
+    log(ph.summary("Час читання за частинами"))
     keys_data = keys if keys is not None else (extras[aes_keys_backup.PART_KEY][2] if aes_keys_backup.PART_KEY in extras else None)
     manifest = build_manifest(info, eeprom, flash, rng_range, started, finished, 3, now_utc, extras or None, region, keys_data)
     if region is not None:

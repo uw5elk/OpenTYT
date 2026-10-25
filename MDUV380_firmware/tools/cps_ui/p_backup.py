@@ -47,6 +47,7 @@ class BackupPanel(Panel):
         self.region_var = tk.BooleanVar(value=False)            # R30: відновити також область custom-data (типово ВИМКНЕНО)
         self.region_state_var = tk.BooleanVar(value=False)      # R30: разом з лічильниками RCTL (стан; типово вимкнено)
         self.keys_var = tk.BooleanVar(value=True)               # R31 K2.3: ключі AES в архіві (типово УВІМКНЕНО)
+        self.custom_var = tk.BooleanVar(value=True)             # R32 T2.3: область custom-data в архіві (типово УВІМКНЕНО; вимкнена -- бекап швидший)
         self.keys_restore_var = tk.BooleanVar(value=False)      # R31 K3.1: відновити також ключі AES (типово ВИМКНЕНО)
         self.header("Бекап і відновлення", "Бекап читає кодплаг із рації й зберігає його в .zip у теці MD-UV390UKR (у домашній теці). "
                                            "Рація має бути у звичайному режимі (не в DFU).")
@@ -59,6 +60,10 @@ class BackupPanel(Panel):
         ttk.Checkbutton(box, text="повний знімок (+ голосові підказки, ключі AES і база позивних)", variable=self.full_snapshot_var,
                         command=self._update_keys_note).pack(anchor="w", padx=8, pady=(0, 2))
         ttk.Checkbutton(box, text="включити ключі AES (секрет)", variable=self.keys_var, command=self._update_keys_note).pack(anchor="w", padx=8, pady=(0, 2))
+        ttk.Checkbutton(box, text="включити область custom-data (SMS, теми, RCTL, APRS; ~64 КіБ, читається довше)", variable=self.custom_var,
+                        command=self._update_keys_note).pack(anchor="w", padx=8, pady=(0, 2))
+        self.contents_note = ttk.Label(box, text="", wraplength=600, justify="left")        # R32 T4.1: що саме ввійде в архів
+        self.contents_note.pack(anchor="w", padx=8, pady=(4, 0))
         self.keys_note = ttk.Label(box, text="", wraplength=600, justify="left")
         self.keys_note.pack(anchor="w", padx=8, pady=(0, 8))
         self._update_keys_note()
@@ -110,13 +115,26 @@ class BackupPanel(Panel):
             return "Архів НЕ міститиме ключів AES; голосові підказки та базу позивних міститиме."
         return "Архів НЕ містить ключів AES і голосових підказок -- ним можна ділитися."
 
+    def contents_text(self):
+        """R32 T4.1: одним рядком, що саме ввійде в архів -- ДО збереження, а не лише з маніфесту після."""
+        parts = ["EEPROM", "флеш-кодплаг"]
+        if self.custom_var.get():
+            parts.append("область custom-data")
+        if self.keys_var.get():
+            parts.append("ключі AES (секрет)")
+        if self.full_snapshot_var.get():
+            parts += ["голосові підказки", "база позивних"]
+        return "У архіві буде: " + ", ".join(parts) + "."
+
     def _update_keys_note(self):
+        self.contents_note.config(text=self.contents_text())
         self.keys_note.config(text=self.keys_note_text())
 
     def _on_backup_clicked(self):
         full = bool(self.full_snapshot_var.get())
         keys = bool(self.keys_var.get())
-        self.shell.run_task(lambda: self._backup_worker(full, keys), "Читаю кодплаг з рації (бекап)...", on_done=self._show_backup_done)
+        custom = bool(self.custom_var.get())
+        self.shell.run_task(lambda: self._backup_worker(full, keys, custom), "Читаю кодплаг з рації (бекап)...", on_done=self._show_backup_done)
 
     @staticmethod
     def _show_backup_done(paths):
@@ -129,10 +147,11 @@ class BackupPanel(Panel):
             tail = "\n\nАрхів НЕ містить ключів AES і голосових підказок."
         messagebox.showinfo("Готово", "Збережено:\n" + path + tail)
 
-    def _backup_worker(self, full_snapshot=False, aes_keys=True):
+    def _backup_worker(self, full_snapshot=False, aes_keys=True, custom_data=True):
         ser = cps.open_radio()
         try:
-            data, manifest = cps.backup_codeplug(cps.CpsLink(ser), self.shell.cps_progress, full_snapshot=full_snapshot, aes_keys=aes_keys)
+            data, manifest = cps.backup_codeplug(cps.CpsLink(ser), self.shell.cps_progress, full_snapshot=full_snapshot, aes_keys=aes_keys,
+                                              custom_data=custom_data)
         finally:
             ser.close()
         path = cps.unique_path(output_dir(), cps.timestamp_name("codeplug_backup", ".zip"))

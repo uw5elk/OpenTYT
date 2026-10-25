@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cps_link as cl  # noqa: E402
 import codeplug_view as cv  # noqa: E402
 import cps_csv as cc  # noqa: E402
+import phase_timing  # noqa: E402
 
 NAME_LIMIT = 16
 ID_MAX = 16777215                    # 24-бітний DMR ID / «All Call»
@@ -196,11 +197,14 @@ def apply_to_radio(link, ops, confirm, progress=None, log=print, out_dir=".", no
             progress(max(0, min(100, int(pct))), text)
 
     prog(0, "Читаю поточний кодплаг рації...")
-    cp, _m = cv.codeplug_from_radio(link, lambda p, t: prog(p * 0.25, t))
+    ph = phase_timing.Phases(link, clock)
+    with ph.phase("свіже читання рації"):
+        cp, _m = cv.codeplug_from_radio(link, lambda p, t: prog(p * 0.25, t))
     res = apply_ops(cc.Image.from_codeplug(cp), ops)
     if not res.any_change():
         prog(100, "Змін немає")
         return {"cancelled": False, "nothingToDo": True, "sectorsWritten": 0, "report": res}
     return cc.write_image_via_restore(link, res, confirm, progress=lambda p, t: prog(27 + p * 0.73, t), log=log, now=now, clock=clock,
                                       post_reset=post_reset, title=EDIT_TITLE, out_dir=out_dir, zip_prefix="codeplug_contacts-edit",
-                                      note="Образ після правки контактів поверх поточного стану рації. Це те, що буде записано.")
+                                      note="Образ після правки контактів поверх поточного стану рації. Це те, що буде записано.",
+                                      prefetched=(cp.eeprom, cp.flash), phases=ph)

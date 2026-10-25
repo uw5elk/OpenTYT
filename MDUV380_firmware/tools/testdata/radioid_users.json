@@ -1,0 +1,104 @@
+{
+ "users": [
+  {
+   "id": 2550001,
+   "callsign": "UR1AAA",
+   "fname": "Ivan",
+   "surname": "Petrenko",
+   "city": "Kyiv",
+   "state": "Kyiv",
+   "country": "Ukraine",
+   "remarks": ""
+  },
+  {
+   "id": 2550002,
+   "callsign": "UR2BBB",
+   "fname": "Olena",
+   "surname": "Koval",
+   "city": "Lviv",
+   "state": "Lviv",
+   "country": "Ukraine",
+   "remarks": ""
+  },
+  {
+   "id": 2550003,
+   "callsign": "UR3CCC",
+   "fname": "Taras",
+   "surname": "Shevchenko",
+   "city": "Kaniv",
+   "state": "Cherkasy",
+   "country": "Ukraine",
+   "remarks": ""
+  },
+  {
+   "id": 2550104,
+   "callsign": "UT4DDD",
+   "fname": "Maria",
+   "surname": "Bondar",
+   "city": "Odesa",
+   "state": "Odesa",
+   "country": "Ukraine",
+   "remarks": ""
+  },
+  {
+   "id": 2559999,
+   "callsign": "UR9ZZZ",
+   "fname": "",
+   "surname": "",
+   "city": "Kharkiv",
+   "state": "Kharkiv",
+   "country": "Ukraine",
+   "remarks": ""
+  },
+  {
+   "id": 2600001,
+   "callsign": "SP1PL",
+   "fname": "Jan",
+   "surname": "Kowalski",
+   "city": "Warsaw",
+   "state": "Mazowieckie",
+   "country": "Poland",
+   "remarks": ""
+  },
+  {
+   "id": 2620002,
+   "callsign": "DL2XYZ",
+   "fname": "Hans",
+   "surname": "Mueller",
+   "city": "Berlin",
+   "state": "Berlin",
+   "country": "Germany",
+   "remarks": ""
+  },
+  {
+   "id": 3100001,
+   "callsign": "K1USA",
+   "fname": "John",
+   "surname": "Smith",
+   "city": "Boston",
+   "state": "MA",
+   "country": "United States",
+   "remarks": ""
+  },
+  {
+   "id": 3100002,
+   "callsign": "W2NYC",
+   "fname": "Mary",
+   "surname": "Jones",
+   "city": "New York",
+   "state": "NY",
+   "country": "United States",
+   "remarks": ""
+  },
+  {
+   "id": 2300003,
+   "callsign": "OK1CZ",
+   "fname": "Petr",
+   "surname": "Novak",
+   "city": "Praha",
+   "state": "Praha",
+   "country": "Czech Republic",
+   "remarks": ""
+  }
+ ]
+}

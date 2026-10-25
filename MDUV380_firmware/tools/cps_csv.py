@@ -41,6 +41,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cps_link as cl  # noqa: E402
 import codeplug_view as cv  # noqa: E402
+import phase_timing  # noqa: E402
 
 FILE_NAMES = {"channels": "Channels.csv", "contacts": "Contacts.csv", "tg_lists": "TG_Lists.csv", "zones": "Zones.csv",
               "aprs": "APRS.csv", "dtmf": "DTMF.csv"}
@@ -1814,7 +1815,9 @@ def import_to_radio(link, directory, confirm, progress=None, log=print, session=
     if not tables:
         raise CsvError("у теці %s немає жодного з файлів: %s" % (directory, ", ".join(FILE_NAMES.values())))
     prog(0, "Читаю поточний кодплаг рації...")
-    cp, _m = cv.codeplug_from_radio(link, lambda p, t: prog(p * 0.25, t))
+    ph = phase_timing.Phases(link, clock)
+    with ph.phase("свіже читання рації"):
+        cp, _m = cv.codeplug_from_radio(link, lambda p, t: prog(p * 0.25, t))
     prog(26, "Розбираю CSV...")
     res = import_csv(cp, tables, dp, session)
     if not res.any_change():
@@ -1823,16 +1826,19 @@ def import_to_radio(link, directory, confirm, progress=None, log=print, session=
         return {"cancelled": False, "nothingToDo": True, "sectorsWritten": 0, "report": res}
     out = write_image_via_restore(link, res, confirm, progress=lambda p, t: prog(27 + p * 0.73, t), log=log, now=now, clock=clock,
                                   post_reset=post_reset, title=IMPORT_TITLE, out_dir=out_dir or directory, zip_prefix="codeplug_csv-import",
-                                  note="Образ, зібраний з CSV імпортом поверх поточного стану рації. Це те, що буде записано.")
+                                  note="Образ, зібраний з CSV імпортом поверх поточного стану рації. Це те, що буде записано.",
+                                  prefetched=(cp.eeprom, cp.flash), phases=ph)
     return out
 
 
 def write_image_via_restore(link, res, confirm, progress=None, log=print, now=None, clock=time.time, post_reset=True, title=None,
-                            out_dir=".", zip_prefix="codeplug_csv-import", note=""):
+                            out_dir=".", zip_prefix="codeplug_csv-import", note="", prefetched=None, phases=None):
     """Спільний хвіст імпорту CSV (R26 V1) і редактора контактів (V2): `res` -- ImportResult з новим образом (res.image) поверх
     ПОТОЧНОГО стану рації. Образ пакується в .zip-бекап (файл «що саме записуємо» лишається в out_dir) і йде через
     cps_restore.restore_codeplug: страхова копія -> діалог зі списком змін -> лише відмінні сектори -> перечитування -> SHA-256 -> C 6 1.
-    Заблоковано тією ж константою RESTORE_UNLOCKED. Повертає підсумок restore_codeplug + ключі report, importZip."""
+    Заблоковано тією ж константою RESTORE_UNLOCKED. Повертає підсумок restore_codeplug + ключі report, importZip.
+    R32 T2: `prefetched=(eeprom, flash)` -- свіже читання, яке щойно зробив виклик (див. cps_restore.restore_codeplug); `phases` -- спільний
+    лічильник фаз (phase_timing.Phases)."""
     import cps_restore as cr
     info = link.radio_info()
     rng = cl.flash_backup_range()
@@ -1846,7 +1852,7 @@ def write_image_via_restore(link, res, confirm, progress=None, log=print, now=No
         f.write(cl.make_zip(bytes(res.image.eeprom), bytes(res.image.flash), manifest))
     log("Образ для запису збережено: %s (%s)" % (zip_path, res.summary()))
     out = cr.restore_codeplug(link, zip_path, confirm, progress, log=log, clock=clock, now=now, post_reset=post_reset, title=title,
-                              extra_lines=res.report_lines())
+                              extra_lines=res.report_lines(), prefetched=prefetched, phases=phases)
     out["report"] = res
     out["importZip"] = zip_path
     return out
