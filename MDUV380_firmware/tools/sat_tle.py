@@ -508,7 +508,7 @@ STATE_TEXT = {
 def read_slots(ser):
     """-> (стан, Block|None, сирі байти|None)."""
     import custom_data as cd
-    kind, addr, ln = cd.find_or_alloc_block(ser, BLOCK_TYPE, BLOCK_LEN)
+    kind, addr, ln = cd.find_or_alloc_block(ser, BLOCK_TYPE, 0)
     if kind is None:
         return ST_NOREGION, None, None
     if kind == "empty":

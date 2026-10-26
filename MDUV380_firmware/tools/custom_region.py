@@ -284,7 +284,10 @@ def simulate_write(buf, type_, payload):
     """Застосувати запис блока до bytearray області так само, як custom_data.write_block. Повертає (True, kind) або (False, причина)."""
     kind, addr, exist = _find_slot(buf, type_, len(payload))
     if kind is None:
-        return False, "області OpenGD77 нема або в ній немає місця"
+        if bytes(buf[:8]) == MAGIC:
+            import custom_compact as cc          # R37: область є -- значить, не вистачає місця: пояснити числами й підказати ущільнення
+            return False, cc.room_check(bytes(buf), type_, len(payload)).text + " Розділ «Усі налаштування» -> «Ущільнити область» прибирає вилучені блоки."
+        return False, "області OpenGD77 нема"
     if kind == "existing" and exist != len(payload):
         return False, "блок уже є, але має іншу довжину (%d, а не %d) -- довжину наявного блока міняти не можна" % (exist, len(payload))
     buf[addr:addr + BLOCK_HDR + len(payload)] = struct.pack("<ii", type_, len(payload)) + payload
