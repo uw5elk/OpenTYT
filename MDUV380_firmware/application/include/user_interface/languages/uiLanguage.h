@@ -379,6 +379,16 @@ typedef struct
    // ОСТАННІМ полем, щоб розкладка stringsTable_t для збірок без LANGUAGE_BUILD_UKRAINIAN
    // лишилась байт-в-байт тією ж.
    const char power[LANGUAGE_TEXTS_LENGTH];
+#if defined(ENABLE_CHANNEL_DELETE)
+   // R41: видалення каналу з меню рації. Поля додано ОСТАННІМИ, у тому самому українському блоці й лише під ENABLE_CHANNEL_DELETE: розкладка
+   // stringsTable_t для решти збірок лишається байт-в-байт тією ж. Код, що до них звертається, -- під CHANNEL_DELETE_ENABLED (те саме поєднання).
+   const char delete_channel[LANGUAGE_TEXTS_LENGTH];
+   const char delete_channel_qm[LANGUAGE_TEXTS_LENGTH];
+   const char in_zones[LANGUAGE_TEXTS_LENGTH];
+   const char channel_deleted[LANGUAGE_TEXTS_LENGTH];
+   const char last_channel[LANGUAGE_TEXTS_LENGTH];
+   const char cannot_delete[LANGUAGE_TEXTS_LENGTH];
+#endif
 #endif
 } stringsTable_t;
 

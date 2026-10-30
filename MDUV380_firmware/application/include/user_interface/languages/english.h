@@ -351,6 +351,14 @@ const stringsTable_t englishLanguage =
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "No GPS", // MaxLen: 16
 .power                                    = "Power", // MaxLen: 16 (заголовок картки потужності, 2026-09-18)
+#if defined(ENABLE_CHANNEL_DELETE)
+.delete_channel                           = "Delete channel", // MaxLen: 16 (R41)
+.delete_channel_qm                        = "Delete?", // MaxLen: 14
+.in_zones                                 = "In zones:", // MaxLen: 14
+.channel_deleted                          = "Channel deleted", // MaxLen: 16
+.last_channel                             = "Only channel", // MaxLen: 14
+.cannot_delete                            = "not deletable", // MaxLen: 14
+#endif
 #endif
 };
 /********************************************************************

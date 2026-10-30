@@ -2180,6 +2180,40 @@ static bool validateOverwriteChannel(void)
 	return true;
 }
 
+#if defined(CHANNEL_DELETE_ENABLED)
+/* R41: колбек MessageBox «Видалити?» (ТАК/НІ). Викликається і на ТАК, і на НІ: як і в validateOverwriteChannel, прапорець змушує швидке меню при
+ * поверненні закритися й показати корінь (екран каналу), тож і підтвердження, і скасування приводять на екран каналу. Видаляємо ПОТОЧНИЙ канал екрана. */
+static bool validateDeleteChannel(void)
+{
+	quickmenuChannelFromVFOHandled = true;
+
+	if (uiDataGlobal.MessageBox.keyPressed == KEY_GREEN)
+	{
+		int channelNumber = uiDataGlobal.currentSelectedChannelNumber;
+
+		if (codeplugChannelDelete(channelNumber) == CODEPLUG_CHANNEL_DELETE_OK)
+		{
+			// Зона, з якої видалили канал, могла спорожніти (тоді вона стала «непридатною»): переходимо на «Всі канали», на їхній перший канал.
+			// Якщо зона жива, LUCZ уже вказує на наступний канал (codeplugChannelDelete поправив позицію).
+			if (!codeplugZoneIsUsable(nonVolatileSettings.currentZone, NULL))
+			{
+				codeplugSetLastUsedChannelInZone(-1, (int16_t)codeplugChannelNextInUse(0));
+				codeplugSaveLastUsedChannelInZone();
+			}
+
+			uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу
+			uiNotificationShowShort(1500U, currentLanguage->channel_deleted, false);
+		}
+		else
+		{
+			uiNotificationShowShort(1500U, currentLanguage->error, false);
+		}
+	}
+
+	return true;
+}
+#endif // CHANNEL_DELETE_ENABLED
+
 static void updateQuickMenuScreen(bool isFirstRun)
 {
 	int mNum = 0;
@@ -2282,6 +2316,11 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					leftSide = currentLanguage->mute;
 					rightSideConst = (uiDataGlobal.QuickMenu.tmpAudioMute ? currentLanguage->yes : currentLanguage->no);
 					break;
+#if defined(CHANNEL_DELETE_ENABLED)
+				case CH_SCREEN_QUICK_MENU_DELETE:
+					rightSideConst = currentLanguage->delete_channel;
+					break;
+#endif
 				default:
 					buf[0] = 0;
 			}
@@ -2405,6 +2444,13 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 			updateQuickMenuScreen(false);
 			return;
 		}
+#if defined(CHANNEL_DELETE_ENABLED)
+		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_DELETE))
+		{
+			// R41: видалення каналу НІКОЛИ не виконується швидкою клавішею (одна випадкова цифра не повинна стирати канал)
+			return;
+		}
+#endif
 		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) < NUM_CH_SCREEN_QUICK_MENU_ITEMS))
 		{
 			menuDataGlobal.currentItemIndex = QUICKKEY_ENTRYID(ev->function);
@@ -2512,6 +2558,73 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 				}
 					break;
 
+#if defined(CHANNEL_DELETE_ENABLED)
+				case CH_SCREEN_QUICK_MENU_DELETE:
+				{
+					const char *vp1;
+					const char *vp2;
+					char chName[17];   // має жити до кінця case: на нього вказує vp2 для голосових підказок
+
+					if (!codeplugAllChannelsIndexIsInUse(uiDataGlobal.currentSelectedChannelNumber))
+					{
+						// На екрані не справжній канал (порожня зона, особливий режим): видаляти нічого -- просто виходимо зі швидкого меню
+						menuSystemPopPreviousMenu();
+						return;
+					}
+
+					if (settingsIsOptionBitSet(BIT_CHANNELS_ARE_READ_ONLY))
+					{
+						// «Канали лише для читання» (Загальні -> Блокування): так само, як для копіювання з VFO
+						vp1 = currentLanguage->aprs_channel;
+						vp2 = currentLanguage->locked;
+						uiDataGlobal.MessageBox.buttons = MESSAGEBOX_BUTTONS_OK;
+						uiDataGlobal.MessageBox.validatorCallback = NULL;
+						snprintf(uiDataGlobal.MessageBox.message, MESSAGEBOX_MESSAGE_LEN_MAX, "%s\n%s", vp1, vp2);
+					}
+					else if (codeplugChannelCountInUse() <= 1)
+					{
+						// Єдиний канал у кодплазі: рація без жодного каналу не має що показувати -- не видаляємо, пояснюємо
+						vp1 = currentLanguage->last_channel;
+						vp2 = currentLanguage->cannot_delete;
+						uiDataGlobal.MessageBox.buttons = MESSAGEBOX_BUTTONS_OK;
+						uiDataGlobal.MessageBox.validatorCallback = NULL;
+						snprintf(uiDataGlobal.MessageBox.message, MESSAGEBOX_MESSAGE_LEN_MAX, "%s\n%s", vp1, vp2);
+					}
+					else
+					{
+						// Екран підтвердження: «Видалити?» / назва каналу / «У зонах: N». Лише номер каналу й число зон -- без вигадок.
+						char zonesLine[SCREEN_LINE_BUFFER_SIZE];
+
+						codeplugUtilConvertBufToString(currentChannelData->name, chName, 16);
+						snprintf(zonesLine, SCREEN_LINE_BUFFER_SIZE, "%s %d", currentLanguage->in_zones, codeplugChannelCountZones(uiDataGlobal.currentSelectedChannelNumber));
+						vp1 = currentLanguage->delete_channel_qm;
+						vp2 = NULL;   // назву каналу озвучуємо як звичайний рядок (вона не з мовної таблиці)
+						uiDataGlobal.MessageBox.buttons = MESSAGEBOX_BUTTONS_YESNO;
+						uiDataGlobal.MessageBox.validatorCallback = validateDeleteChannel;
+						snprintf(uiDataGlobal.MessageBox.message, MESSAGEBOX_MESSAGE_LEN_MAX, "%s\n%s\n%s", vp1, chName, zonesLine);
+					}
+
+					uiDataGlobal.MessageBox.type = MESSAGEBOX_TYPE_INFO;
+					uiDataGlobal.MessageBox.decoration = MESSAGEBOX_DECORATION_FRAME;
+					menuSystemPushNewMenu(UI_MESSAGE_BOX);
+
+					voicePromptsInit();
+					voicePromptsAppendLanguageString(vp1);
+					if (vp2 != NULL)
+					{
+						voicePromptsAppendLanguageString(vp2);
+					}
+					else
+					{
+						voicePromptsAppendString(chName);
+					}
+					voicePromptsPlay();
+
+					return;
+				}
+					break;
+#endif
+
 				default:
 					// CH_SCREEN_QUICK_MENU_FILTER_FM
 					if (nonVolatileSettings.analogFilterLevel != uiDataGlobal.QuickMenu.tmpAnalogFilterLevel)
@@ -2594,7 +2707,11 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 			menuSystemPopPreviousMenu();
 			return;
 		}
-		else if (KEYCHECK_SHORTUP_NUMBER(ev->keys) && BUTTONCHECK_DOWN(ev, BUTTON_SK2))
+		else if (KEYCHECK_SHORTUP_NUMBER(ev->keys) && BUTTONCHECK_DOWN(ev, BUTTON_SK2)
+#if defined(CHANNEL_DELETE_ENABLED)
+				&& (menuDataGlobal.currentItemIndex != CH_SCREEN_QUICK_MENU_DELETE)   // R41: на «Видалити» швидку клавішу призначити не можна
+#endif
+				)
 		{
 			isDirty = true;
 			menuDataGlobal.menuOptionsSetQuickkey = ev->keys.key;

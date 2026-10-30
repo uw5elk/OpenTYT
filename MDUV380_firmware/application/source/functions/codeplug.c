@@ -41,6 +41,9 @@
 #if defined(APRS_R21_NAMES)
 #include "functions/aprs_rx_parse.h"
 #endif
+#if defined(CHANNEL_DELETE_ENABLED)
+#include "functions/codeplug_chandel.h"   /* R41: чиста логіка видалення каналу */
+#endif
 
 
 const int CODEPLUG_ADDR_EX_ZONE_BASIC = 0x8000;
@@ -522,6 +525,149 @@ void codeplugAllChannelsIndexSetUsed(int index)
 		}
 	}
 }
+
+#if defined(CHANNEL_DELETE_ENABLED)
+/* ---- R41: видалення каналу з меню рації ---------------------------------------------------------------------------------------- */
+
+/* Перерахунок лічильників «усіх каналів» із кешу маски (після зміни біта). */
+static void codeplugAllChannelsRecount(void)
+{
+	allChannelsTotalNumOfChannels = (uint16_t)codeplugChanMaskCount(codeplugAllChannelsCache);
+	allChannelsHighestChannelIndex = (uint16_t)codeplugChanMaskHighest(codeplugAllChannelsCache);
+}
+
+int codeplugChannelCountInUse(void)
+{
+	return codeplugChanMaskCount(codeplugAllChannelsCache);
+}
+
+int codeplugChannelNextInUse(int afterIndex)
+{
+	return codeplugChanMaskNextInUse(codeplugAllChannelsCache, afterIndex);
+}
+
+/* У скількох справжніх зонах (без віртуальної «Всі канали») стоїть канал. Зона, де канал записано двічі, рахується один раз. */
+int codeplugChannelCountZones(int channelIndex)
+{
+	CodeplugZone_t z;
+	int n = 0;
+	int realZones = codeplugZonesGetCount() - 1;
+
+	for (int zn = 0; zn < realZones; zn++)
+	{
+		if (codeplugZoneGetDataForNumber(zn, &z) &&
+				(codeplugZoneListCount(z.channels, z.NOT_IN_CODEPLUGDATA_numChannelsInZone, (uint16_t)channelIndex) > 0))
+		{
+			n++;
+		}
+	}
+
+	return n;
+}
+
+/*
+ * Видалення каналу. НОМЕРИ інших каналів не змінюються (зони посилаються на канали за номером). ПОРЯДОК КРОКІВ -- за стійкістю до обриву живлення:
+ *   1. прибрати канал з УСІХ зон (без цього зона вказувала б на «неіснуючий» канал: навігація по зоні маску не перевіряє й завантажила б сміття);
+ *   2. очистити біт у масці «в роботі» -- ось тут канал логічно зникає;
+ *   3. поправити «останній канал у зоні» (LUCZ);
+ *   4. стерти сам запис (0xFF) -- необов'язково для коректності, тому збій тут не робить видалення невдалим.
+ * Обрив після кроку 1 лишає живий канал, якого нема в зонах (його видно в «Всі канали»); обрив після 2 -- видалений канал зі «сміттям» у записі, невидимий.
+ */
+CodeplugChannelDeleteResult_t codeplugChannelDelete(int channelIndex)
+{
+	CodeplugZone_t z;
+	int realZones = codeplugZonesGetCount() - 1;
+	bool luczChanged = false;
+	bool inFlash;
+	int cacheOffset;
+	int addr;
+	uint8_t maskByte;
+	uint8_t blank[CODEPLUG_CHANNEL_DATA_STRUCT_SIZE];
+
+	if (!codeplugAllChannelsIndexIsInUse(channelIndex))
+	{
+		return CODEPLUG_CHANNEL_DELETE_NOT_IN_USE;
+	}
+
+	if (codeplugChanMaskCount(codeplugAllChannelsCache) <= 1)
+	{
+		return CODEPLUG_CHANNEL_DELETE_LAST;
+	}
+
+	// 1. Зони
+	for (int zn = 0; zn < realZones; zn++)
+	{
+		int num;
+		int bit;
+		int oldIdx;
+		int newIdx;
+
+		if (!codeplugZoneGetDataForNumber(zn, &z))
+		{
+			continue;
+		}
+
+		num = z.NOT_IN_CODEPLUGDATA_numChannelsInZone;
+		if (codeplugZoneListCount(z.channels, num, (uint16_t)channelIndex) == 0)
+		{
+			continue;
+		}
+
+		bit = z.NOT_IN_CODEPLUGDATA_indexNumber;
+		oldIdx = codeplugGetLastUsedChannelInZone(bit);
+		newIdx = codeplugZoneIndexAfterRemove(z.channels, num, (uint16_t)channelIndex, oldIdx);
+		codeplugZoneListRemove(z.channels, num, (uint16_t)channelIndex);
+
+		// Розмір запису -- як у codeplugZoneAddChannelToZoneAndSave (структура в пам'яті більша, ніж у кодплазі)
+		if (!EEPROM_Write(CODEPLUG_ADDR_EX_ZONE_LIST + (bit * (16 + (sizeof(uint16_t) * codeplugChannelsPerZone))),
+				(uint8_t *)&z, ((codeplugChannelsPerZone == 16) ? CODEPLUG_ZONE_DATA_ORIGINAL_STRUCT_SIZE : CODEPLUG_ZONE_DATA_OPENGD77_STRUCT_SIZE)))
+		{
+			return CODEPLUG_CHANNEL_DELETE_WRITE_ERROR;
+		}
+
+		if (newIdx != oldIdx)
+		{
+			codeplugSetLastUsedChannelInZone(bit, (int16_t)newIdx);
+			luczChanged = true;
+		}
+	}
+
+	// 2. Маска «в роботі»: байт пишемо в EEPROM (канали 1..128) або флеш (129..1024), кеш міняємо лише після успішного запису
+	addr = codeplugChanMaskByteAddr(channelIndex, CODEPLUG_ADDR_CHANNEL_HEADER_EEPROM, CODEPLUG_ADDR_CHANNEL_HEADER_FLASH, &inFlash, &cacheOffset);
+	maskByte = codeplugAllChannelsCache[cacheOffset] & (uint8_t)~(1U << ((channelIndex - 1) % 8));
+	if (!(inFlash ? SPI_Flash_write(FLASH_ADDRESS_OFFSET + addr, &maskByte, 1) : EEPROM_Write(addr, &maskByte, 1)))
+	{
+		return CODEPLUG_CHANNEL_DELETE_WRITE_ERROR;
+	}
+	codeplugChanMaskClear(codeplugAllChannelsCache, channelIndex);
+	codeplugAllChannelsRecount();
+
+	// 3. «Всі канали»: якщо останнім був видалений -- переставити на найближчий далі
+	if (codeplugGetLastUsedChannelInZone(-1) == channelIndex)
+	{
+		codeplugSetLastUsedChannelInZone(-1, (int16_t)codeplugChanMaskNextInUse(codeplugAllChannelsCache, channelIndex));
+		luczChanged = true;
+	}
+	if (luczChanged)
+	{
+		codeplugSaveLastUsedChannelInZone();
+	}
+
+	// 4. Стерти запис каналу (best effort)
+	addr = codeplugChanRecordAddr(channelIndex, CODEPLUG_ADDR_CHANNEL_EEPROM, CODEPLUG_ADDR_CHANNEL_FLASH, &inFlash);
+	memset(blank, 0xFF, sizeof(blank));
+	if (inFlash)
+	{
+		SPI_Flash_write(FLASH_ADDRESS_OFFSET + addr, blank, sizeof(blank));
+	}
+	else
+	{
+		EEPROM_Write(addr, blank, sizeof(blank));
+	}
+
+	return CODEPLUG_CHANNEL_DELETE_OK;
+}
+#endif /* CHANNEL_DELETE_ENABLED */
 
 void codeplugAllChannelsInitCache(void)
 {

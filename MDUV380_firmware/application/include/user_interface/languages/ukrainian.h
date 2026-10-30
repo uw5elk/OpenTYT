@@ -352,6 +352,14 @@ const stringsTable_t ukrainianLanguage =
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "GPS відсутній", // MaxLen: 16
 .power                                    = "Потужність", // MaxLen: 16 (заголовок картки потужності, 2026-09-18)
+#if defined(ENABLE_CHANNEL_DELETE)
+.delete_channel                           = "Видалити канал", // MaxLen: 16 (R41, пункт швидкого меню каналу)
+.delete_channel_qm                        = "Видалити?", // MaxLen: 14 (рамка екрана підтвердження)
+.in_zones                                 = "У зонах:", // MaxLen: 14 (далі число)
+.channel_deleted                          = "Канал видалено", // MaxLen: 16
+.last_channel                             = "Єдиний канал", // MaxLen: 14
+.cannot_delete                            = "не видаляється", // MaxLen: 14
+#endif
 #endif
 };
 /********************************************************************

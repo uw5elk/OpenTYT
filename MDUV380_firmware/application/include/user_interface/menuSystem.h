@@ -432,6 +432,9 @@ enum CHANNEL_SCREEN_QUICK_MENU_ITEMS
 	CH_SCREEN_QUICK_MENU_TALKAROUND,
 	CH_SCREEN_QUICK_MENU_ROAMING,
 	CH_SCREEN_QUICK_MENU_AUDIO_MUTE,
+#if defined(ENABLE_CHANNEL_DELETE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+	CH_SCREEN_QUICK_MENU_DELETE,   /* R41: видалення каналу -- завжди ОСТАННІЙ пункт, щоб номери решти не зсунулися (швидкі клавіші зберігають номер пункту) */
+#endif
 	NUM_CH_SCREEN_QUICK_MENU_ITEMS
 };
 

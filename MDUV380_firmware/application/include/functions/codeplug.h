@@ -525,6 +525,24 @@ void codeplugSetVFO_ChannelData(CodeplugChannel_t *vfoBuf, Channel_t VFONumber);
 bool codeplugAllChannelsIndexIsInUse(int index);
 void codeplugAllChannelsIndexSetUsed(int index);
 bool codeplugChannelSaveDataForIndex(int index, CodeplugChannel_t *channelBuf);
+
+/* R41: видалення каналу з меню рації. Усе -- лише під ENABLE_CHANNEL_DELETE і лише в українській збірці (рядки меню живуть у її мовному
+ * блоці). Без цього прапорця типова збірка байт-у-байт стокова. */
+#if defined(ENABLE_CHANNEL_DELETE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#define CHANNEL_DELETE_ENABLED 1
+typedef enum
+{
+	CODEPLUG_CHANNEL_DELETE_OK = 0,
+	CODEPLUG_CHANNEL_DELETE_NOT_IN_USE,   // такого каналу нема (поза 1..1024 або біт у масці не стоїть)
+	CODEPLUG_CHANNEL_DELETE_LAST,         // єдиний канал у кодплазі -- не видаляємо
+	CODEPLUG_CHANNEL_DELETE_WRITE_ERROR   // не вдалося записати зону / маску / запис каналу
+} CodeplugChannelDeleteResult_t;
+
+int codeplugChannelCountZones(int channelIndex);                  // у скількох справжніх зонах стоїть канал
+int codeplugChannelCountInUse(void);                              // скільки каналів у масці «в роботі»
+int codeplugChannelNextInUse(int afterIndex);                     // найближчий далі за afterIndex канал у роботі (з переходом через кінець), 0 -- нічого нема
+CodeplugChannelDeleteResult_t codeplugChannelDelete(int channelIndex);
+#endif
 CodeplugCSSTypes_t codeplugGetCSSType(uint16_t tone);
 void codeplugConvertChannelInternalToCodeplug(CodeplugChannel_t *codeplugChannel, CodeplugChannel_t *internalChannel);
 

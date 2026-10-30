@@ -118,7 +118,13 @@ DEFS_APRSPROBENOCR=("${DEFS_UA[@]}" -DENABLE_APRS_RX_PROBE)                 # bu
 # (dmrAesDiagTxBurst, dmrAesTxSkipBurst) іх мають бачити; AES_TX_PHASE_FIX_OFF -- перемикач «до фіксу» для вимірювання.
 DEFS_AESDIAG=("${DEFS_AES1[@]}" -DDMR_AES_DIAG_RX -DAES_TX_MI_CURRENT -DAES_TX_PHASE_FIX_OFF)
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG)
+# R41: «Видалити канал» -- користувацька українська збірка CI (з ENABLE_CHANNEL_DELETE), її англійський двійник (меню й код мають зникнути без
+# помилок: рядки живуть лише в українському блоці) і українська без AES/DMR_DATA.
+DEFS_CHDEL=("${DEFS_APRSRX[@]}" -DENABLE_CHANNEL_DELETE)                    # build-ukrainian (CI) + ENABLE_CHANNEL_DELETE
+DEFS_CHDELEN=("${DEFS_ENDATA[@]}" -DENABLE_CHANNEL_DELETE)                  # англійська + прапорець: фіча має зникнути
+DEFS_CHDELLITE=("${DEFS_COMMON[@]}" -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_CHANNEL_DELETE)  # українська БЕЗ AES/DMR_DATA + видалення
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.
