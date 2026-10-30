@@ -2214,6 +2214,38 @@ static bool validateDeleteChannel(void)
 }
 #endif // CHANNEL_DELETE_ENABLED
 
+#if defined(ZONE_EDIT_ENABLED)
+/* R43: колбек MessageBox «Вийняти?» (ТАК/НІ): виймає ПОТОЧНИЙ канал екрана з ПОТОЧНОЇ зони (запис списку на позиції «останнього каналу в зоні»). Сам канал не видаляється:
+ * лишається в «Всіх каналах» і в інших зонах. Як і validateDeleteChannel, і на ТАК, і на НІ закриває швидке меню й показує екран каналу. */
+static bool validateZoneRemoveChannel(void)
+{
+	quickmenuChannelFromVFOHandled = true;
+
+	if (uiDataGlobal.MessageBox.keyPressed == KEY_GREEN)
+	{
+		int zn = nonVolatileSettings.currentZone;
+
+		if (codeplugZoneRemoveChannelAt(zn, codeplugGetLastUsedChannelInCurrentZone()) == CODEPLUG_ZONE_EDIT_OK)
+		{
+			// Зона спорожніла -> «непридатна»: переходимо на «Всі канали». Інакше LUCZ уже вказує на наступний канал зони (з останнього -- на перший).
+			if (!codeplugZoneIsUsable(zn, NULL))
+			{
+				settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));
+			}
+
+			uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу
+			uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed, false);
+		}
+		else
+		{
+			uiNotificationShowShort(1500U, currentLanguage->error, false);
+		}
+	}
+
+	return true;
+}
+#endif // ZONE_EDIT_ENABLED
+
 static void updateQuickMenuScreen(bool isFirstRun)
 {
 	int mNum = 0;
@@ -2319,6 +2351,11 @@ static void updateQuickMenuScreen(bool isFirstRun)
 #if defined(CHANNEL_DELETE_ENABLED)
 				case CH_SCREEN_QUICK_MENU_DELETE:
 					rightSideConst = currentLanguage->delete_channel;
+					break;
+#endif
+#if defined(ZONE_EDIT_ENABLED)
+				case CH_SCREEN_QUICK_MENU_ZONE_REMOVE:
+					rightSideConst = currentLanguage->zone_ch_remove;
 					break;
 #endif
 				default:
@@ -2448,6 +2485,13 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_DELETE))
 		{
 			// R41: видалення каналу НІКОЛИ не виконується швидкою клавішею (одна випадкова цифра не повинна стирати канал)
+			return;
+		}
+#endif
+#if defined(ZONE_EDIT_ENABLED)
+		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_ZONE_REMOVE))
+		{
+			// R43: виймання з зони теж НІКОЛИ не виконується швидкою клавішею
 			return;
 		}
 #endif
@@ -2625,6 +2669,65 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 					break;
 #endif
 
+#if defined(ZONE_EDIT_ENABLED)
+				case CH_SCREEN_QUICK_MENU_ZONE_REMOVE:
+				{
+					const char *vp1;
+					const char *vp2;
+					char chName[17];   // мають жити до кінця case: на них вказують vp-рядки для голосових підказок
+					char zName[17];
+					int pos = codeplugGetLastUsedChannelInCurrentZone();
+
+					if (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone))
+					{
+						// «Всі канали» -- віртуальна зона: з неї нічого виймати, канал видаляє «Видалити канал»
+						vp1 = currentLanguage->all_channels;
+						vp2 = currentLanguage->zone_not_zone;
+						uiDataGlobal.MessageBox.buttons = MESSAGEBOX_BUTTONS_OK;
+						uiDataGlobal.MessageBox.validatorCallback = NULL;
+						snprintf(uiDataGlobal.MessageBox.message, MESSAGEBOX_MESSAGE_LEN_MAX, "%s\n%s", vp1, vp2);
+					}
+					else if ((pos < 0) || (pos >= currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone) ||
+							(currentZone.channels[pos] != (uint16_t)uiDataGlobal.currentSelectedChannelNumber))
+					{
+						// На екрані не той канал, що в списку зони (порожня зона, особливий режим): виймати нічого -- просто виходимо зі швидкого меню
+						menuSystemPopPreviousMenu();
+						return;
+					}
+					else if (settingsIsOptionBitSet(BIT_CHANNELS_ARE_READ_ONLY))
+					{
+						vp1 = currentLanguage->aprs_channel;
+						vp2 = currentLanguage->locked;
+						uiDataGlobal.MessageBox.buttons = MESSAGEBOX_BUTTONS_OK;
+						uiDataGlobal.MessageBox.validatorCallback = NULL;
+						snprintf(uiDataGlobal.MessageBox.message, MESSAGEBOX_MESSAGE_LEN_MAX, "%s\n%s", vp1, vp2);
+					}
+					else
+					{
+						// Екран підтвердження: «Вийняти?» / назва каналу / назва зони / «Канал лишиться» -- щоб було видно, що канал НЕ видаляється
+						codeplugUtilConvertBufToString(currentChannelData->name, chName, 16);
+						snprintf(zName, sizeof(zName), "%s", currentZoneName);
+						vp1 = currentLanguage->zone_remove_qm;
+						vp2 = currentLanguage->zone_chan_stays;
+						uiDataGlobal.MessageBox.buttons = MESSAGEBOX_BUTTONS_YESNO;
+						uiDataGlobal.MessageBox.validatorCallback = validateZoneRemoveChannel;
+						snprintf(uiDataGlobal.MessageBox.message, MESSAGEBOX_MESSAGE_LEN_MAX, "%s\n%.14s\n%.14s\n%s", vp1, chName, zName, vp2);
+					}
+
+					uiDataGlobal.MessageBox.type = MESSAGEBOX_TYPE_INFO;
+					uiDataGlobal.MessageBox.decoration = MESSAGEBOX_DECORATION_FRAME;
+					menuSystemPushNewMenu(UI_MESSAGE_BOX);
+
+					voicePromptsInit();
+					voicePromptsAppendLanguageString(vp1);
+					voicePromptsAppendLanguageString(vp2);
+					voicePromptsPlay();
+
+					return;
+				}
+					break;
+#endif
+
 				default:
 					// CH_SCREEN_QUICK_MENU_FILTER_FM
 					if (nonVolatileSettings.analogFilterLevel != uiDataGlobal.QuickMenu.tmpAnalogFilterLevel)
@@ -2710,6 +2813,9 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 		else if (KEYCHECK_SHORTUP_NUMBER(ev->keys) && BUTTONCHECK_DOWN(ev, BUTTON_SK2)
 #if defined(CHANNEL_DELETE_ENABLED)
 				&& (menuDataGlobal.currentItemIndex != CH_SCREEN_QUICK_MENU_DELETE)   // R41: на «Видалити» швидку клавішу призначити не можна
+#endif
+#if defined(ZONE_EDIT_ENABLED)
+				&& (menuDataGlobal.currentItemIndex != CH_SCREEN_QUICK_MENU_ZONE_REMOVE)   // R43: і на «Вийняти із зони»
 #endif
 				)
 		{

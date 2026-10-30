@@ -559,6 +559,34 @@ typedef enum
 } CodeplugZoneRenameResult_t;
 
 CodeplugZoneRenameResult_t codeplugZoneRename(int zoneNum, const char *name);   // zoneNum -- номер у списку зон (як у codeplugZoneGetDataForNumber); name -- сирі байти cp1251, 0-термінований
+
+/* R43: редагування зон з рації -- додати канал, вийняти канал, створити й видалити зону. Лише під ENABLE_ZONE_EDIT (і лише там, де є ZONE_RENAME_ENABLED:
+ * назва нової зони набирається тим самим редактором). Чиста логіка -- functions/codeplug_zoneedit.h. */
+#if defined(ENABLE_ZONE_EDIT)
+#define ZONE_EDIT_ENABLED 1
+typedef enum
+{
+	CODEPLUG_ZONE_EDIT_OK = 0,
+	CODEPLUG_ZONE_EDIT_NOT_REAL,           // не справжня зона: віртуальна «Всі канали» або номер поза списком
+	CODEPLUG_ZONE_EDIT_CHANNEL_NOT_IN_USE, // такого каналу нема в масці «в роботі»
+	CODEPLUG_ZONE_EDIT_ALREADY_IN_ZONE,    // канал у зоні вже є
+	CODEPLUG_ZONE_EDIT_ZONE_FULL,          // зона заповнена (codeplugChannelsPerZone каналів)
+	CODEPLUG_ZONE_EDIT_NO_FREE_ZONE,       // досягнуто межі кількості зон (CODEPLUG_ZONES_MAX)
+	CODEPLUG_ZONE_EDIT_BAD_POSITION,       // позиція поза списком каналів зони
+	CODEPLUG_ZONE_EDIT_NAME_EMPTY,         // порожня назва нової зони
+	CODEPLUG_ZONE_EDIT_NAME_TOO_LONG,      // назва задовга або 16 байтів із «я» наприкінці (див. CODEPLUG_ZONE_RENAME_AMBIGUOUS_TAIL)
+	CODEPLUG_ZONE_EDIT_WRITE_ERROR
+} CodeplugZoneEditResult_t;
+
+CodeplugZoneEditResult_t codeplugZoneAddChannel(int zoneNum, int channelIndex);           // канал -- у КІНЕЦЬ списку зони; zoneNum -- номер у списку зон
+CodeplugZoneEditResult_t codeplugZoneRemoveChannelAt(int zoneNum, int pos);               // виймає запис на позиції pos (зсув решти); сам канал НЕ видаляється
+/* Створення/видалення зони зсувають ординали зон правіше. curZoneOrdinal -- ЗБЕРЕЖЕНА поточна зона (nonVolatileSettings.currentZone): функція сама перераховує її так,
+ * щоб рація лишилась на тій самій зоні (або перейшла на «Всі канали», якщо зону видалено). Викликач записує результат у налаштування. */
+CodeplugZoneEditResult_t codeplugZoneCreate(const char *name, int16_t *curZoneOrdinal, int *newOrdinal);
+CodeplugZoneEditResult_t codeplugZoneDelete(int zoneNum, int16_t *curZoneOrdinal);
+int codeplugZoneEditChannelCount(void);                                                   // скільки каналів у масці «в роботі»
+int codeplugZoneEditNthChannel(int n);                                                    // n-й (з нуля) канал із маски, 0 -- поза межами
+#endif
 #endif
 CodeplugCSSTypes_t codeplugGetCSSType(uint16_t tone);
 void codeplugConvertChannelInternalToCodeplug(CodeplugChannel_t *codeplugChannel, CodeplugChannel_t *internalChannel);

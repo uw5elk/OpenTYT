@@ -373,6 +373,26 @@ const stringsTable_t englishLanguage =
 .zone_name_empty                           = "Name is empty", // MaxLen: 14
 .zone_name_ya                              = "Shorten the name", // MaxLen: 16
 #endif
+#if defined(ENABLE_ZONE_EDIT)
+.zone_new                                   = "New zone", // MaxLen: 16
+.zone_add_channel                           = "Add channel", // MaxLen: 16
+.zone_delete                                = "Delete zone", // MaxLen: 16
+.zone_created                               = "Zone created", // MaxLen: 16
+.zone_deleted                               = "Zone deleted", // MaxLen: 16
+.zone_delete_qm                             = "Delete zone?", // MaxLen: 14
+.zone_chans                                 = "Channels:", // MaxLen: 14
+.zone_chans_kept                            = "Channels stay", // MaxLen: 14
+.zone_ch_added                              = "Channel added", // MaxLen: 16
+.zone_has_channel                           = "Already in zone", // MaxLen: 16
+.zone_full                                  = "Zone is full", // MaxLen: 16
+.zone_too_many                              = "Too many zones", // MaxLen: 16
+.zone_max                                   = "Maximum:", // MaxLen: 16
+.zone_ch_remove                             = "Remove from zone", // MaxLen: 16
+.zone_remove_qm                             = "Remove?", // MaxLen: 14
+.zone_chan_stays                            = "Channel stays", // MaxLen: 14
+.zone_ch_removed                            = "Channel removed", // MaxLen: 16
+.zone_not_zone                              = "Not a zone", // MaxLen: 14
+#endif
 #endif
 };
 /********************************************************************

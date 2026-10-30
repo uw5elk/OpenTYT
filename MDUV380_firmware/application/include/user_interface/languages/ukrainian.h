@@ -374,6 +374,26 @@ const stringsTable_t ukrainianLanguage =
 .zone_name_empty                           = "Назва порожня", // MaxLen: 14
 .zone_name_ya                              = "Скоротіть назву", // MaxLen: 16 (16 символів і останній «я»: не відрізнити від дописки)
 #endif
+#if defined(ENABLE_ZONE_EDIT)
+.zone_new                                   = "Нова зона", // MaxLen: 16 (Нова зона у списку «Зони»)
+.zone_add_channel                           = "Додати канал", // MaxLen: 16 (дія над зоною; заголовок вибору каналу)
+.zone_delete                                = "Видалити зону", // MaxLen: 16 (дія над зоною)
+.zone_created                               = "Зону створено", // MaxLen: 16
+.zone_deleted                               = "Зону видалено", // MaxLen: 16
+.zone_delete_qm                             = "Видалити зону?", // MaxLen: 14 (рамка підтвердження: 14 символів на рядок)
+.zone_chans                                 = "Каналів:", // MaxLen: 14 (далі число каналів у зоні)
+.zone_chans_kept                            = "Канали цілі", // MaxLen: 14 (канали при видаленні зони НЕ видаляються)
+.zone_ch_added                              = "Канал додано", // MaxLen: 16
+.zone_has_channel                           = "Вже в зоні", // MaxLen: 16
+.zone_full                                  = "Зона заповнена", // MaxLen: 16 (далі «Максимум: N»)
+.zone_too_many                              = "Забагато зон", // MaxLen: 16 (далі «Максимум: N»)
+.zone_max                                   = "Максимум:", // MaxLen: 16 (далі число)
+.zone_ch_remove                             = "Вийняти з зони", // MaxLen: 16 (пункт швидкого меню каналу)
+.zone_remove_qm                             = "Вийняти?", // MaxLen: 14 (рамка підтвердження: 14 символів на рядок)
+.zone_chan_stays                            = "Канал лишиться", // MaxLen: 14 (канал при виніманні з зони НЕ видаляється)
+.zone_ch_removed                            = "Канал вийнято", // MaxLen: 16
+.zone_not_zone                              = "Це не зона", // MaxLen: 14 («Всі канали» -- віртуальна зона)
+#endif
 #endif
 };
 /********************************************************************

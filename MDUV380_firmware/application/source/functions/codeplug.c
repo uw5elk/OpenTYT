@@ -44,6 +44,9 @@
 #if defined(CHANNEL_DELETE_ENABLED)
 #include "functions/codeplug_chandel.h"   /* R41: чиста логіка видалення каналу */
 #endif
+#if defined(ZONE_EDIT_ENABLED)
+#include "functions/codeplug_zoneedit.h"  /* R43: чиста логіка редагування зон */
+#endif
 
 
 const int CODEPLUG_ADDR_EX_ZONE_BASIC = 0x8000;
@@ -450,23 +453,10 @@ bool codeplugZoneIsUsable(int zoneNum, CodeplugZone_t *z)
 #if defined(ZONE_RENAME_ENABLED)
 /* R42: пишемо ЛИШЕ 16 байтів назви в запис зони -- список каналів зони й решта записів не зачіпаються. Запис назви -- той самий codeplugUtilConvertStringToBuf, що й для
  * каналів і контактів (R34/R36): хвіст 0xFF, а для назви, що закінчується на 0xFF («я»), -- 0x00, тож літера переживає читання. */
-CodeplugZoneRenameResult_t codeplugZoneRename(int zoneNum, const char *name)
+/* Перевірка назви зони й перетворення на 16 байтів кодплага (спільне для перейменування R42 і створення зони R43). buf -- рівно 16 байтів. */
+static CodeplugZoneRenameResult_t codeplugZoneNameToBuf(const char *name, char *buf)
 {
-	char buf[16];
 	int n = 0;
-	int bit;
-
-	// Остання з codeplugZonesGetCount() -- віртуальна «Всі канали» (її назва береться з мовної таблиці): перейменувати нічого
-	if ((zoneNum < 0) || (zoneNum >= (codeplugZonesGetCount() - 1)))
-	{
-		return CODEPLUG_ZONE_RENAME_NOT_REAL;
-	}
-
-	bit = codeplugZoneMaskNthBit(codeplugZonesInUseCache, zoneNum);
-	if (bit < 0)
-	{
-		return CODEPLUG_ZONE_RENAME_NOT_REAL;
-	}
 
 	while ((n <= 16) && (name[n] != 0))
 	{
@@ -487,6 +477,32 @@ CodeplugZoneRenameResult_t codeplugZoneRename(int zoneNum, const char *name)
 	}
 
 	codeplugUtilConvertStringToBuf((char *)name, buf, 16);
+	return CODEPLUG_ZONE_RENAME_OK;
+}
+
+CodeplugZoneRenameResult_t codeplugZoneRename(int zoneNum, const char *name)
+{
+	char buf[16];
+	CodeplugZoneRenameResult_t nameRes;
+	int bit;
+
+	// Остання з codeplugZonesGetCount() -- віртуальна «Всі канали» (її назва береться з мовної таблиці): перейменувати нічого
+	if ((zoneNum < 0) || (zoneNum >= (codeplugZonesGetCount() - 1)))
+	{
+		return CODEPLUG_ZONE_RENAME_NOT_REAL;
+	}
+
+	bit = codeplugZoneMaskNthBit(codeplugZonesInUseCache, zoneNum);
+	if (bit < 0)
+	{
+		return CODEPLUG_ZONE_RENAME_NOT_REAL;
+	}
+
+	nameRes = codeplugZoneNameToBuf(name, buf);
+	if (nameRes != CODEPLUG_ZONE_RENAME_OK)
+	{
+		return nameRes;
+	}
 
 	if (!EEPROM_Write(CODEPLUG_ADDR_EX_ZONE_LIST + (bit * (16 + (sizeof(uint16_t) * codeplugChannelsPerZone))), (uint8_t *)buf, 16))
 	{
@@ -501,6 +517,267 @@ CodeplugZoneRenameResult_t codeplugZoneRename(int zoneNum, const char *name)
 	return CODEPLUG_ZONE_RENAME_OK;
 }
 #endif
+
+#if defined(ZONE_EDIT_ENABLED)
+/* ---- R43: редагування зон з рації ------------------------------------------------------------------------------------------------------------------------------
+ * Усі функції беруть «номер у списку зон» (zoneNum, як codeplugZoneGetDataForNumber), а ПИШУТЬ за номером біта маски (бітів і номерів у списку не збігається: у масці
+ * бувають дірки). Нової статичної пам'яті нема: списки каналів читаються з кодплага по одній зоні на стеку. */
+
+static int codeplugZoneRecordAddr(int bit)
+{
+	return CODEPLUG_ADDR_EX_ZONE_LIST + (bit * (16 + (int)(sizeof(uint16_t) * codeplugChannelsPerZone)));
+}
+
+static int codeplugZoneRecordSize(void)
+{
+	return (codeplugChannelsPerZone == 16) ? CODEPLUG_ZONE_DATA_ORIGINAL_STRUCT_SIZE : CODEPLUG_ZONE_DATA_OPENGD77_STRUCT_SIZE;
+}
+
+/* zoneNum -> біт; -1, якщо це не справжня зона (віртуальна «Всі канали» теж) */
+static int codeplugZoneRealBit(int zoneNum)
+{
+	if ((zoneNum < 0) || (zoneNum >= (codeplugZonesGetCount() - 1)))
+	{
+		return -1;
+	}
+	return codeplugZoneMaskNthBit(codeplugZonesInUseCache, zoneNum);
+}
+
+/* Якщо змінена зона зараз на екрані каналу -- перечитати її, щоб екран бачив новий список без перезапуску */
+static void codeplugZoneRefreshCurrent(int bit, int zoneNum)
+{
+	if (currentZone.NOT_IN_CODEPLUGDATA_indexNumber == bit)
+	{
+		codeplugZoneGetDataForNumber(zoneNum, &currentZone);
+	}
+}
+
+/*
+ * Додати канал у КІНЕЦЬ списку зони. Пишемо ЛИШЕ 2 байти порожньої позиції списку -- запис атомарний: обрив живлення лишає або старий список, або список із новим каналом.
+ * Канал, що вже є в зоні, не додаємо (дубль не має сенсу, а виймання видаляє один запис).
+ */
+CodeplugZoneEditResult_t codeplugZoneAddChannel(int zoneNum, int channelIndex)
+{
+	CodeplugZone_t z;
+	int bit = codeplugZoneRealBit(zoneNum);
+	int num;
+	uint16_t ch = (uint16_t)channelIndex;
+
+	if (bit < 0)
+	{
+		return CODEPLUG_ZONE_EDIT_NOT_REAL;
+	}
+	if (!codeplugAllChannelsIndexIsInUse(channelIndex))
+	{
+		return CODEPLUG_ZONE_EDIT_CHANNEL_NOT_IN_USE;
+	}
+	if (!codeplugZoneGetDataForNumber(zoneNum, &z))
+	{
+		return CODEPLUG_ZONE_EDIT_NOT_REAL;
+	}
+
+	num = z.NOT_IN_CODEPLUGDATA_numChannelsInZone;
+	if (codeplugZoneListFind(z.channels, num, ch) >= 0)
+	{
+		return CODEPLUG_ZONE_EDIT_ALREADY_IN_ZONE;
+	}
+	if (codeplugZoneListAppend(z.channels, num, codeplugChannelsPerZone, ch) < 0)
+	{
+		return CODEPLUG_ZONE_EDIT_ZONE_FULL;
+	}
+
+	if (!EEPROM_Write(codeplugZoneRecordAddr(bit) + 16 + (int)(sizeof(uint16_t) * num), (uint8_t *)&ch, sizeof(uint16_t)))
+	{
+		return CODEPLUG_ZONE_EDIT_WRITE_ERROR;
+	}
+
+	// «Останній канал у зоні» мусить вказувати в межах списку (після обриву живлення при створенні там могло лишитись сміття від попередньої зони з цим бітом)
+	if (codeplugGetLastUsedChannelInZone(bit) > num)
+	{
+		codeplugSetLastUsedChannelInZone(bit, 0);
+		codeplugSaveLastUsedChannelInZone();
+	}
+
+	codeplugZoneRefreshCurrent(bit, zoneNum);
+	return CODEPLUG_ZONE_EDIT_OK;
+}
+
+/*
+ * Вийняти запис списку на позиції pos. Список ЩІЛЬНИЙ, тож решта зсувається вліво, а не обнуляється -- інакше навігація по зоні зупинилась би на дірці (кінець списку --
+ * перший нуль). Сам канал лишається в масці «в роботі», у «Всіх каналах» і в інших зонах.
+ * Порядок: спершу хвіст списку (одним записом від pos до кінця), потім LUCZ. Обрив посеред запису хвоста лишає валідні номери каналів (можливий дубль сусіда), а не сміття.
+ */
+CodeplugZoneEditResult_t codeplugZoneRemoveChannelAt(int zoneNum, int pos)
+{
+	CodeplugZone_t z;
+	int bit = codeplugZoneRealBit(zoneNum);
+	int num;
+	int oldIdx;
+	int newIdx;
+
+	if (bit < 0)
+	{
+		return CODEPLUG_ZONE_EDIT_NOT_REAL;
+	}
+	if (!codeplugZoneGetDataForNumber(zoneNum, &z))
+	{
+		return CODEPLUG_ZONE_EDIT_NOT_REAL;
+	}
+
+	num = z.NOT_IN_CODEPLUGDATA_numChannelsInZone;
+	if ((pos < 0) || (pos >= num))
+	{
+		return CODEPLUG_ZONE_EDIT_BAD_POSITION;
+	}
+
+	oldIdx = codeplugGetLastUsedChannelInZone(bit);
+	newIdx = codeplugZoneIndexAfterRemoveAt(num, pos, oldIdx);
+	codeplugZoneListRemoveAt(z.channels, num, pos);
+
+	if (!EEPROM_Write(codeplugZoneRecordAddr(bit) + 16 + (int)(sizeof(uint16_t) * pos), (uint8_t *)&z.channels[pos], (int)(sizeof(uint16_t) * (num - pos))))
+	{
+		return CODEPLUG_ZONE_EDIT_WRITE_ERROR;
+	}
+
+	if (newIdx != oldIdx)
+	{
+		codeplugSetLastUsedChannelInZone(bit, (int16_t)newIdx);
+		codeplugSaveLastUsedChannelInZone();
+	}
+
+	codeplugZoneRefreshCurrent(bit, zoneNum);
+	return CODEPLUG_ZONE_EDIT_OK;
+}
+
+/* Перерахунок збереженої поточної зони після зміни маски: див. codeplugZoneCurrentAfterChange. oldMask -- маска ДО зміни. */
+static void codeplugZoneFixCurrent(const uint8_t *oldMask, int16_t *curZoneOrdinal)
+{
+	int curBit = -1;
+
+	if (curZoneOrdinal == NULL)
+	{
+		return;
+	}
+	if ((*curZoneOrdinal >= 0) && (*curZoneOrdinal < codeplugZoneMaskCount(oldMask)))
+	{
+		curBit = codeplugZoneMaskNthBit(oldMask, *curZoneOrdinal);
+	}
+	*curZoneOrdinal = (int16_t)codeplugZoneCurrentAfterChange(codeplugZonesInUseCache, curBit);
+}
+
+/* Записати байт маски зон (EEPROM 0x8010 + bit/8); кеш міняємо лише після успішного запису */
+static bool codeplugZoneMaskWrite(const uint8_t *newMask, int bit)
+{
+	if (!EEPROM_Write(CODEPLUG_ADDR_EX_ZONE_INUSE_PACKED_DATA + (bit >> 3), (uint8_t *)&newMask[bit >> 3], 1))
+	{
+		return false;
+	}
+	codeplugZonesInUseCache[bit >> 3] = newMask[bit >> 3];
+	return true;
+}
+
+/*
+ * Створити зону з порожнім списком каналів у першому вільному біті маски (дірку займаємо першою). ПОРЯДОК, стійкий до обриву живлення:
+ *   1. записати ВЕСЬ запис зони (назва + нулі замість каналів) -- поки біт у масці не стоїть, зона невидима, тож обрив тут нічого не псує;
+ *   2. поставити біт у масці -- тут зона з'являється (порожня);
+ *   3. обнулити LUCZ цього біта (там міг лишитись номер від зони, що стояла тут раніше).
+ * Нова зона може стати ЛІВОРУЧ від поточної за ординалом -- тоді ординал поточної зсувається, і функція його перераховує.
+ */
+CodeplugZoneEditResult_t codeplugZoneCreate(const char *name, int16_t *curZoneOrdinal, int *newOrdinal)
+{
+	CodeplugZone_t z;
+	uint8_t oldMask[CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE];
+	uint8_t newMask[CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE];
+	int bit = codeplugZoneMaskFirstFree(codeplugZonesInUseCache);
+
+	if (bit < 0)
+	{
+		return CODEPLUG_ZONE_EDIT_NO_FREE_ZONE;
+	}
+
+	memset(&z, 0, sizeof(z));
+	switch (codeplugZoneNameToBuf(name, z.name))
+	{
+		case CODEPLUG_ZONE_RENAME_OK:
+			break;
+		case CODEPLUG_ZONE_RENAME_EMPTY:
+			return CODEPLUG_ZONE_EDIT_NAME_EMPTY;
+		default:
+			return CODEPLUG_ZONE_EDIT_NAME_TOO_LONG;
+	}
+
+	// 1. Запис зони. УВАГА: байти запису НЕ заповнюємо 0xFF -- автовизначення «16 чи 80 каналів у зоні» (codeplugInitChannelsPerZone) читає байт 0x806F
+	// (у розкладці з 80 каналами це старший байт каналу зони №0 -- мусить бути 0..4). Нулі в списку цього не псують.
+	if (!EEPROM_Write(codeplugZoneRecordAddr(bit), (uint8_t *)&z, codeplugZoneRecordSize()))
+	{
+		return CODEPLUG_ZONE_EDIT_WRITE_ERROR;
+	}
+
+	// 2. Маска
+	memcpy(oldMask, codeplugZonesInUseCache, sizeof(oldMask));
+	memcpy(newMask, codeplugZonesInUseCache, sizeof(newMask));
+	codeplugZoneMaskSetBit(newMask, bit);
+	if (!codeplugZoneMaskWrite(newMask, bit))
+	{
+		return CODEPLUG_ZONE_EDIT_WRITE_ERROR;
+	}
+
+	// 3. LUCZ
+	codeplugSetLastUsedChannelInZone(bit, 0);
+	codeplugSaveLastUsedChannelInZone();
+
+	codeplugZoneFixCurrent(oldMask, curZoneOrdinal);
+	if (newOrdinal != NULL)
+	{
+		*newOrdinal = codeplugZoneOrdinalOfBit(codeplugZonesInUseCache, bit);
+	}
+	return CODEPLUG_ZONE_EDIT_OK;
+}
+
+/*
+ * Видалити зону: ЗНЯТИ БІТ у масці (спершу маска, потім решта, за зразком R41). Канали НЕ чіпаються -- вони лишаються в масці каналів, у «Всіх каналах» і в інших зонах.
+ * Записи інших зон не зсуваються: кодплаг дозволяє дірки в нумерації зон (codeplugZoneMaskNthBit шукає n-ту ПОСТАВЛЕНУ позицію).
+ * Сам запис зони НЕ стираємо: стирання 0xFF (як і нулями) зламало б автовизначення розкладки за байтом 0x806F (див. codeplugZoneCreate); без біта в масці запис ніким
+ * не читається, а наступне створення зони в цьому біті перепише його цілком.
+ * Якщо видалено поточну зону, curZoneOrdinal стає «Всі канали» (= кількість зон, що лишились).
+ */
+CodeplugZoneEditResult_t codeplugZoneDelete(int zoneNum, int16_t *curZoneOrdinal)
+{
+	uint8_t oldMask[CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE];
+	uint8_t newMask[CODEPLUG_EX_ZONE_INUSE_PACKED_DATA_SIZE];
+	int bit = codeplugZoneRealBit(zoneNum);
+
+	if (bit < 0)
+	{
+		return CODEPLUG_ZONE_EDIT_NOT_REAL;
+	}
+
+	memcpy(oldMask, codeplugZonesInUseCache, sizeof(oldMask));
+	memcpy(newMask, codeplugZonesInUseCache, sizeof(newMask));
+	codeplugZoneMaskClearBit(newMask, bit);
+	if (!codeplugZoneMaskWrite(newMask, bit))
+	{
+		return CODEPLUG_ZONE_EDIT_WRITE_ERROR;
+	}
+
+	codeplugSetLastUsedChannelInZone(bit, 0);
+	codeplugSaveLastUsedChannelInZone();
+
+	codeplugZoneFixCurrent(oldMask, curZoneOrdinal);
+	return CODEPLUG_ZONE_EDIT_OK;
+}
+
+/* Список вибору каналу читає канали ПО ОДНОМУ: n-й за порядком канал із маски «в роботі» (1..1024; 0 -- n поза межами) і їх кількість. Копії списку в пам'яті нема. */
+int codeplugZoneEditChannelCount(void)
+{
+	return codeplugChanMaskPopcount(codeplugAllChannelsCache);
+}
+
+int codeplugZoneEditNthChannel(int n)
+{
+	return codeplugChanMaskNth(codeplugAllChannelsCache, n);
+}
+#endif /* ZONE_EDIT_ENABLED */
 
 bool codeplugZoneAddChannelToZoneAndSave(int channelIndex, CodeplugZone_t *zoneBuf)
 {

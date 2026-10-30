@@ -435,6 +435,9 @@ enum CHANNEL_SCREEN_QUICK_MENU_ITEMS
 #if defined(ENABLE_CHANNEL_DELETE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 	CH_SCREEN_QUICK_MENU_DELETE,   /* R41: видалення каналу -- завжди ОСТАННІЙ пункт, щоб номери решти не зсунулися (швидкі клавіші зберігають номер пункту) */
 #endif
+#if defined(ZONE_EDIT_ENABLED)
+	CH_SCREEN_QUICK_MENU_ZONE_REMOVE,   /* R43: «Вийняти із зони» -- ДОДАНО ПІСЛЯ видалення (теж в кінці), номери наявних пунктів не зсуваються */
+#endif
 	NUM_CH_SCREEN_QUICK_MENU_ITEMS
 };
 

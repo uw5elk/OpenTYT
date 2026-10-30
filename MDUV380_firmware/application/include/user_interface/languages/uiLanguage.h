@@ -407,6 +407,28 @@ typedef struct
    const char zone_name_empty[LANGUAGE_TEXTS_LENGTH];
    const char zone_name_ya[LANGUAGE_TEXTS_LENGTH];
 #endif
+#if defined(ENABLE_ZONE_EDIT)
+   // R43: редагування зон з рації (додати/вийняти канал, нова зона, видалити зону). Останніми, в українському блоці, лише під ENABLE_ZONE_EDIT.
+   // Код -- під ZONE_EDIT_ENABLED (codeplug.h).
+   const char zone_new[LANGUAGE_TEXTS_LENGTH];
+   const char zone_add_channel[LANGUAGE_TEXTS_LENGTH];
+   const char zone_delete[LANGUAGE_TEXTS_LENGTH];
+   const char zone_created[LANGUAGE_TEXTS_LENGTH];
+   const char zone_deleted[LANGUAGE_TEXTS_LENGTH];
+   const char zone_delete_qm[LANGUAGE_TEXTS_LENGTH];
+   const char zone_chans[LANGUAGE_TEXTS_LENGTH];
+   const char zone_chans_kept[LANGUAGE_TEXTS_LENGTH];
+   const char zone_ch_added[LANGUAGE_TEXTS_LENGTH];
+   const char zone_has_channel[LANGUAGE_TEXTS_LENGTH];
+   const char zone_full[LANGUAGE_TEXTS_LENGTH];
+   const char zone_too_many[LANGUAGE_TEXTS_LENGTH];
+   const char zone_max[LANGUAGE_TEXTS_LENGTH];
+   const char zone_ch_remove[LANGUAGE_TEXTS_LENGTH];
+   const char zone_remove_qm[LANGUAGE_TEXTS_LENGTH];
+   const char zone_chan_stays[LANGUAGE_TEXTS_LENGTH];
+   const char zone_ch_removed[LANGUAGE_TEXTS_LENGTH];
+   const char zone_not_zone[LANGUAGE_TEXTS_LENGTH];
+#endif
 #endif
 } stringsTable_t;
 

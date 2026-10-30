@@ -141,7 +141,7 @@ ZONE_MUTANTS = [
      "EEPROM_Write(CODEPLUG_ADDR_EX_ZONE_LIST + (bit * (16 + (sizeof(uint16_t) * codeplugChannelsPerZone))), (uint8_t *)buf, 16)",
      "EEPROM_Write(CODEPLUG_ADDR_EX_ZONE_LIST + (zoneNum * (16 + (sizeof(uint16_t) * codeplugChannelsPerZone))), (uint8_t *)buf, 16)"),
     ("«Всі канали» можна перейменувати (знято обидва захисти: за межею списку й від'ємний біт)", "codeplug.c",
-     (("if ((zoneNum < 0) || (zoneNum >= (codeplugZonesGetCount() - 1)))", "if ((zoneNum < 0) || (zoneNum >= codeplugZonesGetCount()))"),
+     (("(її назва береться з мовної таблиці): перейменувати нічого\n	if ((zoneNum < 0) || (zoneNum >= (codeplugZonesGetCount() - 1)))", "(її назва береться з мовної таблиці): перейменувати нічого\n	if ((zoneNum < 0) || (zoneNum >= codeplugZonesGetCount()))"),
       ("	bit = codeplugZoneMaskNthBit(codeplugZonesInUseCache, zoneNum);\n	if (bit < 0)\n	{\n		return CODEPLUG_ZONE_RENAME_NOT_REAL;\n	}",
        "	bit = codeplugZoneMaskNthBit(codeplugZonesInUseCache, zoneNum);")), None),
     ("16 символів з «я» не відхиляються", "codeplug.c",

@@ -133,7 +133,15 @@ DEFS_R42LITE=("${DEFS_COMMON[@]}" -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_SQL_OPEN_D
 DEFS_R42SQL=("${DEFS_APRSRX[@]}" -DENABLE_SQL_OPEN_DELAY)                            # лише затримка шумодава
 DEFS_R42ZONE=("${DEFS_APRSRX[@]}" -DENABLE_ZONE_RENAME)                              # лише перейменування зони
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE R42 R42EN R42LITE R42SQL R42ZONE)
+# R43: редагування зон (ENABLE_ZONE_EDIT). Користувацька українська збірка CI з усіма фічами; англійський двійник (все має зникнути); українська БЕЗ AES/APRS_RX (немає
+# ZONE_RENAME_ENABLED -> немає й ZONE_EDIT_ENABLED); редагування БЕЗ ENABLE_CHANNEL_DELETE (пункти швидкого меню незалежні); прапорець без перейменування (фіча зникає).
+DEFS_R43=("${DEFS_R42[@]}" -DENABLE_ZONE_EDIT)                                       # build-ukrainian (CI) + усі фічі
+DEFS_R43EN=("${DEFS_R42EN[@]}" -DENABLE_ZONE_EDIT)                                   # англійська + прапорці: фічі мають зникнути
+DEFS_R43LITE=("${DEFS_R42LITE[@]}" -DENABLE_ZONE_EDIT)                               # українська БЕЗ AES/APRS_RX
+DEFS_R43EDIT=("${DEFS_APRSRX[@]}" -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT)           # редагування зон без видалення каналу
+DEFS_R43NOREN=("${DEFS_APRSRX[@]}" -DENABLE_ZONE_EDIT)                               # редагування без перейменування: код має зникнути
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE R42 R42EN R42LITE R42SQL R42ZONE R43 R43EN R43LITE R43EDIT R43NOREN)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.
