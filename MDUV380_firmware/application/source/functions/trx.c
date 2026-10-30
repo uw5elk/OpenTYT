@@ -519,11 +519,33 @@ bool trxCheckDigitalSquelch(RadioDevice_t deviceId)
 	return radioDevice->digitalSignalReceived;
 }
 
+#if defined(SQL_OPEN_DELAY_ENABLED)
+/* R42: затримка відкриття шумодава FM. trxSqlOpenSince -- коли сигнал з'явився (0 = не позначено); чиста логіка -- functions/sql_open_delay.h.
+ * Під час сканування затримки НЕМАЄ: підтвердження зупинки скану (SCAN_SHORT_PAUSE_TIME = 500 мс) вимагає відкритого звуку, тож затримка >= 500 мс
+ * не дала б скану зупинитись ніколи. */
+static uint32_t trxSqlOpenSince = 0;
+
+static bool trxSqlOpenDelayReady(void)
+{
+	uint32_t delayMs = uiDataGlobal.Scan.active ? 0U : ((uint32_t)sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1) * SQL_OPEN_DELAY_STEP_MS);
+
+	return sqlOpenDelayCheck(&trxSqlOpenSince, ticksGetMillis(), delayMs, true);
+}
+
+static void trxSqlOpenDelayReset(void)
+{
+	(void)sqlOpenDelayCheck(&trxSqlOpenSince, 0U, 0U, false);
+}
+#endif
+
 void trxTerminateCheckAnalogSquelch(RadioDevice_t deviceId)
 {
 	audioAmpDisable(AUDIO_AMP_CHANNEL_RF);
 	radioDevices[deviceId].analogSignalReceived = false;
 	radioDevices[deviceId].analogTriggeredAudio = false;
+#if defined(SQL_OPEN_DELAY_ENABLED)
+	trxSqlOpenDelayReset();
+#endif
 	trxCssMeasureCount = 0;
 }
 
@@ -537,6 +559,9 @@ bool trxCheckAnalogSquelch(void)
 		}
 		currentRadioDevice->analogSignalReceived = false;
 		currentRadioDevice->analogTriggeredAudio = false;
+#if defined(SQL_OPEN_DELAY_ENABLED)
+		trxSqlOpenDelayReset();
+#endif
 		return false;
 	}
 
@@ -612,6 +637,9 @@ bool trxCheckAnalogSquelch(void)
 				}
 
 				currentRadioDevice->analogTriggeredAudio = false;
+#if defined(SQL_OPEN_DELAY_ENABLED)
+				trxSqlOpenDelayReset();   // R42: сигнал зник -- наступна поява починає відлік затримки заново
+#endif
 				trxCssMeasureCount = 0;
 			}
 		}
@@ -622,7 +650,11 @@ bool trxCheckAnalogSquelch(void)
 		{
 			if (((audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) == 0) && ((rxCSSactive == false) || cssFlag))
 			{
-				if (currentRadioDevice->analogTriggeredAudio) // Execute that block of code just once after valid signal is received.
+				if (currentRadioDevice->analogTriggeredAudio // Execute that block of code just once after valid signal is received.
+#if defined(SQL_OPEN_DELAY_ENABLED)
+						&& trxSqlOpenDelayReady()   // R42: динамік відкриваємо лише коли сигнал пробув відкритим задану затримку
+#endif
+						)
 				{
 					taskENTER_CRITICAL();
 					if (!voicePromptsIsPlaying())
@@ -631,6 +663,9 @@ bool trxCheckAnalogSquelch(void)
 						audioAmpEnable(AUDIO_AMP_CHANNEL_RF);
 						displayLightTrigger(false);
 						currentRadioDevice->analogTriggeredAudio = false;
+#if defined(SQL_OPEN_DELAY_ENABLED)
+						trxSqlOpenDelayReset();
+#endif
 						trxCssMeasureCount = 0;
 					}
 					taskEXIT_CRITICAL();

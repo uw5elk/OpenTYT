@@ -447,6 +447,61 @@ bool codeplugZoneIsUsable(int zoneNum, CodeplugZone_t *z)
 	return codeplugZoneUsableCheck(ok, z->NOT_IN_CODEPLUGDATA_numChannelsInZone, codeplugAllChannelsIndexIsInUse(z->channels[0]));
 }
 
+#if defined(ZONE_RENAME_ENABLED)
+/* R42: пишемо ЛИШЕ 16 байтів назви в запис зони -- список каналів зони й решта записів не зачіпаються. Запис назви -- той самий codeplugUtilConvertStringToBuf, що й для
+ * каналів і контактів (R34/R36): хвіст 0xFF, а для назви, що закінчується на 0xFF («я»), -- 0x00, тож літера переживає читання. */
+CodeplugZoneRenameResult_t codeplugZoneRename(int zoneNum, const char *name)
+{
+	char buf[16];
+	int n = 0;
+	int bit;
+
+	// Остання з codeplugZonesGetCount() -- віртуальна «Всі канали» (її назва береться з мовної таблиці): перейменувати нічого
+	if ((zoneNum < 0) || (zoneNum >= (codeplugZonesGetCount() - 1)))
+	{
+		return CODEPLUG_ZONE_RENAME_NOT_REAL;
+	}
+
+	bit = codeplugZoneMaskNthBit(codeplugZonesInUseCache, zoneNum);
+	if (bit < 0)
+	{
+		return CODEPLUG_ZONE_RENAME_NOT_REAL;
+	}
+
+	while ((n <= 16) && (name[n] != 0))
+	{
+		n++;
+	}
+
+	if (n == 0)
+	{
+		return CODEPLUG_ZONE_RENAME_EMPTY;
+	}
+	if (n > 16)
+	{
+		return CODEPLUG_ZONE_RENAME_TOO_LONG;
+	}
+	if ((n == 16) && (((uint8_t)name[15]) == 0xFF))
+	{
+		return CODEPLUG_ZONE_RENAME_AMBIGUOUS_TAIL;
+	}
+
+	codeplugUtilConvertStringToBuf((char *)name, buf, 16);
+
+	if (!EEPROM_Write(CODEPLUG_ADDR_EX_ZONE_LIST + (bit * (16 + (sizeof(uint16_t) * codeplugChannelsPerZone))), (uint8_t *)buf, 16))
+	{
+		return CODEPLUG_ZONE_RENAME_WRITE_ERROR;
+	}
+
+	if (currentZone.NOT_IN_CODEPLUGDATA_indexNumber == bit)
+	{
+		memcpy(currentZone.name, buf, 16);   // зона на екрані каналу: показуємо нову назву без перечитування
+	}
+
+	return CODEPLUG_ZONE_RENAME_OK;
+}
+#endif
+
 bool codeplugZoneAddChannelToZoneAndSave(int channelIndex, CodeplugZone_t *zoneBuf)
 {
 	if ((zoneBuf->NOT_IN_CODEPLUGDATA_numChannelsInZone < codeplugChannelsPerZone) && (zoneBuf->NOT_IN_CODEPLUGDATA_indexNumber != -1))

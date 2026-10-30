@@ -359,6 +359,20 @@ const stringsTable_t englishLanguage =
 .last_channel                             = "Only channel", // MaxLen: 14
 .cannot_delete                            = "not deletable", // MaxLen: 14
 #endif
+#if defined(ENABLE_SQL_OPEN_DELAY)
+.sql_open_delay                            = "Sql delay", // MaxLen: 10 R42
+.sql_open_delay_ms                         = "ms", // MaxLen: 4
+.sql_open_delay_hint1                      = "Cuts the start of", // MaxLen: 16
+.sql_open_delay_hint2                      = "every transmission", // MaxLen: 16
+.sql_open_delay_hint3                      = "by this time", // MaxLen: 16
+#endif
+#if defined(ENABLE_ZONE_RENAME)
+.zone_name                                 = "Zone name", // MaxLen: 16 R42
+.zone_renamed                              = "Name saved", // MaxLen: 16
+.zone_rename_all                           = "Cannot rename", // MaxLen: 16
+.zone_name_empty                           = "Name is empty", // MaxLen: 14
+.zone_name_ya                              = "Shorten the name", // MaxLen: 16
+#endif
 #endif
 };
 /********************************************************************

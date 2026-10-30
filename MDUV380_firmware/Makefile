@@ -121,10 +121,20 @@ ifeq ($(ENABLE_CALL_REPLAY),1)
 DEFS += -DENABLE_CALL_REPLAY
 endif
 
-# R41: «Видалити канал» у швидкому меню каналу (оранжева на екрані каналу). Діє лише разом з LANGUAGE_UKRAINIAN=1 (рядки меню живуть у
+# R41: «Видалити канал» у швидкому меню каналу (SK1 + зелена на екрані каналу). Діє лише разом з LANGUAGE_UKRAINIAN=1 (рядки меню живуть у
 # українському мовному блоці). Незалежний від ENABLE_AES/ENABLE_DMR_DATA. Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
 ifeq ($(ENABLE_CHANNEL_DELETE),1)
 DEFS += -DENABLE_CHANNEL_DELETE
+endif
+
+# R42: затримка відкриття шумодава FM (Опції рації) і перейменування зони (список «Зони», клавіша «#»). Діють лише разом з LANGUAGE_UKRAINIAN=1; перейменування зони
+# -- ще й з ENABLE_APRS_RX (редактор назви й правила хвоста 0x00 живуть у збірці APRS_R21_NAMES). Незалежні одне від одного й від ENABLE_AES/ENABLE_DMR_DATA.
+# Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
+ifeq ($(ENABLE_SQL_OPEN_DELAY),1)
+DEFS += -DENABLE_SQL_OPEN_DELAY
+endif
+ifeq ($(ENABLE_ZONE_RENAME),1)
+DEFS += -DENABLE_ZONE_RENAME
 endif
 
 # R2/R3 (2026-10-09/10), ТИМЧАСОВО: діагностичний екран «APRS проба» (Опції рації, останній

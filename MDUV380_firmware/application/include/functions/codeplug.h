@@ -543,6 +543,23 @@ int codeplugChannelCountInUse(void);                              // скіль�
 int codeplugChannelNextInUse(int afterIndex);                     // найближчий далі за afterIndex канал у роботі (з переходом через кінець), 0 -- нічого нема
 CodeplugChannelDeleteResult_t codeplugChannelDelete(int channelIndex);
 #endif
+
+/* R42: перейменування зони зі списку «Зони». Лише під ENABLE_ZONE_RENAME, лише в українській збірці з APRS_R21_NAMES (там живуть правила назв R34/R36:
+ * читання без втрати кінцевої «я», запис з хвостом 0x00). Без прапорця типова збірка байт-у-байт стокова. */
+#if defined(ENABLE_ZONE_RENAME) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(APRS_R21_NAMES)
+#define ZONE_RENAME_ENABLED 1
+typedef enum
+{
+	CODEPLUG_ZONE_RENAME_OK = 0,
+	CODEPLUG_ZONE_RENAME_NOT_REAL,        // не справжня зона: віртуальна «Всі канали» або номер поза списком
+	CODEPLUG_ZONE_RENAME_EMPTY,           // порожня назва (запис з name[0] == 0xFF прошивка вважає порожнім)
+	CODEPLUG_ZONE_RENAME_TOO_LONG,        // понад 16 байтів
+	CODEPLUG_ZONE_RENAME_AMBIGUOUS_TAIL,  // рівно 16 байтів і останній 0xFF («я»): місця для хвоста 0x00 нема, читання відрізало б літеру
+	CODEPLUG_ZONE_RENAME_WRITE_ERROR
+} CodeplugZoneRenameResult_t;
+
+CodeplugZoneRenameResult_t codeplugZoneRename(int zoneNum, const char *name);   // zoneNum -- номер у списку зон (як у codeplugZoneGetDataForNumber); name -- сирі байти cp1251, 0-термінований
+#endif
 CodeplugCSSTypes_t codeplugGetCSSType(uint16_t tone);
 void codeplugConvertChannelInternalToCodeplug(CodeplugChannel_t *codeplugChannel, CodeplugChannel_t *internalChannel);
 

@@ -28,11 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     name: перевірки (синтаксис, ширина меню, вирівнювання S-метра)
     steps:
-      - uses: actions/checkout@v4
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
       # Через setup-python, а не системний pip: на свіжих ubuntu-образах системний
       # Python "externally managed", і pip install без --break-system-packages там падає,
       # а сам той прапорець є не в кожній версії pip. Власне середовище надійніше.
-      - uses: actions/setup-python@v5
+      - name: Встановити Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Залежності python (Pillow для рендерера екрана + tools/requirements.txt)
@@ -66,7 +68,8 @@ jobs:
         aes: ["0", "1"]
     name: build (ENABLE_AES=${{ matrix.aes }})
     steps:
-      - uses: actions/checkout@v4
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -81,9 +84,9 @@ jobs:
       # RAM (128 КБ) і CCMRAM (64 КБ) СТАТИЧНО, і хто саме з'їдає місце -- див.
       # tools/mem_report.py. Для ВСІХ конфігурацій матриці, не лише української:
       # ENABLE_AES/ENABLE_DMR_DATA теж коштують пам'яті, і різниця цікава сама по собі.
-      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
         working-directory: MDUV380_firmware
-        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
       - name: Assert codec-merge-capable size
         working-directory: MDUV380_firmware
         run: |
@@ -101,7 +104,8 @@ jobs:
       # Всі артефакти живуть 2 дні (було 7): квота сховища артефактів перераховується лише
       # раз на 6-12 год, і старі артефакти блокували upload нових збірок ("Artifact storage
       # quota has been hit"). .bin/.hex стискаються максимально (compression-level: 9).
-      - uses: actions/upload-artifact@v4
+      - name: Вивантажити артефакт openuv380-10w-aes${{ matrix.aes }}
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: openuv380-10w-aes${{ matrix.aes }}
@@ -112,7 +116,8 @@ jobs:
             MDUV380_firmware/build/*.hex
       # .elf + .map (налагоджувальні символи і лінкерна карта) -- лише вручну.
       # Запуск: GitHub → Actions → "Build MD-UV390 10W firmware" → Run workflow.
-      - uses: actions/upload-artifact@v4
+      - name: Вивантажити артефакт openuv380-10w-aes${{ matrix.aes }}-debug
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         if: github.event_name == 'workflow_dispatch'
         with:
@@ -135,7 +140,8 @@ jobs:
         variant: ["next", "current"]
     name: build (aes-mi-${{ matrix.variant }})
     steps:
-      - uses: actions/checkout@v4
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -148,9 +154,9 @@ jobs:
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
-      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
         working-directory: MDUV380_firmware
-        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
       - name: Перевірити, що перемикач справді (не)ввімкнено в збірці
         working-directory: MDUV380_firmware
         run: |
@@ -161,7 +167,8 @@ jobs:
             ! make -n -B ENABLE_AES=1 AES_TX_MI_CURRENT=0 | grep -q -- "-DAES_TX_MI_CURRENT" || { echo "ПОМИЛКА: -DAES_TX_MI_CURRENT зайвий"; exit 1; }
           fi
           echo "OK: aes-mi-${{ matrix.variant }}"
-      - uses: actions/upload-artifact@v4
+      - name: Вивантажити артефакт openuv380-10w-aes-mi-${{ matrix.variant }}
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: openuv380-10w-aes-mi-${{ matrix.variant }}
@@ -185,7 +192,8 @@ jobs:
         variant: ["nofix", "fix"]
     name: build (aes-diag-${{ matrix.variant }})
     steps:
-      - uses: actions/checkout@v4
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -198,10 +206,11 @@ jobs:
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
-      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
         working-directory: MDUV380_firmware
-        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
-      - uses: actions/upload-artifact@v4
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
+      - name: Вивантажити артефакт openuv380-10w-aes-diag-${{ matrix.variant }}
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: openuv380-10w-aes-diag-${{ matrix.variant }}
@@ -224,7 +233,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -234,17 +244,18 @@ jobs:
         # ENABLE_APRS_RX=1 -- R8 (2026-10-11): справжній фоновий приймач APRS (Опції рації -> «APRS станції»,
         # банер, повідомлення нам). Діагностичний екран «APRS проба» (ENABLE_APRS_RX_PROBE) у користувацьку
         # збірку НЕ входить -- він у окремій роботі build-ukrainian-diag нижче.
-        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
-      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
         working-directory: MDUV380_firmware
-        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
       # Артефакт вивантажуємо ДО перевірок: якщо якась із них колись спрацює хибно,
       # зібраний .bin все одно має лишитись доступним для завантаження.
       # .bin і .hex -- завжди; .elf і .map -- лише при ручному запуску (workflow_dispatch).
-      - uses: actions/upload-artifact@v4
+      - name: Вивантажити артефакт openuv380-10w-ukrainian
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian
@@ -256,7 +267,8 @@ jobs:
       # R10-fix4: для користувацької збірки .elf + .map вивантажуються ЗАВЖДИ (адреси зі звіту про збій розшифровуються
       # лише за .map ТОГО САМОГО коміту: MDUV380_firmware/tools/fault_lookup.py). Окрім артефакту (квота!), .map і .elf
       # кладуться ще й у GitHub Release (крок нижче) -- їх забирає `gh release download`.
-      - uses: actions/upload-artifact@v4
+      - name: Вивантажити артефакт openuv380-10w-ukrainian-debug
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian-debug
@@ -356,7 +368,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -370,10 +383,11 @@ jobs:
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
-      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
         working-directory: MDUV380_firmware
-        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
-      - uses: actions/upload-artifact@v4
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
+      - name: Вивантажити артефакт openuv380-10w-ukrainian-diag
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian-diag
@@ -441,7 +455,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
       # .bin беремо з релізу ci-<sha> (його щойно опублікував build-ukrainian), а НЕ з
       # артефакту: при вичерпаній квоті артефакт не вивантажується, і download-artifact падав.
       - name: Завантажити .bin із релізу ci-<sha>
@@ -456,7 +471,8 @@ jobs:
           gh release download "ci-${SHORT}" --pattern "openuv380-10w-ukrainian-${SHORT}.bin" -D firmware --clobber
           mv "firmware/openuv380-10w-ukrainian-${SHORT}.bin" firmware/openuv380-10w.bin
           ls -l firmware
-      - uses: actions/setup-python@v5
+      - name: Встановити Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install Python-залежності
@@ -500,7 +516,8 @@ jobs:
             --add-data "libusb-1.0.dll;." \
             --add-data "build_info.txt;." \
             gui_flasher.py
-      - uses: actions/upload-artifact@v4
+      - name: Вивантажити артефакт openuv380-flasher-windows
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: openuv380-flasher-windows

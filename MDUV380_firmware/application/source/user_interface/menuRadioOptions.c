@@ -82,6 +82,9 @@ enum
 	RADIO_OPTIONS_MENU_SMS_MONITOR,   /* ui7: останніми -- індекси QuickKey стокових пунктів ті самі */
 	RADIO_OPTIONS_MENU_SMS_TX_MODE,
 #endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+	RADIO_OPTIONS_MENU_SQL_OPEN_DELAY,   /* R42: найостаннішим -- індекси QuickKey усіх попередніх пунктів ті самі */
+#endif
 	NUM_RADIO_OPTIONS_MENU_ITEMS
 };
 
@@ -157,6 +160,9 @@ static void updateScreen(bool isFirstRun)
 			buf[2] = 0;
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 			bool leftSideIsFork = false;   /* підпис -- не рядок currentLanguage: без голосової підказки */
+#endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+			bool sqlDelayNoPrompt = false;   /* R42: підпис -- поле українського блока, поза діапазоном голосових підказок: без підказки */
 #endif
 			leftSide = NULL;
 			rightSideConst = NULL;
@@ -276,6 +282,26 @@ static void updateScreen(bool isFirstRun)
 					}
 					break;
 #endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+				/* R42: затримка відкриття шумодава FM, 0..500 мс кроком 50 (0 = вимкнено, як до R42). Логіка -- functions/sql_open_delay.h. */
+				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
+				{
+					uint8_t steps = sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1);
+
+					leftSide = currentLanguage->sql_open_delay;
+					sqlDelayNoPrompt = true;
+					if (steps == 0)
+					{
+						rightSideConst = currentLanguage->off;
+					}
+					else
+					{
+						snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u", (unsigned)(steps * SQL_OPEN_DELAY_STEP_MS));
+						rightSideUnitsStr = currentLanguage->sql_open_delay_ms;
+					}
+				}
+					break;
+#endif
 			}
 
 			snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s:%s", leftSide, (rightSideVar[0] ? rightSideVar : (rightSideConst ? rightSideConst : "")));
@@ -293,6 +319,9 @@ static void updateScreen(bool isFirstRun)
 				{
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 					if (leftSideIsFork == false)   /* індекс підказки рахується від currentLanguage */
+#endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+					if (sqlDelayNoPrompt == false)   /* R42 */
 #endif
 					voicePromptsAppendLanguageString(leftSide);
 				}
@@ -566,6 +595,27 @@ static void handleEvent(uiEvent_t *ev)
 #endif
 					break;
 #endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
+				{
+					uint8_t steps = sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1);
+					uint8_t next = sqlOpenDelayStepsInc(steps);
+
+					if (next != steps)
+					{
+						settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(next));
+						if (steps == 0)
+						{
+							/* Умикання затримки: одним реченням -- ціна (пункт меню не має рядка підказки). */
+							char hint[3 * LANGUAGE_TEXTS_LENGTH + 2];
+
+							snprintf(hint, sizeof(hint), "%s\n%s\n%s", currentLanguage->sql_open_delay_hint1, currentLanguage->sql_open_delay_hint2, currentLanguage->sql_open_delay_hint3);
+							uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2500, hint, false);
+						}
+					}
+				}
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -701,6 +751,11 @@ static void handleEvent(uiEvent_t *ev)
 #else
 					s_smsTxModePending = 0;                                 /* «Без підтв.» */
 #endif
+					break;
+#endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
+					settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(sqlOpenDelayStepsDec(sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1))));
 					break;
 #endif
 			}

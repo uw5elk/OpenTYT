@@ -389,6 +389,24 @@ typedef struct
    const char last_channel[LANGUAGE_TEXTS_LENGTH];
    const char cannot_delete[LANGUAGE_TEXTS_LENGTH];
 #endif
+#if defined(ENABLE_SQL_OPEN_DELAY)
+   // R42: затримка відкриття шумодава FM («Опції рації»). Поля додано ОСТАННІМИ, в українському блоці й лише під ENABLE_SQL_OPEN_DELAY (розкладка решти збірок та сама).
+   // Код, що до них звертається, -- під SQL_OPEN_DELAY_ENABLED (settings.h): прапорець + українська збірка.
+   const char sql_open_delay[LANGUAGE_TEXTS_LENGTH];
+   const char sql_open_delay_ms[LANGUAGE_TEXTS_LENGTH];
+   const char sql_open_delay_hint1[LANGUAGE_TEXTS_LENGTH];
+   const char sql_open_delay_hint2[LANGUAGE_TEXTS_LENGTH];
+   const char sql_open_delay_hint3[LANGUAGE_TEXTS_LENGTH];
+#endif
+#if defined(ENABLE_ZONE_RENAME)
+   // R42: перейменування зони зі списку «Зони». Те саме правило розташування: останніми, в українському блоці, лише під ENABLE_ZONE_RENAME.
+   // Код -- під ZONE_RENAME_ENABLED (codeplug.h).
+   const char zone_name[LANGUAGE_TEXTS_LENGTH];
+   const char zone_renamed[LANGUAGE_TEXTS_LENGTH];
+   const char zone_rename_all[LANGUAGE_TEXTS_LENGTH];
+   const char zone_name_empty[LANGUAGE_TEXTS_LENGTH];
+   const char zone_name_ya[LANGUAGE_TEXTS_LENGTH];
+#endif
 #endif
 } stringsTable_t;
 

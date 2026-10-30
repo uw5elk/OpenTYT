@@ -124,7 +124,16 @@ DEFS_CHDEL=("${DEFS_APRSRX[@]}" -DENABLE_CHANNEL_DELETE)                    # bu
 DEFS_CHDELEN=("${DEFS_ENDATA[@]}" -DENABLE_CHANNEL_DELETE)                  # англійська + прапорець: фіча має зникнути
 DEFS_CHDELLITE=("${DEFS_COMMON[@]}" -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_CHANNEL_DELETE)  # українська БЕЗ AES/DMR_DATA + видалення
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE)
+# R42: затримка відкриття шумодава (ENABLE_SQL_OPEN_DELAY) і перейменування зони (ENABLE_ZONE_RENAME). Користувацька українська збірка CI з обома прапорцями; англійський
+# двійник (обидві фічі мають зникнути без помилок); українська БЕЗ AES/DMR_DATA/APRS_RX (затримка є, перейменування -- ні: воно потребує APRS_R21_NAMES);
+# окремо кожен прапорець на користувацькій збірці (одна фіча не тягне іншу).
+DEFS_R42=("${DEFS_CHDEL[@]}" -DENABLE_SQL_OPEN_DELAY -DENABLE_ZONE_RENAME)           # build-ukrainian (CI) + обидві фічі
+DEFS_R42EN=("${DEFS_ENDATA[@]}" -DENABLE_SQL_OPEN_DELAY -DENABLE_ZONE_RENAME)        # англійська + прапорці: фічі мають зникнути
+DEFS_R42LITE=("${DEFS_COMMON[@]}" -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_SQL_OPEN_DELAY -DENABLE_ZONE_RENAME)   # українська БЕЗ AES/DMR_DATA/APRS_RX
+DEFS_R42SQL=("${DEFS_APRSRX[@]}" -DENABLE_SQL_OPEN_DELAY)                            # лише затримка шумодава
+DEFS_R42ZONE=("${DEFS_APRSRX[@]}" -DENABLE_ZONE_RENAME)                              # лише перейменування зони
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE R42 R42EN R42LITE R42SQL R42ZONE)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

@@ -360,6 +360,20 @@ const stringsTable_t ukrainianLanguage =
 .last_channel                             = "Єдиний канал", // MaxLen: 14
 .cannot_delete                            = "не видаляється", // MaxLen: 14
 #endif
+#if defined(ENABLE_SQL_OPEN_DELAY)
+.sql_open_delay                            = "Затр.шуму", // MaxLen: 10 (підпис пункту меню; з ":300мс" вкладається в 16) R42
+.sql_open_delay_ms                         = "мс", // MaxLen: 4
+.sql_open_delay_hint1                      = "Зрізає початок", // MaxLen: 14 (підказка при вмиканні, рядок 1)
+.sql_open_delay_hint2                      = "кожної передачі", // MaxLen: 16
+.sql_open_delay_hint3                      = "на цей час", // MaxLen: 16
+#endif
+#if defined(ENABLE_ZONE_RENAME)
+.zone_name                                 = "Назва зони", // MaxLen: 16 (заголовок редактора) R42
+.zone_renamed                              = "Назву збережено", // MaxLen: 16
+.zone_rename_all                           = "Не можна змінити", // MaxLen: 16 (віртуальна «Всі канали»)
+.zone_name_empty                           = "Назва порожня", // MaxLen: 14
+.zone_name_ya                              = "Скоротіть назву", // MaxLen: 16 (16 символів і останній «я»: не відрізнити від дописки)
+#endif
 #endif
 };
 /********************************************************************

@@ -29,6 +29,9 @@ docs/recording-feasibility.md (2026-09-19): п.1.3 того звіту мав л
                                         -> топ-N найбільших об'єктів окремо
                                            в RAM (.data/.bss/._user_heap_stack)
                                            і в CCMRAM (.ccmram).
+  2a. R42: ФЛЕШ програми -- зайнято / вільно / відсоток (регіон 999 424 Б від 0x0800C000 = 1024K - 48K, нижні 48 КБ -- завантажувач TYT).
+     Зайнято = секції з адресою (VMA) у флеші + завантажувані образи .data і .ccmram (AT> FLASH у лінкер-скрипті). Параметр --bin додатково
+     друкує розмір готового .bin і розбіжність із розрахунком.
   3. Окрема перевірка одного конкретного символу (за замовчуванням --
      screenNotificationBufData, п.4 задачі 2026-09-19) -- де він і скільки
      важить, щоб питання "чи справді він у CCM" мало виміряну відповідь,
@@ -50,6 +53,10 @@ RAM_ORIGIN = 0x20000000
 RAM_SIZE = 128 * 1024
 CCMRAM_ORIGIN = 0x10000000
 CCMRAM_SIZE = 64 * 1024
+# R42: флеш програми. STM32F405VGTX_FLASH.ld: FLASH (rx) : ORIGIN = 0x800C000, LENGTH = 1024K - 48K
+FLASH_ORIGIN = 0x0800C000
+FLASH_SIZE = 1024 * 1024 - 48 * 1024   # 999424 Б
+FLASH_LOAD_SECTIONS = (".data", ".ccmram")   # живуть у ОЗП, але їхній початковий образ лежить у флеші (AT> FLASH)
 
 RAM_SECTIONS = (".data", ".bss", "._user_heap_stack")
 CCM_SECTIONS = (".ccmram",)
@@ -111,6 +118,51 @@ def parse_size_A(text):
         if size is not None:
             sizes[parts[0]] = size
     return sizes
+
+
+def parse_size_A_full(text):
+    """Те саме, що parse_size_A, але -> {секція: (розмір, адреса)}. Адреса -- ДЕСЯТКОВА (size -A)."""
+    out = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or not parts[0].startswith("."):
+            continue
+        size = parse_int_dec(parts[1])
+        addr = parse_int_dec(parts[2])
+        if size is not None and addr is not None:
+            out[parts[0]] = (size, addr)
+    return out
+
+
+def flash_used(full):
+    """Скільки байтів займає прошивка у флеші: секції з адресою у [FLASH_ORIGIN, FLASH_ORIGIN + FLASH_SIZE) + образи .data/.ccmram."""
+    used = 0
+    for name, (size, addr) in full.items():
+        if FLASH_ORIGIN <= addr < FLASH_ORIGIN + FLASH_SIZE:
+            used += size
+        elif name in FLASH_LOAD_SECTIONS:
+            used += size
+    return used
+
+
+def print_flash_report(full, bin_path=None):
+    used = flash_used(full)
+    free = FLASH_SIZE - used
+    pct = used * 100.0 / FLASH_SIZE
+    print("== ФЛЕШ програми (0x%08X, %d Б = %d КБ) ==" % (FLASH_ORIGIN, FLASH_SIZE, FLASH_SIZE // 1024))
+    print("  %-20s %8d Б (%.1f%% від %d КБ)" % ("ЗАЙНЯТО РАЗОМ:", used, pct, FLASH_SIZE // 1024))
+    print("  %-20s %8d Б" % ("ВІЛЬНО:", free))
+    if free < 0:
+        print("  !!! ПЕРЕПОВНЕННЯ ФЛЕШУ -- лінкер мав би сам впасти з помилкою.")
+    if bin_path:
+        try:
+            import os
+            n = os.path.getsize(bin_path)
+            print("  %-20s %8d Б (%s; розбіжність із розрахунком: %+d Б)" % (".bin:", n, bin_path, n - used))
+        except OSError as e:
+            print("  .bin: не вдалося прочитати %s (%s)" % (bin_path, e))
+    print()
+    return used, free
 
 
 def parse_nm_sysv(text):
@@ -193,6 +245,7 @@ def main():
     ap.add_argument("--top", type=int, default=20, help="скільки найбільших об'єктів показувати (типово 20)")
     ap.add_argument("--watch", default=DEFAULT_WATCH_SYMBOL,
                      help="який символ перевірити окремо (типово %s)" % DEFAULT_WATCH_SYMBOL)
+    ap.add_argument("--bin", default=None, help="шлях до готового .bin: друкується його розмір і розбіжність із розрахованим зайнятим флешем")
     ap.add_argument("--size-tool", default="arm-none-eabi-size")
     ap.add_argument("--nm-tool", default="arm-none-eabi-nm")
     ap.add_argument("--self-test", action="store_true",
@@ -215,6 +268,7 @@ def main():
     print("Файл: %s\n" % args.elf)
     print_region_report("RAM", RAM_ORIGIN, RAM_SIZE, RAM_SECTIONS, size_sections)
     print_region_report("CCMRAM", CCMRAM_ORIGIN, CCMRAM_SIZE, CCM_SECTIONS, size_sections)
+    print_flash_report(parse_size_A_full(size_text), args.bin)
     print_top_n(symbols, set(RAM_SECTIONS), args.top, "RAM (.data/.bss/._user_heap_stack)")
     print_top_n(symbols, set(CCM_SECTIONS), args.top, "CCMRAM (.ccmram)")
     print_watch_symbol(symbols, args.watch)
@@ -230,14 +284,15 @@ def main():
 _SAMPLE_SIZE_A = """\
 build/openuv380-10w.elf  :
 section               size        addr
-.isr_vector            428    134348800
-.text               524288    134349312
+.isr_vector            428    134266880
+.text               524288    134267308
+.rodata             100000    134791596
 .data                 2048    536870912
 .bss                40960    536872960
 ._user_heap_stack     1536    536913920
 .ccmram              40976    268435456
 .ARM.attributes         50            0
-Total               610286
+Total               710286
 """
 
 _SAMPLE_NM_SYSV = """\
@@ -280,6 +335,12 @@ def run_self_test():
 
     hits = [s for s in symbols if s[0] == "screenNotificationBufData"]
     assert len(hits) == 1 and hits[0][1] == ".ccmram"
+
+    # R42: флеш = секції з VMA у флеші (.isr_vector + .text + .rodata) + образи .data і .ccmram; .bss/._user_heap_stack/.ARM.attributes -- не флеш
+    full = parse_size_A_full(_SAMPLE_SIZE_A)
+    assert full[".text"] == (524288, 134267308), full
+    assert flash_used(full) == 428 + 524288 + 100000 + 2048 + 40976 == 667740, flash_used(full)
+    assert FLASH_SIZE == 999424, FLASH_SIZE
 
     print("Самоперевірка парсера ПРОЙДЕНА: size -A і nm --format=sysv "
           "розбираються коректно на зразках (region-суми, топ-N, пошук символу).")
