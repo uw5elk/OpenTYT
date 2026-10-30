@@ -141,6 +141,7 @@ class SelfcheckPanel(Panel):
     def _make_ctx(self, link):
         ctx = sc.Ctx(link, output_dir(), log=self._log, progress=self._progress)
         ctx.snapshot = self.snapshot
+        ctx.choose = self.shell.choose_from_worker
         return ctx
 
     # --- знімок ---------------------------------------------------------------------------------------

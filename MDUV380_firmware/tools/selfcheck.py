@@ -19,6 +19,7 @@
   * калібрування, таблиця ключів AES, заголовки бази позивних і підказок до і після запису порівнюються (`invariants`): будь-яка зміна -- провал;
   * жоден сценарій не друкує ключів AES: у звіті лише номери слотів і збіг/розбіжність SHA-256.
 Звіт -- Markdown `selfcheck_РРРР-ММ-ДД_ГГ-ХХ.md` (крок, очікувано / отримано, результат, час) + перелік ручних кроків (S5)."""
+import collections
 import contextlib
 import datetime
 import hashlib
@@ -50,8 +51,6 @@ RISK_TEXT = {RISK_READ: "лише читання", RISK_WRITE: "ПИШЕ в ра
 PASS, FAIL, ERROR, SKIPPED, INTERRUPTED = "pass", "fail", "error", "skipped", "interrupted"
 STATUS_TEXT = {PASS: "ПРОЙДЕНО", FAIL: "НЕ ПРОЙДЕНО", ERROR: "ПОМИЛКА", SKIPPED: "ПРОПУЩЕНО", INTERRUPTED: "ОБІРВАНО"}
 
-# S3: скільки відсотків пікселів, що розходяться БЕЗ пояснення станом рації, ще вважається збігом (шум квантування, курсор, мигання)
-UNEXPLAINED_MAX_PCT = 1.0
 SECTOR = 4096
 MAX_CODEPLUG_SECTORS = 12          # скільки секторів кодплага сценарій може змінити за один запис (більше -- план відхиляється)
 TEST_FREQ = ("145.5", "145.6")     # S4.2: «відоме значення» VFO; береться перше, що відрізняється від поточного
@@ -161,6 +160,7 @@ class Ctx:
         self.halted = None              # текст, якщо запис далі небезпечний (рація в проміжному стані)
         self._cp = None
         self.sc_label = ""
+        self.choose = None              # R39 (S3): (заголовок, текст, [підписи]) -> індекс або None; панель підставляє діалог вибору зі списку
 
     # --- ведення ---
     def progress(self, pct, text=""):
@@ -718,13 +718,49 @@ def s2_8(ctx, res):
 
 
 # =============================================================================================================================
-#  S3: знімок екрана проти передпоказу
+#  S3: знімок екрана проти передпоказу (R39)
+#  Головне -- ПАЛІТРА (усі кольори знімка належать темі, яку рація зберігає) і ЗОНИ (у кожній зоні домінує колір, який їй призначає тема).
+#  Піксельна різниця з рендером -- лише довідка: на живій рації частина екрана (сигнал, годинник, заряд, значки) не читається з кодплага.
 # =============================================================================================================================
 W, H = 160, 128
 SCALE = 2
-# елементи теми, чий вигляд визначає СТАН рації (сигнал, батарея, час, позивний, канал, частоти), а не тема: розбіжність на них не помилка
-STATE_ITEMS = ("FG_RSSI_BAR", "FG_RSSI_BAR_S9P", "FG_HEADER_TEXT", "FG_CHANNEL_NAME", "FG_CHANNEL_CONTACT", "FG_CHANNEL_CONTACT_INFO", "FG_ZONE_NAME",
-               "FG_RX_FREQ", "FG_TX_FREQ", "FG_CSS_SQL_VALUES", "FG_TX_COUNTER", "FG_SATELLITE_COLOUR", "FG_GPS_NUMBER", "FG_GPS_COLOUR", "FG_BD_COLOUR")
+S3_MAX_READS = 8                   # скільки разів читати екран, поки два читання поспіль не збіжаться (R39 E3)
+
+# --- де рація зберігає поточну зону/канал (прочитано з вихідного коду прошивки) ---
+LUCZ_ADDR = 0x6000                 # codeplug.h: CODEPLUG_ADDR_LUCZ -- тег «LUCZ» + lastUsedChannelInZoneData[70]
+LUCZ_BYTES = 70                    # CODEPLUG_ALL_ZONES_MAX + 1: байт на зону (за БІТОМ зони) + int16 «Всі канали» на зсуві LUCZ_ALL_SLOT
+LUCZ_ALL_SLOT = 68                 # SAFE_MIN(-1, 68U) у беззнаковому порівнянні дає 68
+SETTINGS_EE_ADDR = 0x6000 + 0x4B   # settingsStorage.c: STORAGE_BASE_ADDRESS -- одразу за блоком LUCZ
+SETTINGS_MAGIC = 0x4780            # settings.c: STORAGE_MAGIC_NUMBER
+SETTINGS_OFF_CURRENT_ZONE = 58     # offsetof(settingsStruct_t, currentZone) для MDUV380 (LOG_GPS_DATA=1): виміряно gcc на витягу структури з settings.h
+ALL_CHANNELS_UA = "Всі канали"     # languages/ukrainian.h: .all_channels (cp1251); звіряється в test_r39
+
+# --- ділянки, яких S3 НЕ порівнює попіксельно, бо їх вигляд визначає стан рації, якого кодплаг не містить (R39 E1.2) ---
+# (x1, y1, x2, y2) включно; назва -- для звіту
+EXCLUDED_ALWAYS = (
+    ("шапка праворуч: заряд, годинник, значки SMS/APRS/GPS", (104, 0, 159, 9)),
+    ("блок S-метра: смуга й значення сигналу", (0, 41, 159, 63)),
+    ("значок замка AES", (147, 14, 156, 22)),
+)
+POWER_BOX = (50, 0, 82, 9)          # рядок потужності в шапці: якщо в каналі «Master», потужність береться з налаштувань рації, яких тут не читаємо
+CONTACT_BOX = (0, 24, 159, 39)
+
+
+def _sv():
+    import screen_views as sv
+    return sv
+
+
+def capture_stable(link, max_reads=S3_MAX_READS, log=print):
+    """Читає екран, доки два читання поспіль не збіжаться (але не більше max_reads). Повертає (дані, стабільний, скільки_читань)."""
+    prev = cl.capture_screen(link)
+    for n in range(2, max(2, max_reads) + 1):
+        cur = cl.capture_screen(link)
+        if cur == prev:
+            return cur, True, n
+        prev = cur
+    log("Увага: екран змінювався під час усіх %d читань -- кадр «рваний»." % max_reads)
+    return prev, False, max_reads
 
 
 def screen_words(raw):
@@ -739,50 +775,157 @@ def render_words(display, colors):
     return [colors[i] for i in display.px]
 
 
-def compare_screens(shot_words, render_px, colors):
-    """Порівняння попіксельно. render_px -- індекси елементів теми (screen_sim.Display.px). Повертає словник:
-    diff (список індексів), explained (розбіжні, що пояснюються станом), unexplained, pct_all, pct_unexplained, by_item {ключ: кількість}."""
-    state_idx = {te.INDEX[k] for k in STATE_ITEMS}
-    # кольори, що трапляються лише на елементах стану: пікселі знімка такого кольору теж «від стану»
-    state_only = {colors[i] for i in state_idx} - {colors[i] for i in range(len(colors)) if i not in state_idx}
-    diff, explained, unexplained = [], [], []
+# --- поточна зона й канал ---------------------------------------------------------------------------------------------------
+
+def _unknown(why):
+    return {"known": False, "why": why}
+
+
+def read_current_selection(cp):
+    """Поточні зона й канал рації з її EEPROM: номер зони -- `nonVolatileSettings.currentZone` (порядковий номер зони серед зон у роботі; остання, віртуальна, --
+    «Всі канали»), позиція в зоні -- байт LUCZ за БІТОМ зони (для «Всі канали» -- int16 = номер каналу - 1). Якщо чогось не вдалося прочитати або значення
+    поза межами -- known=False з причиною (тоді канал обирає людина, перший канал НЕ підставляється, R39 E1.3).
+    Рація зберігає ці значення із затримкою (гіпотеза): щойно перемкнутий канал у EEPROM може ще не бути."""
+    ee = cp.eeprom
+    need = SETTINGS_EE_ADDR + SETTINGS_OFF_CURRENT_ZONE + 2
+    if len(ee) < need or len(ee) < LUCZ_ADDR + 4 + LUCZ_BYTES:
+        return _unknown("образ EEPROM коротший за область налаштувань (%d Б)" % len(ee))
+    magic = struct.unpack_from("<I", ee, SETTINGS_EE_ADDR)[0]
+    if magic != SETTINGS_MAGIC:
+        return _unknown("магічне число налаштувань 0x%X, очікувалось 0x%X (налаштування не записані або інша версія прошивки)" % (magic, SETTINGS_MAGIC))
+    if bytes(ee[LUCZ_ADDR:LUCZ_ADDR + 4]) != b"LUCZ":
+        return _unknown("в EEPROM нема запису «останній канал у зоні» (тег LUCZ)")
+    lucz = bytes(ee[LUCZ_ADDR + 4:LUCZ_ADDR + 4 + LUCZ_BYTES])
+    zone_pos = struct.unpack_from("<h", ee, SETTINGS_EE_ADDR + SETTINGS_OFF_CURRENT_ZONE)[0]
+    zones = cp.zones()
+    if zone_pos == len(zones):
+        n = struct.unpack_from("<h", lucz, LUCZ_ALL_SLOT)[0] + 1
+        if not (1 <= n <= cl.CP_CHANNELS_BANKS * cl.CP_CHANNELS_PER_BANK) or not cp.channel_in_use(n):
+            return _unknown("у «Всіх каналах» збережено канал №%d, якого в кодплазі нема" % n)
+        return {"known": True, "all": True, "zone_name": ALL_CHANNELS_UA, "zone_pos": zone_pos, "pos_in_zone": n, "channel_no": n,
+                "source": "налаштування рації (currentZone=%d, «Всі канали») і LUCZ" % zone_pos}
+    if not (0 <= zone_pos < len(zones)):
+        return _unknown("поточна зона №%d поза межами 0..%d" % (zone_pos, len(zones)))
+    bit1, zname, _enc, chans = zones[zone_pos]
+    idx = lucz[bit1 - 1]
+    if idx >= len(chans):
+        return _unknown("у зоні «%s» збережено позицію %d, а каналів у ній %d" % (zname, idx + 1, len(chans)))
+    n = chans[idx]
+    if not cp.channel_in_use(n):
+        return _unknown("у зоні «%s» позиція %d вказує на канал №%d, якого в кодплазі нема" % (zname, idx + 1, n))
+    return {"known": True, "all": False, "zone_name": zname, "zone_pos": zone_pos, "pos_in_zone": idx + 1, "channel_no": n,
+            "source": "налаштування рації (currentZone=%d) і LUCZ[біт %d]" % (zone_pos, bit1 - 1)}
+
+
+def selection_choices(cp):
+    """Усі пари «зона -- канал» для ручного вибору: [(підпис, вибір)]. Спершу зони по порядку, наприкінці «Всі канали»."""
+    out = []
+    names = {n: t for n, t, *_r in cp.channels()}
+    for pos, (bit1, zname, _enc, chans) in enumerate(cp.zones()):
+        for k, n in enumerate(chans):
+            if cp.channel_in_use(n):
+                out.append(("%s · №%d в зоні · %s (канал %d)" % (zname, k + 1, names.get(n, "?"), n),
+                            {"known": True, "all": False, "zone_name": zname, "zone_pos": pos, "pos_in_zone": k + 1, "channel_no": n, "source": "вибрано вручну"}))
+    npos = len(cp.zones())
+    for n, text, *_r in cp.channels():
+        out.append(("%s · %s (канал %d)" % (ALL_CHANNELS_UA, text, n),
+                    {"known": True, "all": True, "zone_name": ALL_CHANNELS_UA, "zone_pos": npos, "pos_in_zone": n, "channel_no": n, "source": "вибрано вручну"}))
+    return out
+
+
+def real_state(cp, sel):
+    """Словник стану для screen_views.render з РЕАЛЬНИМИ даними кодплага (E1.1) + список додаткових виключених ділянок (E1.2) + список приміток.
+    Усе, чого кодплаг не містить (сигнал, заряд, час, значки), лишається прикладним значенням SAMPLE -- ці ділянки виключаються з порівняння."""
+    sv = _sv()
+    rec = cp.channel_record(sel["channel_no"])
+    st = dict(sv.SAMPLE)
+    extra, notes = [], []
+    digital = rec[cc.O_MODE] != 0
+    st["mode"] = "dmr" if digital else "fm"
+    st["zone"] = sel["zone_name"]
+    st["channel_no"] = sel["pos_in_zone"]
+    st["channel"] = cv.decode_name(bytes(rec[:16]))
+    rx, tx = cv.freq_bcd_le(rec[cc.O_RX:cc.O_RX + 4]), cv.freq_bcd_le(rec[cc.O_TX:cc.O_TX + 4])
+    if rx:
+        st["rx_freq"] = rx
+    if tx:
+        st["tx_freq"] = tx
+    st["ts"] = 2 if rec[cc.O_FLAG2] & cc.F2_TS2 else 1
+    st["cc"] = rec[cc.O_COLOR]
+    if rec[cc.O_POWER] == 0:
+        extra.append(("потужність «Master» (береться з налаштувань рації)", POWER_BOX))
+    else:
+        st["power"] = cc.power_text(rec[cc.O_POWER])
+    if digital:
+        cnum = rec[cc.O_CONTACT] | (rec[cc.O_CONTACT + 1] << 8)
+        names = {n: t for n, t, *_r in cp.contacts()}
+        if cnum and cnum in names:
+            st["contact"] = names[cnum]
+        else:
+            extra.append(("контакт каналу не заданий (що рація показує в цьому рядку -- не змодельовано)", CONTACT_BOX))
+    return st, extra, notes
+
+
+def exclusion_rects(extra=()):
+    return list(EXCLUDED_ALWAYS) + list(extra)
+
+
+def exclusion_mask(rects):
+    """bytearray W*H: 1 -- піксель виключено з порівняння."""
+    m = bytearray(W * H)
+    for _name, (x1, y1, x2, y2) in rects:
+        for y in range(max(0, y1), min(H - 1, y2) + 1):
+            for x in range(max(0, x1), min(W - 1, x2) + 1):
+                m[y * W + x] = 1
+    return m
+
+
+# --- довідкове піксельне порівняння ---------------------------------------------------------------------------------------
+
+def compare_screens(shot_words, render_px, colors, mask=None):
+    """Піксельне порівняння (ДОВІДКА, не критерій). mask -- виключені ділянки. Повертає: diff (усі розбіжні), counted_diff (розбіжні поза виключеними),
+    masked_diff (розбіжні у виключених), n_counted, pct_counted, pct_all, by_item {ключ елемента рендеру: кількість} за порівнюваними."""
+    diff, counted, masked = [], [], []
     by_item = {}
+    n_counted = 0
     for i, (sw, ri) in enumerate(zip(shot_words, render_px)):
+        skip = bool(mask and mask[i])
+        if not skip:
+            n_counted += 1
         if sw == colors[ri]:
             continue
         diff.append(i)
-        if ri in state_idx or sw in state_only:
-            explained.append(i)
+        if skip:
+            masked.append(i)
         else:
-            unexplained.append(i)
-        by_item[te.KEYS[ri]] = by_item.get(te.KEYS[ri], 0) + 1
+            counted.append(i)
+            by_item[te.KEYS[ri]] = by_item.get(te.KEYS[ri], 0) + 1
     n = len(render_px)
-    return {"diff": diff, "explained": explained, "unexplained": unexplained, "pct_all": 100.0 * len(diff) / n,
-            "pct_unexplained": 100.0 * len(unexplained) / n, "by_item": by_item}
+    return {"diff": diff, "counted_diff": counted, "masked_diff": masked, "n_counted": n_counted,
+            "pct_counted": (100.0 * len(counted) / n_counted) if n_counted else 0.0, "pct_all": 100.0 * len(diff) / n, "by_item": by_item}
 
 
 def _rgb(word):
     return cl.rgb565_to_rgb888(struct.pack(">H", word), width=1, height=1)
 
 
-def triptych_png(shot_words, render_words_, cmp_):
-    """PNG «рація | наш рендер | різниця» (масштаб 2). Різниця: затемнений рендер, жовтим -- пояснені станом, червоним -- без пояснення."""
-    exp, unexp = set(cmp_["explained"]), set(cmp_["unexplained"])
+def triptych_png(shot_words, render_words_, cmp_, mask=None):
+    """PNG «рація | наш рендер | різниця» (масштаб 2). Права частина: затемнений рендер; ЖОВТИМ -- виключені ділянки (не порівнюються); ЧЕРВОНИМ --
+    розбіжність поза виключеними (довідково)."""
+    red = set(cmp_["counted_diff"])
     gap = 8
     width = (W * 3) * SCALE + 2 * gap
     rows = []
     for y in range(H):
-        left = bytearray()
-        mid = bytearray()
-        right = bytearray()
+        left, mid, right = bytearray(), bytearray(), bytearray()
         for x in range(W):
             i = y * W + x
             ls = _rgb(shot_words[i])
             ms = _rgb(render_words_[i])
-            if i in unexp:
+            if i in red:
                 rs_ = b"\xff\x00\x00"
-            elif i in exp:
-                rs_ = b"\xff\xd0\x00"
+            elif mask and mask[i]:
+                rs_ = b"\x70\x60\x00"
             else:
                 rs_ = bytes(c // 4 for c in ms)
             left += ls * SCALE
@@ -813,48 +956,288 @@ def regions_text(idx, limit=3):
     return "; ".join(parts) + ("; і ще %d зон" % (len(groups) - limit) if len(groups) > limit else "")
 
 
-def best_match(shot_words, theme_sets, screens=None):
-    """Для кожної пари (екран передпоказу, тема) рахує розбіжності; повертає список (unexplained%, all%, ключ екрана, ім'я теми, cmp, render) від найкращої."""
-    import screen_views as sv
+def layout_score(shot_words, render_px, mask=None):
+    """Скільки пікселів поза маскою «перефарбовують» рендер у знімок: кожному елементу теми в рендері ставиться найчастіший колір знімка в його пікселях.
+    Міра не залежить від того, ЯКІ саме кольори на знімку, тож екран впізнається навіть тоді, коли тема на рації інша (інакше хибний колір ховав би
+    екран від перевірки зон)."""
+    by_item = {}
+    for i, (sw, ri) in enumerate(zip(shot_words, render_px)):
+        if mask and mask[i]:
+            continue
+        c = by_item.get(ri)
+        if c is None:
+            c = by_item[ri] = collections.Counter()
+        c[sw] += 1
+    return sum(c.most_common(1)[0][1] for c in by_item.values())
+
+
+def best_match(shot_words, theme_sets, screens=None, state=None, mask=None):
+    """Для кожного екрана передпоказу (і кожної теми для довідкової різниці) -- список (pct_counted, pct_all, ключ, ім'я теми, cmp, слова рендеру, Display,
+    layout_score) від найкращого. Екран впізнається за layout_score (форма, незалежна від кольорів), різниця пікселів лише розв'язує нічиї. Для екрана каналу
+    з реальним `state` пробуються два варіанти заряду (99 % і 100 %: від нього залежить зсув тексту шапки)."""
+    sv = _sv()
     out = []
     for key, _title in (screens or te.preview_screens()):
-        disp = sv.render(key)
-        for tname, colors in theme_sets:
-            c = compare_screens(shot_words, disp.px, colors)
-            out.append((c["pct_unexplained"], c["pct_all"], key, tname, c, render_words(disp, colors)))
-    out.sort(key=lambda t: (t[0], t[1]))
+        variants = [sv.render(key)]
+        if key == "channel" and state is not None:
+            variants = [sv.render(key, dict(state, battery_pct=p)) for p in (99, 100)]
+        for disp in variants:
+            score = layout_score(shot_words, disp.px, mask)
+            for tname, colors in theme_sets:
+                c = compare_screens(shot_words, disp.px, colors, mask)
+                out.append((c["pct_counted"], c["pct_all"], key, tname, c, render_words(disp, colors), disp, score))
+    out.sort(key=lambda t: (-t[7], len(t[4]["counted_diff"]), t[1]))
     return out
 
 
-def s3(ctx, res):
-    raw, stable = cl.capture_screen_stable(ctx.link, log=ctx.log)
-    res.check("знімок екрана рації прочитано", "%d Б" % (W * H * 2), "%d Б" % len(raw), len(raw) >= W * H * 2)
-    res.check("кадр стабільний (два читання збіглися)", "стабільний", "стабільний" if stable else "екран змінювався під час читання", stable)
-    shot = screen_words(raw)
-    sets = []
+# --- палітра (E2.1) ---------------------------------------------------------------------------------------------------------
+
+def palette_report(shot_words, theme_sets):
+    """Для кожної теми -- які кольори знімка в її палітрі НЕ входять. Повертає [(кількість чужих пікселів, ім'я теми, colors, {слово: кількість})]
+    від найкращої (за порядком наведення при рівності)."""
+    hist = collections.Counter(shot_words)
+    out = []
+    for tname, colors in theme_sets:
+        pal = set(colors)
+        foreign = {w: n for w, n in hist.items() if w not in pal}
+        out.append((sum(foreign.values()), tname, colors, foreign))
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def colour_box(shot_words, word):
+    """Охоплювальний прямокутник пікселів кольору `word` на знімку."""
+    idx = [i for i, w in enumerate(shot_words) if w == word]
+    xs = [i % W for i in idx]
+    ys = [i // W for i in idx]
+    return "x %d..%d, y %d..%d" % (min(xs), max(xs), min(ys), max(ys))
+
+
+# --- зони (E2.2): координати з розкладки screen_views.LAYOUT -------------------------------------------------------------------------
+
+def channel_zones(digital=True):
+    """Зони екрана каналу: [(назва, (x1,y1,x2,y2), ключ тла, (ключі кольору тексту))]. Тло зони має домінувати, а решта пікселів -- бути кольором тексту,
+    який тема призначає саме цій зоні. Координати -- з LAYOUT (ті самі, якими малює передпоказ)."""
+    L = _sv().L
+    top = L["DISPLAY_Y_POS_CONTACT"]
+    name_y = _sv().channel_first_line_y()
+    zones = [("шапка (режим, TS, потужність, CC, заряд)", (0, 0, W - 1, L["DISPLAY_Y_POS_BAR"] - 1), "BG_HEADER_TEXT", ("FG_HEADER_TEXT",))]
+    if digital:
+        zones.append(("контакт", (0, top, W - 1, top + L["MENU_ENTRY_HEIGHT"] - 1), "BG", ("FG_CHANNEL_CONTACT", "FG_CHANNEL_CONTACT_INFO")))
+    zones.append(("назва каналу", (0, name_y, W - 1, name_y + L["MENU_ENTRY_HEIGHT"] - 1), "BG", ("FG_CHANNEL_NAME", "FG_CHANNEL_CONTACT_INFO")))
+    zones.append(("нижній рядок (зона й номер каналу)", (0, L["DISPLAY_Y_POS_ZONE"], W - 1, L["DISPLAY_Y_POS_ZONE"] + 7), "BG", ("FG_ZONE_NAME",)))
+    zones.append(("верхня рамка S-метра", (0, L["SMETER_BLOCK_Y"], W - 1, L["SMETER_BLOCK_Y"]), "FG_DECORATION", ()))
+    return zones
+
+
+def zone_check(shot_words, colors, rect, bg_key, ink_keys):
+    """Повертає (ok, що_отримано, що_очікувалось). ok, якщо (1) у зоні домінує колір, який тема призначає тлу зони, і (2) серед решти пікселів найчастіший
+    колір -- один із призначених тексту зони (порожня зона без тексту -- теж гаразд)."""
+    x1, y1, x2, y2 = rect
+    hist = collections.Counter(shot_words[y * W + x] for y in range(y1, y2 + 1) for x in range(x1, x2 + 1))
+    bg = colors[te.INDEX[bg_key]]
+    ink = {}
+    for k in ink_keys:
+        ink.setdefault(colors[te.INDEX[k]], []).append(k)
+    exp = "домінує %s %s" % (bg_key, te.to_hex(bg))
+    if ink:
+        exp += "; текст -- %s" % " або ".join("%s %s" % ("/".join(ks), te.to_hex(w)) for w, ks in ink.items())
+    dom, dom_n = hist.most_common(1)[0]
+    if dom != bg:
+        return False, "домінує %s (%d з %d пікселів)" % (te.to_hex(dom), dom_n, sum(hist.values())), exp
+    rest = [(w, n) for w, n in hist.most_common() if w != bg]
+    if rest and ink and rest[0][0] not in ink:
+        return False, "текст намальовано кольором %s (%d пікселів), а тема призначає %s" % (te.to_hex(rest[0][0]), rest[0][1], " або ".join(sorted(k for ks in ink.values() for k in ks))), exp
+    got = "тло %s" % te.to_hex(bg) + ("; текст %s" % te.to_hex(rest[0][0]) if rest else "; тексту нема")
+    return True, got, exp
+
+
+# --- S-метр: рівень сигналу з самого знімка, далі блок порівнюється ТОЧНО ----------------------------------------------------------------
+
+SMETER_TEXT_BOX = (132, 57, 159, 64)
+
+
+def smeter_level(shot_words, colors):
+    """Рівень сигналу в дБм, який показує підпис S-метра на знімку (текст FG_DEFAULT у правому куті блока), або None. Підпис порівнюється з підписами,
+    які малює передпоказ для кожного рівня; якщо FG_DEFAULT збігається з тлом теми, підпис невидимий і рівня не визначити."""
+    sv = _sv()
+    import screen_sim as sim
+    fg_i = te.INDEX["FG_DEFAULT"]
+    if colors[fg_i] == colors[te.INDEX["BG"]]:
+        return None
+    x1, y1, x2, y2 = SMETER_TEXT_BOX
+    cells = [(x, y) for y in range(y1, y2 + 1) for x in range(x1, x2 + 1)]
+    shot_mask = tuple(shot_words[y * W + x] == colors[fg_i] for x, y in cells)
+    if not any(shot_mask):
+        return None
+    for dbm in range(-150, -29):
+        d = sim.Display()
+        sv.draw_smeter_block(d, dbm)
+        if tuple(d.px[y * W + x] == fg_i for x, y in cells) == shot_mask:
+            return dbm
+    return None
+
+
+def smeter_check(shot_words, colors):
+    """Блок S-метра (y 41..63). Якщо рівень визначено з підпису -- блок має збігатися з намальованим передпоказом ТОЧНО, окремо за частинами:
+    смуга до S9, смуга вище S9, решта (рамка, поділки, цифри шкали). Повертає (dbm|None, [(назва, ok, отримано, очікувалось)])."""
+    sv = _sv()
+    import screen_sim as sim
+    L = sv.L
+    dbm = smeter_level(shot_words, colors)
+    y1, y2 = L["SMETER_BLOCK_Y"], L["SMETER_BLOCK_Y"] + L["SMETER_BLOCK_H"] - 1
+    if dbm is None:
+        # рівень невідомий: смуга (y 43..50) може містити лише тло та два кольори смуги
+        allowed = {colors[te.INDEX[k]] for k in ("BG", "FG_RSSI_BAR", "FG_RSSI_BAR_S9P")}
+        ys = range(L["SMETER_BAR_Y"], L["SMETER_BAR_Y"] + L["SMETER_BAR_H"])
+        xs = range(L["SMETER_BAR_X"], L["SMETER_BAR_X"] + L["SMETER_BAR_WIDTH"])
+        bad = collections.Counter(shot_words[y * W + x] for y in ys for x in xs if shot_words[y * W + x] not in allowed)
+        got = "лише тло й кольори смуги" if not bad else "чужі кольори в смузі: " + ", ".join("%s ×%d" % (te.to_hex(w), n) for w, n in bad.most_common(3))
+        return None, [("смуга S-метра: кольори (рівень за підписом не визначено)", not bad, got, "тло, FG_RSSI_BAR, FG_RSSI_BAR_S9P")]
+    d = sim.Display()
+    sv.draw_smeter_block(d, dbm)
+    bar_w = max(0, min(sv.smeter_pixel_pos(dbm), L["SMETER_BAR_WIDTH"]))
+    s9 = L["SMETER_S9_POS"]
+    bx, by, bh = L["SMETER_BAR_X"], L["SMETER_BAR_Y"], L["SMETER_BAR_H"]
+
+    def part(i, x, y):
+        if by <= y < by + bh and bx <= x < bx + L["SMETER_BAR_WIDTH"]:
+            if x < bx + s9:
+                return "below"
+            return "above"
+        return "rest"
+    bad = {"below": [], "above": [], "rest": []}
+    tot = {"below": 0, "above": 0, "rest": 0}
+    for y in range(y1, y2 + 1):
+        for x in range(W):
+            i = y * W + x
+            p = part(i, x, y)
+            tot[p] += 1
+            if shot_words[i] != colors[d.px[i]]:
+                bad[p].append(i)
+    out = []
+    names = (("below", "смуга S-метра до S9"), ("above", "смуга S-метра вище S9"), ("rest", "рамка, поділки, цифри S-метра"))
+    for p, label in names:
+        if p == "above" and bar_w <= s9:
+            continue
+        if p == "below" and bar_w == 0:
+            continue
+        exp_item = {"below": "FG_RSSI_BAR", "above": "FG_RSSI_BAR_S9P", "rest": "FG_DECORATION/FG_DEFAULT/ТЛО"}[p]
+        if bad[p]:
+            wrong = collections.Counter(shot_words[i] for i in bad[p])
+            got = "%d з %d пікселів не за темою (найчастіше %s)" % (len(bad[p]), tot[p], te.to_hex(wrong.most_common(1)[0][0]))
+        else:
+            got = "збігається (%d пікселів)" % tot[p]
+        out.append(("%s (за підписом %d дБм)" % (label, dbm), not bad[p], got, "колір %s" % exp_item if p != "rest" else "як у темі"))
+    return dbm, out
+
+
+# --- сценарій -----------------------------------------------------------------------------------------------------------------
+
+def _theme_sets(ctx):
+    sets, sources = [], []
     for daytime in ("day", "night"):
         state, colors = te.read_theme(ctx.link.ser, daytime)
+        src = "прочитана з рації"
         if colors is None:
             colors = te.stock_colors(daytime)
+            src = "стандартна (в рації власної теми нема)"
         sets.append((te.DAYTIME_NAMES[daytime].lower(), colors))
-    ranked = best_match(shot, sets)
-    pu, pa, key, tname, cmp_, rendered = ranked[0]
-    import screen_views as sv
-    res.info("найближчий екран передпоказу", "«%s», %s тема" % (sv.SCREEN_TITLES[key], tname),
-             "інші кандидати: " + "; ".join("%s/%s -- %.1f%%" % (r[2], r[3], r[0]) for r in ranked[1:4]))
-    res.info("розбіжних пікселів усього", "%.3f %% (%d з %d)" % (pa, len(cmp_["diff"]), W * H))
-    res.info("з них пояснюються станом рації (сигнал, час, канал, частоти, батарея)", "%.3f %% (%d пікселів)" % (100.0 * len(cmp_["explained"]) / (W * H), len(cmp_["explained"])),
-             "ділянки: " + regions_text(cmp_["explained"]))
-    res.check("розбіжних пікселів БЕЗ пояснення станом", "не більше %.1f %%" % UNEXPLAINED_MAX_PCT, "%.3f %% (%d пікселів)" % (pu, len(cmp_["unexplained"])),
-              pu <= UNEXPLAINED_MAX_PCT, "ділянки: " + regions_text(cmp_["unexplained"]) if cmp_["unexplained"] else "")
-    if cmp_["by_item"]:
-        top = sorted(cmp_["by_item"].items(), key=lambda kv: -kv[1])[:5]
-        res.info("розбіжності за елементами теми (за рендером)", "; ".join("%s -- %d" % kv for kv in top))
+        sources.append(src)
+    return sets, sources
+
+
+def s3(ctx, res):
+    sv = _sv()
+    raw, stable, reads = capture_stable(ctx.link, log=ctx.log)
+    res.check("знімок екрана рації прочитано", "%d Б" % (W * H * 2), "%d Б" % len(raw), len(raw) >= W * H * 2)
+    res.check("кадр стабільний (два читання поспіль збіглися)", "стабільний", ("стабільний, потрібно читань: %d" % reads) if stable else
+              "екран змінювався під час усіх %d читань" % reads, stable, "" if stable else "Далі кадр не аналізується: рваний кадр дав би хибні провали. Повторіть, коли екран не змінюється.")
+    if not stable:
+        return
+    shot = screen_words(raw)
+    sets, sources = _theme_sets(ctx)
+
+    # 1) палітра -- головний критерій
+    pal = palette_report(shot, sets)
+    n_foreign, tname, colors, foreign = pal[0]
+    src = sources[[s[0] for s in sets].index(tname)]
+    n_colors = len(set(shot))
+    if foreign:
+        top = sorted(foreign.items(), key=lambda kv: -kv[1])
+        got = "%d кольорів знімка не належать темі «%s» (найближча): " % (len(foreign), tname) + "; ".join(
+            "%s ×%d (%s)" % (te.to_hex(w), n, colour_box(shot, w)) for w, n in top[:3])
+    else:
+        got = "усі %d кольорів знімка -- з палітри теми «%s» (%s)" % (n_colors, tname, src)
+    res.check("палітра: усі кольори знімка належать палітрі теми з рації", "жодного чужого кольору", got, not foreign,
+              "Чужий колір -- справжній дефект: або тема в рації не та, що вважає майстер, або екран малює колір поза темою. Якщо ви крутили гучність чи тримали клавішу, повторіть."
+              if foreign else "")
+
+    # 2) поточна зона/канал, рендер із реальними даними
+    cp = ctx.codeplug()
+    sel = read_current_selection(cp)
+    if not sel["known"]:
+        res.info("поточний канал рації", "не визначено", sel["why"])
+        chooser = getattr(ctx, "choose", None)
+        if chooser:
+            choices = selection_choices(cp)
+            if choices:
+                k = chooser("Самоперевірка S3: який канал зараз на екрані рації?",
+                            "Поточний канал не вдалося прочитати з рації (%s). Оберіть зі списку зону й канал, які ЗАРАЗ показані на екрані. "
+                            "Перший канал підставлено не буде." % sel["why"], [lab for lab, _s in choices])
+                if k is not None and 0 <= k < len(choices):
+                    sel = choices[k][1]
+    state = extra = None
+    if sel["known"]:
+        state, extra, _notes = real_state(cp, sel)
+        res.info("поточний канал рації", "зона «%s», №%d в зоні, канал %d «%s»" % (sel["zone_name"], sel["pos_in_zone"], sel["channel_no"], state["channel"]),
+                 "джерело: %s. Рація записує поточний вибір із затримкою (гіпотеза): якщо щойно перемикали канал, дані можуть бути застарілі." % sel["source"])
+    else:
+        res.info("піксельне порівняння з рендером", "не робиться",
+                 "канал не визначено й не обрано вручну; рендер із прикладними даними лише для ілюстрації, відсоток не рахується")
+    rects = exclusion_rects(extra or ())
+    mask = exclusion_mask(rects)
+    ranked = best_match(shot, sets, state=state, mask=mask)
+    disp = ranked[0][6]
+    key = ranked[0][2]
+    # довідкова різниця -- з темою, чия палітра найкраще підійшла знімку (а не з тією, що дала найменше розбіжних пікселів)
+    pc, pa, key, rname, cmp_, rendered, disp, _score = next(r for r in ranked if r[6] is disp and r[3] == tname)
+    others = []
+    for r in ranked:
+        if r[2] != key and r[2] not in [o[0] for o in others] and r[3] == tname:
+            others.append((r[2], r[7]))
+    res.info("найближчий екран передпоказу", "«%s», %s тема" % (sv.SCREEN_TITLES[key], rname),
+             "екран впізнано за формою, а не за кольорами. Інші кандидати (збіг форми, пікселів): " + "; ".join("%s -- %d" % o for o in others[:3]))
+
+    # 3) зони -- другий головний критерій
+    if key == "channel":
+        digital = (state or {}).get("mode", "dmr") != "fm"
+        for zname, rect, bg_key, ink_keys in channel_zones(digital):
+            ok, got_z, exp_z = zone_check(shot, colors, rect, bg_key, ink_keys)
+            res.check("зона «%s»: колір за темою" % zname, exp_z, got_z, ok)
+        dbm, parts = smeter_check(shot, colors)
+        if dbm is not None:
+            res.info("рівень сигналу (з підпису S-метра)", "%d дБм" % dbm)
+        for label, ok, got_z, exp_z in parts:
+            res.check(label, exp_z, got_z, ok)
+    else:
+        res.info("зони екрана", "не перевірялись", "для екрана «%s» зони не визначено; діє лише перевірка палітри. Для S3 залиште на рації екран каналу (не VFO, не меню)." % sv.SCREEN_TITLES[key])
+
+    # 4) піксельна різниця -- лише довідка
+    if sel["known"]:
+        res.info("довідково: пікселів, що розходяться з рендером (поза виключеними)", "%.3f %% (%d з %d порівнюваних)" % (pc, len(cmp_["counted_diff"]), cmp_["n_counted"]),
+                 "НЕ критерій: порога нема. ділянки: " + regions_text(cmp_["counted_diff"]))
+        if cmp_["by_item"]:
+            top = sorted(cmp_["by_item"].items(), key=lambda kv: -kv[1])[:5]
+            res.info("довідково: розбіжності за елементами теми (за рендером)", "; ".join("%s -- %d" % kv for kv in top))
+    res.info("виключено з порівняння (стан рації, якого немає в кодплазі)", "; ".join("%s -- x %d..%d, y %d..%d" % (n, r[0], r[2], r[1], r[3]) for n, r in rects),
+             "у цих ділянках палітра перевіряється, а піксельне порівняння -- ні")
     path = cl.unique_path(ctx.mkdir(), "selfcheck_screen_%s.png" % ctx.stamp)
     with open(path, "wb") as f:
-        f.write(triptych_png(shot, rendered, cmp_))
-    res.artifacts.append(("знімок | рендер | різниця (жовтим -- від стану, червоним -- без пояснення)", path))
-    res.notes.append("Це перевірка «оком» за чек-листом 2.10 (CJ5) у машинному вигляді: якщо червоного багато -- відкрийте картинку й опишіть, що не так.")
+        f.write(triptych_png(shot, rendered, cmp_, mask))
+    res.artifacts.append(("знімок | рендер | різниця (жовтим -- виключено з порівняння, червоним -- розбіжність поза виключеними, довідково)", path))
+    res.notes.append("S3 вирішують палітра й зони (див. кроки вище). Піксельна різниця -- довідка: після кількох прогонів на живій рації з неї буде виведено поріг "
+                     "(у R39 його навмисно нема: виміряних даних ще немає).")
 
 
 # =============================================================================================================================
@@ -1084,7 +1467,7 @@ SCENARIOS = [
     Scenario("S2.6", "База позивних: заголовок, формат, кількість, довжина запису", RISK_READ, s2_6, closes=("2.9",)),
     Scenario("S2.7", "Голосові підказки: заголовок, версія, скільки фраз", RISK_READ, s2_7),
     Scenario("S2.8", "Назви з малою «я»: як закодовані (хвіст 0xFF чи 0x00)", RISK_READ, s2_8),
-    Scenario("S3", "Знімок екрана проти передпоказу «Тем»", RISK_READ, s3, closes=("2.10",)),
+    Scenario("S3", "Знімок екрана: палітра й зони за темою", RISK_READ, s3, closes=("2.10",)),
     Scenario("S4.1", "Тема: змінити один колір, перевірити, повернути", RISK_WRITE, s4_1,
              writes=("custom-data: блок денної теми (64 байти, один колір змінюється на мить) -> повертається", "перелік змін перевіряється: решта 31 колір і решта області не змінюються")),
     Scenario("S4.2", "VFO A: записати відоме значення, перевірити, повернути", RISK_WRITE, s4_2,

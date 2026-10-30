@@ -10,7 +10,7 @@ Z1  кожен сценарій проходить на справній рац�
 G   запобіжники: без знімка запис недоступний (жодної X-команди), без згоди -- пропускається, читання не пише нічого;
 Z2  сценарій запису з обривом на КОЖНОМУ кроці: звіт каже про проміжний стан, страхова копія й знімок цілі, подальший запис зупинено;
 Z3  звіт: усі кроки на місці, непройдений видно одразу, підсумок рахує правильно, є перелік ручних кроків з номерами чек-листа;
-Z4  знімок проти передпоказу: однакові -- 0 %, змінений піксель -- ненульовий відсоток, розбіжності від стану окремо;
+Z4  знімок проти передпоказу: однакові -- 0 %, змінений піксель -- ненульовий відсоток, виключені ділянки окремо (з R39 критерії S3 -- у test_r39);
 Z5  панель під xvfb (Tk) і запуск без DISPLAY пропущено.
 Запуск: `xvfb-run -a python3.12 tools/test_r38.py`."""
 import contextlib
@@ -297,7 +297,7 @@ def test_z1_read_planted():
         disp = bytearray(stock_display())
         disp[: 160 * 128 * 2 // 2] = b"\x07\xe0" * (160 * 128 // 2)          # півекрана зеленим
         res = only(run_one(make_radio(display=bytes(disp)), "S3", snapshot=False)[0])
-        check(res.status == sc.FAIL and any("БЕЗ пояснення" in n for n in failed_names(res)), "Z1 S3: півекрана інакше -- провал: %r" % failed_names(res))
+        check(res.status == sc.FAIL and any(n.startswith("палітра") for n in failed_names(res)), "Z1 S3: півекрана чужим кольором -- провал палітри: %r" % failed_names(res))
     finally:
         time.sleep = old
 
@@ -664,30 +664,35 @@ def test_z4_compare():
     disp = sv.render("channel")
     words = sc.render_words(disp, colors)
     c = sc.compare_screens(list(words), disp.px, colors)
-    check(c["pct_all"] == 0.0 and c["pct_unexplained"] == 0.0 and not c["diff"], "Z4: однакові картинки -- 0 %% різниці (%r)" % c["pct_all"])
-    # змінений піксель, що належить НЕ елементу стану
+    check(c["pct_all"] == 0.0 and c["pct_counted"] == 0.0 and not c["diff"], "Z4: однакові картинки -- 0 %% різниці (%r)" % c["pct_all"])
+    # змінений піксель: рахується в довідковій різниці
     idx = next(i for i, it in enumerate(disp.px) if te.KEYS[it] in ("BG", "BG_HEADER_TEXT", "FG_DEFAULT"))
     w2 = list(words)
     w2[idx] ^= 0x0841
     c2 = sc.compare_screens(w2, disp.px, colors)
     check(c2["pct_all"] > 0 and abs(c2["pct_all"] - 100.0 / 20480) < 1e-9 and c2["diff"] == [idx], "Z4: один піксель -- ненульовий відсоток: %r" % c2["pct_all"])
-    check(c2["pct_unexplained"] > 0 and c2["unexplained"] == [idx], "Z4: піксель тла -- без пояснення станом")
-    # піксель смуги сигналу -- від стану
-    st = next((i for i, it in enumerate(disp.px) if te.KEYS[it] in ("FG_RSSI_BAR", "FG_CHANNEL_NAME", "FG_RX_FREQ")), None)
-    check(st is not None, "Z4: на екрані «канал» є елементи стану")
-    w3 = list(words)
-    w3[st] ^= 0x0841
-    c3 = sc.compare_screens(w3, disp.px, colors)
-    check(c3["explained"] == [st] and c3["unexplained"] == [] and c3["pct_unexplained"] == 0.0 and c3["pct_all"] > 0,
-          "Z4: розбіжність на елементі стану -- в окремому переліку, а не як помилка: %r" % {k: len(v) if isinstance(v, list) else v for k, v in c3.items()})
+    check(c2["counted_diff"] == [idx] and c2["masked_diff"] == [], "Z4: піксель поза маскою -- у порівнюваних")
+    # той самий піксель під маскою (R39: виключена ділянка) -- у виключених, відсоток порівнюваних 0
+    mask = bytearray(20480)
+    mask[idx] = 1
+    c3 = sc.compare_screens(w2, disp.px, colors, mask)
+    check(c3["masked_diff"] == [idx] and c3["counted_diff"] == [] and c3["pct_counted"] == 0.0 and c3["pct_all"] > 0 and c3["n_counted"] == 20479,
+          "Z4: розбіжність під маскою не рахується як порівнювана: %r" % {k: len(v) if isinstance(v, list) else v for k, v in c3.items()})
     # інша тема -> багато розбіжностей
     other = sc.compare_screens(sc.render_words(disp, te.stock_colors("night")), disp.px, colors)
     check(other["pct_all"] > 20, "Z4: нічна палітра проти денної -- велика різниця (%.1f %%)" % other["pct_all"])
     # best_match знаходить правильні екран і тему
     ranked = sc.best_match(list(words), [("денна", te.stock_colors("day")), ("нічна", te.stock_colors("night"))])
-    check(ranked[0][2] == "channel" and ranked[0][3] == "денна" and ranked[0][0] == 0.0, "Z4: найближчий екран -- «channel», денна: %r" % (ranked[0][:4],))
+    top = [r for r in ranked if r[2] == ranked[0][2] and r[6] is ranked[0][6]]
+    check(ranked[0][2] == "channel" and min(top, key=lambda r: len(r[4]["counted_diff"]))[3] == "денна" and min(r[0] for r in top) == 0.0, "Z4: найближчий екран -- «channel», денна: %r" % (ranked[0][:4],))
     ranked_n = sc.best_match(sc.render_words(sv.render("menu"), te.stock_colors("night")), [("денна", te.stock_colors("day")), ("нічна", te.stock_colors("night"))])
-    check(ranked_n[0][2] == "menu" and ranked_n[0][3] == "нічна", "Z4: меню в нічній темі впізнано: %r" % (ranked_n[0][:4],))
+    top_n = [r for r in ranked_n if r[2] == "menu"]
+    check(ranked_n[0][2] == "menu" and min(top_n, key=lambda r: len(r[4]["counted_diff"]))[3] == "нічна", "Z4: меню в нічній темі впізнано: %r" % (ranked_n[0][:4],))
+    # екран впізнається за формою навіть у чужих кольорах (R39)
+    odd = list(te.stock_colors("day"))
+    odd = [(c ^ 0x1234) & 0xFFFF for c in odd]
+    ranked_o = sc.best_match(sc.render_words(sv.render("menu"), odd), [("денна", te.stock_colors("day"))])
+    check(ranked_o[0][2] == "menu", "Z4: меню в перефарбованій темі впізнано за формою: %r" % (ranked_o[0][:4],))
     # знімок з байтів рації
     raw = stock_display()
     check(sc.screen_words(raw) == list(words), "Z4: розбір сирого буфера (RGB565, big-endian) = слова передпоказу")
@@ -710,15 +715,15 @@ def test_z4_compare():
         png_files = [p for _l, p in res.artifacts]
         check(res.status == sc.PASS and png_files and os.path.isfile(png_files[0]) and open(png_files[0], "rb").read(8) == b"\x89PNG\r\n\x1a\n",
               "Z4: сценарій S3 зберіг картинку: %r %r" % (res.status, png_files))
-        got = " ".join(str(s.got) for s in res.steps)
-        check("0.000 %" in got, "Z4: у кроках 0.00 %% розбіжності: %s" % got[:200])
-        # зміна одного пікселя тла на знімку -- не провал (шум), але відсоток ненульовий
+        names = [s.name for s in res.steps]
+        check(any(n.startswith("палітра") for n in names) and any(n.startswith("зона «") for n in names), "Z4: сценарій S3 має кроки палітри й зон (R39): %r" % names[:6])
+        # піксель тла іншого кольору з палітри -- не провал (це довідкова різниця, не критерій)
         disp2 = bytearray(stock_display())
-        disp2[idx * 2:idx * 2 + 2] = struct.pack(">H", w2[idx])
+        pal_other = te.stock_colors("day")[te.INDEX["FG_ZONE_NAME"]]
+        disp2[idx * 2:idx * 2 + 2] = struct.pack(">H", pal_other)
         rep, ctx = run_one(make_radio(display=bytes(disp2)), "S3", snapshot=False)
         res = only(rep)
-        step = next(s for s in res.steps if s.name.startswith("розбіжних пікселів БЕЗ"))
-        check("0.000 %" not in step.got and "1 пікселів" in step.got and res.status == sc.PASS, "Z4: один піксель -- ненульовий відсоток, але в межах шуму: %s" % step.got)
+        check(res.status == sc.PASS, "Z4: один піксель кольором з палітри -- не провал (довідкова різниця, поріг прибрано в R39): %r" % failed_names(res))
     finally:
         time.sleep = old
 

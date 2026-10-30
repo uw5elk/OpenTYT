@@ -265,14 +265,17 @@ def freq_text(freq_10hz):
 # ---------------------------------------------------------------------------------------------------------------------------------
 
 def scr_channel(d, st):
-    """Канал DMR, очікування: uiChannelModeUpdateScreen() -> QSO_DISPLAY_DEFAULT_SCREEN (uiChannelMode.c)."""
+    """Канал DMR, очікування: uiChannelModeUpdateScreen() -> QSO_DISPLAY_DEFAULT_SCREEN (uiChannelMode.c).
+    st["mode"] == "fm" (R39, самоперевірка S3): аналоговий канал -- шапка FM і без рядка контакту (контакт малюється лише в цифровому режимі)."""
     st = dict(st, rssi=st["rssi_idle"])
+    mode = st.get("mode", "dmr")
     d.theme_reset()
     d.clear_buf()
-    draw_header(d, st, "dmr")
+    draw_header(d, st, mode)
     display_information(d, "%s Ch:%d" % (st["zone"], st["channel_no"]), "zone", -2)
     display_information(d, st["channel"], "channel", -1)
-    display_information(d, st["contact"], "contact", -1)
+    if mode != "fm":
+        display_information(d, st["contact"], "contact", -1)
 
 
 def scr_channel_qso(d, st):

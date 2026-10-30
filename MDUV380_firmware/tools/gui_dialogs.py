@@ -68,6 +68,69 @@ def choice_dialog(parent, title, text, buttons, default_index=0):
     return res["value"]
 
 
+def list_choice_dialog(parent, title, text, labels):
+    """Вибір одного рядка зі списку (з фільтром). Повертає індекс у `labels` або None (скасовано / закрито). R39: ручний вибір каналу для самоперевірки S3."""
+    win = _small_window(parent, title)
+    win.minsize(520, 460)
+    result = {"value": None}
+    flt = tk.StringVar()
+    body = ttk.Frame(win)
+    body.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+    ttk.Label(body, text=text, wraplength=480, justify="left").pack(anchor="w")
+    ttk.Label(body, text="Фільтр списку:").pack(anchor="w", pady=(6, 0))
+    ttk.Entry(body, textvariable=flt).pack(fill="x", pady=2)
+    frame = ttk.Frame(body)
+    frame.pack(fill="both", expand=True, pady=4)
+    lb = tk.Listbox(frame, selectmode="browse", exportselection=False, height=12)
+    gt.style_text(lb)
+    sb = gt.AutoScrollbar(frame, orient="vertical", command=lb.yview)
+    lb.configure(yscrollcommand=sb.set)
+    lb.grid(row=0, column=0, sticky="nsew")
+    sb.grid(row=0, column=1, sticky="ns")
+    frame.rowconfigure(0, weight=1)
+    frame.columnconfigure(0, weight=1)
+    shown = []                  # індекси в labels того, що видно після фільтра
+    ok_btn = None
+
+    def fill(*_a):
+        lb.delete(0, "end")
+        shown.clear()
+        needle = flt.get().strip().casefold()
+        for i, label in enumerate(labels):
+            if not needle or needle in label.casefold():
+                shown.append(i)
+                lb.insert("end", label)
+        refresh()
+
+    def refresh(_e=None):
+        if ok_btn is not None:
+            ok_btn.config(state="normal" if lb.curselection() else "disabled")
+
+    def finish(value):
+        result["value"] = value
+        win.destroy()
+
+    def accept(_e=None):
+        sel = lb.curselection()
+        if sel:
+            finish(shown[sel[0]])
+    lb.bind("<<ListboxSelect>>", refresh)
+    lb.bind("<Double-Button-1>", accept)
+    flt.trace_add("write", fill)
+    bar = ttk.Frame(win)
+    bar.pack(fill="x", padx=12, pady=(4, 12))
+    ok_btn = ttk.Button(bar, text="Обрати", command=accept)
+    ok_btn.pack(side="right", padx=(8, 0))
+    ttk.Button(bar, text="Не обирати", command=lambda: finish(None)).pack(side="right")
+    win.bind("<Escape>", lambda _e: finish(None))
+    win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+    fill()
+    win.update_idletasks()
+    win.grab_set()
+    parent.wait_window(win)
+    return result["value"]
+
+
 def delete_choice(parent, noun, name, refs_text=None):
     """Єдиний діалог видалення запису документа (редактори контактів / списків / зон / каналів і блок APRS-слотів, R28).
     refs_text -- перелік тих, хто на запис посилається (te.Refs.text()); None/порожній -- посилань нема.
