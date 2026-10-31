@@ -30,6 +30,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "functions/codeplug.h"
+#if defined(CODEPLUG_MENU_ENABLED)
+#include <stddef.h>   /* R44: offsetof(CodeplugChannel_t, contact) */
+#endif
 #include "functions/codeplug_zone.h"
 #include "hardware/EEPROM.h"
 #include "hardware/SPI_Flash.h"
@@ -1833,6 +1836,82 @@ bool codeplugContactGetRXGroup(int index)
 	}
 	return false;
 }
+
+#if defined(CODEPLUG_MENU_ENABLED)
+/* ---- R44: видалення контакту з каскадом ------------------------------------------------------------------------------------------ */
+
+/* Поле «контакт» каналу (2 байти, індекс 1..1024; 0 -- «Немає»). Читаємо лише його: канали по одному, без копії списку. */
+static uint16_t codeplugChannelContactField(int channelIndex)
+{
+	CodeplugChannel_t ch;
+
+	codeplugChannelGetDataWithOffsetAndLengthForIndex(channelIndex, &ch, (uint8_t)offsetof(CodeplugChannel_t, contact), (int)sizeof(ch.contact));
+	return ch.contact;
+}
+
+int codeplugContactCountChannels(int contactIndex)
+{
+	int n = 0;
+
+	if ((contactIndex < CODEPLUG_CONTACTS_MIN) || (contactIndex > CODEPLUG_CONTACTS_MAX))
+	{
+		return 0;
+	}
+
+	for (int ch = CODEPLUG_CHDEL_CHANNELS_MIN; ch <= CODEPLUG_CHDEL_CHANNELS_MAX; ch++)
+	{
+		if (codeplugAllChannelsIndexIsInUse(ch) && (codeplugChannelContactField(ch) == (uint16_t)contactIndex))
+		{
+			n++;
+		}
+	}
+	return n;
+}
+
+/* Пише «Немає» (0) лише в 2 байти поля «контакт» -- решту запису каналу не чіпаємо (як і R41/R43, що пишуть мінімум). 1 -> 0 лише знімає біти. */
+static bool codeplugChannelClearContactField(int channelIndex)
+{
+	bool inFlash;
+	uint8_t zero[2] = { 0, 0 };
+	int addr = codeplugChanRecordAddr(channelIndex, CODEPLUG_ADDR_CHANNEL_EEPROM, CODEPLUG_ADDR_CHANNEL_FLASH, &inFlash);
+
+	if (addr < 0)
+	{
+		return false;
+	}
+	addr += (int)offsetof(CodeplugChannel_t, contact);
+	return inFlash ? SPI_Flash_write(FLASH_ADDRESS_OFFSET + addr, zero, 2) : EEPROM_Write(addr, zero, 2);
+}
+
+/*
+ * Видалення контакту. ПОРЯДОК -- за стійкістю до обриву живлення:
+ *   1. канали, що посилаються на контакт, -> «Немає» (контакт ще живий: обрив лишає частину каналів без контакту, нічого зламаного);
+ *   2. стирання слота контакту (так само, як стокове: ім'я 0xFF, TG 0, тип 0xFF) і виймання з кешу.
+ * Без кроку 1 канал читав би зі стертого слота ім'я 0xFF, TG 0 і тип 0xFF -- тобто «сміття», а не контакт.
+ */
+bool codeplugContactDelete(int contactIndex)
+{
+	CodeplugContact_t c;
+
+	if ((contactIndex < CODEPLUG_CONTACTS_MIN) || (contactIndex > CODEPLUG_CONTACTS_MAX) || !codeplugContactGetDataForIndex(contactIndex, &c))
+	{
+		return false;
+	}
+
+	for (int ch = CODEPLUG_CHDEL_CHANNELS_MIN; ch <= CODEPLUG_CHDEL_CHANNELS_MAX; ch++)
+	{
+		if (codeplugAllChannelsIndexIsInUse(ch) && (codeplugChannelContactField(ch) == (uint16_t)contactIndex) && !codeplugChannelClearContactField(ch))
+		{
+			return false;
+		}
+	}
+
+	memset(c.name, 0xff, 16);
+	c.tgNumber = 0;
+	c.callType = 0xff;
+	return codeplugContactSaveDataForIndex(contactIndex, &c) != 0;
+}
+#endif /* CODEPLUG_MENU_ENABLED */
 
 uint32_t codeplugGetUserDMRID(void)
 {

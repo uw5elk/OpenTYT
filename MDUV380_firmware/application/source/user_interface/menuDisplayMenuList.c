@@ -133,6 +133,11 @@ static void updateScreen(bool isFirstRun)
 		case MENU_OPTIONS:
 			mName = currentLanguage->options;
 			break;
+#if defined(CODEPLUG_MENU_ENABLED)
+		case MENU_CODEPLUG:
+			mName = currentLanguage->codeplug_menu;
+			break;
+#endif
 	}
 
 	menuDisplayTitle(mName);

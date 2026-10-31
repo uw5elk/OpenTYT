@@ -429,6 +429,19 @@ typedef struct
    const char zone_ch_removed[LANGUAGE_TEXTS_LENGTH];
    const char zone_not_zone[LANGUAGE_TEXTS_LENGTH];
 #endif
+#if defined(ENABLE_CODEPLUG_MENU)
+   // R44: єдиний розділ «Кодплаг» (канали, зони, контакти). Останніми, в українському блоці, лише під ENABLE_CODEPLUG_MENU. Код -- під CODEPLUG_MENU_ENABLED (codeplug.h).
+   const char codeplug_menu[LANGUAGE_TEXTS_LENGTH];
+   const char cp_channels[LANGUAGE_TEXTS_LENGTH];
+   const char cp_edit[LANGUAGE_TEXTS_LENGTH];
+   const char cp_delete[LANGUAGE_TEXTS_LENGTH];
+   const char cp_to_zone[LANGUAGE_TEXTS_LENGTH];
+   const char cp_rename[LANGUAGE_TEXTS_LENGTH];
+   const char cp_zone_chans[LANGUAGE_TEXTS_LENGTH];
+   const char cp_choose_zone[LANGUAGE_TEXTS_LENGTH];
+   const char cp_in_channels[LANGUAGE_TEXTS_LENGTH];
+   const char cp_becomes_none[LANGUAGE_TEXTS_LENGTH];
+#endif
 #endif
 } stringsTable_t;
 

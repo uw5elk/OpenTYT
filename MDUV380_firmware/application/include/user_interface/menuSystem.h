@@ -416,6 +416,11 @@ enum MENU_SCREENS
 	MENU_THEME_ITEMS_BROWSER,
 	MENU_COLOUR_PICKER,
 #endif
+#if defined(CODEPLUG_MENU_ENABLED)
+	MENU_CODEPLUG,            // R44: «Кодплаг» (список: Канали / Зони / Контакти). ПІСЛЯ межі швидких клавіш: ID 0..31 наявних меню не зсуваються
+	MENU_CODEPLUG_CHANNELS,   // R44: «Кодплаг» -> Канали
+	MENU_CODEPLUG_ZONES,      // R44: «Кодплаг» -> Зони (menuZoneList у режимі редагування)
+#endif
 	NUM_MENU_ENTRIES
 };
 
@@ -432,10 +437,10 @@ enum CHANNEL_SCREEN_QUICK_MENU_ITEMS
 	CH_SCREEN_QUICK_MENU_TALKAROUND,
 	CH_SCREEN_QUICK_MENU_ROAMING,
 	CH_SCREEN_QUICK_MENU_AUDIO_MUTE,
-#if defined(ENABLE_CHANNEL_DELETE) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#if defined(CH_QUICKMENU_DELETE_ENABLED)
 	CH_SCREEN_QUICK_MENU_DELETE,   /* R41: видалення каналу -- завжди ОСТАННІЙ пункт, щоб номери решти не зсунулися (швидкі клавіші зберігають номер пункту) */
 #endif
-#if defined(ZONE_EDIT_ENABLED)
+#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 	CH_SCREEN_QUICK_MENU_ZONE_REMOVE,   /* R43: «Вийняти із зони» -- ДОДАНО ПІСЛЯ видалення (теж в кінці), номери наявних пунктів не зсуваються */
 #endif
 	NUM_CH_SCREEN_QUICK_MENU_ITEMS
@@ -520,6 +525,12 @@ extern menuDataGlobal_t 		menuDataGlobal;
 extern const menuItemsList_t 	menuDataMainMenu;
 extern const menuItemsList_t 	menuDataContact;
 extern const menuItemsList_t 	menuDataOptions;
+#if defined(CODEPLUG_MENU_ENABLED)
+extern const menuItemsList_t 	menuDataCodeplug;   // R44: «Кодплаг» -> Канали / Зони / Контакти
+menuStatus_t menuCodeplugChannels(uiEvent_t *event, bool isFirstRun);   // R44: «Кодплаг» -> Канали (menuCodeplug.c)
+bool uiChannelModeDeleteChannel(int channelNumber);                   // R41, винесено в R44: видалення каналу й приведення екрана каналу до ладу (uiChannelMode.c)
+bool uiChannelModeZoneRemoveChannelAt(int zn, int pos);               // R43, винесено в R44: виймання запису pos з зони zn (uiChannelMode.c)
+#endif
 extern bool lockscreenIsRearming;
 
 menuStatus_t uiVFOMode(uiEvent_t *event, bool isFirstRun);

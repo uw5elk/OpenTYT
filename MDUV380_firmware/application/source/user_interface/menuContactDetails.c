@@ -800,6 +800,15 @@ static void handleEvent(uiEvent_t *ev)
 
 					if ((tmpContact.tgNumber >= MIN_TG_OR_PC_VALUE) && (tmpContact.tgNumber <= MAX_TG_OR_PC_VALUE))
 					{
+#if defined(CODEPLUG_MENU_ENABLED)
+						// R44 (правило R34/R36): рівно 16 символів і остання -- «я» (0xFF): місця для хвоста 0x00 нема, а стокове читання відрізало б літеру. Не зберігаємо, кажемо словами.
+						if ((strlen(contactName) == 16U) && (((uint8_t)contactName[15]) == 0xFF))
+						{
+							uiNotificationShowShort(1500U, currentLanguage->zone_name_ya, false);
+							updateScreen(false, allowedToSpeakUpdate);
+							return;
+						}
+#endif
 						codeplugUtilConvertStringToBuf(contactName, tmpContact.name, 16);
 						if ((contactDetailsIndex >= CODEPLUG_CONTACTS_MIN) && (contactDetailsIndex <= CODEPLUG_CONTACTS_MAX))
 						{

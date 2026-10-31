@@ -267,6 +267,20 @@ static void updateScreen(bool isFirstRun)
 			codeplugUtilConvertBufToDisplayString(contactListContactData.name, nameBuf, 16);
 			menuDisplayTitle(nameBuf);
 			displayPrintCentered(16, currentLanguage->delete_contact_qm, FONT_SIZE_3);
+#if defined(CODEPLUG_MENU_ENABLED)
+			{
+				// R44: у скількох каналах стоїть контакт -- у тих каналах він стане «Немає» (каскад у codeplugContactDelete). Рахуємо при кожній перемальовці: екран відкривається рідко.
+				char usedLine[SCREEN_LINE_BUFFER_SIZE];
+				int used = codeplugContactCountChannels(uiDataGlobal.currentSelectedContactIndex);
+
+				snprintf(usedLine, sizeof(usedLine), "%s %d", currentLanguage->cp_in_channels, used);
+				displayPrintCentered(36, usedLine, FONT_SIZE_3);
+				if (used > 0)
+				{
+					displayPrintCentered(52, currentLanguage->cp_becomes_none, FONT_SIZE_3);
+				}
+			}
+#endif
 			displayDrawChoice(CHOICE_YESNO, false);
 			break;
 
@@ -426,10 +440,30 @@ static void handleEvent(uiEvent_t *ev)
 		case MENU_CONTACT_LIST_CONFIRM:
 			if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 			{
+#if defined(CODEPLUG_MENU_ENABLED)
+				// R44: канали з цим контактом -> «Немає», потім стирання слота (codeplugContactDelete). Тут же -- обидва VFO (їхній контакт лежить у налаштуваннях, не в каналах).
+				if (!codeplugContactDelete(uiDataGlobal.currentSelectedContactIndex))
+				{
+					uiNotificationShowShort(1500U, currentLanguage->error, false);
+					contactListDisplayState = MENU_CONTACT_LIST_DISPLAY;
+					reloadContactList(contactListType);
+					updateScreen(false);
+					break;
+				}
+				for (int v = 0; v < 2; v++)
+				{
+					if (settingsVFOChannel[v].contact == (uint16_t)uiDataGlobal.currentSelectedContactIndex)
+					{
+						settingsVFOChannel[v].contact = 0;
+						settingsSetVFODirty();
+					}
+				}
+#else
 				memset(contact.name, 0xff, 16);
 				contact.tgNumber = 0;
 				contact.callType = 0xff;
 				codeplugContactSaveDataForIndex(uiDataGlobal.currentSelectedContactIndex, &contact);
+#endif
 				uiDataGlobal.currentSelectedContactIndex = 0;
 				menuContactListTimeout = 2000;
 				contactListDisplayState = MENU_CONTACT_LIST_DELETED;

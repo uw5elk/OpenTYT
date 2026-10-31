@@ -141,7 +141,15 @@ DEFS_R43LITE=("${DEFS_R42LITE[@]}" -DENABLE_ZONE_EDIT)                          
 DEFS_R43EDIT=("${DEFS_APRSRX[@]}" -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT)           # редагування зон без видалення каналу
 DEFS_R43NOREN=("${DEFS_APRSRX[@]}" -DENABLE_ZONE_EDIT)                               # редагування без перейменування: код має зникнути
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE R42 R42EN R42LITE R42SQL R42ZONE R43 R43EN R43LITE R43EDIT R43NOREN)
+# R44: єдиний розділ «Кодплаг» (ENABLE_CODEPLUG_MENU). Потребує ВСІХ трьох: ENABLE_CHANNEL_DELETE + ENABLE_ZONE_RENAME + ENABLE_ZONE_EDIT. Користувацька українська збірка CI;
+# англійський двійник (розділ має зникнути); українська БЕЗ AES/APRS_RX; прапорець без видалення каналу й без редагування зон (розділу нема -- R41-R43 лишаються як були).
+DEFS_R44=("${DEFS_R43[@]}" -DENABLE_CODEPLUG_MENU)                                   # build-ukrainian (CI) + розділ «Кодплаг»
+DEFS_R44EN=("${DEFS_R43EN[@]}" -DENABLE_CODEPLUG_MENU)                               # англійська + прапорці: розділ має зникнути
+DEFS_R44LITE=("${DEFS_R43LITE[@]}" -DENABLE_CODEPLUG_MENU)                           # українська БЕЗ AES/APRS_RX
+DEFS_R44NODEL=("${DEFS_R43EDIT[@]}" -DENABLE_CODEPLUG_MENU)                          # без ENABLE_CHANNEL_DELETE: розділу нема
+DEFS_R44NOEDIT=("${DEFS_R42[@]}" -DENABLE_CODEPLUG_MENU)                             # без ENABLE_ZONE_EDIT: розділу нема
+
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE R42 R42EN R42LITE R42SQL R42ZONE R43 R43EN R43LITE R43EDIT R43NOREN R44 R44EN R44LITE R44NODEL R44NOEDIT)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

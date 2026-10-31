@@ -152,7 +152,7 @@ def zone_menu_problems(text):
         p.append("видалення зони не лише за підтвердженням зеленою")
     if "zeDeleteConfirmed();" not in text or text.count("zeDeleteConfirmed();") != 1:
         p.append("zeDeleteConfirmed() викликається не в одному місці (підтвердження)")
-    if "|| zoneIsEmpty(zn)" not in text:
+    if "|| (ZL_EDIT() && zoneIsEmpty(zn))" not in text:
         p.append("порожні зони не видно в списку")
     if not re.search(r"if \(menuDataGlobal\.currentItemIndex >= s_zoneMapCount\)\n\t\{\n\t\tzeStartCreate\(\);", text):
         p.append("пункт «Нова зона» не запускає створення")
@@ -166,24 +166,24 @@ def zone_menu_problems(text):
         p.append("екран видалення зони не каже, що канали лишаються")
     if "menuDataGlobal.numItems = s_zoneMapCount" in text.replace("s_zoneMapCount + 1", ""):
         pass
-    if "return s_zoneMapCount + 1;" not in text:
+    if "return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);" not in text:
         p.append("у списку зон нема пункту «Нова зона»")
     return p
 
 
 def channel_menu_problems(text, hdr):
     p = []
-    if not re.search(r"CH_SCREEN_QUICK_MENU_DELETE,[^\n]*\n#endif\n#if defined\(ZONE_EDIT_ENABLED\)\n\tCH_SCREEN_QUICK_MENU_ZONE_REMOVE,[^\n]*\n#endif\n\tNUM_CH_SCREEN_QUICK_MENU_ITEMS", hdr):
+    if not re.search(r"CH_SCREEN_QUICK_MENU_DELETE,[^\n]*\n#endif\n#if defined\(CH_QUICKMENU_ZONE_REMOVE_ENABLED\)\n\tCH_SCREEN_QUICK_MENU_ZONE_REMOVE,[^\n]*\n#endif\n\tNUM_CH_SCREEN_QUICK_MENU_ITEMS", hdr):
         p.append("«Вийняти із зони» не останній пункт швидкого меню (зсунулись би номери швидких клавіш)")
     if not re.search(r"QUICKKEY_ENTRYID\(ev->function\) == CH_SCREEN_QUICK_MENU_ZONE_REMOVE\)\)\n\t\t\{\n[^\n]*\n\t\t\treturn;", text):
         p.append("виймання виконується швидкою клавішею")
     if "(menuDataGlobal.currentItemIndex != CH_SCREEN_QUICK_MENU_ZONE_REMOVE)" not in text:
         p.append("на «Вийняти із зони» можна призначити швидку клавішу")
-    if "codeplugZoneRemoveChannelAt(zn, codeplugGetLastUsedChannelInCurrentZone())" not in text:
+    if "uiChannelModeZoneRemoveChannelAt(nonVolatileSettings.currentZone, codeplugGetLastUsedChannelInCurrentZone())" not in text:
         p.append("виймається не запис під «останнім каналом у зоні»")
-    if not re.search(r"if \(!codeplugZoneIsUsable\(zn, NULL\)\)\n\t\t\t\{\n\t\t\t\tsettingsSet\(nonVolatileSettings\.currentZone, \(int16_t\)\(codeplugZonesGetCount\(\) - 1\)\);", text):
+    if not re.search(r"if \(!codeplugZoneIsUsable\(zn, NULL\) && \(zn == nonVolatileSettings\.currentZone\)\)\n\t\t\{\n\t\t\tsettingsSet\(nonVolatileSettings\.currentZone, \(int16_t\)\(codeplugZonesGetCount\(\) - 1\)\);", text):
         p.append("спорожніла зона не веде на «Всі канали»")
-    if "uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу\n			uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed" not in text:
+    if "uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу\n\t\tuiNotificationShowShort(1500U, currentLanguage->zone_ch_removed" not in text:
         p.append("після виймання екран каналу не перечитує зону")
     if not re.search(r"validateZoneRemoveChannel\(void\)\n\{\n\tquickmenuChannelFromVFOHandled = true;", text):
         p.append("колбек виймання не закриває швидке меню")
@@ -199,20 +199,20 @@ MENU_MUTANTS = [
      "#if defined(ZONE_EDIT_ENABLED)\n		zeEnterActions();", "#if defined(ZONE_EDIT_ENABLED)\n		zrStart(s_zoneMap[menuDataGlobal.currentItemIndex]);"),
     ("зона видаляється без підтвердження (одразу на «Видалити зону»)", "zone",
      "			ZE_STATE = ZE_ST_CONFIRM;\n			zeDraw();", "			zeDeleteConfirmed();"),
-    ("порожні зони не видно в списку", "zone", "|| zoneIsEmpty(zn)", "|| 0"),
-    ("пункт «Нова зона» з'їдено", "zone", "	return s_zoneMapCount + 1;", "	return s_zoneMapCount;"),
+    ("порожні зони не видно в списку", "zone", "|| (ZL_EDIT() && zoneIsEmpty(zn))", "|| 0"),
+    ("пункт «Нова зона» з'їдено", "zone", "	return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);", "	return s_zoneMapCount;"),
     ("екран видалення зони не каже про канали", "zone", "currentLanguage->zone_chans_kept", "currentLanguage->zone_deleted"),
     ("поточну зону після видалення не зберігають", "zone", "		settingsSet(nonVolatileSettings.currentZone, cur);\n		channelScreenChannelData.rxFreq = 0x00;   // екран каналу перечитає зону (uiChannelInitializeCurrentZone), вибір піде",
      "		channelScreenChannelData.rxFreq = 0x00;   // екран каналу перечитає зону (uiChannelInitializeCurrentZone), вибір піде"),
     ("виймання швидкою клавішею дозволено", "chan",
      "		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_ZONE_REMOVE))\n		{\n			// R43: виймання з зони теж НІКОЛИ не виконується швидкою клавішею\n			return;",
      "		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_ZONE_REMOVE))\n		{\n			(void)0;"),
-    ("спорожніла зона не веде на «Всі канали»", "chan", "			if (!codeplugZoneIsUsable(zn, NULL))\n			{\n				settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));",
-     "			if (0)\n			{\n				settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));"),
-    ("виймається не поточний запис, а перший", "chan", "codeplugZoneRemoveChannelAt(zn, codeplugGetLastUsedChannelInCurrentZone())", "codeplugZoneRemoveChannelAt(zn, 0)"),
+    ("спорожніла зона не веде на «Всі канали»", "chan", "		if (!codeplugZoneIsUsable(zn, NULL) && (zn == nonVolatileSettings.currentZone))\n		{\n			settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));",
+     "		if (0)\n		{\n			settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));"),
+    ("виймається не поточний запис, а перший", "chan", "uiChannelModeZoneRemoveChannelAt(nonVolatileSettings.currentZone, codeplugGetLastUsedChannelInCurrentZone())", "uiChannelModeZoneRemoveChannelAt(nonVolatileSettings.currentZone, 0)"),
     ("екран каналу не перечитує зону після виймання", "chan",
-     "			uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу\n			uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed",
-     "			uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed"),
+     "		uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу\n		uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed",
+     "		uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed"),
 ]
 
 
@@ -234,7 +234,7 @@ def test_menu_structure():
         probs = zone_menu_problems(mut) if which == "zone" else channel_menu_problems(mut, hdr)
         check(probs != [], "Z4b: мутант меню «%s» -- структурна перевірка ловить" % title)
     # заголовок: «Вийняти із зони» не останній
-    mh = hdr.replace("#if defined(ZONE_EDIT_ENABLED)\n	CH_SCREEN_QUICK_MENU_ZONE_REMOVE,", "#if defined(ZONE_EDIT_ENABLED)\n	CH_SCREEN_QUICK_MENU_FILTER_DMR_TS_X,", 1)
+    mh = hdr.replace("#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)\n	CH_SCREEN_QUICK_MENU_ZONE_REMOVE,", "#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)\n	CH_SCREEN_QUICK_MENU_FILTER_DMR_TS_X,", 1)
     check(channel_menu_problems(chan, mh) != [], "Z4b: мутант меню «пункт швидкого меню не на місці» -- ловить")
 
 

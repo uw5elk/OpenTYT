@@ -2181,6 +2181,31 @@ static bool validateOverwriteChannel(void)
 }
 
 #if defined(CHANNEL_DELETE_ENABLED)
+/* R41 (R44: винесено окремою функцією, ТЕКСТ ТОЙ САМИЙ): видаляє канал channelNumber і приводить екран каналу до ладу. Викликається і з колбека швидкого меню (R41, видаляє
+ * ПОТОЧНИЙ канал), і з розділу «Кодплаг» -> Канали (R44, довільний канал). Повертає true, якщо канал видалено. */
+bool uiChannelModeDeleteChannel(int channelNumber)
+{
+	if (codeplugChannelDelete(channelNumber) == CODEPLUG_CHANNEL_DELETE_OK)
+	{
+		// Зона, з якої видалили канал, могла спорожніти (тоді вона стала «непридатною»): переходимо на «Всі канали», на їхній перший канал.
+		// Якщо зона жива, LUCZ уже вказує на наступний канал (codeplugChannelDelete поправив позицію).
+		if (!codeplugZoneIsUsable(nonVolatileSettings.currentZone, NULL))
+		{
+			codeplugSetLastUsedChannelInZone(-1, (int16_t)codeplugChannelNextInUse(0));
+			codeplugSaveLastUsedChannelInZone();
+		}
+
+		uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу
+		uiNotificationShowShort(1500U, currentLanguage->channel_deleted, false);
+		return true;
+	}
+
+	uiNotificationShowShort(1500U, currentLanguage->error, false);
+	return false;
+}
+#endif // CHANNEL_DELETE_ENABLED
+
+#if defined(CH_QUICKMENU_DELETE_ENABLED)
 /* R41: колбек MessageBox «Видалити?» (ТАК/НІ). Викликається і на ТАК, і на НІ: як і в validateOverwriteChannel, прапорець змушує швидке меню при
  * поверненні закритися й показати корінь (екран каналу), тож і підтвердження, і скасування приводять на екран каналу. Видаляємо ПОТОЧНИЙ канал екрана. */
 static bool validateDeleteChannel(void)
@@ -2189,32 +2214,37 @@ static bool validateDeleteChannel(void)
 
 	if (uiDataGlobal.MessageBox.keyPressed == KEY_GREEN)
 	{
-		int channelNumber = uiDataGlobal.currentSelectedChannelNumber;
-
-		if (codeplugChannelDelete(channelNumber) == CODEPLUG_CHANNEL_DELETE_OK)
-		{
-			// Зона, з якої видалили канал, могла спорожніти (тоді вона стала «непридатною»): переходимо на «Всі канали», на їхній перший канал.
-			// Якщо зона жива, LUCZ уже вказує на наступний канал (codeplugChannelDelete поправив позицію).
-			if (!codeplugZoneIsUsable(nonVolatileSettings.currentZone, NULL))
-			{
-				codeplugSetLastUsedChannelInZone(-1, (int16_t)codeplugChannelNextInUse(0));
-				codeplugSaveLastUsedChannelInZone();
-			}
-
-			uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу
-			uiNotificationShowShort(1500U, currentLanguage->channel_deleted, false);
-		}
-		else
-		{
-			uiNotificationShowShort(1500U, currentLanguage->error, false);
-		}
+		uiChannelModeDeleteChannel(uiDataGlobal.currentSelectedChannelNumber);
 	}
 
 	return true;
 }
-#endif // CHANNEL_DELETE_ENABLED
+#endif // CH_QUICKMENU_DELETE_ENABLED
 
 #if defined(ZONE_EDIT_ENABLED)
+/* R43 (R44: винесено окремою функцією, ТЕКСТ ТОЙ САМИЙ, крім умови zn == поточна зона): виймає з зони zn запис на позиції pos. Сам канал не видаляється: лишається у «Всіх каналах» і в
+ * інших зонах. Викликається і з колбека швидкого меню (R43, ПОТОЧНА зона й позиція «останнього каналу в зоні»), і з розділу «Кодплаг» -> Зони -> Канали зони (довільна зона й позиція). */
+bool uiChannelModeZoneRemoveChannelAt(int zn, int pos)
+{
+	if (codeplugZoneRemoveChannelAt(zn, pos) == CODEPLUG_ZONE_EDIT_OK)
+	{
+		// Зона спорожніла -> «непридатна»: якщо це ПОТОЧНА зона -- переходимо на «Всі канали». Інакше LUCZ уже вказує на наступний канал зони (з останнього -- на перший).
+		if (!codeplugZoneIsUsable(zn, NULL) && (zn == nonVolatileSettings.currentZone))
+		{
+			settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));
+		}
+
+		uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу
+		uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed, false);
+		return true;
+	}
+
+	uiNotificationShowShort(1500U, currentLanguage->error, false);
+	return false;
+}
+#endif // ZONE_EDIT_ENABLED
+
+#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 /* R43: колбек MessageBox «Вийняти?» (ТАК/НІ): виймає ПОТОЧНИЙ канал екрана з ПОТОЧНОЇ зони (запис списку на позиції «останнього каналу в зоні»). Сам канал не видаляється:
  * лишається в «Всіх каналах» і в інших зонах. Як і validateDeleteChannel, і на ТАК, і на НІ закриває швидке меню й показує екран каналу. */
 static bool validateZoneRemoveChannel(void)
@@ -2223,28 +2253,12 @@ static bool validateZoneRemoveChannel(void)
 
 	if (uiDataGlobal.MessageBox.keyPressed == KEY_GREEN)
 	{
-		int zn = nonVolatileSettings.currentZone;
-
-		if (codeplugZoneRemoveChannelAt(zn, codeplugGetLastUsedChannelInCurrentZone()) == CODEPLUG_ZONE_EDIT_OK)
-		{
-			// Зона спорожніла -> «непридатна»: переходимо на «Всі канали». Інакше LUCZ уже вказує на наступний канал зони (з останнього -- на перший).
-			if (!codeplugZoneIsUsable(zn, NULL))
-			{
-				settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));
-			}
-
-			uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу
-			uiNotificationShowShort(1500U, currentLanguage->zone_ch_removed, false);
-		}
-		else
-		{
-			uiNotificationShowShort(1500U, currentLanguage->error, false);
-		}
+		uiChannelModeZoneRemoveChannelAt(nonVolatileSettings.currentZone, codeplugGetLastUsedChannelInCurrentZone());
 	}
 
 	return true;
 }
-#endif // ZONE_EDIT_ENABLED
+#endif // CH_QUICKMENU_ZONE_REMOVE_ENABLED
 
 static void updateQuickMenuScreen(bool isFirstRun)
 {
@@ -2348,12 +2362,12 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					leftSide = currentLanguage->mute;
 					rightSideConst = (uiDataGlobal.QuickMenu.tmpAudioMute ? currentLanguage->yes : currentLanguage->no);
 					break;
-#if defined(CHANNEL_DELETE_ENABLED)
+#if defined(CH_QUICKMENU_DELETE_ENABLED)
 				case CH_SCREEN_QUICK_MENU_DELETE:
 					rightSideConst = currentLanguage->delete_channel;
 					break;
 #endif
-#if defined(ZONE_EDIT_ENABLED)
+#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 				case CH_SCREEN_QUICK_MENU_ZONE_REMOVE:
 					rightSideConst = currentLanguage->zone_ch_remove;
 					break;
@@ -2481,14 +2495,14 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 			updateQuickMenuScreen(false);
 			return;
 		}
-#if defined(CHANNEL_DELETE_ENABLED)
+#if defined(CH_QUICKMENU_DELETE_ENABLED)
 		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_DELETE))
 		{
 			// R41: видалення каналу НІКОЛИ не виконується швидкою клавішею (одна випадкова цифра не повинна стирати канал)
 			return;
 		}
 #endif
-#if defined(ZONE_EDIT_ENABLED)
+#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_ZONE_REMOVE))
 		{
 			// R43: виймання з зони теж НІКОЛИ не виконується швидкою клавішею
@@ -2602,7 +2616,7 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 				}
 					break;
 
-#if defined(CHANNEL_DELETE_ENABLED)
+#if defined(CH_QUICKMENU_DELETE_ENABLED)
 				case CH_SCREEN_QUICK_MENU_DELETE:
 				{
 					const char *vp1;
@@ -2669,7 +2683,7 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 					break;
 #endif
 
-#if defined(ZONE_EDIT_ENABLED)
+#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 				case CH_SCREEN_QUICK_MENU_ZONE_REMOVE:
 				{
 					const char *vp1;
@@ -2811,10 +2825,10 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 			return;
 		}
 		else if (KEYCHECK_SHORTUP_NUMBER(ev->keys) && BUTTONCHECK_DOWN(ev, BUTTON_SK2)
-#if defined(CHANNEL_DELETE_ENABLED)
+#if defined(CH_QUICKMENU_DELETE_ENABLED)
 				&& (menuDataGlobal.currentItemIndex != CH_SCREEN_QUICK_MENU_DELETE)   // R41: на «Видалити» швидку клавішу призначити не можна
 #endif
-#if defined(ZONE_EDIT_ENABLED)
+#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 				&& (menuDataGlobal.currentItemIndex != CH_SCREEN_QUICK_MENU_ZONE_REMOVE)   // R43: і на «Вийняти із зони»
 #endif
 				)

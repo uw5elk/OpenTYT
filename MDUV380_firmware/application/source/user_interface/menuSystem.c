@@ -113,6 +113,11 @@ menuDataGlobal_t menuDataGlobal =
 				NULL,// Theme items browser
 				NULL,// Colour picker
 #endif
+#if defined(CODEPLUG_MENU_ENABLED)
+				&menuDataCodeplug,// R44: «Кодплаг»
+				NULL,// R44: «Кодплаг» -> Канали
+				NULL,// R44: «Кодплаг» -> Зони
+#endif
 		}
 };
 
@@ -184,6 +189,11 @@ static menuFunctionData_t menuFunctions[] =
 #if defined(HAS_COLOURS)
 		{ menuThemeItemsBrowser,    NULL, NULL, 0 },
 		{ menuColourPicker,         NULL, NULL, 0 },
+#endif
+#if defined(CODEPLUG_MENU_ENABLED)
+		{ menuDisplayMenuList,      NULL, NULL, 0 },// R44: «Кодплаг»
+		{ menuCodeplugChannels,     NULL, NULL, 0 },// R44: «Кодплаг» -> Канали
+		{ menuZoneList,             NULL, NULL, 0 },// R44: «Кодплаг» -> Зони (той самий екран зон, режим редагування -- за номером меню)
 #endif
 };
 
@@ -685,6 +695,11 @@ const menuItemNewData_t mainMenuItems[] =
 	{   3, MENU_ZONE_LIST       },
 	{   6, MENU_CONTACTS_MENU   },
 	{  12, MENU_CHANNEL_DETAILS },
+#if defined(CODEPLUG_MENU_ENABLED)
+	// R44: єдиний розділ редагування кодплага -- одразу після «Деталей каналу» (та сама природа: правка даних, а не налаштування). Швидкі клавіші зберігають ID меню, а не
+	// позицію пункту, тож порядок головного меню їх не зсуває.
+	{ (int)(offsetof(stringsTable_t, codeplug_menu) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG },
+#endif
 #if !defined(LANGUAGE_BUILD_UKRAINIAN)
 	// Українська збірка (ui1, 2026-10-04): пункт «RSSI» прибрано з головного меню -- S-метр
 	// і так завжди в шапці. Сам екран лишився (MENU_RSSI_SCREEN, швидкі клавіші на нього
@@ -748,6 +763,22 @@ const menuItemsList_t menuDataContact =
 	.numItems = (sizeof(contactMenuItems) / sizeof(contactMenuItems[0])),
 	.items = contactMenuItems
 };
+
+#if defined(CODEPLUG_MENU_ENABLED)
+// R44: будова та сама, що в нашому CPS (Канали / Зони / Контакти). «Контакти» відкривають НАЯВНЕ меню контактів (список -> змінити/видалити, новий контакт) -- не копію.
+static const menuItemNewData_t codeplugMenuItems[] =
+{
+	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },
+	{ (int)(offsetof(stringsTable_t, zones) / LANGUAGE_TEXTS_LENGTH),       MENU_CODEPLUG_ZONES },
+	{ 6,                                                                  MENU_CONTACTS_MENU },
+};
+
+const menuItemsList_t menuDataCodeplug =
+{
+	.numItems = (sizeof(codeplugMenuItems) / sizeof(codeplugMenuItems[0])),
+	.items = codeplugMenuItems
+};
+#endif
 
 static const menuItemNewData_t optionsMenuItems[] =
 {

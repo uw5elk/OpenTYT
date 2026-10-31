@@ -587,6 +587,23 @@ CodeplugZoneEditResult_t codeplugZoneDelete(int zoneNum, int16_t *curZoneOrdinal
 int codeplugZoneEditChannelCount(void);                                                   // скільки каналів у масці «в роботі»
 int codeplugZoneEditNthChannel(int n);                                                    // n-й (з нуля) канал із маски, 0 -- поза межами
 #endif
+
+/* R44: єдиний розділ «Кодплаг» у головному меню (канали, зони, контакти). Лише під ENABLE_CODEPLUG_MENU і лише там, де є ВСІ три логіки R41-R43 (видалення каналу,
+ * перейменування й редагування зон): входи з швидкого меню каналу й зі списку зон тоді зникають. Без прапорця -- R41-R43 як були, типова збірка байт-у-байт стокова.
+ * Контакти: стокове видалення НЕ перевіряло канали, що посилаються на контакт (канал читав зі стертого слота ім'я 0xFF, TG 0, тип 0xFF), тож тут -- каскад. */
+#if defined(ENABLE_CODEPLUG_MENU) && defined(CHANNEL_DELETE_ENABLED) && defined(ZONE_EDIT_ENABLED)
+#define CODEPLUG_MENU_ENABLED 1
+int codeplugContactCountChannels(int contactIndex);   // у скількох каналах (справжніх, у масці «в роботі») поле «контакт» == contactIndex
+bool codeplugContactDelete(int contactIndex);         // канали з цим контактом -> «Немає» (0), далі стирання слота контакту; false -- збій запису
+#endif
+#endif
+
+/* R44: пункти швидкого меню каналу «Видалити канал» (R41) і «Вийняти із зони» (R43) існують, ЛИШЕ поки нема розділу «Кодплаг» -- там вони живуть замість них (без дублів). */
+#if defined(CHANNEL_DELETE_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)
+#define CH_QUICKMENU_DELETE_ENABLED 1
+#endif
+#if defined(ZONE_EDIT_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)
+#define CH_QUICKMENU_ZONE_REMOVE_ENABLED 1
 #endif
 CodeplugCSSTypes_t codeplugGetCSSType(uint16_t tone);
 void codeplugConvertChannelInternalToCodeplug(CodeplugChannel_t *codeplugChannel, CodeplugChannel_t *internalChannel);
