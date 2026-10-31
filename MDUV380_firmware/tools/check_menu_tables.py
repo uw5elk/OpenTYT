@@ -9,10 +9,10 @@
 
 Що перевіряється для кожної конфігурації (препроцесор `gcc -E -P` -- умови обчислює компілятор, не ми):
   A. `menuFunctions[]` має рівно стільки елементів, скільки значень enum (NUM_MENU_ENTRIES);
-  B. функція на позиції відомого меню -- та, що очікується (таблиця EXPECTED_FUNCS: головне, зони, Options, перегляд каналу, повідомлення, APRS, Кодплаг...);
+  B. функція на позиції відомого меню -- та, що очікується (таблиця EXPECTED_FUNCS: головне, зони, Options, перегляд каналу, повідомлення, APRS, «Канали»...);
   C. кожен НЕ-NULL елемент `data[]` лежить на позиції СВОГО меню (EXPECTED_DATA); невідомий елемент -- провал (додай його в таблицю свідомо);
   E. кожне меню зі списком пунктів (EXPECTED_DATA) має свою таблицю саме на своїй позиції (а не NULL);
-  D. якщо в конфігурації є меню «Кодплаг» (їхні ID -- поза межами стокового масиву), `data[]` має покривати ВСІ значення enum: читання `data[ID]` для будь-якого меню
+  D. якщо в конфігурації є меню «Канали» (R46; ID -- поза межами стокового масиву), `data[]` має покривати ВСІ значення enum: читання `data[ID]` для будь-якого меню
      (menuSystem.c: menuSystemPushNewMenu/Pop, menuDisplayMenuList.c) інакше виходить за масив. Для решти конфігурацій це лише примітка: так у стоку (data[] коротший за enum).
 
 Лише читання; потрібен gcc (як для syntax_check.sh). Код виходу 1 -- є розбіжності.   Запуск: python3 tools/check_menu_tables.py [--root КАТАЛОГ_MDUV380_firmware] [--only ІМ'Я,ІМ'Я] [--quiet]"""
@@ -65,19 +65,16 @@ EXPECTED_FUNCS = {
     "MENU_CONTACT_NEW": "menuContactDetails",
     "MENU_THEME_ITEMS_BROWSER": "menuThemeItemsBrowser",
     "MENU_COLOUR_PICKER": "menuColourPicker",
-    "MENU_CODEPLUG": "menuDisplayMenuList",
     "MENU_CODEPLUG_CHANNELS": "menuCodeplugChannels",
-    "MENU_CODEPLUG_ZONES": "menuZoneList",
 }
 # --- очікування: таблиця в data[] -> меню, якому вона належить ---
 EXPECTED_DATA = {
     "menuDataMainMenu": "MENU_MAIN_MENU",
     "menuDataContact": "MENU_CONTACTS_MENU",
     "menuDataOptions": "MENU_OPTIONS",
-    "menuDataCodeplug": "MENU_CODEPLUG",
 }
 # меню, чиї ID лежать ПОЗА стоковим масивом data[] (додані форком після межі швидких клавіш): для них покриття data[] обов'язкове
-FORK_MENU_MARKER = "MENU_CODEPLUG"
+FORK_MENU_MARKER = "MENU_CODEPLUG_CHANNELS"   # R46: «Кодплаг» і MENU_CODEPLUG_ZONES зникли; єдине форкове меню за межею швидких клавіш -- «Канали»
 
 
 def load_configs(root):

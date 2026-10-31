@@ -114,15 +114,14 @@ menuDataGlobal_t menuDataGlobal =
 				NULL,// Colour picker
 #endif
 #if defined(CODEPLUG_MENU_ENABLED)
-				/* R44-fix: ЯВНІ індекси. Масив ініціалізується позиційно, а в enum MENU_SCREENS стоять ще MENU_AES_KEYS, MENU_MESSAGES, MENU_RCTL_REMOTE, MENU_RCTL_CONFIG, MENU_CALL_REPLAY
-				 * і MENU_APRS_HUB, для яких тут NULL-заглушок нема (у них нема таблиці). Через це «&menuDataCodeplug» лягало на позицію 40, а MENU_CODEPLUG = 46: data[46] -- вже
-				 * ЗА межами масиву змінної довжини (.data[] без розміру), тож menuDisplayMenuList читав items/numItems із сусідніх змінних RAM -> сміттєвий stringOffset ->
-				 * strlen(0x1DC69F44) -> HardFault при відкритті «Кодплаг». Явний індекс тримається на місці при будь-яких #if вище; останній NULL розтягує масив до
-				 * NUM_MENU_ENTRIES, тож data[ID] для кожного меню (menuSystemPushNewMenu, Pop, батьківське меню в menuDisplayMenuList) читається в межах масиву.
-				 * Звіряє tools/check_menu_tables.py. Лише під CODEPLUG_MENU_ENABLED: збірка без розділу «Кодплаг» не змінюється. */
-				[MENU_CODEPLUG] = &menuDataCodeplug,// R44: «Кодплаг»
-				[MENU_CODEPLUG_CHANNELS] = NULL,// R44: «Кодплаг» -> Канали
-				[MENU_CODEPLUG_ZONES] = NULL,// R44: «Кодплаг» -> Зони
+				/* R44-fix: ЯВНИЙ індекс. Масив ініціалізується позиційно, а в enum MENU_SCREENS стоять ще MENU_AES_KEYS, MENU_MESSAGES, MENU_RCTL_REMOTE, MENU_RCTL_CONFIG, MENU_CALL_REPLAY
+				 * і MENU_APRS_HUB, для яких тут NULL-заглушок нема (у них нема таблиці). Через це запис, доданий позиційно, лягав би на чужу позицію, а читання data[ID] --
+				 * ЗА межами масиву змінної довжини (.data[] без розміру): menuDisplayMenuList читав би items/numItems із сусідніх змінних RAM -> сміттєвий stringOffset -> HardFault
+				 * (R44: «Кодплаг» на позиції 40 замість 46). R46: власної таблиці в нового меню «Канали» нема (список малює menuCodeplugChannels), тож тут лише NULL, але саме з
+				 * ЯВНИМ індексом -- він розтягує масив до NUM_MENU_ENTRIES, тож data[ID] для кожного меню (menuSystemPushNewMenu, Pop, батьківське меню в menuDisplayMenuList)
+				 * читається в межах масиву. Нове меню з таблицею додавати так само: [MENU_X] = &menuDataX. Звіряє tools/check_menu_tables.py.
+				 * Лише під CODEPLUG_MENU_ENABLED: збірка без розділів «Зона/Канали/Контакти» не змінюється. */
+				[MENU_CODEPLUG_CHANNELS] = NULL,// R46: головне меню -> «Канали»
 #endif
 		}
 };
@@ -197,9 +196,7 @@ static menuFunctionData_t menuFunctions[] =
 		{ menuColourPicker,         NULL, NULL, 0 },
 #endif
 #if defined(CODEPLUG_MENU_ENABLED)
-		{ menuDisplayMenuList,      NULL, NULL, 0 },// R44: «Кодплаг»
-		{ menuCodeplugChannels,     NULL, NULL, 0 },// R44: «Кодплаг» -> Канали
-		{ menuZoneList,             NULL, NULL, 0 },// R44: «Кодплаг» -> Зони (той самий екран зон, режим редагування -- за номером меню)
+		{ menuCodeplugChannels,     NULL, NULL, 0 },// R46: головне меню -> «Канали»
 #endif
 };
 
@@ -699,13 +696,14 @@ void menuSystemLanguageHasChanged(void)
 const menuItemNewData_t mainMenuItems[] =
 {
 	{   3, MENU_ZONE_LIST       },
+#if defined(CODEPLUG_MENU_ENABLED)
+	// R46: розділ «Кодплаг» розформовано -- його пункти стали пунктами головного меню в порядку роботи з кодплагом: «Зона» (рядок 3 мовної таблиці -- це `zone`, тобто пункт
+	// вже називався «Зона»; екран той самий MENU_ZONE_LIST, тепер із редагуванням), «Канали», «Контакти» (те саме меню, що й було; одне на всю рацію). Швидкі клавіші зберігають
+	// ID меню, а не позицію пункту, тож порядок головного меню їх не зсуває. «Канали» мають ID > 31 -- швидку клавішу на нього не прив'язати (див. menuDisplayMenuList.c).
+	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },
+#endif
 	{   6, MENU_CONTACTS_MENU   },
 	{  12, MENU_CHANNEL_DETAILS },
-#if defined(CODEPLUG_MENU_ENABLED)
-	// R44: єдиний розділ редагування кодплага -- одразу після «Деталей каналу» (та сама природа: правка даних, а не налаштування). Швидкі клавіші зберігають ID меню, а не
-	// позицію пункту, тож порядок головного меню їх не зсуває.
-	{ (int)(offsetof(stringsTable_t, codeplug_menu) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG },
-#endif
 #if !defined(LANGUAGE_BUILD_UKRAINIAN)
 	// Українська збірка (ui1, 2026-10-04): пункт «RSSI» прибрано з головного меню -- S-метр
 	// і так завжди в шапці. Сам екран лишився (MENU_RSSI_SCREEN, швидкі клавіші на нього
@@ -769,22 +767,6 @@ const menuItemsList_t menuDataContact =
 	.numItems = (sizeof(contactMenuItems) / sizeof(contactMenuItems[0])),
 	.items = contactMenuItems
 };
-
-#if defined(CODEPLUG_MENU_ENABLED)
-// R44: будова та сама, що в нашому CPS (Канали / Зони / Контакти). «Контакти» відкривають НАЯВНЕ меню контактів (список -> змінити/видалити, новий контакт) -- не копію.
-static const menuItemNewData_t codeplugMenuItems[] =
-{
-	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },
-	{ (int)(offsetof(stringsTable_t, zones) / LANGUAGE_TEXTS_LENGTH),       MENU_CODEPLUG_ZONES },
-	{ 6,                                                                  MENU_CONTACTS_MENU },
-};
-
-const menuItemsList_t menuDataCodeplug =
-{
-	.numItems = (sizeof(codeplugMenuItems) / sizeof(codeplugMenuItems[0])),
-	.items = codeplugMenuItems
-};
-#endif
 
 static const menuItemNewData_t optionsMenuItems[] =
 {

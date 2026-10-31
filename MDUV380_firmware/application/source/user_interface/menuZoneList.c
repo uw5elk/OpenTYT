@@ -37,12 +37,10 @@
 #include "functions/codeplug_zoneedit.h"   /* R43: codeplugZoneListFind -- позначка «канал уже в зоні» у списку вибору */
 #endif
 
-/* R44: у збірці з розділом «Кодплаг» цей самий екран обслуговує ДВА меню: MENU_ZONE_LIST (робочий список: перемикання зони, як у стокової прошивки) і MENU_CODEPLUG_ZONES
- * (редагування: перейменувати, канали зони, видалити, «Нова зона»). Режим береться з номера поточного меню -- жодної нової змінної (RAM). Без розділу «Кодплаг» (R42/R43) редагування
- * живе в самому списку «Зони», як було. */
-#if defined(CODEPLUG_MENU_ENABLED)
-#define ZL_EDIT() (menuSystemGetCurrentMenuNumber() == MENU_CODEPLUG_ZONES)
-#elif defined(ZONE_RENAME_ENABLED)
+/* R46: пункт головного меню «Зона» -- ОДИН екран (MENU_ZONE_LIST) на все: список зон + «Нова зона» (останній рядок); зелена на зоні відкриває дії: «Встановити» (зробити зону
+ * поточною -- той самий setZoneToUserSelection(), що перемикав зону в стоковому списку), «Перейменувати», «Канали зони», «Видалити». «Всі канали» -- лише «Встановити».
+ * (R44 тримав редагування окремим меню в розділі «Кодплаг» -- два режими екрана; розділ розформовано, режим знову один, як у R42/R43.) */
+#if defined(ZONE_RENAME_ENABLED)
 #define ZL_EDIT() (true)
 #else
 #define ZL_EDIT() (false)
@@ -72,7 +70,11 @@ static void zrHandleEvent(uiEvent_t *ev);
 #define ZE_ST_ACTIONS   1
 #define ZE_ST_PICKER    2
 #define ZE_ST_CONFIRM   3
+#if defined(CODEPLUG_MENU_ENABLED)
+#define ZE_ACTIONS_COUNT 4   /* R46: Встановити / Перейменувати / Канали зони / Видалити */
+#else
 #define ZE_ACTIONS_COUNT 3
+#endif
 #if defined(CODEPLUG_MENU_ENABLED)
 #define ZE_ST_ZCHANS     4   /* R44: «Канали зони» -- список каналів зони: перший рядок «Додати канал», далі канали (зелена на каналі -- вийняти) */
 #define ZE_ST_RMCONFIRM  5   /* R44: підтвердження «Вийняти?» для каналу зі списку «Канали зони» */
@@ -115,27 +117,17 @@ static void buildZoneMap(void)
 	s_zoneMapCount = 0;
 	for (int zn = 0; (zn < total) && (s_zoneMapCount < (int)CODEPLUG_ALL_ZONES_MAX); zn++)
 	{
-#if defined(CODEPLUG_MENU_ENABLED)
-		if (ZL_EDIT() && (zn == allChannelsZone))
-		{
-			continue;   // R44: у редагуванні «Всі канали» немає -- віртуальна зона, редагувати нічого
-		}
-#endif
 		// "Всі канали" -- завжди показуємо (codeplugZoneIsUsable() теж каже "так")
 		if ((zn == allChannelsZone) || codeplugZoneIsUsable(zn, NULL)
 #if defined(ZONE_EDIT_ENABLED)
-				|| (ZL_EDIT() && zoneIsEmpty(zn))   // R43: порожню (щойно створену або спорожнілу) зону теж показуємо -- інакше в неї не додати каналів. R44: лише в редагуванні
+				|| (ZL_EDIT() && zoneIsEmpty(zn))   // R43: порожню (щойно створену або спорожнілу) зону теж показуємо -- інакше в неї не додати каналів
 #endif
 				)
 		{
 			s_zoneMap[s_zoneMapCount++] = (uint8_t)zn;
 		}
 	}
-#if defined(CODEPLUG_MENU_ENABLED)
-	if ((s_zoneMapCount == 0) && !ZL_EDIT()) { s_zoneMap[s_zoneMapCount++] = 0; }   // запобіжник (не має статись). R44: у редагуванні зон може не бути зовсім -- лишається «Нова зона»
-#else
 	if (s_zoneMapCount == 0) { s_zoneMap[s_zoneMapCount++] = 0; }   // запобіжник (не має статись)
-#endif
 }
 
 // Екранний індекс, що відповідає збереженій поточній зоні (або 0, якщо та зона порожня/зникла).
@@ -152,7 +144,7 @@ static int zoneMapIndexForZone(int zoneNum)
 // Скільки пунктів у списку: зони + (R43) останній пункт «Нова зона»
 static int zoneListItems(void)
 {
-	return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);   // R44: у робочому списку «Нової зони» нема
+	return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);
 }
 #endif
 
@@ -162,7 +154,7 @@ menuStatus_t menuZoneList(uiEvent_t *ev, bool isFirstRun)
 	{
 		buildZoneMap();
 #if defined(ZONE_RENAME_ENABLED)
-		if (ZL_EDIT())   // R44: у робочому списку буфер повідомлення (чужа пам'ять) не чіпаємо
+		if (ZL_EDIT())
 		{
 		ZR_ACTIVE = 0;   // R42: редактор назви закритий (буфер -- чужа пам'ять, див. нижче)
 #if defined(ZONE_EDIT_ENABLED)
@@ -569,7 +561,8 @@ static void zrHandleEvent(uiEvent_t *ev)
 static const char *zeActionLabel(int i)
 {
 #if defined(CODEPLUG_MENU_ENABLED)
-	return (i == 0) ? currentLanguage->cp_rename : ((i == 1) ? currentLanguage->cp_zone_chans : currentLanguage->zone_delete);   // R44: «Канали зони» замість прямого «Додати канал»
+	// R46: «Встановити» першою (курсор стоїть на ній: зелена-зелена = обрати зону, як у стоковому списку), «Видалити» -- останньою
+	return (i == 0) ? currentLanguage->cp_set_zone : ((i == 1) ? currentLanguage->cp_rename : ((i == 2) ? currentLanguage->cp_zone_chans : currentLanguage->cp_delete));
 #else
 	return (i == 0) ? currentLanguage->zone_name : ((i == 1) ? currentLanguage->zone_add_channel : currentLanguage->zone_delete);
 #endif
@@ -603,7 +596,7 @@ static void zeToList(int selectOrdinal)
 	updateScreen(false);
 }
 
-// Малює список під курсором: ZE_ST_ACTIONS -- три дії, ZE_ST_PICKER -- канали з кодплага (позначені «*» вже в зоні), ZE_ST_CONFIRM -- підтвердження видалення зони
+// Малює список під курсором: ZE_ST_ACTIONS -- дії над зоною (R46: чотири, перша «Встановити»), ZE_ST_PICKER -- канали з кодплага (позначені «*» вже в зоні), ZE_ST_CONFIRM -- підтвердження видалення зони
 static void zeDraw(void)
 {
 	char nameBuf[17];
@@ -736,16 +729,45 @@ static void zeToActions(void)
 	zeDraw();
 }
 
-// «#» на зоні (або зелена на порожній зоні): відкрити дії
+#if defined(CODEPLUG_MENU_ENABLED)
+// R46: «Встановити». Зона обирається ТИМ САМИМ setZoneToUserSelection(), що й у стоковому списку (скидає overrideTG, пише currentZone, зберігає, виходить на екран каналів): лише
+// ставимо екранний індекс цієї зони -- дублювання коду нема. Курсор дій після цього не потрібен: усі меню закриваються. Порожню зону не обираємо -- стоковий список таких не показував
+// (перемикатись нема на що); «Всі канали» (віртуальна) завжди обирається.
+static void zeSetActive(int zn)
+{
+	if ((zn != (codeplugZonesGetCount() - 1)) && zoneIsEmpty(zn))
+	{
+		uiNotificationShowShort(1500U, currentLanguage->zone_empty, false);   // «Зона пуста»
+		return;
+	}
+
+	menuDataGlobal.currentItemIndex = zoneMapIndexForZone(zn);
+	setZoneToUserSelection();
+}
+#endif
+
+// Зелена на зоні (R43: «#»): відкрити дії
 static void zeEnterActions(void)
 {
 	int zn = (menuDataGlobal.currentItemIndex < s_zoneMapCount) ? s_zoneMap[menuDataGlobal.currentItemIndex] : -1;
 
+#if defined(CODEPLUG_MENU_ENABLED)
+	if (zn == (codeplugZonesGetCount() - 1))
+	{
+		zeSetActive(zn);   // R46: «Всі канали» -- віртуальна зона, редагувати нічого; єдина дія над нею -- «Встановити», тож без списку дій
+		return;
+	}
+	if (zn < 0)
+	{
+		return;   // пункт «Нова зона» сюди не потрапляє (його обробляє zeListEvent), запобіжник
+	}
+#else
 	if ((zn < 0) || (zn == (codeplugZonesGetCount() - 1)))
 	{
 		uiNotificationShowShort(1500U, currentLanguage->zone_rename_all, false);   // «Всі канали» (і пункт «Нова зона») -- не зона для редагування
 		return;
 	}
+#endif
 
 	ZE_LISTCUR = (char)menuDataGlobal.currentItemIndex;
 	ZR_ZN = (char)zn;
@@ -872,7 +894,8 @@ static void zeRemoveConfirmed(void)
 	zeToZChans(pos + 1);   // курсор лишається поруч (на наступному каналі, що зайняв місце)
 }
 
-// Список зон у режимі редагування: зелена -- дії над зоною (або «Нова зона» на останньому рядку), червона -- назад до «Кодплаг»
+// Список зон («Зона» в головному меню): зелена -- дії над зоною (або «Нова зона» на останньому рядку), червона -- назад до головного меню.
+// Швидкі клавіші, як у стоковому списку: SK2+цифра на зоні запам'ятовує її (ID меню 2 + номер рядка), збережена швидка клавіша перемикає зону одразу.
 static void zeListEvent(uiEvent_t *ev)
 {
 	if (ev->events & BUTTON_EVENT)
@@ -889,6 +912,11 @@ static void zeListEvent(uiEvent_t *ev)
 		{
 			updateScreen(false);
 		}
+		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_LONGENTRYID(ev->function) > 0) && (QUICKKEY_LONGENTRYID(ev->function) <= s_zoneMapCount))
+		{
+			// Збережена швидка клавіша на зону (рядок = номер - 1). «Нова зона» (останній рядок) сюди не потрапляє: <= s_zoneMapCount, а не numItems
+			zeSetActive(s_zoneMap[QUICKKEY_LONGENTRYID(ev->function) - 1]);
+		}
 		return;
 	}
 
@@ -903,6 +931,13 @@ static void zeListEvent(uiEvent_t *ev)
 		menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, menuDataGlobal.numItems);
 		updateScreen(false);
 		menuZoneExitCode |= MENU_STATUS_LIST_TYPE;
+	}
+	else if (KEYCHECK_SHORTUP_NUMBER(ev->keys) && BUTTONCHECK_DOWN(ev, BUTTON_SK2))
+	{
+		if (menuDataGlobal.currentItemIndex < s_zoneMapCount)   // на «Новій зоні» швидку клавішу не запам'ятовуємо
+		{
+			saveQuickkeyMenuLongValue(ev->keys.key, menuSystemGetCurrentMenuNumber(), menuDataGlobal.currentItemIndex + 1);
+		}
 	}
 	else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
@@ -1014,18 +1049,29 @@ static void zeHandleEvent(uiEvent_t *ev)
 			}
 		}
 #endif
+#if defined(CODEPLUG_MENU_ENABLED)
+		else if (menuDataGlobal.currentItemIndex == 0)
+		{
+			zeSetActive((uint8_t)ZR_ZN);   // R46: «Встановити»
+		}
+		else if (menuDataGlobal.currentItemIndex == 1)
+		{
+			zrStart((uint8_t)ZR_ZN);   // «Перейменувати»: редактор R42
+		}
+		else if (menuDataGlobal.currentItemIndex == 2)
+		{
+			zeToZChans(0);   // R44: «Канали зони» (додати/вийняти)
+		}
+#else
 		else if (menuDataGlobal.currentItemIndex == 0)
 		{
 			zrStart((uint8_t)ZR_ZN);   // «Назва зони»: редактор R42
 		}
 		else if (menuDataGlobal.currentItemIndex == 1)
 		{
-#if defined(CODEPLUG_MENU_ENABLED)
-			zeToZChans(0);   // R44: «Канали зони» (додати/вийняти)
-#else
 			zeToPicker();
-#endif
 		}
+#endif
 		else
 		{
 			ZE_STATE = ZE_ST_CONFIRM;
@@ -1125,7 +1171,7 @@ static void handleEvent(uiEvent_t *ev)
 		menuSystemPopPreviousMenu();
 		return;
 	}
-#if defined(ZONE_RENAME_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)   /* R44: у збірці з «Кодплагом» «#» у списку зон нічого не відкриває -- редагування там */
+#if defined(ZONE_RENAME_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)   /* R46: у збірці з ENABLE_CODEPLUG_MENU список обслуговує zeListEvent: «#» нічого не відкриває, дії -- на зеленій */
 	else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH))
 	{
 #if defined(ZONE_EDIT_ENABLED)
@@ -1146,7 +1192,7 @@ static void handleEvent(uiEvent_t *ev)
 
 static void setZoneToUserSelection(void)
 {
-#if defined(ZONE_EDIT_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)   /* R44: у збірці з «Кодплагом» робочий список не редагує */
+#if defined(ZONE_EDIT_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)   /* R46: у збірці з ENABLE_CODEPLUG_MENU вибір зони й дії розділені (zeListEvent/zeSetActive) */
 	if (menuDataGlobal.currentItemIndex >= s_zoneMapCount)
 	{
 		zeStartCreate();   // R43: останній пункт «Нова зона»

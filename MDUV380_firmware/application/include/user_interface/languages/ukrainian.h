@@ -395,7 +395,6 @@ const stringsTable_t ukrainianLanguage =
 .zone_not_zone                              = "Це не зона", // MaxLen: 14 («Всі канали» -- віртуальна зона)
 #endif
 #if defined(ENABLE_CODEPLUG_MENU)
-.codeplug_menu                           = "Кодплаг", // MaxLen: 16 (розділ головного меню)
 .cp_channels                             = "Канали", // MaxLen: 16 («Кодплаг» -> Канали)
 .cp_edit                                 = "Змінити", // MaxLen: 16 (дія над каналом)
 .cp_delete                               = "Видалити", // MaxLen: 16 (дія над каналом)
@@ -405,6 +404,7 @@ const stringsTable_t ukrainianLanguage =
 .cp_choose_zone                          = "В яку зону?", // MaxLen: 16 (заголовок вибору зони)
 .cp_in_channels                          = "У каналах:", // MaxLen: 14 (далі число каналів, що посилаються на контакт)
 .cp_becomes_none                         = "Стане: Немає", // MaxLen: 14 (у тих каналах контакт стане «Немає»)
+.cp_set_zone                             = "Встановити", // MaxLen: 16 (дія над зоною: зробити поточною, R46)
 #endif
 #endif
 };

@@ -93,28 +93,41 @@ def test_macros():
 
 # ------------------------------------------------------------------------------------------ Z2: структура меню
 def menu_problems(sys_c, sys_h, disp, zl, chm):
+    """R46: розділ «Кодплаг» розформовано -- «Зона» (MENU_ZONE_LIST), «Канали», «Контакти» стоять у головному меню. Перевіряємо місце, склад, ID, прибрані швидкі пункти."""
     p = []
-    m = re.search(r"\{\s*12,\s*MENU_CHANNEL_DETAILS\s*\},\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*\{ \(int\)\(offsetof\(stringsTable_t, codeplug_menu\) / LANGUAGE_TEXTS_LENGTH\), MENU_CODEPLUG \},\n#endif", sys_c)
+    m = re.search(r"\{\s*3,\s*MENU_ZONE_LIST\s*\},\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*\{ \(int\)\(offsetof\(stringsTable_t, cp_channels\) / LANGUAGE_TEXTS_LENGTH\), MENU_CODEPLUG_CHANNELS \},\n#endif\s*\n\s*\{\s*6,\s*MENU_CONTACTS_MENU\s*\},\s*\n\s*\{\s*12,\s*MENU_CHANNEL_DETAILS\s*\}", sys_c)
     if not m:
-        p.append("пункт «Кодплаг» не одразу після «Деталей каналу»")
-    for needle, what in (("MENU_CODEPLUG_CHANNELS }", "«Канали»"), ("MENU_CODEPLUG_ZONES }", "«Зони»"), ("{ 6,", "«Контакти»")):
-        if needle not in sys_c:
-            p.append("у меню «Кодплаг» нема пункту " + what)
-    if not re.search(r"MENU_CODEPLUG,[^\n]*\n\s*MENU_CODEPLUG_CHANNELS,[^\n]*\n\s*MENU_CODEPLUG_ZONES,[^\n]*\n#endif\s*\n\s*NUM_MENU_ENTRIES", sys_h):
-        p.append("нові ID меню не в самому кінці переліку (швидкі клавіші користувача зсунулись би)")
-    if "case MENU_CODEPLUG:" not in disp:
-        p.append("у «Кодплазі» нема власного заголовка")
-    if not re.search(r"menuDisplayMenuList, menuCodeplugChannels, menuZoneList", re.sub(r"\s+", " ", sys_c)) and \
-            not all(x in sys_c for x in ("menuCodeplugChannels", "MENU_CODEPLUG_ZONES")):
-        p.append("екрани «Кодплага» не зареєстровані в menuFunctions[]")
+        p.append("головне меню не в порядку «Зона», «Канали», «Контакти», «Деталі каналу» (або «Канали» не під CODEPLUG_MENU_ENABLED)")
+    for name, text in (("menuSystem.c", sys_c), ("menuSystem.h", sys_h), ("menuDisplayMenuList.c", disp), ("menuZoneList.c", zl)):
+        if re.search(r"\bMENU_CODEPLUG\b|MENU_CODEPLUG_ZONES|menuDataCodeplug|codeplug_menu", text):
+            p.append("у %s лишилась згадка розформованого розділу «Кодплаг» (MENU_CODEPLUG / MENU_CODEPLUG_ZONES / menuDataCodeplug / codeplug_menu)" % name)
+    if not re.search(r"MENU_COLOUR_PICKER,\s*\n#endif\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n\s*MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n\s*NUM_MENU_ENTRIES", sys_h) and \
+            not re.search(r"MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n\s*NUM_MENU_ENTRIES", sys_h):
+        p.append("нове ID меню не в самому кінці переліку (швидкі клавіші користувача зсунулись би)")
+    if "menuCodeplugChannels,     NULL, NULL, 0 },// R46" not in sys_c:
+        p.append("«Канали» не зареєстровані в menuFunctions[]")
+    if not re.search(r"\[MENU_CODEPLUG_CHANNELS\] = NULL", sys_c):
+        p.append("«Канали» не мають ЯВНОГО індексу в menuDataGlobal.data[]")
+    if "<= 31" not in disp or "CODEPLUG_MENU_ENABLED" not in disp:
+        p.append("SK2+цифра на пункті з ID > 31 («Канали») не захищена: QuickKey записав би ID & 0x1F -- швидку клавішу на чуже меню")
     if "#if defined(ZONE_RENAME_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)" not in zl:
-        p.append("«#» у робочому списку зон не вимкнено в збірці з «Кодплагом»")
+        p.append("«#» у списку зон не вимкнено в збірці з ENABLE_CODEPLUG_MENU")
     if "#if defined(ZONE_EDIT_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)" not in zl:
-        p.append("«#»-дії над зоною в робочому списку не вимкнено")
+        p.append("«#»-дії над зоною в setZoneToUserSelection не вимкнено")
     if "return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);" not in zl:
-        p.append("«Нова зона» лишилась у робочому списку")
-    if "menuSystemGetCurrentMenuNumber() == MENU_CODEPLUG_ZONES" not in zl:
-        p.append("режим редагування списку зон не прив'язаний до розділу «Кодплаг»")
+        p.append("«Нова зона» зникла зі списку зон")
+    if "#define ZE_ACTIONS_COUNT 4" not in zl:
+        p.append("дій над зоною не чотири (Встановити / Перейменувати / Канали зони / Видалити)")
+    am = re.search(r"static const char \*zeActionLabel\(int i\)\n\{\n#if defined\(CODEPLUG_MENU_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*return \(i == 0\) \? currentLanguage->cp_set_zone : \(\(i == 1\) \? currentLanguage->cp_rename : \(\(i == 2\) \? currentLanguage->cp_zone_chans : currentLanguage->cp_delete\)\);", zl)
+    if not am:
+        p.append("підписи дій над зоною не в порядку «Встановити», «Перейменувати», «Канали зони», «Видалити»")
+    se = re.search(r"static void zeSetActive\(int zn\)\n\{.*?\n\}\n", zl, re.S)
+    if not se or "setZoneToUserSelection();" not in se.group(0) or "currentLanguage->zone_empty" not in se.group(0):
+        p.append("«Встановити» не викликає наявний setZoneToUserSelection() (або не відсікає порожню зону)")
+    elif se.group(0).count("settingsSet(") != 0:
+        p.append("«Встановити» дублює код вибору зони замість виклику setZoneToUserSelection()")
+    if "zeSetActive(zn);   // R46: «Всі канали»" not in zl:
+        p.append("«Всі канали» не встановлюється одразу")
     if "#if defined(CH_QUICKMENU_DELETE_ENABLED)\n	CH_SCREEN_QUICK_MENU_DELETE" not in sys_h:
         p.append("пункт швидкого меню «Видалити канал» не під CH_QUICKMENU_DELETE_ENABLED")
     if "#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)\n	CH_SCREEN_QUICK_MENU_ZONE_REMOVE" not in sys_h:
@@ -133,24 +146,30 @@ def test_menu_structure():
     zl = rd("source/user_interface/menuZoneList.c")
     chm = rd("source/user_interface/uiChannelMode.c")
     pr = menu_problems(sys_c, sys_h, disp, zl, chm)
-    check(pr == [], "Z2: меню «Кодплаг» -- місце, склад, ID, прибрані швидкі пункти: %r" % pr)
+    check(pr == [], "Z2: головне меню «Зона/Канали/Контакти» -- місце, склад, ID, дії, прибрані швидкі пункти: %r" % pr)
     mutants = [
-        ("пункт «Кодплаг» перенесено (вже не одразу після «Деталей каналу»)", "c", "	{  12, MENU_CHANNEL_DETAILS },\n#if defined(CODEPLUG_MENU_ENABLED)\n",
-         "	{   6, MENU_CONTACTS_MENU   },\n#if defined(CODEPLUG_MENU_ENABLED)\n"),
-        ("«Контакти» прибрано з «Кодплага»", "c", "	{ 6,                                                                  MENU_CONTACTS_MENU },\n", ""),
-        ("«Нова зона» повернули в робочий список", "zl", "return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);", "return s_zoneMapCount + 1;"),
-        ("«#» повернули в робочий список", "zl", "#if defined(ZONE_RENAME_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)", "#if defined(ZONE_RENAME_ENABLED)"),
+        ("«Канали» прибрано з головного меню", "c", "	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },\n", ""),
+        ("«Канали» переставлено після «Контактів»", "c", "	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },\n#endif\n	{   6, MENU_CONTACTS_MENU   },\n",
+         "#endif\n	{   6, MENU_CONTACTS_MENU   },\n	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },\n"),
+        ("«Контакти» прибрано з головного меню", "c", "	{   6, MENU_CONTACTS_MENU   },\n	{  12, MENU_CHANNEL_DETAILS },\n", "	{  12, MENU_CHANNEL_DETAILS },\n"),
+        ("розділ «Кодплаг» повернули (MENU_CODEPLUG)", "c", "	{   3, MENU_ZONE_LIST       },\n#if defined(CODEPLUG_MENU_ENABLED)\n", "	{   3, MENU_ZONE_LIST       },\n	{ 1, MENU_CODEPLUG },\n#if defined(CODEPLUG_MENU_ENABLED)\n"),
+        ("«Нова зона» прибрано зі списку", "zl", "return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);", "return s_zoneMapCount;"),
+        ("«#» повернули в список зон", "zl", "#if defined(ZONE_RENAME_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)", "#if defined(ZONE_RENAME_ENABLED)"),
+        ("«Встановити» не викликає setZoneToUserSelection", "zl", "	menuDataGlobal.currentItemIndex = zoneMapIndexForZone(zn);\n	setZoneToUserSelection();\n", "	menuDataGlobal.currentItemIndex = zoneMapIndexForZone(zn);\n"),
+        ("«Встановити» дублює вибір зони", "zl", "	menuDataGlobal.currentItemIndex = zoneMapIndexForZone(zn);\n	setZoneToUserSelection();\n", "	settingsSet(nonVolatileSettings.currentZone, (int16_t) zn);\n	setZoneToUserSelection();\n"),
+        ("«Встановити» не на першому місці", "zl", "return (i == 0) ? currentLanguage->cp_set_zone : ((i == 1) ? currentLanguage->cp_rename", "return (i == 1) ? currentLanguage->cp_set_zone : ((i == 0) ? currentLanguage->cp_rename"),
+        ("захист швидкої клавіші ID > 31 прибрано", "d", " && (menuDataGlobal.currentMenuList[menuDataGlobal.currentItemIndex].menuNum <= 31))", ")"),
         ("«Видалити канал» повернули у швидке меню", "h", "#if defined(CH_QUICKMENU_DELETE_ENABLED)\n	CH_SCREEN_QUICK_MENU_DELETE", "#if defined(CHANNEL_DELETE_ENABLED)\n	CH_SCREEN_QUICK_MENU_DELETE"),
     ]
     for title, which, old, new in mutants:
-        src = {"c": sys_c, "h": sys_h, "zl": zl}[which]
+        src = {"c": sys_c, "h": sys_h, "zl": zl, "d": disp}[which]
         if src.count(old) != 1:
             check(False, "Z2: мутант «%s»: шаблон знайдено %d раз(ів), треба 1 (код змінився -- онови мутант)" % (title, src.count(old)))
             continue
         mut = src.replace(old, new)
-        args = dict(c=sys_c, h=sys_h, zl=zl)
+        args = dict(c=sys_c, h=sys_h, zl=zl, d=disp)
         args[which] = mut
-        pr = menu_problems(args["c"], args["h"], disp, args["zl"], chm)
+        pr = menu_problems(args["c"], args["h"], args["d"], args["zl"], chm)
         check(pr != [], "Z2: мутант «%s» -- перевірка ловить" % title)
 
 

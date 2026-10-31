@@ -394,7 +394,6 @@ const stringsTable_t englishLanguage =
 .zone_not_zone                              = "Not a zone", // MaxLen: 14
 #endif
 #if defined(ENABLE_CODEPLUG_MENU)
-.codeplug_menu                           = "Codeplug", // MaxLen: 16
 .cp_channels                             = "Channels", // MaxLen: 16
 .cp_edit                                 = "Edit", // MaxLen: 16
 .cp_delete                               = "Delete", // MaxLen: 16
@@ -404,6 +403,7 @@ const stringsTable_t englishLanguage =
 .cp_choose_zone                          = "Which zone?", // MaxLen: 16
 .cp_in_channels                          = "In channels:", // MaxLen: 14
 .cp_becomes_none                         = "Becomes: none", // MaxLen: 14
+.cp_set_zone                             = "Set active", // MaxLen: 16
 #endif
 #endif
 };

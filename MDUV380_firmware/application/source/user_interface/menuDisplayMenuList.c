@@ -133,11 +133,6 @@ static void updateScreen(bool isFirstRun)
 		case MENU_OPTIONS:
 			mName = currentLanguage->options;
 			break;
-#if defined(CODEPLUG_MENU_ENABLED)
-		case MENU_CODEPLUG:
-			mName = currentLanguage->codeplug_menu;
-			break;
-#endif
 	}
 
 	menuDisplayTitle(mName);
@@ -243,7 +238,13 @@ static void handleEvent(uiEvent_t *ev)
 	}
 	else if (KEYCHECK_SHORTUP_NUMBER(ev->keys) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2)))
 	{
+#if defined(CODEPLUG_MENU_ENABLED)
+		/* R46: QuickKey зберігає ID меню в 5 бітах (QUICKKEY_MENUID), тож для меню з ID > 31 (наше «Канали», за межею швидких клавіш) QUICKKEY_MENUVALUE записало б ID & 0x1F --
+		 * швидку клавішу на ЧУЖЕ меню. Такі пункти не запам'ятовуємо. */
+		if ((menuDataGlobal.currentMenuList[menuDataGlobal.currentItemIndex].menuNum != -1) && (menuDataGlobal.currentMenuList[menuDataGlobal.currentItemIndex].menuNum <= 31))
+#else
 		if (menuDataGlobal.currentMenuList[menuDataGlobal.currentItemIndex].menuNum != -1)
+#endif
 		{
 			saveQuickkeyMenuIndex(ev->keys.key, menuDataGlobal.currentMenuList[menuDataGlobal.currentItemIndex].menuNum, 0, 0);
 		}

@@ -417,9 +417,7 @@ enum MENU_SCREENS
 	MENU_COLOUR_PICKER,
 #endif
 #if defined(CODEPLUG_MENU_ENABLED)
-	MENU_CODEPLUG,            // R44: «Кодплаг» (список: Канали / Зони / Контакти). ПІСЛЯ межі швидких клавіш: ID 0..31 наявних меню не зсуваються
-	MENU_CODEPLUG_CHANNELS,   // R44: «Кодплаг» -> Канали
-	MENU_CODEPLUG_ZONES,      // R44: «Кодплаг» -> Зони (menuZoneList у режимі редагування)
+	MENU_CODEPLUG_CHANNELS,   // R46: головне меню -> «Канали» (раніше «Кодплаг» -> Канали, R44). ПІСЛЯ межі швидких клавіш: ID 0..31 наявних меню не зсуваються; швидкої клавіші на нього нема
 #endif
 	NUM_MENU_ENTRIES
 };
@@ -526,8 +524,7 @@ extern const menuItemsList_t 	menuDataMainMenu;
 extern const menuItemsList_t 	menuDataContact;
 extern const menuItemsList_t 	menuDataOptions;
 #if defined(CODEPLUG_MENU_ENABLED)
-extern const menuItemsList_t 	menuDataCodeplug;   // R44: «Кодплаг» -> Канали / Зони / Контакти
-menuStatus_t menuCodeplugChannels(uiEvent_t *event, bool isFirstRun);   // R44: «Кодплаг» -> Канали (menuCodeplug.c)
+menuStatus_t menuCodeplugChannels(uiEvent_t *event, bool isFirstRun);   // R46: головне меню -> «Канали» (menuCodeplug.c)
 bool uiChannelModeDeleteChannel(int channelNumber);                   // R41, винесено в R44: видалення каналу й приведення екрана каналу до ладу (uiChannelMode.c)
 bool uiChannelModeZoneRemoveChannelAt(int zn, int pos);               // R43, винесено в R44: виймання запису pos з зони zn (uiChannelMode.c)
 #endif

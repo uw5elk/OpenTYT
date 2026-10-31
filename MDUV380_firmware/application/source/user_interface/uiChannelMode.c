@@ -2182,7 +2182,7 @@ static bool validateOverwriteChannel(void)
 
 #if defined(CHANNEL_DELETE_ENABLED)
 /* R41 (R44: винесено окремою функцією, ТЕКСТ ТОЙ САМИЙ): видаляє канал channelNumber і приводить екран каналу до ладу. Викликається і з колбека швидкого меню (R41, видаляє
- * ПОТОЧНИЙ канал), і з розділу «Кодплаг» -> Канали (R44, довільний канал). Повертає true, якщо канал видалено. */
+ * ПОТОЧНИЙ канал), і з пункту головного меню «Канали» (R44/R46, довільний канал). Повертає true, якщо канал видалено. */
 bool uiChannelModeDeleteChannel(int channelNumber)
 {
 	if (codeplugChannelDelete(channelNumber) == CODEPLUG_CHANNEL_DELETE_OK)
@@ -2223,7 +2223,7 @@ static bool validateDeleteChannel(void)
 
 #if defined(ZONE_EDIT_ENABLED)
 /* R43 (R44: винесено окремою функцією, ТЕКСТ ТОЙ САМИЙ, крім умови zn == поточна зона): виймає з зони zn запис на позиції pos. Сам канал не видаляється: лишається у «Всіх каналах» і в
- * інших зонах. Викликається і з колбека швидкого меню (R43, ПОТОЧНА зона й позиція «останнього каналу в зоні»), і з розділу «Кодплаг» -> Зони -> Канали зони (довільна зона й позиція). */
+ * інших зонах. Викликається і з колбека швидкого меню (R43, ПОТОЧНА зона й позиція «останнього каналу в зоні»), і з пункту «Зона» -> дії -> Канали зони (R44/R46, довільна зона й позиція). */
 bool uiChannelModeZoneRemoveChannelAt(int zn, int pos)
 {
 	if (codeplugZoneRemoveChannelAt(zn, pos) == CODEPLUG_ZONE_EDIT_OK)

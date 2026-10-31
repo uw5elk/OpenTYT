@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""R44-fix: HardFault при відкритті меню «Кодплаг» (strlen(0x1DC69F44) у menuDisplayEntry).
+"""R44-fix (оновлено в R46): HardFault при відкритті меню «Кодплаг» (strlen(0x1DC69F44) у menuDisplayEntry). R46 розформував «Кодплаг» -- тепер сторожовий приклад той самий механізм
+на єдиному форковому меню за межею швидких клавіш, «Канали» (MENU_CODEPLUG_CHANNELS): якщо його запис у data[] знову стане позиційним, data[] стане коротшим за enum.
 
 Причина (код, а не мовні рядки): `menuDataGlobal.data[]` -- масив ЗМІННОЇ довжини, що ініціалізується ПОЗИЦІЙНО, а в enum MENU_SCREENS перед MENU_CODEPLUG стоять шість
 меню без таблиць (AES_KEYS, MESSAGES, RCTL_REMOTE, RCTL_CONFIG, CALL_REPLAY, APRS_HUB), для яких NULL-заглушок у data[] нема. `&menuDataCodeplug` лягало на позицію 40,
 а MENU_CODEPLUG = 46 -> data[46] читалось за межами масиву -> сміттєві items/numItems -> сміттєвий stringOffset -> strlen(сміття).
 
-Z0  розбір: tools/check_menu_tables.py на дереві R44 (dc1aedc, відтворено підстановкою старого блока) ПАДАЄ і називає data[40] проти 46; на виправленому проходить;
-Z1  мутанти menuSystem.c (старий блок, зсув на 1, нема хвостового NULL, чужа таблиця, пропущений елемент menuFunctions[], не та функція) -- усі падають;
-Z2  виконання на хості: menuSystem.c зі збірки R44 скомпільовано, data[MENU_CODEPLUG] == &menuDataCodeplug, numItems == 3, data[] покриває NUM_MENU_ENTRIES; на старому блоці -- ні;
+Z0  розбір: tools/check_menu_tables.py на поточному дереві проходить; на позиційному записі (як у R44) ПАДАЄ і називає data[] коротшим за enum; на справжньому menuSystem.c з коміту R44 теж падає;
+Z1  мутанти menuSystem.c (позиційний запис, зсув на 1, нема явного індексу, чужа таблиця, пропущений елемент menuFunctions[], не та функція) -- усі падають;
+Z2  виконання на хості: menuSystem.c зі збірки R44 скомпільовано, data[] має рівно NUM_MENU_ENTRIES елементів (довжину дає `nm -S`), data[MENU_CODEPLUG_CHANNELS] == NULL, таблиці головного меню / контактів /
+    Options на своїх місцях; на позиційному записі -- data[] коротший за enum;
 Z3  мовні поля: check_language_fields.py проходить на дереві (в т.ч. на R44 -- мовні рядки не були причиною) і ловить підкладені вади (бракує ініціалізатора, порядок,
     зайвий ініціалізатор, інша умова #if, нове поле структури без значення);
 Z4  збірка без розділу «Кодплаг» не змінилась: токени `gcc -E -P` menuSystem.c без ENABLE_CODEPLUG_MENU збігаються з R44 (git show dc1aedc), якщо є git-історія;
@@ -34,9 +36,7 @@ LANG = os.path.join(FW, "application", "include", "user_interface", "languages")
 R44_BASE = os.environ.get("R44_BASE", "dc1aedc")
 
 OLD_BLOCK = """#if defined(CODEPLUG_MENU_ENABLED)
-				&menuDataCodeplug,// R44: «Кодплаг»
-				NULL,// R44: «Кодплаг» -> Канали
-				NULL,// R44: «Кодплаг» -> Зони
+				NULL,// R44-стиль: позиційний запис без явного індексу
 #endif
 """
 
@@ -59,7 +59,7 @@ def write(path, text):
 
 def new_block(src):
     """Поточний блок R44 у `.data` (з явними індексами)."""
-    m = re.search(r"#if defined\(CODEPLUG_MENU_ENABLED\)\n\t\t\t\t/\* R44-fix:.*?\[MENU_CODEPLUG_ZONES\] = NULL,[^\n]*\n#endif\n", src, re.S)
+    m = re.search(r"#if defined\(CODEPLUG_MENU_ENABLED\)\n\t\t\t\t/\* R44-fix:.*?\[MENU_CODEPLUG_CHANNELS\] = NULL,[^\n]*\n#endif\n", src, re.S)
     return m.group(0) if m else None
 
 
@@ -96,7 +96,7 @@ def test_z0_z1_tables():
     check(blk is not None, "Z0: у menuSystem.c є виправлений блок R44-fix з явними індексами")
     if blk is None:
         return
-    check("[MENU_CODEPLUG] = &menuDataCodeplug" in blk and "[MENU_CODEPLUG_CHANNELS] = NULL" in blk and "[MENU_CODEPLUG_ZONES] = NULL" in blk, "Z0: три явні індекси")
+    check("[MENU_CODEPLUG_CHANNELS] = NULL" in blk, "Z0: явний індекс «Канали»")
     rc, out = run_tables(FW)
     check(rc == 0, "Z0: check_menu_tables проходить на виправленому дереві: %s" % out[-400:])
 
@@ -105,12 +105,11 @@ def test_z0_z1_tables():
     try:
         rc, out = run_tables(root)
         check(rc == 1, "Z0: check_menu_tables ПАДАЄ на коді R44 (старий блок): rc=%s" % rc)
-        check("data[40] = &menuDataCodeplug" in out and "MENU_CODEPLUG має ID 46" in out and "різниця +6" in out, "Z0: називає позицію 40 проти 46 і різницю +6: %s" % out[-500:])
-        check("data[] має 43 елементів, а меню в enum -- 49" in out and "ЗА межами" in out, "Z0: називає вихід за межі масиву (43 проти 49): %s" % out[-500:])
+        check("data[] має 41 елементів, а меню в enum -- 47" in out and "ЗА межами" in out, "Z0: називає вихід за межі масиву (41 проти 47): %s" % out[-500:])
         check("R44" in out.split("ПРОВАЛ")[-1], "Z0: називає конфігурацію R44")
-        # інші конфігурації з розділом на тому самому коді -- лише R44 має розділ «Кодплаг» (решта без нього проходять)
+        # інші конфігурації на тому самому коді -- лише R44 має меню «Канали» (решта без нього проходять)
         rc2, out2 = run_tables(root, "AES0,AES1,UA,CHDEL,R43,R44LITE,R44NODEL")
-        check(rc2 == 0, "Z0: конфігурації без розділу «Кодплаг» цей код не ламає: %s" % out2[-300:])
+        check(rc2 == 0, "Z0: конфігурації без пунктів «Зона/Канали/Контакти» цей код не ламає: %s" % out2[-300:])
     finally:
         shutil.rmtree(root, ignore_errors=True)
     if os.path.isdir(os.path.join(os.path.dirname(FW), ".git")) or True:
@@ -120,7 +119,7 @@ def test_z0_z1_tables():
                 root = make_root(old.stdout.decode("utf-8"))
                 try:
                     rc, out = run_tables(root)
-                    check(rc == 1 and "data[40]" in out, "Z0: на справжньому menuSystem.c з коміту %s перевірка падає: %s" % (R44_BASE, out[-300:]))
+                    check(rc == 1, "Z0: на справжньому menuSystem.c з коміту %s перевірка падає: %s" % (R44_BASE, out[-300:]))
                 finally:
                     shutil.rmtree(root, ignore_errors=True)
             else:
@@ -131,9 +130,8 @@ def test_z0_z1_tables():
     # --- мутанти ---
     mutants = [
         ("позиційні заглушки замість явних індексів (як було)", lambda s: s.replace(blk, OLD_BLOCK)),
-        ("індекс зсунуто на 1", lambda s: s.replace("[MENU_CODEPLUG] = &menuDataCodeplug", "[MENU_CODEPLUG - 1] = &menuDataCodeplug")),
-        ("нема хвостового NULL (масив коротший за enum)", lambda s: s.replace("\t\t\t\t[MENU_CODEPLUG_ZONES] = NULL,// R44: «Кодплаг» -> Зони\n", "")),
-        ("таблиця Кодплагу на місці MENU_CODEPLUG_CHANNELS", lambda s: s.replace("[MENU_CODEPLUG] = &menuDataCodeplug", "[MENU_CODEPLUG_CHANNELS] = &menuDataCodeplug")),
+        ("індекс зсунуто на 1", lambda s: s.replace("[MENU_CODEPLUG_CHANNELS] = NULL", "[MENU_CODEPLUG_CHANNELS - 1] = NULL")),
+        ("нема явного індексу (масив коротший за enum)", lambda s: s.replace("\t\t\t\t[MENU_CODEPLUG_CHANNELS] = NULL,// R46: головне меню -> «Канали»\n", "")),
         ("чужа таблиця в data[]", lambda s: s.replace("[MENU_CODEPLUG_CHANNELS] = NULL", "[MENU_CODEPLUG_CHANNELS] = &menuDataContact")),
         ("пропущено елемент menuFunctions[] (меню APRS)", lambda s: s.replace("\t\t{ menuAprsHub,              NULL, NULL, 0 },// R8-fix: меню «APRS»\n", "")),
         ("не та функція на MENU_CODEPLUG_CHANNELS", lambda s: s.replace("{ menuCodeplugChannels,     NULL, NULL, 0 }", "{ menuZoneList,             NULL, NULL, 0 }")),
@@ -163,12 +161,10 @@ PROBE = r'''
 #include "user_interface/menuSystem.h"
 int main(void)
 {
-	const menuItemsList_t *t = menuDataGlobal.data[MENU_CODEPLUG];
-	printf("codeplug=%d\n", (t == &menuDataCodeplug) ? 1 : 0);
-	printf("numItems=%d\n", t ? t->numItems : -1);
+	printf("off=%d ptr=%d num=%d\n", (int)offsetof(menuDataGlobal_t, data), (int)sizeof(void *), (int)NUM_MENU_ENTRIES);
 	printf("main=%d contact=%d options=%d\n", menuDataGlobal.data[MENU_MAIN_MENU] == &menuDataMainMenu, menuDataGlobal.data[MENU_CONTACTS_MENU] == &menuDataContact,
 	       menuDataGlobal.data[MENU_OPTIONS] == &menuDataOptions);
-	printf("tail=%d\n", (menuDataGlobal.data[MENU_CODEPLUG_CHANNELS] == NULL) && (menuDataGlobal.data[MENU_CODEPLUG_ZONES] == NULL));
+	printf("tail=%d\n", (menuDataGlobal.data[MENU_CODEPLUG_CHANNELS] == NULL) ? 1 : 0);
 	return 0;
 }
 '''
@@ -195,7 +191,13 @@ def run_probe(menusystem_text, tmp):
     if r.returncode != 0:
         return {}
     out = subprocess.run([exe], capture_output=True, text=True).stdout
-    return dict(re.findall(r"(\w+)=(-?\d+)", out))
+    res = dict(re.findall(r"(\w+)=(-?\d+)", out))
+    # довжина data[] -- з розміру символа menuDataGlobal в об'єкті: (розмір - зсув поля data) / розмір вказівника
+    nm = subprocess.run(["nm", "-S", obj], capture_output=True, text=True).stdout
+    m = re.search(r"^\w+\s+(\w+)\s+[dD]\s+menuDataGlobal$", nm, re.M)
+    if m and "off" in res and "ptr" in res:
+        res["datalen"] = str((int(m.group(1), 16) - int(res["off"])) // int(res["ptr"]))
+    return res
 
 
 def test_z2_runtime():
@@ -207,13 +209,12 @@ def test_z2_runtime():
         if res is None:
             print("test_r44fix: gcc нема -- розділ Z2 пропущено")
             return
-        check(res.get("codeplug") == "1", "Z2: data[MENU_CODEPLUG] == &menuDataCodeplug: %r" % res)
-        check(res.get("numItems") == "3", "Z2: таблиця «Кодплаг» має 3 пункти (Канали / Зони / Контакти): %r" % res)
-        check(res.get("main") == "1" and res.get("contact") == "1" and res.get("options") == "1", "Z2: решта таблиць на своїх місцях: %r" % res)
-        check(res.get("tail") == "1", "Z2: data[] покриває MENU_CODEPLUG_CHANNELS і MENU_CODEPLUG_ZONES (NULL, а не сміття): %r" % res)
-        # на старому блоці зонд має ПОБАЧИТИ вади
+        check(res.get("datalen") is not None and res.get("datalen") == res.get("num"), "Z2: data[] має рівно NUM_MENU_ENTRIES елементів: %r" % res)
+        check(res.get("main") == "1" and res.get("contact") == "1" and res.get("options") == "1", "Z2: таблиці головного меню / контактів / Options на своїх місцях: %r" % res)
+        check(res.get("tail") == "1", "Z2: data[MENU_CODEPLUG_CHANNELS] читається в межах масиву і дорівнює NULL (а не сміття): %r" % res)
+        # на позиційному записі data[] коротший за enum
         old = run_probe(src.replace(blk, OLD_BLOCK), tmp)
-        check(old and old.get("codeplug") == "0", "Z2: на старому блоці R44 data[MENU_CODEPLUG] != &menuDataCodeplug (відтворено вада): %r" % (old,))
+        check(old and old.get("datalen") is not None and old.get("datalen") != old.get("num"), "Z2: на позиційному записі data[] коротший за enum (вада відтворена): %r" % (old,))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -285,7 +286,7 @@ def test_z3_language():
             shutil.rmtree(root, ignore_errors=True)
 
     # 1. у ukrainian.h бракує ініціалізатора останнього поля розділу «Кодплаг»
-    caught("нема ініціалізатора cp_becomes_none", {"ukrainian.h": lambda t: t.replace(line_of(t, "cp_becomes_none").group(0), "")}, ["cp_becomes_none", "ukrainian.h", "ПОЛЕ БЕЗ ЗНАЧЕННЯ"])
+    caught("нема ініціалізатора cp_set_zone", {"ukrainian.h": lambda t: t.replace(line_of(t, "cp_set_zone").group(0), "")}, ["cp_set_zone", "ukrainian.h", "ПОЛЕ БЕЗ ЗНАЧЕННЯ"])
     # 2. два сусідні ініціалізатори переставлено
     def swap(t):
         a, b = line_of(t, "cp_edit").group(0), line_of(t, "cp_delete").group(0)
@@ -295,7 +296,7 @@ def test_z3_language():
     caught("зайвий ініціалізатор", {"english.h": lambda t: t.replace(line_of(t, "cp_becomes_none").group(0), line_of(t, "cp_becomes_none").group(0) + '.cp_unknown = "x",\n')}, ["ЗАЙВИЙ ІНІЦІАЛІЗАТОР", "cp_unknown"])
     # 4. поле під іншою умовою #if, ніж у структурі: ініціалізатор винесено з #if ENABLE_CODEPLUG_MENU
     def other_if(t):
-        m = line_of(t, "codeplug_menu")
+        m = line_of(t, "cp_channels")
         head = t[:m.start()]
         i = head.rindex("#if defined(ENABLE_CODEPLUG_MENU)")
         return head[:i] + head[i:].replace("#if defined(ENABLE_CODEPLUG_MENU)", "#if defined(ENABLE_ZONE_EDIT)", 1) + t[m.start():]
@@ -312,6 +313,9 @@ def test_z3_language():
     # 8. стокова мова втратила поле, яке НЕ в списку відомих прогалин
     caught("стокова мова без поля", {"german.h": lambda t: t.replace(line_of(t, "battery").group(0), "")}, ["german.h", "battery"])
     print("test_r44fix: мовних вад підкладено 8, усі спіймані")
+    # R46: розформований розділ не лишив слідів у мовній структурі
+    ui = open(os.path.join(LANG, "uiLanguage.h"), "rb").read().decode("latin-1")
+    check("codeplug_menu" not in ui and "cp_set_zone" in ui, "Z3: поле codeplug_menu прибрано, cp_set_zone додано останнім у блоці R44/R46")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -336,7 +340,7 @@ def test_z4_default_unchanged():
     try:
         for name, defs in cfgs:
             if name == "R44":
-                continue                       # єдина конфігурація, де розділ «Кодплаг» ввімкнено, -- саме вона й виправлена
+                continue                       # єдина конфігурація з ENABLE_CODEPLUG_MENU -- саме її R46 і змінює
             a, b = tokens(FW, defs, incs), tokens(root, defs, incs)
             check(a is not None and a == b, "Z4: конфігурація %s -- токени menuSystem.c не змінились відносно R44" % name)
     finally:
