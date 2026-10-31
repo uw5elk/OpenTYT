@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """R46: розділ «Кодплаг» розформовано -- «Зона», «Канали», «Контакти» стали пунктами головного меню.
 
-W1  склад головного меню (препроцесор `gcc -E -P`, конфігурація R44 з ENABLE_CODEPLUG_MENU): «Зона» (MENU_ZONE_LIST), «Канали», «Контакти», «Деталі каналу» -- по одному разу й саме в цьому порядку;
+W1  склад головного меню (препроцесор `gcc -E -P`, конфігурація R44 з ENABLE_CODEPLUG_MENU): «Зона» (MENU_ZONE_LIST), «Канали», «Контакти» -- по одному разу й саме в цьому порядку (R47: «Канал» звідти прибрано);
     «Кодплагу» в enum і в меню нема; у конфігураціях без ENABLE_CODEPLUG_MENU -- стокові пункти без «Каналів»;
 W2  підписи пунктів з мовної таблиці (cp1251): «Зона», «Канали», «Контакти»; підпис «Встановити» (cp_set_zone) є, останній у блоці R44/R46;
 W3  швидкі клавіші: усі пункти головного меню, крім «Каналів», мають ID <= 31 (QuickKey -- 5 біт); «Канали» -- єдиний виняток, і код не дає прив'язати до нього швидку клавішу;
@@ -64,8 +64,8 @@ def test_w1_menu_composition():
         print("test_r46: gcc нема -- W1 пропущено")
         return
     names, enum = cfg_main_menu("R44")
-    want = ["MENU_ZONE_LIST", "MENU_CODEPLUG_CHANNELS", "MENU_CONTACTS_MENU", "MENU_CHANNEL_DETAILS"]
-    check(names[:4] == want, "W1: початок головного меню (R44) = %r, має бути %r" % (names[:4], want))
+    want = ["MENU_ZONE_LIST", "MENU_CODEPLUG_CHANNELS", "MENU_CONTACTS_MENU"]   # R47: «Канал» (MENU_CHANNEL_DETAILS) з цього меню прибрано
+    check(names[:3] == want and "MENU_CHANNEL_DETAILS" not in names, "W1: початок головного меню (R44) = %r, має бути %r і без MENU_CHANNEL_DETAILS" % (names[:3], want))
     for n in ("MENU_ZONE_LIST", "MENU_CODEPLUG_CHANNELS", "MENU_CONTACTS_MENU"):
         check(names.count(n) == 1, "W1: пункт %s у головному меню рівно один раз (є %d)" % (n, names.count(n)))
     check("MENU_CODEPLUG" not in enum and "MENU_CODEPLUG_ZONES" not in enum, "W1: у enum MENU_SCREENS нема MENU_CODEPLUG / MENU_CODEPLUG_ZONES")

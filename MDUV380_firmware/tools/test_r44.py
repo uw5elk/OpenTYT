@@ -95,9 +95,9 @@ def test_macros():
 def menu_problems(sys_c, sys_h, disp, zl, chm):
     """R46: розділ «Кодплаг» розформовано -- «Зона» (MENU_ZONE_LIST), «Канали», «Контакти» стоять у головному меню. Перевіряємо місце, склад, ID, прибрані швидкі пункти."""
     p = []
-    m = re.search(r"\{\s*3,\s*MENU_ZONE_LIST\s*\},\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*\{ \(int\)\(offsetof\(stringsTable_t, cp_channels\) / LANGUAGE_TEXTS_LENGTH\), MENU_CODEPLUG_CHANNELS \},\n#endif\s*\n\s*\{\s*6,\s*MENU_CONTACTS_MENU\s*\},\s*\n\s*\{\s*12,\s*MENU_CHANNEL_DETAILS\s*\}", sys_c)
+    m = re.search(r"\{\s*3,\s*MENU_ZONE_LIST\s*\},\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*\{ \(int\)\(offsetof\(stringsTable_t, cp_channels\) / LANGUAGE_TEXTS_LENGTH\), MENU_CODEPLUG_CHANNELS \},\n#endif\s*\n\s*\{\s*6,\s*MENU_CONTACTS_MENU\s*\},\s*\n#if !defined\(CODEPLUG_MENU_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*\{\s*12,\s*MENU_CHANNEL_DETAILS\s*\},\s*\n#endif", sys_c)
     if not m:
-        p.append("головне меню не в порядку «Зона», «Канали», «Контакти», «Деталі каналу» (або «Канали» не під CODEPLUG_MENU_ENABLED)")
+        p.append("головне меню не в порядку «Зона», «Канали», «Контакти» (або «Канали» не під CODEPLUG_MENU_ENABLED, або «Канал» (MENU_CHANNEL_DETAILS) не під #if !defined(CODEPLUG_MENU_ENABLED))")
     for name, text in (("menuSystem.c", sys_c), ("menuSystem.h", sys_h), ("menuDisplayMenuList.c", disp), ("menuZoneList.c", zl)):
         if re.search(r"\bMENU_CODEPLUG\b|MENU_CODEPLUG_ZONES|menuDataCodeplug|codeplug_menu", text):
             p.append("у %s лишилась згадка розформованого розділу «Кодплаг» (MENU_CODEPLUG / MENU_CODEPLUG_ZONES / menuDataCodeplug / codeplug_menu)" % name)
@@ -151,7 +151,7 @@ def test_menu_structure():
         ("«Канали» прибрано з головного меню", "c", "	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },\n", ""),
         ("«Канали» переставлено після «Контактів»", "c", "	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },\n#endif\n	{   6, MENU_CONTACTS_MENU   },\n",
          "#endif\n	{   6, MENU_CONTACTS_MENU   },\n	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },\n"),
-        ("«Контакти» прибрано з головного меню", "c", "	{   6, MENU_CONTACTS_MENU   },\n	{  12, MENU_CHANNEL_DETAILS },\n", "	{  12, MENU_CHANNEL_DETAILS },\n"),
+        ("«Контакти» прибрано з головного меню", "c", "	{   6, MENU_CONTACTS_MENU   },\n#if !defined(CODEPLUG_MENU_ENABLED)\n", "#if !defined(CODEPLUG_MENU_ENABLED)\n"),
         ("розділ «Кодплаг» повернули (MENU_CODEPLUG)", "c", "	{   3, MENU_ZONE_LIST       },\n#if defined(CODEPLUG_MENU_ENABLED)\n", "	{   3, MENU_ZONE_LIST       },\n	{ 1, MENU_CODEPLUG },\n#if defined(CODEPLUG_MENU_ENABLED)\n"),
         ("«Нова зона» прибрано зі списку", "zl", "return s_zoneMapCount + (ZL_EDIT() ? 1 : 0);", "return s_zoneMapCount;"),
         ("«#» повернули в список зон", "zl", "#if defined(ZONE_RENAME_ENABLED) && !defined(CODEPLUG_MENU_ENABLED)", "#if defined(ZONE_RENAME_ENABLED)"),

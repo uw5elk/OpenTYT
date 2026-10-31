@@ -703,7 +703,12 @@ const menuItemNewData_t mainMenuItems[] =
 	{ (int)(offsetof(stringsTable_t, cp_channels) / LANGUAGE_TEXTS_LENGTH), MENU_CODEPLUG_CHANNELS },
 #endif
 	{   6, MENU_CONTACTS_MENU   },
+#if !defined(CODEPLUG_MENU_ENABLED)
+	// R47: з головного меню прибрано пункт «Канал» (MENU_CHANNEL_DETAILS) -- поруч із «Канали» він лише плутав. Сам екран лишився й досяжний: «Канали» -> канал -> «Змінити»
+	// (menuCodeplug.c, ccEdit), SK2+зелена на екрані каналів і VFO. Збережені швидкі клавіші SK2+цифра на нього працюють (applicationMain.c викликає меню за ID, а не за позицією
+	// у списку); нову прив'язати до цього екрана з головного меню вже не можна -- пункту в списку нема.
 	{  12, MENU_CHANNEL_DETAILS },
+#endif
 #if !defined(LANGUAGE_BUILD_UKRAINIAN)
 	// Українська збірка (ui1, 2026-10-04): пункт «RSSI» прибрано з головного меню -- S-метр
 	// і так завжди в шапці. Сам екран лишився (MENU_RSSI_SCREEN, швидкі клавіші на нього
