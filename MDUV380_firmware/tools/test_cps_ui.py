@@ -41,11 +41,11 @@ EXPECTED = [
     ("grp_settings", "Налаштування рації", ""),
     ("aes", "AES-ключі", "grp_settings"),
     ("rctl", "Віддалене керування (RCTL)", "grp_settings"),
-    ("themes", "Теми", "grp_settings"),
+    ("themes", "Тема: файл .gtm для стокового CPS", "grp_settings"),
     ("splash", "Заставка", "grp_settings"),
     ("melody", "Мелодія вмикання", "grp_settings"),
     ("satellites", "Супутники", "grp_settings"),
-    ("allsettings", "Усі налаштування", "grp_settings"),
+    ("allsettings", "Усі налаштування (custom-data)", "grp_settings"),
     ("dmrdb", "База позивних", "grp_settings"),
 ]
 
@@ -254,7 +254,8 @@ def test_gui():
             for _ in range(4):
                 app.update()
             rw, rh = app.right.winfo_width(), app.right.winfo_height() - app.docbar.winfo_height()
-            check(rw >= W - 420 and rh >= H - 270, "Q1 %dx%d: область панелі велика (%dx%d)" % (W, H, rw, rh))
+            check(rw >= W - 420 and rh >= H - 310,   # R50: довший підпис «Записати кодплаг у рацію» на 760 px додає ще один рядок кнопок над розділами (+34 px)
+                   "Q1 %dx%d: область панелі велика (%dx%d)" % (W, H, rw, rh))
             for key in leaf:
                 app.show(key)
                 for _ in range(3):

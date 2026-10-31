@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Розділ «Кодплаг → Бекап і відновлення»: бекап у .zip (R24, лише читання) і відновлення (R25, ЗАПИС у рацію;
-заблоковано константою cps_restore.RESTORE_UNLOCKED). R49: «Відкрити бекап як документ» тут прибрано -- це та сама дія, що кнопка «Відкрити з бекапу…» над розділами. Логіку перенесено з gui_flasher.py без змін."""
+заблоковано константою cps_restore.RESTORE_UNLOCKED). R49: «Відкрити бекап як документ» тут прибрано -- це та сама дія, що кнопка «Відкрити з бекапу…» над розділами.
+R50: усе відновлення -- ОДНЕ вікно «Відновити…» (restore_dialog.py): джерело (архів або автоматична страхова копія) і прапорці кодплаг / область custom-data / ключі AES.
+Окремих кнопок «Відновити лише …» і прапорців на панелі більше нема; усі їхні сполучення досяжні у вікні. Запобіжники -- ті самі (cps_restore, custom_region, aes_keys_backup)."""
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -13,6 +15,7 @@ import restore_extras as rx
 
 from .common import output_dir
 from .panel import Panel
+from .restore_dialog import ask_restore
 
 
 def show_restore_result(res):
@@ -44,15 +47,12 @@ class BackupPanel(Panel):
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
         self.full_snapshot_var = tk.BooleanVar(value=False)
-        self.region_var = tk.BooleanVar(value=False)            # R30: відновити також область custom-data (типово ВИМКНЕНО)
-        self.region_state_var = tk.BooleanVar(value=False)      # R30: разом з лічильниками RCTL (стан; типово вимкнено)
         self.keys_var = tk.BooleanVar(value=True)               # R31 K2.3: ключі AES в архіві (типово УВІМКНЕНО)
         self.custom_var = tk.BooleanVar(value=True)             # R32 T2.3: область custom-data в архіві (типово УВІМКНЕНО; вимкнена -- бекап швидший)
-        self.keys_restore_var = tk.BooleanVar(value=False)      # R31 K3.1: відновити також ключі AES (типово ВИМКНЕНО)
         self.header("Бекап і відновлення", "Бекап читає кодплаг із рації й зберігає його в .zip у теці MD-UV390UKR (у домашній теці). "
                                            "Рація має бути у звичайному режимі (не в DFU).",
-                    purpose="повна копія кодплага (канали, зони, контакти...) у .zip, щоб повернути рацію до цього стану; окремо від «Усі налаштування», "
-                            "які переносять лише область custom-data.")
+                    purpose="повна копія кодплага (канали, зони, контакти...) у .zip, щоб повернути рацію до цього стану; одне вікно «Відновити…» повертає кодплаг, "
+                            "область custom-data і ключі AES (разом або окремо), у тому числі зі страхової копії.")
 
         box = ttk.LabelFrame(self, text="Бекап (лише читання)")
         box.pack(fill="x", padx=12, pady=6)
@@ -72,24 +72,12 @@ class BackupPanel(Panel):
 
         rest = ttk.LabelFrame(self, text="Відновлення (ЗАПИС у рацію)")
         rest.pack(fill="x", padx=12, pady=6)
-        self.restore_button = ttk.Button(rest, text="Відновити кодплаг...", command=self._on_restore_clicked)
+        self.restore_button = ttk.Button(rest, text="Відновити…", command=self._on_restore_clicked)
         self.restore_button.pack(anchor="w", padx=8, pady=(8, 4))
         self.reg(self.restore_button, radio=True, write=True)
-        self.region_check = ttk.Checkbutton(rest, text="відновити також область custom-data (теми, SMS, RCTL, APRS, вибір ключа AES)", variable=self.region_var)
-        self.region_check.pack(anchor="w", padx=8, pady=(0, 2))
-        self.region_state_check = ttk.Checkbutton(rest, text="разом з лічильниками RCTL (стан прошивки, не налаштування)", variable=self.region_state_var)
-        self.region_state_check.pack(anchor="w", padx=28, pady=(0, 2))
-        self.keys_check = ttk.Checkbutton(rest, text="відновити також ключі AES (перезапише слоти, які є в архіві; перед записом покажу, які саме)",
-                                          variable=self.keys_restore_var)
-        self.keys_check.pack(anchor="w", padx=8, pady=(0, 2))
-        self.keys_only_button = ttk.Button(rest, text="Відновити лише ключі AES...", command=self._on_restore_keys_clicked)
-        self.keys_only_button.pack(anchor="w", padx=8, pady=(4, 2))
-        self.reg(self.keys_only_button, radio=True, write=True)
-        self.region_only_button = ttk.Button(rest, text="Відновити лише область custom-data...", command=self._on_restore_region_clicked)
-        self.region_only_button.pack(anchor="w", padx=8, pady=(4, 4))
-        self.reg(self.region_only_button, radio=True, write=True)
-        ttk.Label(rest, text=("Область custom-data лежить окремо від кодплага; у бекапі вона окремим файлом. Прапорець вимкнено: тоді відновлення кодплага її не чіпає. "
-                              "Перед записом ти побачиш, які блоки будуть перезаписані. Бекап, зроблений до R30, області не має -- її тоді не чіпаю."),
+        ttk.Label(rest, text=("У вікні обираєш джерело (архів бекапу або автоматичну страхову копію, яку CPS зберіг перед записом) і що відновити: кодплаг, область custom-data "
+                              "(теми, SMS, RCTL, APRS, вибір ключа AES), ключі AES -- разом або окремо. Типово позначено лише кодплаг. Область custom-data лежить окремо від кодплага; "
+                              "бекап, зроблений до R30, її не має. Перед записом побачиш, що саме буде перезаписано."),
                   wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 4))
         self.restore_note = ttk.Label(rest, text="" if cps_rest.RESTORE_UNLOCKED else cps_rest.LOCKED_CAPTION, foreground=gt.P["warn"],
                                       wraplength=600, justify="left")
@@ -176,27 +164,48 @@ class BackupPanel(Panel):
     # --- відновлення (ЗАПИС у рацію) ---
 
     def _on_restore_clicked(self):
+        """Відкрити вікно «Відновити…»; вибране виконує start_restore()."""
         if self.shell.busy or not cps_rest.RESTORE_UNLOCKED:
             return
-        path = filedialog.askopenfilename(title="Бекап, з якого відновити кодплаг", initialdir=output_dir(),
-                                          filetypes=[("Бекап кодплага (.zip)", "*.zip")])
-        if not path:
+        spec = ask_restore(self.shell, start_dir=output_dir())
+        if spec:
+            self.start_restore(spec)
+
+    def start_restore(self, spec):
+        """Виконати вибране у вікні «Відновити…» у фоні. spec: {"path","kind","codeplug","region","state","keys"} (restore_dialog.RestoreDialog.spec)."""
+        if self.shell.busy or not cps_rest.RESTORE_UNLOCKED:
             return
-        with_region = bool(self.region_var.get())
-        include_state = with_region and bool(self.region_state_var.get())
-        with_keys = bool(self.keys_restore_var.get())
-        self.shell.run_task(lambda: self._restore_worker(path, with_region, include_state, with_keys), "Відновлюю кодплаг...", on_done=self._show_restore_done,
-                            fail_suffix="\n\nСтан рації описано вище. Не вимикай програму, поки не прочитаєш повідомлення.",
-                            reconnect_ms=6000)
+        path = spec["path"]
+        with_cp = bool(spec.get("codeplug")) and spec["kind"] == rx.KIND_ZIP
+        with_region = bool(spec.get("region"))
+        include_state = with_region and bool(spec.get("state"))
+        with_keys = bool(spec.get("keys")) and spec["kind"] == rx.KIND_ZIP
+        if with_cp:
+            fail = "\n\nСтан рації описано вище. Не вимикай програму, поки не прочитаєш повідомлення."
+            plain = False
+        else:
+            fail = "\n\nЗаписане лишається записаним; решту не чіпали."
+            plain = True
+        what = "кодплаг" if with_cp else ("ключі AES" if (with_keys and not with_region) else ("область custom-data" if not with_keys else "область custom-data й ключі AES"))
+        self.shell.run_task(lambda: self._restore_worker(path, with_cp, with_region, include_state, with_keys), "Відновлюю %s..." % what,
+                            on_done=self._show_restore_done, fail_suffix=fail, plain_errors=plain, reconnect_ms=6000)
 
     def _show_restore_done(self, out):
-        show_restore_result(out["codeplug"])
+        if out.get("codeplug") is not None:
+            show_restore_result(out["codeplug"])
+        if out.get("raw") is not None:
+            self._show_raw_result(out["raw"])
         if out.get("region") is not None:
             self._show_region_result(out["region"])
         if out.get("keys") is not None:
             self._show_keys_result(out["keys"])
         elif out.get("keysNote"):
             messagebox.showinfo("Ключі AES", out["keysNote"])
+
+    @staticmethod
+    def _show_raw_result(res):
+        failed = not res.get("ok", True)
+        (messagebox.showerror if failed else messagebox.showinfo)("Область custom-data", res["text"])
 
     @staticmethod
     def _show_keys_result(res):
@@ -207,22 +216,6 @@ class BackupPanel(Panel):
             failed = bool(res.get("result") and res["result"].get("failed"))
             (messagebox.showerror if failed else messagebox.showinfo)("Ключі AES", res["text"] + tail)
 
-    def _on_restore_keys_clicked(self):
-        if self.shell.busy or not cps_rest.RESTORE_UNLOCKED:
-            return
-        path = filedialog.askopenfilename(title="Бекап, з якого відновити ключі AES", initialdir=output_dir(), filetypes=[("Бекап кодплага (.zip)", "*.zip")])
-        if not path:
-            return
-        self.shell.run_task(lambda: self._restore_keys_worker(path), "Відновлюю ключі AES...", on_done=self._show_keys_result,
-                            fail_suffix="\n\nЗаписані слоти лишаються записаними; решту не чіпали.", plain_errors=True, reconnect_ms=6000)
-
-    def _restore_keys_worker(self, path):
-        ser = cps.open_radio()
-        try:
-            return akb.restore_keys(cps.CpsLink(ser), path, self.shell.confirm_from_worker, progress=self.shell.cps_progress, log=print)
-        finally:
-            close_quietly(ser)
-
     @staticmethod
     def _show_region_result(res):
         if res.get("absent"):
@@ -232,29 +225,10 @@ class BackupPanel(Panel):
             failed = bool(res.get("result") and res["result"].get("failed"))
             (messagebox.showerror if failed else messagebox.showinfo)("Область custom-data", res["text"] + tail)
 
-    def _on_restore_region_clicked(self):
-        if self.shell.busy or not cps_rest.RESTORE_UNLOCKED:
-            return
-        path = filedialog.askopenfilename(title="Бекап, з якого відновити область custom-data", initialdir=output_dir(),
-                                          filetypes=[("Бекап кодплага (.zip)", "*.zip")])
-        if not path:
-            return
-        include_state = bool(self.region_state_var.get())
-        self.shell.run_task(lambda: self._restore_region_worker(path, include_state), "Відновлюю область custom-data...", on_done=self._show_region_result,
-                            fail_suffix="\n\nЗаписані блоки лишаються записаними; решту не чіпали.", plain_errors=True, reconnect_ms=6000)
-
-    def _restore_region_worker(self, path, include_state):
+    def _restore_worker(self, path, with_cp=True, with_region=False, include_state=False, with_keys=False):
         ser = cps.open_radio()
         try:
-            return cr.restore_region(cps.CpsLink(ser), path, self.shell.confirm_from_worker, include_state=include_state,
-                                     progress=self.shell.cps_progress, log=print)
-        finally:
-            close_quietly(ser)
-
-    def _restore_worker(self, path, with_region=False, include_state=False, with_keys=False):
-        ser = cps.open_radio()
-        try:
-            return rx.restore_codeplug_and_extras(cps.CpsLink(ser), path, self.shell.confirm_from_worker, self.shell.cps_progress, log=print,
-                                                  with_region=with_region, include_state=include_state, with_keys=with_keys)
+            return rx.restore_selected(cps.CpsLink(ser), path, self.shell.confirm_from_worker, self.shell.cps_progress, log=print,
+                                       with_codeplug=with_cp, with_region=with_region, include_state=include_state, with_keys=with_keys)
         finally:
             close_quietly(ser)

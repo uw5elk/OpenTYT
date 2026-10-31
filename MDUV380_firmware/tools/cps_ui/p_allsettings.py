@@ -4,11 +4,11 @@
 
 «Зберегти всі налаштування у файл» читає область з рації (лише читання) і пише JSON-файл OpenTYT-settings-1 (кожен блок з SHA-256).
 «Завантажити з файлу» показує блоки з файла з прапорцями: що застосувати. Типово НЕ позначені: лічильники RCTL (RCTL_STATE -- стан прошивки, а не налаштування)
-і блок AES із ключовим матеріалом. «Записати вибране в рацію» пише блок за блоком (custom_data.write_block + звірка читанням); збій на блоці зупиняє решту.
+і блок AES із ключовим матеріалом. «Записати вибрані блоки в рацію» пише блок за блоком (custom_data.write_block + звірка читанням); збій на блоці зупиняє решту.
 Усе записане в область не стосується кодплага (документ не змінюється). Логіка -- у tools/custom_region.py; тут лише вікно.
 
 R37: блок «Стан області» -- скільки зайнято, скільки вільно, скільки займають вилучені (retire) блоки (числа читаються з області рації); кнопка «Ущільнити область»
-(страхова копія -> безпечний запис -> звірка; tools/custom_compact.py) і «Відновити область зі страхової копії...»."""
+(страхова копія -> безпечний запис -> звірка; tools/custom_compact.py) (R50: «Відновити область зі страхової копії» перенесено у вікно «Бекап і відновлення» -> «Відновити…» -- одне місце для всього відновлення)."""
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -24,7 +24,7 @@ from .panel import Panel
 
 class AllSettingsPanel(Panel):
     key = "allsettings"
-    title = "Усі налаштування"
+    title = "Усі налаштування (custom-data)"   # R50: у дереві (269 px) повна назва не влізає (413 px) -- вона в заголовку розділу
 
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
@@ -36,7 +36,7 @@ class AllSettingsPanel(Panel):
         self._build_ui()
 
     def _build_ui(self):
-        self.header("Усі налаштування рації", "Одним файлом -- уся область custom-data рації: теми екрана, SMS (пресети й повідомлення), RCTL, APRS, вибір ключа AES. "
+        self.header("Усі налаштування (область custom-data, у тому числі теми)", "Одним файлом -- уся область custom-data рації: теми екрана, SMS (пресети й повідомлення), RCTL, APRS, вибір ключа AES. "
                                               "Це не кодплаг: канали, зони й контакти тут не зберігаються (для них -- «Бекап і відновлення»).",
                     purpose="перенести налаштування рації (теми, SMS, RCTL, APRS, вибір ключа AES) на іншу рацію або повернути їх після дослідів.")
         bar = ttk.Frame(self)
@@ -60,18 +60,22 @@ class AllSettingsPanel(Panel):
         sbar.pack(fill="x", padx=8, pady=(2, 4))
         self.state_btn = ttk.Button(sbar, text="Показати стан області", command=self._on_state)
         self.compact_btn = ttk.Button(sbar, text="Ущільнити область", command=self._on_compact)
-        self.safety_btn = ttk.Button(sbar, text="Відновити область зі страхової копії...", command=self._on_restore_safety)
         equal_buttons(self.state_btn, self.compact_btn)
-        for b in (self.state_btn, self.compact_btn, self.safety_btn):
+        for b in (self.state_btn, self.compact_btn):
             sbar.add(b)
         self.reg(self.state_btn)
         self.reg(self.compact_btn, radio=True, write=True)
-        self.reg(self.safety_btn, radio=True, write=True)
         ttk.Label(box, text=("Вилучення блока (картинка, мелодія) лише ховає його від рації, а місце не звільняє: область 64 КіБ поступово заповнюється. «Ущільнити область» "
                              "збирає живі блоки підряд і викидає вилучені. Перед записом зберігається страхова копія ВСІЄЇ області у файл (без успішної копії запис не "
                              "починається); запис іде так, що обірваний запис рація прочитає як «області нема» (типові налаштування), а не як покручений вміст; після запису "
                              "область перечитується й звіряється байт у байт, а рація перезавантажується."),
                   wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 6))
+
+        link = ttk.Label(box, text="Повернути область зі страхової копії: «Бекап і відновлення» -> «Відновити…» (джерело -- автоматична страхова копія).",
+                         foreground=gt.P["accent"], cursor="hand2", wraplength=600, justify="left")
+        link.pack(anchor="w", padx=8, pady=(0, 6))
+        link.bind("<Button-1>", lambda _e: self.shell.show("backup"))
+        self.restore_link = link
 
         self.file_label = ttk.Label(self, text="Файл не завантажено.", foreground=gt.P["muted"], wraplength=600, justify="left")
         self.file_label.pack(anchor="w", padx=12, pady=(2, 2))
@@ -80,7 +84,7 @@ class AllSettingsPanel(Panel):
         self.empty_label = ttk.Label(self.list_box, text="Завантаж файл, щоб побачити блоки.", foreground=gt.P["muted"])
         self.empty_label.pack(anchor="w", padx=8, pady=6)
 
-        self.apply_btn = ttk.Button(self, text="Записати вибране в рацію", command=self._on_apply)
+        self.apply_btn = ttk.Button(self, text="Записати вибрані блоки в рацію", command=self._on_apply)
         self.apply_btn.pack(anchor="w", padx=12, pady=(4, 2))
         self.reg(self.apply_btn, radio=True, write=True)
         self.warn = ttk.Label(self, text=("Блок записується в рацію одразу, поза кодплагом, і перезаписує наявний блок такого ж типу. Довжину наявного блока змінити не можна "
@@ -238,23 +242,3 @@ class AllSettingsPanel(Panel):
             self.state_label.config(text="Щойно ущільнено. Натисни «Показати стан області», щоб побачити поточні числа після перезавантаження рації.")
             self.state_warn.config(text="")
         (messagebox.showerror if failed else messagebox.showinfo)("Ущільнення області", res["text"], parent=self.shell)
-
-    def _on_restore_safety(self):
-        if self.shell.busy:
-            return
-        path = filedialog.askopenfilename(parent=self.shell, title="Страхова копія області custom-data", initialdir=output_dir(),
-                                          filetypes=[("Страхова копія області (*.bin)", "*.bin"), ("Усі файли", "*.*")])
-        if not path:
-            return
-        self.shell.run_task(lambda: self.restore_safety_worker(path), "Повертаю область зі страхової копії...", plain_errors=True, on_done=self._show_compacted,
-                            ok_status="Готово.", reconnect_ms=6000)
-
-    def restore_safety_worker(self, path):
-        ser = cps.open_radio()
-        try:
-            return cc.restore_safety_copy(cps.CpsLink(ser), path, self.shell.confirm_from_worker, progress=self.shell.cps_progress, log=print)
-        finally:
-            try:
-                ser.close()
-            except Exception:  # noqa: BLE001
-                pass

@@ -608,7 +608,7 @@ def test_ui():
         app.show("allsettings")
         t36.spin(app, 0.5)
         p = app.get_panel("allsettings")
-        check(isinstance(p, AllSettingsPanel) and all(hasattr(p, n) for n in ("state_btn", "compact_btn", "safety_btn", "state_label", "state_warn")),
+        check(isinstance(p, AllSettingsPanel) and all(hasattr(p, n) for n in ("state_btn", "compact_btn", "restore_link", "state_label", "state_warn")),
               "UI: у розділі «Усі налаштування» є блок стану й кнопки")
         check(p.compact_btn.cget("text") == "Ущільнити область", "UI: кнопка називається «Ущільнити область»")
         check("не прочитано" in p.state_label.cget("text"), "UI: до читання стан пояснює, що робити")

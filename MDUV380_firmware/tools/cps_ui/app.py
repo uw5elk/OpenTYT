@@ -76,6 +76,8 @@ class CpsApp(DocActions, tk.Tk):
         self.title(APP_TITLE)
         self.minsize(760, 520)
         self.settings = settings or Settings()
+        gd.GEOMETRY_STORE = self.settings          # R50: діалоги запам'ятовують розмір у тих самих налаштуваннях
+        gd.install_message_boxes()                 # R50: короткі повідомлення теж зміннорозмірні (і довгий підсумок запису прокручується)
         self.queue = queue.Queue()
         custom_data.ROOM_HOOK = self._room_hook          # R37 U3: нестача місця в області custom-data -> пропозиція ущільнення замість глухої помилки
         self.backend = load_usb_backend()
@@ -89,6 +91,7 @@ class CpsApp(DocActions, tk.Tk):
         self._hosts = {}
         self._current = None
         self._normal_size = None
+        self._normal_pos = None
         self._panes = {}                 # R36 B2: назва -> PaneMemory (межі всередині панелей; положення зберігаються в налаштуваннях)
         self._defs = {}
         for gkey, gtitle, classes in SECTIONS:
@@ -142,7 +145,10 @@ class CpsApp(DocActions, tk.Tk):
     def _apply_saved_window(self):
         w, h = self.settings.get("width"), self.settings.get("height")
         if isinstance(w, int) and isinstance(h, int) and w >= 600 and h >= 400:
-            self.geometry("%dx%d" % (min(w, self.winfo_screenwidth()), min(h, self.winfo_screenheight())))
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            w, h = min(w, sw), min(h, sh)
+            pos = self._saved_position(w, h, sw, sh)
+            self.geometry("%dx%d%s" % (w, h, pos))
             self._normal_size = (w, h)
             if self.settings.get("zoomed"):
                 self._maximize()
@@ -150,15 +156,30 @@ class CpsApp(DocActions, tk.Tk):
             self.geometry("1000x680")        # перший запуск: на весь екран, як було завжди
             self._maximize()
 
+    def _saved_position(self, w, h, sw, sh):
+        """R50: збережене положення вікна ('+x+y') або порожній рядок. Положення, за якого вікно (майже) не видно -- наприклад, друга екранна
+        пара вже відключена, -- відкидається, і система ставить вікно сама."""
+        x, y = self.settings.get("x"), self.settings.get("y")
+        if not (isinstance(x, int) and isinstance(y, int)):
+            return ""
+        if x > sw - 120 or y > sh - 80 or x < -(w - 120) or y < 0:
+            return ""
+        return "%+d%+d" % (x, y)
+
     def _on_configure(self, e):
         if e.widget is self and not self._is_maximized():
             self._normal_size = (e.width, e.height)
+            self._normal_pos = (self.winfo_x(), self.winfo_y())
 
     def save_settings(self):
         w, h = self._normal_size or (self.winfo_width(), self.winfo_height())
         if w >= 600 and h >= 400:         # згорнуте вікно дає безглуздий розмір -- його не запам'ятовуємо
             self.settings.set("width", int(w))
             self.settings.set("height", int(h))
+        pos = self._normal_pos
+        if pos and not self._is_maximized():
+            self.settings.set("x", int(pos[0]))
+            self.settings.set("y", int(pos[1]))
         self.settings.set("zoomed", bool(self._is_maximized()))
         self.settings.set("section", self._current)
         self.settings.set("log_open", bool(self._log_open))
@@ -340,7 +361,7 @@ class CpsApp(DocActions, tk.Tk):
         for key, text, cmd in (("open_radio", "Відкрити з рації", lambda: self.doc_open_radio()),
                                ("open_file", "Відкрити з бекапу...", lambda: self.doc_open_file()),
                                ("save_as", "Зберегти як...", lambda: self.doc_save_as()),
-                               ("write", "Записати в рацію", lambda: self.doc_write()),
+                               ("write", "Записати кодплаг у рацію", lambda: self.doc_write()),
                                ("discard", "Відкинути зміни", lambda: self.doc_discard())):
             b = ttk.Button(row, text=text, command=cmd)
             self.docbtn[key] = b
@@ -564,6 +585,9 @@ class CpsApp(DocActions, tk.Tk):
     def destroy(self):
         if getattr(custom_data.ROOM_HOOK, "__self__", None) is self:
             custom_data.ROOM_HOOK = None
+        if gd.GEOMETRY_STORE is self.settings:          # R50: пам'ять розмірів діалогів належить цьому застосунку
+            gd.GEOMETRY_STORE = None
+            gd.uninstall_message_boxes()
         try:
             self.after_cancel(self._poll_id)
         except (AttributeError, tk.TclError):

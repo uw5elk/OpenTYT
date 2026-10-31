@@ -21,7 +21,7 @@ class DtmfPanel(EditorPanel):
     kind = "dtmf"
     noun = "DTMF-контакт"
     hint_text = ("DTMF-контакти кодплага (до %d): ім'я і код із знаків 0-9, A-D, *, #. Зміни потрапляють у документ одразу; рація змінюється лише за "
-                 "дією «Записати в рацію»." % cc.DTMF_MAX)
+                 "дією «Записати кодплаг у рацію»." % cc.DTMF_MAX)
     columns = (("name", "Ім'я", 190, True), ("code", "Код", 110, False))
 
     def entities(self, img):

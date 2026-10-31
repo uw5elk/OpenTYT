@@ -28,7 +28,7 @@ _WIDTHS = {"№": 50, "Назва": 190, "TG / ID": 100, "Тип": 80, "Коду
 class CodeplugViewer(ttk.Frame):
     """Таблиці ДОКУМЕНТА (cps_ui.document.Document): контакти, групи RX, зони, канали, APRS, DTMF. Єдине джерело даних -- документ;
     вкладка «Контакти» редагується, і кожна правка одразу лягає в документ (а не в чергу): у рацію нічого не пишеться, поки
-    користувач не вибере «Записати в рацію» у панелі документа. Зміни документа (імпорт CSV, відкидання тощо) вікно підхоплює через
+    користувач не вибере «Записати кодплаг у рацію» у панелі документа. Зміни документа (імпорт CSV, відкидання тощо) вікно підхоплює через
     refresh()."""
 
     def __init__(self, parent, document, csv_dir, is_busy=None):
@@ -96,7 +96,7 @@ class CodeplugViewer(ttk.Frame):
                     tree.insert("", "end", values=r)
         cp = self.document.view()
         self.head.config(text="%s. Позивний %s, DMR ID %d. Вкладка «Контакти» редагується; усе, що ви змінюєте, лягає в документ і "
-                              "потрапить у рацію лише за дією «Записати в рацію»." % (
+                              "потрапить у рацію лише за дією «Записати кодплаг у рацію»." % (
                                   self.document.status_text(), cp.callsign() or "(порожньо)", cp.dmr_id()))
         self.set_editable(not self.is_busy())
 
@@ -220,21 +220,21 @@ class ContactDialog(tk.Toplevel):
         gt.style_window(self)
         self.title(title)
         self.transient(parent.winfo_toplevel())
-        self.resizable(False, False)
         self.result = None
         self.name_var = tk.StringVar(value=name)
         self.id_var = tk.StringVar(value=ident)
         self.type_var = tk.StringVar(value=ce.CALL_TYPE_LABELS.get(ctype, "Група"))
         f = ttk.Frame(self)
-        f.pack(padx=14, pady=12)
+        f.pack(fill="both", expand=True, padx=14, pady=12)
+        f.columnconfigure(1, weight=1)
         ttk.Label(f, text="Назва:").grid(row=0, column=0, sticky="w")
         self.name_entry = ttk.Entry(f, textvariable=self.name_var, width=34)
-        self.name_entry.grid(row=0, column=1, padx=8, pady=3)
-        self.name_info = ttk.Label(f, text="", wraplength=360, justify="left")
+        self.name_entry.grid(row=0, column=1, padx=8, pady=3, sticky="ew")
+        self.name_info = gd.autowrap(ttk.Label(f, text="", wraplength=360, justify="left"), f, margin=130)
         self.name_info.grid(row=1, column=1, sticky="w", padx=8)
         ttk.Label(f, text="TG / ID:").grid(row=2, column=0, sticky="w")
         ttk.Entry(f, textvariable=self.id_var, width=14).grid(row=2, column=1, sticky="w", padx=8, pady=3)
-        self.id_info = ttk.Label(f, text="", wraplength=360, justify="left")
+        self.id_info = gd.autowrap(ttk.Label(f, text="", wraplength=360, justify="left"), f, margin=130)
         self.id_info.grid(row=3, column=1, sticky="w", padx=8)
         ttk.Label(f, text="Тип виклику:").grid(row=4, column=0, sticky="w")
         ttk.Combobox(f, textvariable=self.type_var, values=list(ce.CALL_TYPE_LABELS.values()), state="readonly", width=12).grid(
@@ -249,6 +249,7 @@ class ContactDialog(tk.Toplevel):
         self._validate()
         self.name_entry.focus_set()
         self.bind("<Escape>", lambda _e: self.destroy())
+        gd.remember_window(self, "contact", (420, 200))
         self.grab_set()
         parent.wait_window(self)
 

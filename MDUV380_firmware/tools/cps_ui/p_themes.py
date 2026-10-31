@@ -2,7 +2,7 @@
 """Розділ «Налаштування рації → Теми» (R28): кольори екрана рації -- денна й нічна теми (по 32 кольори).
 
 ТЕМИ НЕ Є ЧАСТИНОЮ ДОКУМЕНТА КОДПЛАГА. Вони лежать в області custom-data SPI-флеша (блоки 4 і 5), поза EEPROM і поза діапазоном, який відновлює
-cps_restore, тому «Записати в рацію» над документом теми не змінює (з R30 область custom-data входить у бекап окремим файлом і відновлюється
+cps_restore, тому «Записати кодплаг у рацію» над документом теми не змінює (з R30 область custom-data входить у бекап окремим файлом і відновлюється
 окремим прапорцем -- див. «Бекап і відновлення»). Файл теми -- `.gtm` стокового CPS OpenGD77: рівно 64 байти, без заголовка (theme_edit.py). Панель працює як бікон APRS: «Прочитати з рації» і «Записати в рацію» --
 негайно, тим самим шляхом (custom_data.write_block + звірка читанням). Рація читає теми ЛИШЕ при вмиканні -- після запису її треба вимкнути й увімкнути.
 
@@ -28,7 +28,7 @@ PREVIEW_SCALE = 4
 
 class ThemesPanel(Panel):
     key = "themes"
-    title = "Теми"
+    title = "Тема: файл .gtm для стокового CPS"
     scroll = False          # список кольорів має власну прокрутку, перегляд лишається на місці
 
     def __init__(self, parent, shell):
@@ -60,7 +60,7 @@ class ThemesPanel(Panel):
         left = self.left_host.inner
         ttk.Label(left, text="Теми", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=gt.PAD, pady=(10, 2))
         self._wrap = []
-        hint = ttk.Label(left, text=("Кольори екрана рації: денна й нічна теми. Тема живе не в кодплазі, а в окремій області флеша рації, тому «Записати в рацію» "
+        hint = ttk.Label(left, text=("Кольори екрана рації: денна й нічна теми. Тема живе не в кодплазі, а в окремій області флеша рації, тому «Записати теми в рацію» "
                               "тут змінює рацію одразу, окремо від кодплага. Рація читає тему лише при вмиканні: після запису вимкни її й увімкни, а до того не "
                               "міняй тему з меню рації -- воно записало б поверх свої значення з пам'яті."),
                   wraplength=360, justify="left", foreground=gt.P["muted"])
@@ -91,7 +91,7 @@ class ThemesPanel(Panel):
         bar = FlowFrame(left)
         bar.pack(fill="x", padx=gt.PAD, pady=(6, 2))
         self.read_btn = ttk.Button(bar, text="Прочитати з рації", command=self._on_read)
-        self.write_btn = ttk.Button(bar, text="Записати в рацію", command=self._on_write)
+        self.write_btn = ttk.Button(bar, text="Записати теми в рацію", command=self._on_write)
         equal_buttons(self.read_btn, self.write_btn)
         bar.add(self.read_btn)
         bar.add(self.write_btn)
@@ -387,7 +387,7 @@ class ThemesPanel(Panel):
         self.colors[self.dt] = te.stock_colors(self.dt, variant)
         self.touched[self.dt] = True
         self._redraw()
-        self._status("%s тему скинуто до стокової (%s). У рацію вона потрапить після «Записати в рацію»."
+        self._status("%s тему скинуто до стокової (%s). У рацію вона потрапить після «Записати теми в рацію»."
                      % (te.DAYTIME_NAMES[self.dt], te.VARIANT_NAMES[variant].lower()), "info")
 
     # --- файл ---------------------------------------------------------------------------------------

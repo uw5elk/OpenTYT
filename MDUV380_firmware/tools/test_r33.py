@@ -635,7 +635,7 @@ def test_gui():
         keys = [c.key for _g, _t, cls in SECTIONS for c in cls]
         check("contacts" in keys and "viewer" not in keys, "Q1/Z6: розділ «Контакти» є, «Перегляд кодплага» прибрано: %s" % [k for k in keys if k in ("contacts", "viewer")])
         titles = {c.key: c.title for _g, _t, cls in SECTIONS for c in cls}
-        check(titles.get("contacts") == "Контакти" and titles.get("themes") == "Теми", "Q1/R1/Z6: назви розділів «Контакти» і «Теми»: %r %r" % (titles.get("contacts"), titles.get("themes")))
+        check(titles.get("contacts") == "Контакти" and titles.get("themes") == "Тема: файл .gtm для стокового CPS", "Q1/R1/Z6: назви розділів «Контакти» і «Тема: файл .gtm для стокового CPS» (R50): %r %r" % (titles.get("contacts"), titles.get("themes")))
         check("Перегляд кодплага" not in titles.values() and "Теми екрана" not in titles.values(), "Q2/R1: старі назви розділів прибрано")
 
         for label, spi in (("без документа", None), ("порожній", tc.base.make_spi()), ("повний", tc.make_fixture_spi())):
@@ -819,8 +819,9 @@ def test_gui():
         check(len(errors) >= n_err, "Z2 (панель): порожній файл не вішає вікно")
         # перегляд джерела: обидва RadioID позначено як неперевірені
         labels = [s[0] for s in __import__("cps_ui.p_dmrdb", fromlist=["SOURCES"]).SOURCES]
-        check(any("ContactLists" in s and "формат перевірено" in s for s in labels) and sum("НЕ ПЕРЕВІРЕНО" in s for s in labels) == 2,
-              "P2/Z6: у списку джерел ContactLists перевірено, обидва Radioid позначені «НЕ ПЕРЕВІРЕНО»")
+        check(any("ContactLists" in s and "формат перевірено" in s for s in labels) and sum("НЕ ПЕРЕВІРЕНО" in s for s in labels) == 1
+              and any("user.csv" in s and "перевірено 2026-10-31" in s for s in labels) and labels[0].startswith("Radioid.net user.csv"),
+              "P2/Z6 (R50): ContactLists перевірено; Radioid user.csv перевірено 2026-10-31 і стоїть першим; лише users.json лишився «НЕ ПЕРЕВІРЕНО»")
         check(not any("HamDigital" in s or "hamdigital" in s.lower() for s in labels), "P2: пресет HamDigital прибрано")
         check(not any(k == "probe" for k in []) and hasattr(dp, "_on_probe"), "P2: є «Перевірити джерело»")
     finally:

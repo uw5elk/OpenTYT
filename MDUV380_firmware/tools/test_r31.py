@@ -850,7 +850,7 @@ def test_gui():
             app.show("backup")
             _spin(app)
             bp = app.get_panel("backup")
-            check(bp.keys_var.get() is True and bp.keys_restore_var.get() is False, "K2.3/K3.1/Z1 (%s): ключі в архів -- типово ТАК; відновлення ключів -- типово НІ" % label)
+            check(bp.keys_var.get() is True and not hasattr(bp, "keys_restore_var"), "K2.3/Z1 (%s): ключі в архів -- типово ТАК; R50: прапорець відновлення ключів тепер у вікні «Відновити…» (типово НІ)" % label)
             check("міститиме ключі шифрування AES" in bp.keys_note.cget("text"), "K2.2: рядок про ключі в архіві: %s" % bp.keys_note.cget("text"))
             bp.keys_var.set(False)
             bp._update_keys_note()
@@ -861,7 +861,7 @@ def test_gui():
             bp.full_snapshot_var.set(False)
             bp.keys_var.set(True)
             bp._update_keys_note()
-            check(str(bp.keys_only_button.cget("state")) == "disabled", "Z1 (%s): без рації «Відновити лише ключі AES» вимкнено" % label)
+            check(str(bp.restore_button.cget("state")) == "disabled", "Z1 (%s): без рації «Відновити…» вимкнено" % label)
 
         # ---------- бекап із панелі: з ключами / без ----------
         spi_a = put_table(tcr.spi_a(), make_table(1, OCC))
@@ -893,7 +893,7 @@ def test_gui():
         cl.open_radio = lambda *a, **k: radio_r
         fd.askopenfilename = lambda **k: bpath
         confirms.clear()
-        bp._on_restore_keys_clicked()
+        bp.start_restore({"path": bpath, "kind": "zip", "codeplug": False, "region": False, "state": False, "keys": True})
         _wait_idle(app, 40.0)
         check(len(confirms) == 1 and "Слоти до запису: 5, 9." in confirms[0][2] or "Слоти до запису" in confirms[0][2], "K3.1/Z1: перед записом показано підтвердження зі слотами")
         check(all(akb.entry_of(table_of(radio_r.spi), s) == akb.entry_of(table_of(spi_a), s) for s in OCC), "K3/Z1: «Відновити лише ключі AES» відновила слоти")
@@ -902,17 +902,14 @@ def test_gui():
         radio_s = tcr.FakeRadioX(bytearray(tb))
         cl.open_radio = lambda *a, **k: radio_s
         infos.clear()
-        bp.keys_restore_var.set(False)
-        bp._on_restore_clicked()
+        bp.start_restore({"path": bpath, "kind": "zip", "codeplug": True, "region": False, "state": False, "keys": False})
         _wait_idle(app, 60.0)
         check(table_of(radio_s.spi) == table_of(tb) and any("НЕ відновлювались" in str(i) for i in infos), "K3.1/K4.2/Z1: прапорець вимкнено -- ключі не чіпано, про це сказано")
         radio_t = tcr.FakeRadioX(bytearray(tb))
         cl.open_radio = lambda *a, **k: radio_t
-        bp.keys_restore_var.set(True)
-        bp._on_restore_clicked()
+        bp.start_restore({"path": bpath, "kind": "zip", "codeplug": True, "region": False, "state": False, "keys": True})
         _wait_idle(app, 60.0)
         check(all(akb.entry_of(table_of(radio_t.spi), s) == akb.entry_of(table_of(spi_a), s) for s in OCC), "K3.1/Z1: прапорець увімкнено -- ключі відновлено разом з кодплагом")
-        bp.keys_restore_var.set(False)
 
         # ---------- панель бази: файл -> відбір -> запис ----------
         csvp = os.path.join(tmp, "users.csv")

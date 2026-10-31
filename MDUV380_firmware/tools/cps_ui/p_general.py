@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Розділ «Кодплаг → Загальні налаштування» (R-next, Y2): лише те, що є в кодплазі І справді читається прошивкою -- пароль на старті (прапорець +
 PIN) і тривалості DTMF. Решта 40-байтового блоку «загальних налаштувань» прошивка OpenGD77 не читає, тому тут її нема (див. general_edit.py).
-Зміни лягають у документ (зірочка в заголовку вікна); у рацію -- лише дією «Записати в рацію»."""
+Зміни лягають у документ (зірочка в заголовку вікна); у рацію -- лише дією «Записати кодплаг у рацію»."""
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -21,7 +21,7 @@ class GeneralPanel(Panel):
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
         self.header("Загальні налаштування", "Тільки те, що рація справді читає з кодплага: пароль на старті й тривалості DTMF. Зміни потрапляють "
-                                              "у документ; рація змінюється лише за дією «Записати в рацію».")
+                                              "у документ; рація змінюється лише за дією «Записати кодплаг у рацію».")
         self.hint = ttk.Label(self, text=HINT_NO_DOC, foreground=gt.P["muted"])
         self.enable = tk.BooleanVar()
         self.pin = tk.StringVar()
@@ -60,7 +60,7 @@ class GeneralPanel(Panel):
             self.infos[key] = ttk.Label(f, text="", foreground=gt.P["muted"], wraplength=460, justify="left")
             self.infos[key].pack(side="left", padx=10)
             self.dt[key].trace_add("write", lambda *_: self._validate())
-        ttk.Label(self.box_dtmf, text=("Рація читає ці значення один раз при вмиканні -- після запису перезавантажте її (запис з «Записати в рацію» "
+        ttk.Label(self.box_dtmf, text=("Рація читає ці значення один раз при вмиканні -- після запису перезавантажте її (запис з «Записати кодплаг у рацію» "
                                        "перезавантажує сам). Швидкість 0 заборонена: прошивка ділила б на нуль."),
                   wraplength=560, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 

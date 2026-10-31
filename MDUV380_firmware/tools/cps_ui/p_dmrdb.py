@@ -18,9 +18,10 @@ from .layout import FitTable, combo_width
 from .common import output_dir
 from .panel import Panel
 
-SOURCES = [("ContactLists GD77, увесь світ (формат перевірено)", db.CONTACTLISTS_URL),
+# R50: типове джерело -- Radioid user.csv (адреса й колонки перевірено 2026-10-31). Усе змінюється в панелі й запам'ятовується між запусками.
+SOURCES = [("Radioid.net user.csv (перевірено 2026-10-31)", db.RADIOID_CSV_URL),
+           ("ContactLists GD77, увесь світ (формат перевірено)", db.CONTACTLISTS_URL),
            ("Radioid.net users.json (НЕ ПЕРЕВІРЕНО)", db.RADIOID_JSON_URL),
-           ("Radioid.net user.csv (НЕ ПЕРЕВІРЕНО)", db.RADIOID_CSV_URL),
            ("Інша адреса", "")]
 BATCH = 400                    # скільки рядків таблиці вставляємо за один крок (вікно не підвисає: між кроками обробляються події)
 SEARCH_DELAY_MS = 250
@@ -37,14 +38,36 @@ class DmrDbPanel(Panel):
         self.image = None               # готовий образ з файла бази (має перевагу над відбором)
         self.image_name = ""
         self.cancel_event = threading.Event()
-        self.src_var = tk.StringVar(value=SOURCES[0][0])
-        self.url_var = tk.StringVar(value=SOURCES[0][1])
-        self.prefix_var = tk.StringVar(value="255")
+        st = getattr(shell, "settings", None)
+        url0 = (st.get("dmrdb_url") if st is not None else None) or SOURCES[0][1]
+        label0 = next((n for n, u in SOURCES if u == url0 and u), SOURCES[-1][0])
+        self.src_var = tk.StringVar(value=label0)
+        self.url_var = tk.StringVar(value=url0)
+        self.prefix_var = tk.StringVar(value=self._saved(st, "dmrdb_prefix", ",".join(db.DEFAULT_PREFIXES)))
+        self.country_var = tk.StringVar(value=self._saved(st, "dmrdb_countries", ",".join(db.DEFAULT_COUNTRIES)))
         self.days_var = tk.StringVar(value="")
         self.limit_var = tk.StringVar(value="")
         self.chars_var = tk.StringVar(value=str(db.DEFAULT_TEXT_CHARS))
         self.cols_var = tk.StringVar(value=",".join(db.DEFAULT_COLUMNS))
         self._build_ui()
+
+    @staticmethod
+    def _saved(st, key, default):
+        v = st.get(key) if st is not None else None
+        return default if v is None else str(v)
+
+    def _remember(self):
+        """Запам'ятати джерело й відбір (settings.py); помилки запису не заважають."""
+        st = getattr(self.shell, "settings", None)
+        if st is None:
+            return
+        st.set("dmrdb_url", self.url_var.get().strip())
+        st.set("dmrdb_prefix", self.prefix_var.get().strip())
+        st.set("dmrdb_countries", self.country_var.get().strip())
+        try:
+            st.save()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _build_ui(self):
         self.header("База позивних DMR ID", "Щоб на екрані «Останні почуті» замість номера з'являвся позивний. База лежить в області №1 флеша рації (0x50000..0x8FFFF); "
@@ -66,13 +89,14 @@ class DmrDbPanel(Panel):
         self.net_btn = ttk.Button(row2, text="Завантажити з мережі у файл...", command=self._on_download)
         self.net_btn.pack(side="left", padx=8)
         self.reg(self.net_btn, radio=False)
-        self.open_btn = ttk.Button(row2, text="Відкрити файл з диска (CSV, JSON)...", command=self._on_open_source)
+        self.open_btn = ttk.Button(row2, text="Відкрити файл…", command=self._on_open_source)
         self.open_btn.pack(side="left", padx=8)
         self.reg(self.open_btn, radio=False)
-        ttk.Label(src, text=("Мережа вмикається лише кнопками «Перевірити джерело» (запитує перші ~2 КБ і показує, що прийшло) та «Завантажити з мережі» (весь файл у обране тобою місце); "
-                             "у репозиторії нічого не кешується. Мережі нема -- відкрий файл, завантажений вручну. ContactLists -- файл на весь світ, тож обов'язково залиш регіон (початок DMR ID). "
-                             "HamDigital: прямої адреси у відкритому доступі нема -- потрібен власний обліковий запис на amateurradio.digital (реєстрація й щорічний внесок); "
-                             "завантаж файл звідти вручну й відкрий його кнопкою «Відкрити файл з диска»."),
+        ttk.Label(src, text=("Джерело вже задано (Radioid user.csv). Мережа вмикається лише кнопками «Перевірити джерело» (запитує перші ~2 КБ і показує, що прийшло) та «Завантажити з мережі у файл» "
+                             "(весь файл у обране тобою місце); у репозиторії нічого не кешується. «Відкрити файл…» розпізнає сам: CSV чи JSON (з них збирається база -- далі відбір) або "
+                             "готовий образ .bin / повний знімок .zip (він іде в рацію як є, відбір не діє). Мережі нема -- відкрий файл, завантажений вручну. Файли на весь світ "
+                             "обов'язково звужуй: регіоном (початок DMR ID) і/або країною. "
+                             "HamDigital: прямої адреси у відкритому доступі нема -- потрібен власний обліковий запис на amateurradio.digital; завантаж файл звідти вручну й відкрий його."),
                   wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 2))
         self.src_label = ttk.Label(src, text="Файл не відкрито.", foreground=gt.P["muted"], wraplength=600, justify="left")
         self.src_label.pack(anchor="w", padx=8, pady=(0, 6))
@@ -81,7 +105,8 @@ class DmrDbPanel(Panel):
         flt.pack(fill="x", padx=12, pady=6)
         grid = ttk.Frame(flt)
         grid.pack(fill="x", padx=8, pady=6)
-        fields = [("Регіон -- початок DMR ID (через кому; порожньо = усі)", self.prefix_var, 14),
+        fields = [("Регіон -- початок DMR ID (через кому; порожньо = без цього фільтра)", self.prefix_var, 14),
+                  ("Країна -- колонка COUNTRY (через кому; порожньо = без цього фільтра; з регіоном діє як «або»)", self.country_var, 24),
                   ("Не активні довше, ніж (днів; порожньо = не фільтрувати)", self.days_var, 8),
                   ("Не більше записів (порожньо = без ліміту)", self.limit_var, 8),
                   ("Колонки тексту і їх порядок (%s)" % ", ".join(db.COLUMN_NAMES), self.cols_var, 28)]
@@ -129,7 +154,7 @@ class DmrDbPanel(Panel):
         rad.pack(fill="x", padx=12, pady=6)
         bar = ttk.Frame(rad)
         bar.pack(fill="x", padx=8, pady=(6, 2))
-        self.write_btn = ttk.Button(bar, text="Записати базу в рацію...", command=self._on_write)
+        self.write_btn = ttk.Button(bar, text="Записати базу позивних в рацію...", command=self._on_write)
         self.write_btn.pack(side="left")
         self.reg(self.write_btn, radio=True, write=True)
         self.cancel_btn = ttk.Button(bar, text="Скасувати запис", command=self._on_cancel, state="disabled")
@@ -142,9 +167,6 @@ class DmrDbPanel(Panel):
         self.save_btn = ttk.Button(bar2, text="Зберегти базу з рації у файл...", command=self._on_save_db)
         self.save_btn.pack(side="left")
         self.reg(self.save_btn)
-        self.load_btn = ttk.Button(bar2, text="Завантажити базу з файлу (.bin або повний знімок .zip)...", command=self._on_load_db)
-        self.load_btn.pack(side="left", padx=8)
-        self.reg(self.load_btn, radio=False)
         self.what_label = ttk.Label(rad, text="", wraplength=600, justify="left")
         self.what_label.pack(anchor="w", padx=8, pady=(2, 2))
         ttk.Label(rad, text=("Запис займає хвилини: база в 17 тисяч записів -- це десятки 4-КіБ секторів, кожен пишеться окремо. Спершу обнуляється заголовок бази, заголовок пишеться останнім, тож "
@@ -167,6 +189,7 @@ class DmrDbPanel(Panel):
             return
         if not messagebox.askyesno("Завантажити з мережі", "Буде завантажено файл:\n%s\n\nРозмір і час побачиш у журналі під час завантаження. Продовжити?" % url, parent=self.shell):
             return
+        self._remember()
         name = os.path.basename(url.split("?")[0]) or "dmr_users.csv"
         dest = filedialog.asksaveasfilename(parent=self.shell, title="Куди зберегти завантажений файл", initialdir=output_dir(), initialfile=name)
         if not dest:
@@ -179,13 +202,27 @@ class DmrDbPanel(Panel):
         return db.read_source_file(dest), "%s (завантажено %.1f МБ за %.0f с)" % (dest, got / 1048576.0, secs)
 
     def _on_open_source(self):
+        """R50: одне «Відкрити файл…». CSV/JSON -> джерело для складання бази (далі відбір); .bin / повний знімок .zip -> готовий образ (відбір не діє)."""
         if self.shell.busy:
             return
-        path = filedialog.askopenfilename(parent=self.shell, title="Файл бази позивних", initialdir=output_dir(),
-                                          filetypes=[("CSV або JSON", "*.csv *.json *.txt"), ("Усі файли", "*.*")])
+        path = filedialog.askopenfilename(parent=self.shell, title="Файл бази позивних (CSV, JSON, образ .bin або знімок .zip)", initialdir=output_dir(),
+                                          filetypes=[("База позивних: CSV, JSON, .bin, .zip", "*.csv *.json *.txt *.bin *.zip"), ("Усі файли", "*.*")])
         if not path:
             return
+        try:
+            kind = db.detect_file_kind(path)
+        except OSError as e:
+            messagebox.showerror("База позивних", "Файл не прочитано: %s" % e, parent=self.shell)
+            return
+        if kind == "image":
+            try:
+                self.load_db_path(path)
+            except db.DbError as e:
+                messagebox.showerror("База позивних", "Файл не підійшов: %s" % e, parent=self.shell)
+            return
         self.shell.run_task(lambda: (db.read_source_file(path), path), "Читаю файл бази...", plain_errors=True, on_done=self._source_loaded, ok_status="Файл прочитано.")
+
+    _on_load_db = _on_open_source      # стара назва (раніше була друга кнопка для готового образу)
 
     def _source_loaded(self, res):
         self.source, label = res
@@ -234,7 +271,8 @@ class DmrDbPanel(Panel):
         if self.source is None:
             raise db.DbError("спершу відкрий або завантаж файл бази")
         return db.Job(self.source, db.parse_prefixes(self.prefix_var.get()), self._int_or_none(self.days_var, "дні бездіяльності"),
-                      self._int_or_none(self.limit_var, "ліміт записів"), db.parse_columns(self.cols_var.get()), int(self.chars_var.get()))
+                      self._int_or_none(self.limit_var, "ліміт записів"), db.parse_columns(self.cols_var.get()), int(self.chars_var.get()),
+                      countries=db.parse_countries(self.country_var.get()))
 
     def _on_count(self):
         try:
@@ -244,6 +282,7 @@ class DmrDbPanel(Panel):
             return
         self.job = job
         self.image = None
+        self._remember()
         self.summary.config(text=job.summary())
         self.show_table(job.table_rows(), job.counts_line() + ("\n" + job.dropped_text() if job.dropped else ""))
 
@@ -417,18 +456,6 @@ class DmrDbPanel(Panel):
         img = db.parse_image(data, want_records=False)
         extra = "" if img.in_area1 else "\nУВАГА: база довша за область №1 -- у файл потрапила лише частина з області №1."
         return "Збережено %d записів (%d Б): %s%s" % (min(img.count, db.capacity(img.rec_len)), len(data), path, extra)
-
-    def _on_load_db(self):
-        if self.shell.busy:
-            return
-        path = filedialog.askopenfilename(parent=self.shell, title="Файл бази (образ або повний знімок)", initialdir=output_dir(),
-                                          filetypes=[("Образ бази або повний знімок", "*.bin *.zip"), ("Усі файли", "*.*")])
-        if not path:
-            return
-        try:
-            self.load_db_path(path)
-        except db.DbError as e:
-            messagebox.showerror("База позивних", "Файл не підійшов: %s" % e, parent=self.shell)
 
     def load_db_path(self, path):
         """Завантажити готовий образ з файла; відбір (крок 2) тоді не застосовується. DbError -- пояснення, поточний стан не змінюється."""

@@ -9,14 +9,99 @@ from tkinter import ttk, scrolledtext
 
 import gui_theme as gt
 
+# R50: пам'ять розміру діалогів. Хто завгодно (CpsApp) кладе сюди об'єкт з get(key, default)/set(key, value)/save() -- типово settings.Settings;
+# без нього діалоги поводяться як раніше (розмір за вмістом). Ключ -- вид діалогу, не його заголовок (заголовки містять назви каналів тощо).
+GEOMETRY_STORE = None
+MIN_DIALOG = (320, 180)                 # менше цього діалог зберегти не дозволяємо (збережене сміття не має робити вікно непридатним)
 
-def _build(parent, title, text, buttons, default_index, width=84, height=26):
+
+def _parse_size(text):
+    """'640x480' -> (640, 480) або None."""
+    try:
+        w, h = str(text).lower().split("x")
+        w, h = int(w), int(h)
+    except (ValueError, AttributeError):
+        return None
+    return (w, h) if w >= MIN_DIALOG[0] and h >= MIN_DIALOG[1] else None
+
+
+def remember_window(win, key, minsize=None):
+    """Зробити діалог зміннорозмірним і запам'ятовувати його розмір між запусками. Збережений розмір застосовується (не більший за екран), нове
+    положення -- по центру над головним вікном. Розмір записується в GEOMETRY_STORE при закритті діалогу."""
+    win.resizable(True, True)
+    if minsize:
+        win.minsize(*minsize)
+    store = GEOMETRY_STORE
+    sk = "dlg_" + key
+    win.update_idletasks()
+    w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+    saved = _parse_size(store.get(sk)) if store is not None else None
+    if saved:
+        w, h = saved
+    mw, mh = (minsize or (0, 0))
+    w = max(w, mw)
+    h = max(h, mh)
+    try:
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        w, h = min(w, sw), min(h, sh)
+        top = win.master.winfo_toplevel()
+        x = top.winfo_rootx() + max(0, (top.winfo_width() - w) // 2)
+        y = top.winfo_rooty() + max(0, (top.winfo_height() - h) // 3)
+        x = max(0, min(x, sw - w))
+        y = max(0, min(y, sh - h))
+        win.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        if not saved:
+            # підписи, що переносяться (autowrap), після першого розміщення можуть захотіти більше висоти -- даємо її, поки вміщується в екран
+            for _ in range(3):
+                win.update_idletasks()
+                need = win.winfo_reqheight()
+                if need <= win.winfo_height() or need > sh:
+                    break
+                win.geometry("%dx%d" % (w, need))
+    except tk.TclError:
+        pass
+
+    def on_destroy(e):
+        if e.widget is not win or store is None:
+            return
+        cur = win._r50_size
+        if cur and cur[0] >= MIN_DIALOG[0] and cur[1] >= MIN_DIALOG[1]:
+            store.set(sk, "%dx%d" % cur)
+            try:
+                store.save()
+            except Exception:  # noqa: BLE001 -- збереження розміру ніколи не заважає роботі
+                pass
+
+    def on_conf(e):
+        if e.widget is win:
+            win._r50_size = (e.width, e.height)
+    win._r50_size = None
+    win.bind("<Configure>", on_conf, add="+")
+    win.bind("<Destroy>", on_destroy, add="+")
+
+
+def _slug(title):
+    """Коротка стабільна частина ключа з заголовка діалогу (щоб велике підтвердження запису не розтягувало маленьке «Видалити?»)."""
+    t = "".join(c if c.isalnum() else "_" for c in str(title).lower())
+    return t[:40].strip("_") or "x"
+
+
+def autowrap(label, container, margin=28, floor=180):
+    """Підпис, що переноситься за шириною контейнера (діалог можна розтягнути -- текст не лишається вузьким і не обрізається)."""
+    def fit(e=None):
+        w = container.winfo_width()
+        if w > 1:
+            label.config(wraplength=max(floor, w - margin))
+    container.bind("<Configure>", fit, add="+")
+    return label
+
+
+def _build(parent, title, text, buttons, default_index, width=84, height=26, key="text", minsize=(560, 320)):
     """Повертає (Toplevel, словник-результат). buttons: [(підпис, значення)]."""
     win = tk.Toplevel(parent)
     gt.style_window(win)
     win.title(title)
     win.transient(parent.winfo_toplevel())
-    win.minsize(560, 320)
     result = {"value": None}
     body = ttk.Frame(win)
     body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
@@ -41,12 +126,13 @@ def _build(parent, title, text, buttons, default_index, width=84, height=26):
         # кнопки пакуються справа наліво: перша в списку -- крайня права; фокус -- на «безпечній» (default_index)
         btns[default_index].focus_set()
     win._dialog_text = txt
+    remember_window(win, "%s_%s" % (key, _slug(title)), minsize)
     return win, result
 
 
 def confirm_dialog(parent, title, text, yes="Так", no="Ні"):
     """Так/Ні з прокрутимим текстом. Типово фокус на «Ні». Закриття вікна = «Ні»."""
-    win, res = _build(parent, title, text, [(yes, True), (no, False)], 1)
+    win, res = _build(parent, title, text, [(yes, True), (no, False)], 1, key="confirm")
     win.grab_set()
     parent.wait_window(win)
     return bool(res["value"])
@@ -54,7 +140,7 @@ def confirm_dialog(parent, title, text, yes="Так", no="Ні"):
 
 def text_dialog(parent, title, text, close="Закрити"):
     """Лише читання, одна кнопка."""
-    win, _res = _build(parent, title, text, [(close, None)], 0)
+    win, _res = _build(parent, title, text, [(close, None)], 0, key="text")
     win.grab_set()
     parent.wait_window(win)
 
@@ -62,7 +148,7 @@ def text_dialog(parent, title, text, close="Закрити"):
 def choice_dialog(parent, title, text, buttons, default_index=0):
     """Вибір з кількох кнопок. buttons: [(підпис, значення)] -- ПЕРША в списку стоїть крайньою правою (і має фокус, якщо default_index = 0).
     Закриття вікна без вибору повертає None."""
-    win, res = _build(parent, title, text, buttons, default_index, width=70, height=10)
+    win, res = _build(parent, title, text, buttons, default_index, width=70, height=10, key="choice")
     win.grab_set()
     parent.wait_window(win)
     return res["value"]
@@ -87,11 +173,13 @@ def delete_choice(parent, noun, name, refs_text=None):
 # ----------------------------------------------------------------------------------------------------------------------------
 
 def _small_window(parent, title):
+    """Мале вікно діалогу. Розмір запам'ятовується (remember_window) -- викликач після створення вмісту викликає win.remember(ключ, мінімум)."""
     win = tk.Toplevel(parent)
     gt.style_window(win)
     win.title(title)
     win.transient(parent.winfo_toplevel())
     win.resizable(True, True)
+    win.remember = lambda key, minsize=None: remember_window(win, key, minsize)
     return win
 
 
@@ -117,7 +205,7 @@ def name_dialog(parent, title, prompt, initial="", check=None, ok="Гаразд"
     ttk.Label(body, text=prompt).pack(anchor="w")
     entry = ttk.Entry(body, textvariable=var, width=40)
     entry.pack(fill="x", pady=4)
-    msg = ttk.Label(body, text="", wraplength=380, justify="left")
+    msg = autowrap(ttk.Label(body, text="", wraplength=380, justify="left"), body)
     msg.pack(anchor="w", pady=2)
     bar = ttk.Frame(win)
     bar.pack(fill="x", padx=12, pady=(4, 12))
@@ -140,7 +228,7 @@ def name_dialog(parent, title, prompt, initial="", check=None, ok="Гаразд"
     win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
     entry.focus_set()
     entry.select_range(0, "end")
-    win.update_idletasks()
+    win.remember("name", None)
     win.grab_set()
     parent.wait_window(win)
     return result["value"]
@@ -157,12 +245,12 @@ def two_field_dialog(parent, title, prompt1, prompt2, check1, check2, initial1="
     ttk.Label(body, text=prompt1).pack(anchor="w")
     e1 = ttk.Entry(body, textvariable=v1, width=40)
     e1.pack(fill="x", pady=4)
-    m1 = ttk.Label(body, text="", wraplength=380, justify="left")
+    m1 = autowrap(ttk.Label(body, text="", wraplength=380, justify="left"), body)
     m1.pack(anchor="w", pady=2)
     ttk.Label(body, text=prompt2).pack(anchor="w", pady=(6, 0))
     e2 = ttk.Entry(body, textvariable=v2, width=40)
     e2.pack(fill="x", pady=4)
-    m2 = ttk.Label(body, text="", wraplength=380, justify="left")
+    m2 = autowrap(ttk.Label(body, text="", wraplength=380, justify="left"), body)
     m2.pack(anchor="w", pady=2)
     bar = ttk.Frame(win)
     bar.pack(fill="x", padx=12, pady=(4, 12))
@@ -187,7 +275,7 @@ def two_field_dialog(parent, title, prompt1, prompt2, check1, check2, initial1="
     win.bind("<Escape>", lambda _e: finish(None))
     win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
     e1.focus_set()
-    win.update_idletasks()
+    win.remember("two_field", None)
     win.grab_set()
     parent.wait_window(win)
     return result["value"]
@@ -197,7 +285,6 @@ def pick_dialog(parent, title, name_prompt, items, limit, check=None, ok="Ств
     """Назва + вибір елементів (мінімум 1, не більше limit) зі списку items [(значення, підпис)]. Порядок результату -- як у списку.
     Повертає (назва, [значення]) або None."""
     win = _small_window(parent, title)
-    win.minsize(460, 460)
     result = {"value": None}
     var = tk.StringVar(value=initial)
     flt = tk.StringVar()
@@ -206,7 +293,7 @@ def pick_dialog(parent, title, name_prompt, items, limit, check=None, ok="Ств
     ttk.Label(body, text=name_prompt).pack(anchor="w")
     entry = ttk.Entry(body, textvariable=var, width=40)
     entry.pack(fill="x", pady=4)
-    msg = ttk.Label(body, text="", wraplength=420, justify="left")
+    msg = autowrap(ttk.Label(body, text="", wraplength=420, justify="left"), body)
     msg.pack(anchor="w", pady=2)
     ttk.Label(body, text="Фільтр списку:").pack(anchor="w", pady=(6, 0))
     ttk.Entry(body, textvariable=flt).pack(fill="x", pady=2)
@@ -275,7 +362,7 @@ def pick_dialog(parent, title, name_prompt, items, limit, check=None, ok="Ств
     win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
     fill()
     entry.focus_set()
-    win.update_idletasks()
+    win.remember("pick", (460, 460))
     win.grab_set()
     parent.wait_window(win)
     return result["value"]
@@ -294,7 +381,7 @@ def new_channel_dialog(parent, title, check=None, base_label=None):
     ttk.Label(body, text="Назва нового каналу:").pack(anchor="w")
     entry = ttk.Entry(body, textvariable=var, width=40)
     entry.pack(fill="x", pady=4)
-    msg = ttk.Label(body, text="", wraplength=380, justify="left")
+    msg = autowrap(ttk.Label(body, text="", wraplength=380, justify="left"), body)
     msg.pack(anchor="w", pady=2)
     box = ttk.LabelFrame(body, text="Тип")
     box.pack(fill="x", pady=6)
@@ -302,8 +389,8 @@ def new_channel_dialog(parent, title, check=None, base_label=None):
     r1.pack(anchor="w", padx=8, pady=2)
     r2 = ttk.Radiobutton(box, text="Цифровий (DMR)", variable=kind, value="digital")
     r2.pack(anchor="w", padx=8, pady=2)
-    ttk.Label(body, text="Частоти RX/TX нового каналу -- типові (145,50000 МГц): змініть їх у формі.", wraplength=380, justify="left",
-              foreground=gt.P["muted"]).pack(anchor="w", pady=2)
+    autowrap(ttk.Label(body, text="Частоти RX/TX нового каналу -- типові (145,50000 МГц): змініть їх у формі.", wraplength=380, justify="left",
+                       foreground=gt.P["muted"]), body).pack(anchor="w", pady=2)
     if base_label:
         ttk.Checkbutton(body, text="Узяти значення з вибраного каналу: %s (тип береться з нього)" % base_label, variable=use_base,
                         command=lambda: [w.config(state="disabled" if use_base.get() else "normal") for w in (r1, r2)]).pack(anchor="w", pady=4)
@@ -326,7 +413,63 @@ def new_channel_dialog(parent, title, check=None, base_label=None):
     win.bind("<Escape>", lambda _e: finish(None))
     win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
     entry.focus_set()
-    win.update_idletasks()
+    win.remember("new_channel", None)
     win.grab_set()
     parent.wait_window(win)
     return result["value"]
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+#  R50: системні messagebox -> наші зміннорозмірні діалоги (довгі підсумки запису прокручуються, розмір запам'ятовується)
+# ----------------------------------------------------------------------------------------------------------------------------
+
+import tkinter.messagebox as _mb
+
+_PRISTINE = {n: getattr(_mb, n) for n in ("showinfo", "showwarning", "showerror", "askyesno", "askokcancel", "askyesnocancel")}
+_INSTALLED = {}
+
+
+def _message_dialog(kind, buttons, default_of):
+    """kind: 'info' | 'yesno' | 'okcancel' | 'yesnocancel'. buttons: [(підпис, значення)] -- перша крайня права."""
+    orig = _PRISTINE[{"info": "showinfo", "yesno": "askyesno", "okcancel": "askokcancel", "yesnocancel": "askyesnocancel"}[kind]]
+
+    def fn(title=None, message=None, **options):
+        parent = options.get("parent") or tk._default_root
+        if parent is None:
+            return orig(title, message, **options)
+        text = str(message if message is not None else "")
+        lines = text.split("\n") or [""]
+        width = max(40, min(84, max(len(l) for l in lines) + 2))
+        height = max(3, min(24, sum(max(1, -(-len(l) // width)) for l in lines)))
+        default_index = default_of(options.get("default"))
+        win, res = _build(parent, str(title or ""), text, buttons, default_index, width=width, height=height, key="msg", minsize=(380, 170))
+        win.grab_set()
+        parent.wait_window(win)
+        v = res["value"]
+        if kind == "info":
+            return "ok"
+        if kind == "yesnocancel":
+            return v if v in (True, False) else None
+        return v is True
+    return fn
+
+
+def install_message_boxes():
+    """Замінити showinfo/showwarning/showerror/askyesno/askokcancel/askyesnocancel зміннорозмірними діалогами. Те, що вже підмінено ззовні
+    (наприклад, у тестах), не чіпаємо."""
+    info = _message_dialog("info", [("Гаразд", "ok")], lambda d: 0)
+    new = {"showinfo": info, "showwarning": info, "showerror": info,
+           "askyesno": _message_dialog("yesno", [("Так", True), ("Ні", False)], lambda d: 1 if d == "no" else 0),
+           "askokcancel": _message_dialog("okcancel", [("Гаразд", True), ("Скасувати", False)], lambda d: 1 if d == "cancel" else 0),
+           "askyesnocancel": _message_dialog("yesnocancel", [("Так", True), ("Ні", False), ("Скасувати", None)], lambda d: {"no": 1, "cancel": 2}.get(d, 0))}
+    for name, fn in new.items():
+        if getattr(_mb, name) is _PRISTINE[name]:
+            setattr(_mb, name, fn)
+            _INSTALLED[name] = fn
+
+
+def uninstall_message_boxes():
+    for name, fn in list(_INSTALLED.items()):
+        if getattr(_mb, name) is fn:
+            setattr(_mb, name, _PRISTINE[name])
+        del _INSTALLED[name]

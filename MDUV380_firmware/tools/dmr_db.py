@@ -49,7 +49,9 @@ PART_KEY = "dmrIdDb"
 PART_FILE = "dmriddb.bin"
 CONTACTLISTS_URL = "https://raw.githubusercontent.com/ContactLists/NORMAL-ContactLists/master/RADIODDITY/GD77/GD77_WW_default.csv"   # R33: формат перевірено завантаженням 2026-10-25 (за брифом): Radio ID,Callsign,Name,Nickname,City,State,Country,Remarks
 RADIOID_JSON_URL = "https://database.radioid.net/static/users.json"   # адреса з конфіга стороннього застосунку (Russell-KV4S/DMR.UserDB.RadioConverter); НЕ перевірено -- є кнопка «Перевірити джерело»
-RADIOID_CSV_URL = "https://radioid.net/static/user.csv"               # з пам'яті, НЕ перевірено; якщо не відкривається -- візьми JSON або скачай файл вручну
+RADIOID_CSV_URL = "https://radioid.net/static/user.csv"               # R50: перевірено Богданом 2026-10-31: HTTP 200, 17 197 867 Б, колонки RADIO_ID,CALLSIGN,FIRST_NAME,LAST_NAME,CITY,STATE,COUNTRY
+DEFAULT_COUNTRIES = ("Ukraine",)                                      # R50: типовий фільтр «Україна» -- значення колонки COUNTRY (редагується в панелі)
+DEFAULT_PREFIXES = ("255",)                                           # ...і/або початок DMR ID (MCC 255); обидва фільтри діють як «АБО»
 COLUMN_NAMES = ("callsign", "first", "last", "city", "state", "country")
 COLUMN_TITLES = {"callsign": "позивний", "first": "ім'я", "last": "прізвище", "city": "місто", "state": "область", "country": "країна"}
 DEFAULT_COLUMNS = ("callsign", "first")
@@ -631,6 +633,11 @@ def parse_prefixes(text):
     return out
 
 
+def parse_countries(text):
+    """Країни через кому або «;» (значення колонки COUNTRY). Порожньо -- без фільтра за країною."""
+    return [c.strip() for c in str(text or "").replace(";", ",").split(",") if c.strip()]
+
+
 def parse_columns(text):
     names = [c.strip().lower() for c in str(text or "").replace(";", ",").split(",") if c.strip()]
     if not names:
@@ -645,13 +652,19 @@ def compose(row, columns):
     return sanitize(" ".join(str(row.get(c) or "").strip() for c in columns if str(row.get(c) or "").strip()))
 
 
-def apply_filters(rows, prefixes=(), max_inactive_days=None, limit=None, today=None, has_date=None):
+def apply_filters(rows, prefixes=(), max_inactive_days=None, limit=None, today=None, has_date=None, countries=()):
     """Повертає (відібрані рядки, інфо). Дублікати за ID -- перший. ID поза 1..0xFFFFFF відкидаються (формат 'N' має 3 байти).
-    Бездіяльність: лише якщо в джерелі є колонка з датою; інакше інфо["inactiveUnavailable"] і фільтр НЕ застосовується (мовчки не відкидаємо нічого)."""
+    Бездіяльність: лише якщо в джерелі є колонка з датою; інакше інфо["inactiveUnavailable"] і фільтр НЕ застосовується (мовчки не відкидаємо нічого).
+    R50: `countries` -- значення колонки COUNTRY (без урахування регістру). Регіон = початок ID З `prefixes` АБО країна зі `countries`. Якщо в джерелі нема
+    жодної країни -- фільтр країн НЕ застосовується (інфо["countryUnavailable"]), діють лише префікси."""
     today = today or datetime.date.today()
-    info = {"input": len(rows), "badId": 0, "dups": 0, "region": 0, "inactive": 0, "limited": 0, "inactiveUnavailable": False}
+    info = {"input": len(rows), "badId": 0, "dups": 0, "region": 0, "inactive": 0, "limited": 0, "inactiveUnavailable": False, "countryUnavailable": False}
     if has_date is None:
         has_date = any(r.get("date") for r in rows)
+    want_countries = {c.strip().casefold() for c in countries if c and c.strip()}
+    if want_countries and not any(r.get("country") for r in rows):
+        want_countries = set()
+        info["countryUnavailable"] = True
     seen, out = set(), []
     for r in rows:
         rid = r["id"]
@@ -662,9 +675,12 @@ def apply_filters(rows, prefixes=(), max_inactive_days=None, limit=None, today=N
             info["dups"] += 1
             continue
         seen.add(rid)
-        if prefixes and not any(str(rid).startswith(p) for p in prefixes):
-            info["region"] += 1
-            continue
+        if prefixes or want_countries:
+            by_id = bool(prefixes) and any(str(rid).startswith(p) for p in prefixes)
+            by_country = bool(want_countries) and (r.get("country") or "").strip().casefold() in want_countries
+            if not (by_id or by_country):
+                info["region"] += 1
+                continue
         if max_inactive_days is not None:
             if not has_date:
                 info["inactiveUnavailable"] = True
@@ -688,9 +704,9 @@ def apply_filters(rows, prefixes=(), max_inactive_days=None, limit=None, today=N
 
 class Job:
     """Усе, що панель показує до запису: скільки в файлі, скільки відібрано, скільки вміститься й скільки буде записано (D3.3, R33 P1.3/P4.3)."""
-    def __init__(self, source, prefixes, max_inactive_days, limit, columns, text_chars, today=None):
+    def __init__(self, source, prefixes, max_inactive_days, limit, columns, text_chars, today=None, countries=()):
         self.file_rows = len(source.rows)
-        self.rows, self.info = apply_filters(source.rows, prefixes, max_inactive_days, limit, today, source.has_date)
+        self.rows, self.info = apply_filters(source.rows, prefixes, max_inactive_days, limit, today, source.has_date, countries)
         self.columns = columns
         self.text_chars = text_chars
         self.rec_len = rec_len_for(text_chars)
@@ -738,6 +754,8 @@ class Job:
                  "Запис %d Б; у область №1 вміщується %d." % (self.rec_len, self.cap)]
         if i["inactiveUnavailable"]:
             lines.append("УВАГА: у файлі нема колонки з датою активності -- фільтр бездіяльності НЕ застосовано.")
+        if i.get("countryUnavailable"):
+            lines.append("УВАГА: у файлі нема колонки з країною (COUNTRY) -- фільтр за країною НЕ застосовано, діє лише початок DMR ID.")
         if not self.fits:
             lines.append("НЕ ВМІЩУЄТЬСЯ: на %d записів більше. %s Звуж фільтри або задай ліміт записів. У область №2 пишу не буду (там таблиця ключів AES)."
                          % (self.selected - self.cap, self.dropped_text()))
@@ -785,6 +803,24 @@ def load_db_file(path):
     if not img.rec_len:
         raise DbError("файл не є базою позивних: %s" % "; ".join(img.problems))
     return trim_image(raw)
+
+
+SOURCE_EXTS = (".csv", ".json", ".txt", ".tsv")
+
+
+def detect_file_kind(path):
+    """R50: що за файл бази -- 'image' (готовий образ .bin або повний знімок .zip) чи 'source' (CSV/JSON для складання). За змістом, а не лише за розширенням:
+    початок 'PK' -- архів; розширення .csv/.json/.txt/.tsv -- джерело; .bin -- образ; інакше -- нуль-байти в початку файла означають образ."""
+    with open(path, "rb") as f:
+        head = f.read(1024)
+    if head[:2] == b"PK":
+        return "image"
+    ext = os.path.splitext(path)[1].lower()
+    if ext in SOURCE_EXTS:
+        return "source"
+    if ext == ".bin":
+        return "image"
+    return "image" if b"\0" in head else "source"
 
 
 def save_db_file(path, image):

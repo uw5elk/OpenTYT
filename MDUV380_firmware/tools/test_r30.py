@@ -690,8 +690,8 @@ def test_gui():
             app.show("backup")
             _spin(app)
             bp = app.get_panel("backup")
-            check(bp.region_var.get() is False and bp.region_state_var.get() is False, "W3.1/Z1 (%s): прапорці відновлення області типово ВИМКНЕНО" % label)
-            check(str(bp.region_only_button.cget("state")) == "disabled", "Z1 (%s): без рації «Відновити лише область» вимкнено" % label)
+            check(not hasattr(bp, "region_var") and not hasattr(bp, "region_only_button"), "W3.1/Z1 (%s): R50 -- окремих прапорців і кнопки «лише область» на панелі нема (усе у вікні «Відновити…»)" % label)
+            check(str(bp.restore_button.cget("state")) == "disabled", "Z1 (%s): без рації «Відновити…» вимкнено" % label)
 
         # ---------- файл налаштувань і запис через панель на підробленій рації ----------
         spi_a, spi_b = new_spi_with(1), new_spi_with(2)
@@ -724,15 +724,13 @@ def test_gui():
         fd.askopenfilename = lambda **k: bpath
         radio_c = tcr.FakeRadioX(bytearray(spi_b))
         cl.open_radio = lambda *a, **k: radio_c
-        bp.region_var.set(True)
-        bp._on_restore_clicked()
+        bp.start_restore({"path": bpath, "kind": "zip", "codeplug": True, "region": True, "state": False, "keys": False})
         _wait_idle(app, 40.0)
         check(payloads_of(region_of(radio_c.spi))[4] == pa[4] and payloads_of(region_of(radio_c.spi))[10] == pb0[10], "W3/Z1: «Відновити кодплаг» з прапорцем області -- область відновлено (стан RCTL лишився)")
         check(not errors, "Z1: відновлення з прапорцем -- без помилок: %r" % errors)
         radio_d = tcr.FakeRadioX(bytearray(spi_b))
         cl.open_radio = lambda *a, **k: radio_d
-        bp.region_var.set(False)
-        bp._on_restore_clicked()
+        bp.start_restore({"path": bpath, "kind": "zip", "codeplug": True, "region": False, "state": False, "keys": False})
         _wait_idle(app, 40.0)
         check(region_of(radio_d.spi) == region_of(spi_b), "CF5/Z1: без прапорця область лишилась як була")
     finally:
