@@ -26,7 +26,6 @@ EXPECTED = [
     ("conn", "Підключення і стан", "grp_radio"),
     ("flash", "Прошивка", "grp_radio"),
     ("shot", "Знімок екрана", "grp_radio"),
-    ("selfcheck", "Самоперевірка", "grp_radio"),
     ("grp_codeplug", "Кодплаг", ""),
     ("backup", "Бекап і відновлення", "grp_codeplug"),
     ("basic", "Основна інформація", "grp_codeplug"),
@@ -45,7 +44,6 @@ EXPECTED = [
     ("themes", "Теми", "grp_settings"),
     ("splash", "Заставка", "grp_settings"),
     ("melody", "Мелодія вмикання", "grp_settings"),
-    ("voice", "Голосові підказки", "grp_settings"),
     ("satellites", "Супутники", "grp_settings"),
     ("allsettings", "Усі налаштування", "grp_settings"),
     ("dmrdb", "База позивних", "grp_settings"),
@@ -121,7 +119,7 @@ def test_gui():
                 check(tree.parent(key) == parent, "дерево: %s лежить у %r" % (key, parent))
         all_items = list(tree.get_children()) + [c for g in tree.get_children() for c in tree.get_children(g)]
         check(len(all_items) == len(EXPECTED), "дерево: рівно %d пунктів (є %d)" % (len(EXPECTED), len(all_items)))
-        check(sum(len(s[2]) for s in SECTIONS) == 24, "SECTIONS: 24 панелі (R28: +теми екрана, R30: +усі налаштування, R31: +база позивних, R35: +заставка, мелодія, підказки, супутники, R38: +самоперевірка)")
+        check(sum(len(s[2]) for s in SECTIONS) == 22, "SECTIONS: 22 панелі (R28: +теми екрана, R30: +усі налаштування, R31: +база позивних, R35: +заставка, мелодія, супутники; R49: -підказки, -самоперевірка)")
 
         # --- стан 1: рації нема ---
         app.conn.mark_absent()
@@ -146,7 +144,7 @@ def test_gui():
             check(radio_btns and all(str(w.cget("state")) == "disabled" for w in radio_btns), "%s: кнопки, що потребують рації, вимкнені" % key)
         # без рації лишаються доступними: перегляд бекапу, CSV з бекапу, прошивка (рація може бути в DFU), оновлення
         app.show("backup"); app.update()
-        check(str(app.get_panel("backup").view_file_button.cget("state")) == "normal", "без рації: «Відкрити бекап у перегляді» доступна")
+        check(str(app.docbtn["open_file"].cget("state")) == "normal", "без рації: «Відкрити з бекапу…» (панель документа) доступна")
         check(str(app.docbtn["open_file"].cget("state")) == "normal", "без рації: «Відкрити з бекапу» над розділами доступна")
         check(str(app.docbtn["open_radio"].cget("state")) == "disabled", "без рації: «Відкрити з рації» вимкнена")
         check("не знайдено" in app.docbar_note.cget("text"), "без рації: біля кнопок документа є причина (%r)" % app.docbar_note.cget("text"))

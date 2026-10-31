@@ -6,7 +6,6 @@ Z3  мутації: у копії sql_open_delay.h / codeplug.c ламаєтьс
     для trx.c (на хості не збирається) -- структурна перевірка, що затримка стоїть саме в умові відкриття динаміка й скидається при зникненні сигналу, + її мутації;
 Z4  інструменти: кодплаг зі зоною, перейменованою ТАК, як це пише прошивка (зокрема кінцева «я» з хвостом 0x00), читається переглядачем, CSV-коло байт-у-байт;
 Z5  tools/mem_report.py друкує флеш (зайнято/вільно/%), розрахунок збігається з розміром .bin на зразку, а ELF-вихід розбирається;
-Z5b TS у шапці (C4): різниця рендера з іншим TS = 0 завдяки виключеній ділянці; без неї -- ненульова (мутація);
 Z7  (за бажанням, змінна R42_BASE=<каталог application попередньої версії>) типова збірка (без ENABLE_SQL_OPEN_DELAY/ENABLE_ZONE_RENAME) після препроцесора ідентична старій.
 Запуск: `python3 tools/test_r42.py` (без рації, без ARM-тулчейну; потрібен лише gcc)."""
 import os
@@ -24,7 +23,6 @@ sys.path.insert(0, HERE)
 
 import cps_csv as cc                     # noqa: E402
 import cps_link as cl                    # noqa: E402
-import selfcheck as sc                   # noqa: E402
 import mem_report as mr                  # noqa: E402
 import test_cps_csv as tc                # noqa: E402
 
@@ -295,42 +293,6 @@ Total               700286
         mr.FLASH_LOAD_SECTIONS = saved
 
 
-# ------------------------------------------------------------------------------------------ Z5b: TS у шапці (C4)
-def test_ts_excluded():
-    import screen_views as sv
-    rect = [r for n, r in sc.EXCLUDED_ALWAYS if "таймслот" in n]
-    check(len(rect) == 1, "C4: ділянка таймслота є серед виключених")
-    if not rect:
-        return
-    x1, y1, x2, y2 = rect[0]
-    # виміряна на залізі ділянка розбіжності (x 29..43, y 2..8) і всі варіанти положення тексту TS (itemOffset 0..2, три символи по 6 пікселів) мають в неї потрапляти
-    check(x1 <= 29 and x2 >= 43 and y1 <= 2 and y2 >= 8, "C4: виміряні x 29..43, y 2..8 лежать усередині виключеної ділянки %r" % (rect[0],))
-    for off in (0, 1, 2):
-        tx = 37 + off - 9
-        check(x1 <= tx - 1 and tx + 18 <= x2 + 1 and y1 <= 1 and y2 >= 9 - 1, "C4: текст TS при itemOffset=%d (x %d..%d) у ділянці" % (off, tx, tx + 17))
-    pw = sc.POWER_BOX
-    check(x2 < pw[0], "C4: ділянка TS не заходить на рядок потужності (%d < %d)" % (x2, pw[0]))
-    # живий кадр рації показує ІНШИЙ TS, ніж кодплаг (кнопка перемкнула) -> піксельна різниця 0 завдяки виключеній ділянці; без неї -- ненульова
-    import test_r39 as t39
-    spi = t39.real_selection_spi(zone_pos=0, lucz_idx=0)
-    cpx = t39.codeplug_of(spi)
-    state = sc.real_state(cpx, sc.read_current_selection(cpx))[0]
-    other_ts = 1 if state.get("ts") == 2 else 2
-    live = sv.render("channel", dict(state, battery_pct=99, ts=other_ts))
-    res, _ = t39.run_s3(t39.buf(t39.words(live)), spi=spi)
-    ref = t39.step(res, "довідково: пікселів")
-    check(res.status == sc.PASS and ref is not None and ref.got.startswith("0.000 %"),
-          "C4: інший TS на екрані рації (TS%s проти кодплага TS%s) -- довідкова різниця 0.000 %%: %s" % (other_ts, state.get("ts"), ref.got if ref else None))
-    saved = sc.EXCLUDED_ALWAYS
-    try:
-        sc.EXCLUDED_ALWAYS = tuple(x for x in saved if "таймслот" not in x[0])
-        res, _ = t39.run_s3(t39.buf(t39.words(live)), spi=spi)
-        ref = t39.step(res, "довідково: пікселів")
-        check(ref is not None and not ref.got.startswith("0.000 %"), "C4: без виключеної ділянки TS різниця ненульова (мутація): %s" % (ref.got if ref else None))
-    finally:
-        sc.EXCLUDED_ALWAYS = saved
-
-
 # ------------------------------------------------------------------------------------------ Z7
 def test_default_identity():
     base = os.environ.get("R42_BASE")
@@ -367,7 +329,6 @@ def main():
     test_zone_mutants()
     test_tools_renamed_zone()
     test_mem_report()
-    test_ts_excluded()
     test_default_identity()
     if FAILS:
         print("\nПРОВАЛІВ: %d" % len(FAILS))

@@ -344,7 +344,7 @@ def test_full_cycle():
         check(after[0x10000:0x10010] == b"CALIB-B-CALIB-B!", "калібрування рації НЕ змінено (лишилось своє)")
         check(after[QK_START:QK_END + 1] == b"\x11" * 20, "квіккеї рації не змінені (прошивка їх не перезаписує)")
         check(after[0x20000:0x9B000] == before[0x20000:0x9B000] and after[0xAF000:] == before[0xAF000:],
-              "custom-data, бази ID, голосові підказки, ключі AES, прошивка -- НЕ чіпались")
+              "custom-data, бази ID, сира область 0xAF400..0xD8000, ключі AES, прошивка -- НЕ чіпались")
         # --- що саме писали ---
         check(radio.cal_touched is False, "до сектора калібрування (0x10000) не торкались")
         check(all(s != 16 for s in radio.commits), "сектор 16 не записувався")
@@ -586,7 +586,7 @@ def test_filters_and_tables():
 def test_full_snapshot():
     a = spi_a()
     a[cl.AES_KEYS_RAW_START:cl.AES_KEYS_RAW_START + 4] = b"KEY!"
-    a[cl.VOICE_PROMPTS_RAW_START:cl.VOICE_PROMPTS_RAW_START + 4] = b"VPVP"
+    a[cl.RAW_AREA_START:cl.RAW_AREA_START + 4] = b"VPVP"
     # звичайний бекап: без додаткових частин
     d0, m0 = cl.backup_codeplug(cl.CpsLink(base.FakeRadio(a)), rng=random.Random(1), log=lambda *_: None)
     # R30: звичайний бекап містить ще й область custom-data (customdata.bin); повного знімка (підказки, ключі AES) за замовчуванням нема

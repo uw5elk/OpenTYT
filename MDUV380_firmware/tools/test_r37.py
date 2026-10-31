@@ -370,7 +370,7 @@ def test_z4():
     fg.write_span(radio, 0x20000, b"\x00", "customdata")
     check(radio.commits == [0x2F, 0x20], "Z4: крайні байти області дозволені й потрапляють у сектори 0x2F та 0x20")
     # інші вікна не можуть писати в область custom-data
-    for w in ("keys", "dmrdb", "voiceprompts"):
+    for w in ("keys", "dmrdb", "rawarea"):
         try:
             fg.write_span(radio, 0x20000, b"\x00", w)
             check(False, "Z4: вікно %s не повинне діставати області custom-data" % w)

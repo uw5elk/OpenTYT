@@ -46,12 +46,10 @@ from .p_flash import FlashPanel
 from .p_general import GeneralPanel
 from .p_rctl import RctlPanel
 from .p_screenshot import ScreenshotPanel
-from .p_selfcheck import SelfcheckPanel
 from .p_tglists import TgListsPanel
 from .p_satellites import SatellitesPanel
 from .p_splash import SplashPanel
 from .p_themes import ThemesPanel
-from .p_voice import VoicePanel
 from .p_vfo import VfoPanel
 from .p_contacts import ContactsPanel
 from .p_zones import ZonesPanel
@@ -61,10 +59,10 @@ from .settings import Settings
 
 # Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
-    ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel, SelfcheckPanel]),
+    ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
     ("grp_codeplug", "Кодплаг", [BackupPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, VfoPanel, ZonesPanel, ContactsPanel, TgListsPanel,
                                   DtmfPanel, AprsPanel, CsvPanel]),
-    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel, SplashPanel, MelodyPanel, VoicePanel, SatellitesPanel, AllSettingsPanel, DmrDbPanel]),
+    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel, SplashPanel, MelodyPanel, SatellitesPanel, AllSettingsPanel, DmrDbPanel]),
 ]
 DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}
@@ -555,8 +553,6 @@ class CpsApp(DocActions, tk.Tk):
                         payload()
                     elif kind == "confirm":
                         self._on_confirm_request(*payload)
-                    elif kind == "choose":
-                        self._on_choose_request(*payload)
                     elif kind == "taskdone":
                         self._on_task_done(*payload)
                 except Exception:  # noqa: BLE001 -- помилка в обробнику не повинна зупиняти опитування черги
@@ -593,20 +589,6 @@ class CpsApp(DocActions, tk.Tk):
     def _on_confirm_request(self, text, done, answer):
         try:
             answer["yes"] = bool(gd.confirm_dialog(self, "Підтвердження запису в рацію", text, yes="Записати в рацію", no="Скасувати"))
-        finally:
-            done.set()
-
-    def choose_from_worker(self, title, text, labels):
-        """Викликається з робочого потоку: головний потік показує список, цей потік чекає. Повертає індекс або None (R39, S3: ручний вибір каналу)."""
-        done = threading.Event()
-        answer = {"index": None}
-        self.queue.put(("choose", (title, text, list(labels), done, answer)))
-        done.wait()
-        return answer["index"]
-
-    def _on_choose_request(self, title, text, labels, done, answer):
-        try:
-            answer["index"] = gd.list_choice_dialog(self, title, text, labels)
         finally:
             done.set()
 

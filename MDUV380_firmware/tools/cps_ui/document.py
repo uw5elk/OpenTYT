@@ -216,7 +216,7 @@ class Document:
 
     def save_bytes(self):
         """Той самий .zip, що й бекап (eeprom.bin + flash.bin + manifest.json): його відкривають і «Відкрити з бекапу…», і «Відновити».
-        Зберігається ЛИШЕ кодплаг (без голосових підказок і ключів AES, навіть якщо документ відкрито з повного знімка)."""
+        Зберігається ЛИШЕ кодплаг (без сирої області 0xAF400..0xD8000 і ключів AES, навіть якщо документ відкрито з повного знімка)."""
         rng = cl.flash_backup_range()
         ee, fl = bytes(self.image.eeprom), bytes(self.image.flash)
         if len(ee) != cl.EEPROM_BACKUP_LEN or len(fl) != rng["length"]:

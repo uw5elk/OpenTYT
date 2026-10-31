@@ -86,15 +86,16 @@ CP_RXGROUPS_MAX = 76                          # codeplug.h: CODEPLUG_RX_GROUPLIS
 
 
 # --- R25 W3.2: «повний знімок» (необов'язково; ВІДНОВЛЕННЯ цих двох ділянок у R25 НЕ реалізовано) --------
-VOICE_PROMPTS_RAW_START = 0xAF400             # voicePrompts.c: VOICE_PROMPTS_FLASH_HEADER_ADDRESS = 0x8F400 + FLASH_ADDRESS_OFFSET
-VOICE_PROMPTS_RAW_END = 0xD8000               # початок бази DMR ID №2 (uiUtilities.c: DMRID_MEMORY_LOCATION_2); кінець підказок ВИВЕДЕНО, не виміряно
+RAW_AREA_START = 0xAF400                      # сира область флешу 0x8F400 + FLASH_ADDRESS_OFFSET: повний знімок копіює її як є, без розбору (R49: нейтральна область)
+RAW_AREA_END = 0xD8000                        # початок бази DMR ID №2 (uiUtilities.c: DMRID_MEMORY_LOCATION_2); кінець ВИВЕДЕНО, не виміряно
 AES_KEYS_RAW_START = 0xD9F9C                  # stock_key_table.py: STOCK_KEY_TABLE_BASE
 AES_KEYS_ENTRY_LEN = 0x64                     # stock_key_table.py: STOCK_KEY_ENTRY_LEN
 AES_KEYS_ENTRIES = 16                         # keyId 0..15 (використовуються 1..15)
 AES_KEYS_RAW_LEN = AES_KEYS_ENTRY_LEN * AES_KEYS_ENTRIES
 FULL_SNAPSHOT_PARTS = (
     # ключ у manifest["parts"], файл у zip, початок, довжина
-    ("voicePrompts", "voiceprompts.bin", VOICE_PROMPTS_RAW_START, VOICE_PROMPTS_RAW_END - VOICE_PROMPTS_RAW_START),
+    # R49: ключ "voicePrompts" і файл voiceprompts.bin лишено як були -- щоб читалися архіви, зроблені раніше; зміст області не розбирається
+    ("voicePrompts", "voiceprompts.bin", RAW_AREA_START, RAW_AREA_END - RAW_AREA_START),
     ("aesKeys", "aeskeys.bin", AES_KEYS_RAW_START, AES_KEYS_RAW_LEN),
     # R31 D5: база позивних DMR ID, область №1 (DMRID_MEMORY_LOCATION_1 = 0x30000 + FLASH_ADDRESS_OFFSET, 0x40000 Б). У звичайний бекап не входить.
     ("dmrIdDb", "dmriddb.bin", 0x30000 + FLASH_ADDRESS_OFFSET, 0x40000),
@@ -426,9 +427,9 @@ def build_manifest(info, eeprom, flash, rng_range, started, finished, verified_b
             m["parts"][key] = {"file": fname, "area": CPS_ACCESS_FLASH, "start": start, "length": len(data), "sha256": sha256(data),
                                "restorable": False}
             m["includes"].append(key)
-        names = {"voicePrompts": "голосові підказки", "aesKeys": "таблиця ключів AES (SPI 0xD9F9C, секрет)", "dmrIdDb": "база позивних DMR ID (область №1)"}
+        names = {"voicePrompts": "сира область 0xAF400..0xD8000", "aesKeys": "таблиця ключів AES (SPI 0xD9F9C, секрет)", "dmrIdDb": "база позивних DMR ID (область №1)"}
         m["note"] = ("Лише читання; у рацію нічого не записувалось. ПОВНИЙ ЗНІМОК: додатково " + ", ".join(names.get(k, k) for k in extras)
-                     + ". Голосові підказки з архіву не відновлюються; ключі AES відновлює окремий прапорець, базу позивних -- панель «База позивних».")
+                     + ". Сира область 0xAF400..0xD8000 з архіву не відновлюється; ключі AES відновлює окремий прапорець, базу позивних -- панель «База позивних».")
     if region is not None:
         # R30: область custom-data (теми, SMS, RCTL, APRS...) -- окремий файл у архіві. cps_restore її не відновлює (restorable лишається [eeprom, flash]);
         # відновлює custom_region.restore_region окремим прапорцем.
@@ -499,7 +500,7 @@ def read_backup_zip(source):
 def backup_codeplug(link, progress=None, rng=None, clock=time.time, now_utc=None, log=print, full_snapshot=False, custom_data=True, aes_keys=True,
                     prefetched=None):
     """Прочитати EEPROM і флеш-частину кодплага, самоперевірити й зібрати .zip.
-    full_snapshot=True (R25 W3.2) -- додатково голосові підказки і таблицю ключів AES (за замовчуванням ВИМКНЕНО).
+    full_snapshot=True (R25 W3.2) -- додатково сиру область 0xAF400..0xD8000 і таблицю ключів AES (за замовчуванням ВИМКНЕНО).
     prefetched=(eeprom, flash) (R32 T2.2) -- ці дві частини вже щойно прочитані (свіже читання перед записом): вдруге
     їх не читаємо, а самоперевірка все одно перечитує випадкові блоки й порівнює з ними -- тож якщо рація за цей час змінилась, буде
     BackupInvalid, а не тихо застарілий бекап. Довжини мають збігатися з тим, що читає цей бекап.
@@ -614,7 +615,7 @@ def main(argv=None):
     b = sub.add_parser("backup", help="бекап кодплага -> .zip")
     b.add_argument("--port")
     b.add_argument("--outdir", default=".")
-    b.add_argument("--full", action="store_true", help="повний знімок: ще й голосові підказки, ключі AES (секретно!) і базу позивних")
+    b.add_argument("--full", action="store_true", help="повний знімок: ще й сира область 0xAF400..0xD8000, ключі AES (секретно!) і базу позивних")
     b.add_argument("--no-keys", action="store_true", help="R31: не включати ключі AES в архів (щоб ним можна було поділитися)")
     a = ap.parse_args(argv)
 

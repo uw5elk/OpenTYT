@@ -208,7 +208,7 @@ def test_backup_keys():
     # повний знімок з ключами й без них
     _p3, d3, m3, _r3 = mk_zip(spi_a, full_snapshot=True)
     check(m3["includes"].count("aesKeys") == 1 and m3["parts"]["aesKeys"]["occupiedSlots"] == [2, 5, 9] and "dmrIdDb" in m3["parts"] and "voicePrompts" in m3["parts"],
-          "K2/D5: повний знімок має ключі зі слотами, голосові підказки й базу позивних")
+          "K2/D5: повний знімок має ключі зі слотами, сиру область 0xAF400..0xD8000 і базу позивних")
     with zipfile.ZipFile(io.BytesIO(d3)) as z:
         check(sorted(z.namelist()) == ["aeskeys.bin", "customdata.bin", "dmriddb.bin", "eeprom.bin", "flash.bin", "manifest.json", "voiceprompts.bin"] and
               len(z.read("dmriddb.bin")) == 0x40000, "D5.1: повний знімок: dmriddb.bin = область №1 (256 КіБ)")
@@ -854,10 +854,10 @@ def test_gui():
             check("міститиме ключі шифрування AES" in bp.keys_note.cget("text"), "K2.2: рядок про ключі в архіві: %s" % bp.keys_note.cget("text"))
             bp.keys_var.set(False)
             bp._update_keys_note()
-            check("НЕ містить ключів AES і голосових підказок" in bp.keys_note.cget("text"), "K4.1/Z1: ключі вимкнено -- у вікні сказано, що архів їх не містить: %s" % bp.keys_note.cget("text"))
+            check("НЕ містить ключів AES і сирої області 0xAF400..0xD8000" in bp.keys_note.cget("text"), "K4.1/Z1: ключі вимкнено -- у вікні сказано, що архів їх не містить: %s" % bp.keys_note.cget("text"))
             bp.full_snapshot_var.set(True)
             bp._update_keys_note()
-            check("НЕ міститиме ключів AES" in bp.keys_note.cget("text") and "голосові підказки" in bp.keys_note.cget("text"), "K4.1: повний знімок без ключів -- рядок відповідає")
+            check("НЕ міститиме ключів AES" in bp.keys_note.cget("text") and "сиру область 0xAF400..0xD8000" in bp.keys_note.cget("text"), "K4.1: повний знімок без ключів -- рядок відповідає")
             bp.full_snapshot_var.set(False)
             bp.keys_var.set(True)
             bp._update_keys_note()

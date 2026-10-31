@@ -3,8 +3,7 @@
 """R41: видалення каналу з меню рації -- сторона інструментів (tools/) і мутації прошивкової логіки.
 
 Z5  кодплаг з ДІРОЮ в нумерації каналів (канал видалено так, як це робить прошивка: біт маски знято, запис 0xFF, номер прибрано з усіх зон):
-    переглядач, таблиці, експорт у CSV, імпорт без правок (байт-у-байт), новий канал без номера займає найменший вільний номер,
-    selfcheck._free_channel_number шукає вільний номер за маскою, а не за «густою» нумерацією;
+    переглядач, таблиці, експорт у CSV, імпорт без правок (байт-у-байт), новий канал без номера займає найменший вільний номер.
 Z5b розкладка адрес у C-тесті (tests/test_codeplug_chandel.c) збігається з тим, що знають інструменти (cps_link) -- обидві сторони читають один формат;
 Z6  мутації: у копії codeplug.c / codeplug_chandel.h ламається одне місце -- хост-тест прошивки (tests/test_codeplug_chandel.c) МАЄ провалитись;
 Z7  (за бажанням, змінна R41_BASE=<каталог application старої версії>) типова збірка (без ENABLE_CHANNEL_DELETE) після препроцесора ідентична старій.
@@ -25,7 +24,6 @@ sys.path.insert(0, HERE)
 import cps_csv as cc                     # noqa: E402
 import cps_link as cl                    # noqa: E402
 import codeplug_view as cv               # noqa: E402
-import selfcheck as sc                   # noqa: E402
 import test_cps_csv as tc                # noqa: E402
 
 FAILS = []
@@ -137,12 +135,8 @@ def test_tools_with_hole():
         others_same = all(res.image.channel_rec(n) == cp2z.channel_record(n) for n in (1, 3, 130))
         check(others_same, "CSV-коло: решта каналів не змінилась")
 
-    # дірка у флеш-банку (видалили 130): вільний номер для selfcheck береться за маскою
+    # дірка у флеш-банку (видалили 130)
     cp3, _ = tc.codeplug_of(spi_with_deleted([130]))
-    rng = cl.flash_backup_range()
-    img3 = cc.Image(bytearray(cp3.eeprom), bytearray(cp3.flash), rng["codeplug_start"])
-    free = sc._free_channel_number(img3)
-    check(free == 129, "selfcheck._free_channel_number: перший вільний у флеш-банках = 129 (є %r)" % free)
     check([c[0] for c in cp3.channels()][:3] == [1, 2, 3], "після видалення 130 лишилось 1,2,3,...")
 
 

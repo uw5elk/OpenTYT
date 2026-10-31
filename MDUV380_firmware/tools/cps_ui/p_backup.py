@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Розділ «Кодплаг → Бекап і відновлення»: бекап у .zip (R24, лише читання), перегляд бекапу, відновлення (R25, ЗАПИС у рацію;
-заблоковано константою cps_restore.RESTORE_UNLOCKED). Логіку перенесено з gui_flasher.py без змін."""
+"""Розділ «Кодплаг → Бекап і відновлення»: бекап у .zip (R24, лише читання) і відновлення (R25, ЗАПИС у рацію;
+заблоковано константою cps_restore.RESTORE_UNLOCKED). R49: «Відкрити бекап як документ» тут прибрано -- це та сама дія, що кнопка «Відкрити з бекапу…» над розділами. Логіку перенесено з gui_flasher.py без змін."""
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -59,7 +59,7 @@ class BackupPanel(Panel):
         self.backup_button = ttk.Button(box, text="Бекап кодплага", command=self._on_backup_clicked)
         self.backup_button.pack(anchor="w", padx=8, pady=(8, 4))
         self.reg(self.backup_button)
-        ttk.Checkbutton(box, text="повний знімок (+ голосові підказки, ключі AES і база позивних)", variable=self.full_snapshot_var,
+        ttk.Checkbutton(box, text="повний знімок (+ сира область 0xAF400..0xD8000, ключі AES і база позивних)", variable=self.full_snapshot_var,
                         command=self._update_keys_note).pack(anchor="w", padx=8, pady=(0, 2))
         ttk.Checkbutton(box, text="включити ключі AES (секрет)", variable=self.keys_var, command=self._update_keys_note).pack(anchor="w", padx=8, pady=(0, 2))
         ttk.Checkbutton(box, text="включити область custom-data (SMS, теми, RCTL, APRS; ~64 КіБ, читається довше)", variable=self.custom_var,
@@ -69,12 +69,6 @@ class BackupPanel(Panel):
         self.keys_note = ttk.Label(box, text="", wraplength=600, justify="left")
         self.keys_note.pack(anchor="w", padx=8, pady=(0, 8))
         self._update_keys_note()
-
-        view = ttk.LabelFrame(self, text="Відкрити бекап для перегляду й правки")
-        view.pack(fill="x", padx=12, pady=6)
-        self.view_file_button = ttk.Button(view, text="Відкрити бекап як документ...", command=self._on_view_file_clicked)
-        self.view_file_button.pack(anchor="w", padx=8, pady=8)
-        self.reg(self.view_file_button, radio=False)        # файл читається з диска, рація не потрібна
 
         rest = ttk.LabelFrame(self, text="Відновлення (ЗАПИС у рацію)")
         rest.pack(fill="x", padx=12, pady=6)
@@ -110,12 +104,12 @@ class BackupPanel(Panel):
         """K2.2 / K4.1: одним рядком, що буде (або не буде) в архіві."""
         full, keys = bool(self.full_snapshot_var.get()), bool(self.keys_var.get())
         if keys and full:
-            return "Архів міститиме ключі шифрування AES (секрет), голосові підказки та базу позивних."
+            return "Архів міститиме ключі шифрування AES (секрет), сиру область 0xAF400..0xD8000 та базу позивних."
         if keys:
-            return "Архів міститиме ключі шифрування AES -- зберігай його як секрет. Голосових підказок у ньому не буде."
+            return "Архів міститиме ключі шифрування AES -- зберігай його як секрет. Сирої області 0xAF400..0xD8000 у ньому не буде."
         if full:
-            return "Архів НЕ міститиме ключів AES; голосові підказки та базу позивних міститиме."
-        return "Архів НЕ містить ключів AES і голосових підказок -- ним можна ділитися."
+            return "Архів НЕ міститиме ключів AES; сиру область 0xAF400..0xD8000 та базу позивних міститиме."
+        return "Архів НЕ містить ключів AES і сирої області 0xAF400..0xD8000 -- ним можна ділитися."
 
     def contents_text(self):
         """R32 T4.1: одним рядком, що саме ввійде в архів -- ДО збереження, а не лише з маніфесту після."""
@@ -125,7 +119,7 @@ class BackupPanel(Panel):
         if self.keys_var.get():
             parts.append("ключі AES (секрет)")
         if self.full_snapshot_var.get():
-            parts += ["голосові підказки", "база позивних"]
+            parts += ["сира область 0xAF400..0xD8000", "база позивних"]
         return "У архіві буде: " + ", ".join(parts) + "."
 
     def _update_keys_note(self):
@@ -146,7 +140,7 @@ class BackupPanel(Panel):
         if keys is True:
             tail = "\n\nАрхів містить ключі шифрування AES -- зберігай його як секрет."
         elif keys is False:
-            tail = "\n\nАрхів НЕ містить ключів AES і голосових підказок."
+            tail = "\n\nАрхів НЕ містить ключів AES і сирої області 0xAF400..0xD8000."
         messagebox.showinfo("Готово", "Збережено:\n" + path + tail)
 
     def _backup_worker(self, full_snapshot=False, aes_keys=True, custom_data=True):
@@ -174,16 +168,10 @@ class BackupPanel(Panel):
         if k_part:
             print("УВАГА: архів містить ключі шифрування AES (слоти: {}) -- зберігай його як секрет.".format(akb.slots_text(k_part["occupiedSlots"])))
         else:
-            print("Архів не містить ключів AES{}.".format("" if full_snapshot else " і голосових підказок"))
+            print("Архів не містить ключів AES{}.".format("" if full_snapshot else " і сирої області 0xAF400..0xD8000"))
         return [path, bool(k_part) if (k_part or not full_snapshot) else None]
 
     # --- перегляд бекапу: відкривається як ДОКУМЕНТ (тим самим, що й «Відкрити з бекапу» над розділами) ---
-
-    def _on_view_file_clicked(self):
-        if self.shell.busy:
-            return
-        if self.shell.doc_open_file():
-            self.shell.show("basic")
 
     # --- відновлення (ЗАПИС у рацію) ---
 

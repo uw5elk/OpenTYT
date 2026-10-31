@@ -8,10 +8,10 @@
 Вікна (сирі адреси SPI-флеша, усе з коду прошивки; обґрунтування -- claude/codeplug-map.md):
   keys   0xDA000..0xDA5DB  слоти ключів AES 1..15 (запис keyId = 0xD9F9C + 100*keyId; слот 0 прошивка не використовує і ми його не пишемо)
   dmrdb  0x50000..0x8FFFF  область №1 бази позивних (DMRID_MEMORY_LOCATION_1 + 0x40000)
-  voiceprompts 0xAF400..0xD7FFF  голосові підказки (R35; VOICE_PROMPTS_FLASH_HEADER_ADDRESS .. початок області №2 бази)
+  rawarea 0xAF400..0xD7FFF  сира область перед областю №2 бази (R35; R49: без розбору змісту -- інструмент у неї більше нічого не пише, зона лишається захищеною від вікон бази й ключів)
   customdata   0x20000..0x2FFFF  область custom-data (R37: ущільнення custom_compact.py; блоки по одному далі пише custom_data.flash_write_span зі своєю перевіркою меж)
 Захищені зони, у які не може потрапити жодне вікно (перевіряється `check_windows`, тест Z6):
-  калібрування 0x10000..0x10FFF, область custom-data 0x20000..0x2FFFF, флеш-кодплаг, голосові підказки (для вікон бази й ключів), ключі AES (для вікна бази й підказок), база (для вікна ключів)."""
+  калібрування 0x10000..0x10FFF, область custom-data 0x20000..0x2FFFF, флеш-кодплаг, сира область 0xAF400..0xD7FFF (для вікон бази й ключів), ключі AES (для вікна бази й підказок), база (для вікна ключів)."""
 import aes_key_store as aks
 import cps_link as cl
 
@@ -28,7 +28,7 @@ ZONES = {
     "customdata": (0x20000, 0x30000),
     "dmrdb1": (0x30000 + cl.FLASH_ADDRESS_OFFSET, 0x30000 + cl.FLASH_ADDRESS_OFFSET + 0x40000),
     "codeplug": (0x9B000, 0xAF000),
-    "voiceprompts": (0xAF400, 0xD8000),
+    "rawarea": (0xAF400, 0xD8000),
     "dmrdb2head": (0xB8000 + cl.FLASH_ADDRESS_OFFSET, cl.AES_KEYS_RAW_START),           # область №2 бази: від 0xD8000 до таблиці ключів
     "aeskeys": (cl.AES_KEYS_RAW_START, cl.AES_KEYS_RAW_START + cl.AES_KEYS_RAW_LEN),
 }
@@ -36,11 +36,11 @@ SLOT_AREA = (cl.AES_KEYS_RAW_START + cl.AES_KEYS_ENTRY_LEN, cl.AES_KEYS_RAW_STAR
 WINDOWS = {
     "keys": SLOT_AREA,
     "dmrdb": ZONES["dmrdb1"],
-    "voiceprompts": ZONES["voiceprompts"],          # R35 D: 0xAF400..0xD7FFF (до початку області №2 бази позивних)
+    "rawarea": ZONES["rawarea"],                    # R35 D: 0xAF400..0xD7FFF (до початку області №2 бази позивних)
     "customdata": ZONES["customdata"],              # R37: 0x20000..0x2FFFF -- лише ущільнення області (custom_compact)
 }
 # які зони вікно має право перетинати (лише власну)
-OWN_ZONE = {"keys": "aeskeys", "dmrdb": "dmrdb1", "voiceprompts": "voiceprompts", "customdata": "customdata"}
+OWN_ZONE = {"keys": "aeskeys", "dmrdb": "dmrdb1", "rawarea": "rawarea", "customdata": "customdata"}
 
 
 def check_windows(windows=None, zones=None):

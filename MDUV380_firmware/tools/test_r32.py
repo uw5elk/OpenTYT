@@ -380,7 +380,7 @@ def test_gui():
         bp.full_snapshot_var.set(True)
         bp._update_keys_note()
         t = bp.contents_note.cget("text")
-        check(t == "У архіві буде: EEPROM, флеш-кодплаг, голосові підказки, база позивних.", "T4.1: повний знімок без ключів і без custom-data: %s" % t)
+        check(t == "У архіві буде: EEPROM, флеш-кодплаг, сира область 0xAF400..0xD8000, база позивних.", "T4.1: повний знімок без ключів і без custom-data: %s" % t)
         check(bp.custom_var.get() is False and "НЕ міститиме ключів AES" in bp.keys_note.cget("text"), "T4.1: окремий рядок про ключі збережено")
         bp.custom_var.set(True)
         bp.keys_var.set(True)

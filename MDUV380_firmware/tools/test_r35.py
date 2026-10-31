@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""R35 (Z1-Z6): супутники (sat_tle.py), картинка заставки (splash_image.py), мелодія вмикання (boot_melody.py), голосові підказки (voice_prompts.py, vp_names.py),
-вилучення блока (custom_data.retire_block), вікно флеш-охоронця voiceprompts і чотири панелі CPS (p_satellites, p_splash, p_melody, p_voice).
+"""R35 (Z1-Z6): супутники (sat_tle.py), картинка заставки (splash_image.py), мелодія вмикання (boot_melody.py),
+вилучення блока (custom_data.retire_block), вікно флеш-охоронця rawarea і три панелі CPS (p_satellites, p_splash, p_melody).
+R49: голосові підказки (voice_prompts.py, vp_names.py, p_voice) скасовано; їхні перевірки з цього тесту прибрано, а сира область 0xAF400..0xD8000 лишилась захищеною зоною.
 Логіка -- у будь-якому python3; GUI -- лише з tkinter + DISPLAY (`xvfb-run -a python3.12 -B tools/test_r35.py`). Рації нема: SPI-флеш підроблено (FakeRadioX з test_cps_restore).
 
 ПРОШИВКА перевіряється на СПРАВЖНЬОМУ коді, де це можливо: з satellite.c витягується satelliteTLE2Native (разом із decompressTleData) і компілюється gcc -- блок, який збирає
-CPS, мусить розпакуватися прошивкою в ті самі числа, що стоять у TLE; таблиця частот нот і множник 27 мс звіряються з sound.c; імена фраз підказок -- з voicePrompts.h
-і uiLanguage.h. Pillow (якщо встановлений) використовується ЛИШЕ в тесті для перехресної перевірки наших декодерів PNG; сам інструмент його не потребує."""
+CPS, мусить розпакуватися прошивкою в ті самі числа, що стоять у TLE; таблиця частот нот і множник 27 мс звіряються з sound.c; Pillow (якщо встановлений) використовується ЛИШЕ в тесті для перехресної перевірки наших декодерів PNG; сам інструмент його не потребує."""
 import datetime
 import os
 import random
@@ -35,8 +35,6 @@ import splash_image as si                # noqa: E402
 import test_cps_restore as tcr           # noqa: E402
 import test_r30 as t30                   # noqa: E402
 import test_r31 as t31                   # noqa: E402
-import voice_prompts as vp               # noqa: E402
-import vp_names                          # noqa: E402
 
 FAILS = []
 PASSED = [0]
@@ -159,20 +157,6 @@ def test_constants_match_firmware():
     check(re.search(r"for\s*\(\s*uint16_t\s+i\s*=\s*0\s*;\s*i\s*<\s*%d\s*;" % bm.MAX_NOTES, sound_c) is not None, "Z0/C1: не більше %d пар -- з sound.c" % bm.MAX_NOTES)
     splash_c = read_text("source", "user_interface", "uiSplashScreen.c")
     check("uint8_t melodyBuf[%d]" % bm.BLOCK_LEN in splash_c, "Z0/C1: буфер мелодії %d Б -- з uiSplashScreen.c" % bm.BLOCK_LEN)
-    # назви фраз підказок
-    h = read_text("include", "functions", "voicePrompts.h")
-    m = re.search(r"typedef enum\s*\{(.*?)\}\s*voicePrompt_t", h, re.S)
-    body = re.sub(r"/\*.*?\*/|//[^\n]*", "", m.group(1), flags=re.S)
-    ids = re.findall(r"\b(PROMPT_[A-Z0-9_]+|NUM_VOICE_PROMPTS)\b", body)
-    k = ids.index("NUM_VOICE_PROMPTS")
-    check(k == vp_names.NUM_VOICE_PROMPTS and tuple(ids[:k]) == vp_names.PROMPT_NAMES, "Z0/D3: імена %d фіксованих фраз збігаються з voicePrompts.h" % k)
-    u = read_text("include", "user_interface", "languages", "uiLanguage.h")
-    a = u.index("typedef struct")
-    rest = u[a:]
-    cut = rest.find("ENABLE_AES")
-    fields = re.findall(r"const char (\w+)\[LANGUAGE_TEXTS_LENGTH\]", rest[:cut] if cut > 0 else rest)
-    check(tuple(fields) == vp_names.LANG_FIELDS, "Z0/D3: %d стокових полів мови збігаються з uiLanguage.h" % len(fields))
-    check(vp.TOC_SIZE == 368 and vp.AMBE_FRAME == 27, "Z0/D1: TOC 368, кадр 27")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1177,37 +1161,16 @@ def test_melody():
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-#  Z5: голосові підказки
+#  Z5: сира область 0xAF400..0xD8000 (охоронець)
 # ----------------------------------------------------------------------------------------------------------------------
 
-def vp_image(lens=None, seed=1, version=9, magic=0x5056):
-    """Образ підказок, зібраний незалежно від voice_prompts: заголовок <II, 368 зміщень (накопичувальна сума довжин), дані."""
-    rnd = random.Random(seed)
-    if lens is None:
-        lens = [27 * rnd.randrange(1, 40) if i < 120 else 0 for i in range(367)]
-    assert len(lens) == 367
-    toc, acc = [0] * 368, 0
-    for i in range(367):
-        toc[i] = acc
-        acc += lens[i]
-    toc[367] = acc
-    data = bytes(rnd.randrange(256) for _ in range(acc))
-    return struct.pack("<II", magic, version) + struct.pack("<368I", *toc) + data, lens
+RAW_START, RAW_END = cl.RAW_AREA_START, cl.RAW_AREA_END
 
 
-def spi_vp(image=None, db_mode=None):
-    """SPI із підказками (або з порожньою областю) та, за потреби, базою позивних: db_mode None / 'warn' / 'clobber'."""
+def spi_raw():
+    """SPI-флеш з позначеними областями й порожньою (0xFF) сирою областю 0xAF400..0xD8000."""
     spi = t31.spi_marked()
-    spi[vp.VP_START:vp.VP_END] = b"\xff" * (vp.VP_END - vp.VP_START)
-    if image is not None:
-        spi[vp.VP_START:vp.VP_START + len(image)] = image
-    spi[db.AREA1_START:db.AREA1_START + db.AREA1_LEN] = b"\xff" * db.AREA1_LEN
-    if db_mode:
-        img = bytearray(db.build_image(t31.make_records(200, 5)))
-        img[2:3] = b"n"
-        if db_mode == "clobber":
-            img[8:12] = struct.pack("<I", 20000)
-        spi[db.AREA1_START:db.AREA1_START + len(img)] = bytes(img)
+    spi[RAW_START:RAW_END] = b"\xff" * (RAW_END - RAW_START)
     return spi
 
 
@@ -1215,212 +1178,16 @@ def sector_span(addr, n):
     return addr // 4096 * 4096, (addr + n + 4095) // 4096 * 4096
 
 
-def test_voice():
-    old_sleep = t31.no_sleep()
-    try:
-        _test_voice()
-    finally:
-        time.sleep = old_sleep
-
-
-def _test_voice():
-    d = tempfile.mkdtemp(prefix="r35vp_")
-    img_a, lens_a = vp_image(seed=1)
-    img_b, lens_b = vp_image(seed=2)
-    # --- розбір ---
-    info = vp.parse_image(img_a)
-    check(info.valid and info.version == 9 and info.total == len(img_a) and info.extent == sum(lens_a) and info.present == sum(1 for x in lens_a[1:] if x), "Z5/D1: образ розібрано: версія, довжина, число фраз")
-    rs = vp.rows(info)
-    check(len(rs) == 367 and all(r["length"] == (0 if r["index"] == 0 else lens_a[r["index"]]) for r in rs) and rs[0]["silent"], "Z5/D3: довжина фрази = різниця сусідніх зміщень (незалежне накопичення); №0 зі зміщенням 0 прошивка вважає відсутньою (voicePrompts.c)")
-    check(rs[0]["label"] == "PROMPT_SILENCE" and rs[2]["label"] == "PROMPT_0" and rs[87]["label"].startswith("рядок мови: LANGUAGE_NAME") and rs[87 + 279]["label"].startswith("рядок мови: ")
-          and vp.prompt_label(87 + 280).startswith("рядок мови №280"), "Z5/D3: підписи: фіксовані фрази й рядки мови")
-    check(all(r["frames"] == r["length"] // 27 and r["remainder"] == 0 and not r["oversize"] for r in rs), "Z5/D3: кадри AMBE+2 по 27 Б, без залишків")
-    txt = vp.list_text(info, only_present=True)
-    check(txt.count("\n") == info.present and "PROMPT_POINT" in txt and "PROMPT_SILENCE" not in txt, "Z5/D3: перелік фраз у текст -- лише наявні")
-    check("Фраз у таблиці: %d" % info.present in vp.summary_text(info), "Z5/D3: короткий опис образу")
-    odd, _ = vp_image([27 * 3 + 5 if i == 4 else (27 * 2 if i < 10 else 0) for i in range(367)], seed=3)
-    check("не кратна" in vp.summary_text(vp.parse_image(odd)), "Z5/D3: фраза довжиною не кратною 27 -- зауваження")
-    big_lens = [2100 if i == 3 else (27 * 2 if i < 10 else 0) for i in range(367)]
-    bi, _ = vp_image(big_lens, seed=3)
-    check("довші за буфер" in vp.summary_text(vp.parse_image(bi)) and vp.rows(vp.parse_image(bi))[3]["oversize"], "Z5/D3: фраза довша за буфер 2052 Б -- попередження")
-    # відхилені образи
-    bad_cases = []
-    bad_cases.append(("версія 8", vp_image(version=8)[0]))
-    bad_cases.append(("не 'VP'", vp_image(magic=0x4141)[0]))
-    bad_cases.append(("обірваний", img_a[:-100]))
-    bad_cases.append(("коротший за заголовок", img_a[:100]))
-    toc_bad = bytearray(img_a)
-    struct.pack_into("<I", toc_bad, 8 + 4 * 50, struct.unpack_from("<I", toc_bad, 8 + 4 * 49)[0] - 27)
-    bad_cases.append(("TOC не зростає", bytes(toc_bad)))
-    over, _ = vp_image([27 * 1500 if i < 5 else 0 for i in range(367)], seed=4)
-    bad_cases.append(("більше за область", over))
-    for what, bad in bad_cases:
-        check(not vp.parse_image(bad).valid, "Z5/D1: образ «%s» не вважається придатним" % what)
-        radio = tcr.FakeRadioX(bytearray(spi_vp(img_a)))
-        try:
-            vp.write_image(cl.CpsLink(radio), bad, lambda *_: True, log=quiet, safety_dir=d)
-            check(False, "Z5/D2: образ «%s» мав бути відхилений" % what)
-        except vp.VpError:
-            check(radio.x_total == 0, "Z5/D2: образ «%s» -- відмова, у рацію нічого" % what)
-    # --- читання з рації ---
-    spi = spi_vp(img_a)
-    before = bytes(spi)
-    radio = tcr.FakeRadioX(bytearray(spi))
-    link = cl.CpsLink(radio)
-    ri = vp.read_info(link)
-    check(ri.valid and ri.total == len(img_a) and vp.read_image(link) == img_a, "Z5/D2: образ з рації == записаний у фікстуру байт-в-байт")
-    try:
-        vp.read_image(cl.CpsLink(tcr.FakeRadioX(bytearray(spi_vp(None)))))
-        check(False, "Z5: без підказок читання образу мало дати VpError")
-    except vp.VpError as e:
-        check("нема" in str(e), "Z5/D2: підказок у рації нема -- пояснення: %s" % e)
-    # --- запис ---
-    confirm, asked = confirm_recorder(True)
-    prog = []
-    radio.commits.clear()
-    res = vp.write_image(link, img_b, confirm, progress=lambda p, t: prog.append(p), log=quiet, safety_dir=d, rng=random.Random(3))
-    after = bytes(radio.spi)
-    lo, hi = sector_span(vp.VP_START, len(img_b))
-    check(res["written"] and res["verified"] is True and not res["cancelled"], "Z5/D2: образ записано й звірено: %s" % res["text"].split("\n")[0])
-    check(after[vp.VP_START:vp.VP_START + len(img_b)] == img_b, "Z5/D2: область підказок у рації == новий образ байт-в-байт")
-    check(t31.untouched_outside(before, after, lo, hi), "Z5/Z6: поза секторами області підказок (%X..%X) нічого не змінено -- ні кодплаг, ні custom-data, ні база, ні ключі, ні калібрування" % (lo, hi))
-    check(after[lo:vp.VP_START] == before[lo:vp.VP_START], "Z5: байти ПЕРЕД областю в першому секторі збережені (область починається не на межі сектора)")
-    old_end = vp.VP_START + len(img_a)
-    if len(img_b) < len(img_a):
-        check(after[vp.VP_START + len(img_b):hi] == before[vp.VP_START + len(img_b):hi], "Z5: хвіст останнього сектора лишився як був")
-    sec0 = vp.VP_START // 4096
-    check(radio.commits[0] == sec0 and radio.commits[-1] == sec0 and len(radio.commits) >= 3, "Z5/D2: перший і останній запис -- сектор заголовка (спершу обнулення, наприкінці справжній заголовок)")
-    check(all(lo // 4096 <= s < hi // 4096 for s in radio.commits) and not radio.cal_touched, "Z5/Z6: усі записані сектори в області підказок, калібрування недоторкане")
-    sc = res["safetyCopy"]
-    check(os.path.dirname(sc) == d and "voiceprompts_pre-write" in sc and open(sc, "rb").read() == before[vp.VP_START:vp.VP_START + max(len(img_a), len(img_b))],
-          "Z5/D2: страхова копія (стара область з запасом на нову довжину) збережена до запису")
-    check(vp.parse_image(open(sc, "rb").read()).total == len(img_a) and open(sc, "rb").read()[:len(img_a)] == img_a, "Z5/D2: страхову копію можна відкрити як образ підказок -- це стара область")
-    check(prog and prog[-1] == 100 and prog == sorted(prog), "Z5: прогрес зростає до 100")
-    check(radio.reset_requested, "Z5/D2: після запису рація перезавантажується")
-    t_ = asked[0]
-    check("Порядок" in t_ and "заголовок" in t_ and "база позивних" in t_ and ("%d" % len(img_b)) in t_ and "страхов" in t_, "Z5/D2: підтвердження описує порядок запису, обидва образи, межі: %s" % t_.split("\n")[1])
-    ok_, why_ = vp.verify(link, img_b, vp.parse_image(img_b), random.Random(1))
-    check(ok_, "Z5: звірка проходить на записаному")
-    # звірка ловить псування
-    for off, what in ((3, "заголовок"), (8 + 4 * 20, "TOC"), (len(img_b) - 5, "кінець даних")):
-        radio.spi[vp.VP_START + off] ^= 0xFF
-        ok2, why2 = vp.verify(link, img_b, vp.parse_image(img_b), random.Random(1))
-        check(not ok2, "Z5/D2: звірка ловить зіпсований %s" % what)
-        radio.spi[vp.VP_START + off] ^= 0xFF
-    # той самий образ -- нічого
-    r2 = vp.write_image(link, img_b, confirm, log=quiet, safety_dir=d)
-    check(r2.get("nothingToDo") and not r2["written"], "Z5/D2: такий самий образ -- записувати нічого")
-    # відмова в підтвердженні
-    radio_n = tcr.FakeRadioX(bytearray(spi))
-    rn = vp.write_image(cl.CpsLink(radio_n), img_b, lambda *_: False, log=quiet, safety_dir=d)
-    check(rn["cancelled"] and radio_n.x_total == 0 and bytes(radio_n.spi) == before, "Z5/D2: «Скасувати» у підтвердженні -- у рацію нічого (страхова копія вже є)")
-    # скасування посеред запису
-    radio_c = tcr.FakeRadioX(bytearray(spi))
-    cnt = [0]
-
-    def cancel():
-        cnt[0] += 1
-        return cnt[0] > 4
-    rc = vp.write_image(cl.CpsLink(radio_c), img_b, confirm, log=quiet, safety_dir=d, cancel=cancel)
-    hd = bytes(radio_c.spi[vp.VP_START:vp.VP_START + 8])
-    check(rc["cancelled"] and not rc["written"] and hd == bytes(8), "Z5/D2: скасування -- заголовок обнулено (підказок нема), а не напівзаписана область")
-    check("ПЕРЕРВАНО" in rc["text"] and rc["safetyCopy"] in rc["text"] and t31.untouched_outside(before, bytes(radio_c.spi), lo, hi), "Z5/D2/Z6: звіт про скасування зі страховою копією; поза областю нічого не змінено")
-    check(open(rc["safetyCopy"], "rb").read()[:len(img_a)] == img_a, "Z5/D2: страхова копія після скасування -- стара область, її можна записати назад")
-    # збій рації посеред запису
-    radio_f = tcr.FakeRadioX(bytearray(spi), die_after_x=9)
-    rf = vp.write_image(cl.CpsLink(radio_f), img_b, confirm, log=quiet, safety_dir=d)
-    check(rf.get("failed") and not rf["written"] and "ПОМИЛКА" in rf["text"] and "обнулено" in rf["text"], "Z5/D2: збій рації -- звіт словами: %s" % rf["text"][:70])
-    check(t31.untouched_outside(before, bytes(radio_f.spi), lo, hi), "Z5/Z6: при збої поза областю нічого не змінено")
-    # страхова тека недоступна -- нічого не пишемо
-    radio_s = tcr.FakeRadioX(bytearray(spi))
-    try:
-        vp.write_image(cl.CpsLink(radio_s), img_b, confirm, log=quiet, safety_dir=os.path.join(d, "нема", "такої"))
-        check(False, "Z5/D2: без страхової теки запис мав бути відхилений")
-    except vp.VpError as e:
-        check(radio_s.x_total == 0 and "страхов" in str(e), "Z5/D2: теки для страхової копії нема -- відмова до першого запису: %s" % e)
-    # порожня область, найбільший образ, найменший образ
-    radio_e = tcr.FakeRadioX(bytearray(spi_vp(None)))
-    re_ = vp.write_image(cl.CpsLink(radio_e), img_a, confirm, log=quiet, safety_dir=d)
-    check(re_["written"] and bytes(radio_e.spi[vp.VP_START:vp.VP_START + len(img_a)]) == img_a, "Z5/D2: у порожню область (0xFF) записано")
-    mx_lens = [0] * 367
-    mx_lens[0] = vp.VP_MAX - vp.DATA_BASE
-    mx_img, _ = vp_image(mx_lens, seed=9)
-    check(len(mx_img) == vp.VP_MAX and vp.parse_image(mx_img).valid, "Z5/D1: образ на всю область (%d Б) придатний" % vp.VP_MAX)
-    radio_m = tcr.FakeRadioX(bytearray(spi_vp(img_a)))
-    before_m = bytes(radio_m.spi)
-    rm = vp.write_image(cl.CpsLink(radio_m), mx_img, confirm, log=quiet, safety_dir=d)
-    check(rm["written"] and rm["verified"] and bytes(radio_m.spi[vp.VP_START:vp.VP_END]) == mx_img, "Z5/D2: образ на всю область записано")
-    check(bytes(radio_m.spi[vp.VP_END:]) == before_m[vp.VP_END:] and bytes(radio_m.spi[:vp.VP_START // 4096 * 4096]) == before_m[:vp.VP_START // 4096 * 4096],
-          "Z5/Z6: найбільший образ не вийшов за область (ні в базу область №2, ні в ключі, ні назад до кодплага)")
-    small_lens = [0] * 367
-    small_lens[0] = 27
-    s_img, _ = vp_image(small_lens, seed=9)
-    radio_sm = tcr.FakeRadioX(bytearray(spi_vp(img_a)))
-    rs_ = vp.write_image(cl.CpsLink(radio_sm), s_img, confirm, log=quiet, safety_dir=d)
-    check(rs_["written"] and bytes(radio_sm.spi[vp.VP_START:vp.VP_START + len(s_img)]) == s_img, "Z5/D2: найменший образ (одна фраза) записано")
-    # --- стирання, збереження і відновлення з файла (CL5) ---
-    radio_x = tcr.FakeRadioX(bytearray(spi))
-    lx = cl.CpsLink(radio_x)
-    saved = vp.read_image(lx)
-    fpath = os.path.join(d, "saved.bin")
-    open(fpath, "wb").write(saved)
-    res_e = vp.erase(lx, confirm, log=quiet, safety_dir=d)
-    ax = bytes(radio_x.spi)
-    check(res_e["erased"] and not vp.read_info(lx).magic_ok and ax[vp.VP_START:vp.VP_START + len(img_a)] == b"\xff" * len(img_a), "Z5/D2: стирання: заголовка 'VP' нема, область 0xFF")
-    check(t31.untouched_outside(before, ax, *sector_span(vp.VP_START, len(img_a))), "Z5/Z6: стирання не зачепило нічого поза областю підказок")
-    check(open(res_e["safetyCopy"], "rb").read() == img_a, "Z5/D2: стирання починається зі страхової копії; вона == стара область")
-    res_w = vp.write_image(lx, open(fpath, "rb").read(), confirm, log=quiet, safety_dir=d)
-    check(res_w["written"] and bytes(radio_x.spi[vp.VP_START:vp.VP_START + len(img_a)]) == img_a and bytes(radio_x.spi) == before, "Z5/CL5: зберегти -> стерти -> записати з файла: рація повернулась у вихідний стан байт-в-байт")
-    # стирання: відмова, скасування, заголовок першим
-    radio_y = tcr.FakeRadioX(bytearray(spi))
-    ry = vp.erase(cl.CpsLink(radio_y), lambda *_: False, log=quiet, safety_dir=d)
-    check(ry["cancelled"] and radio_y.x_total == 0 and bytes(radio_y.spi) == before, "Z5/D2: стирання без підтвердження -- у рацію нічого")
-    radio_z = tcr.FakeRadioX(bytearray(spi))
-    cnt[0] = 0
-    rz = vp.erase(cl.CpsLink(radio_z), confirm, log=quiet, safety_dir=d, cancel=cancel)
-    check(rz["cancelled"] and bytes(radio_z.spi[vp.VP_START:vp.VP_START + 8]) == bytes(8), "Z5/D2: скасоване стирання -- заголовок обнулено, рація їх не бачить")
-    try:
-        vp.erase(cl.CpsLink(tcr.FakeRadioX(bytearray(spi_vp(None)))), confirm, log=quiet, safety_dir=d)
-        check(False, "Z5: стирати нічого")
-    except vp.VpError:
-        pass
-    # --- D5: база позивних 'n' ---
-    rw = tcr.FakeRadioX(bytearray(spi_vp(img_a, "warn")))
-    hdr = db.read_radio_header(cl.CpsLink(rw))
-    check(hdr.mode == "n" and hdr.extent <= db.AREA1_LEN, "Z5/D5: фікстура: база в режимі 'n', що вміщується в область №1")
-    lvl, ctext = vp.db_conflict(cl.CpsLink(rw))
-    check(lvl == "warn" and "'n'" in ctext, "Z5/D5: 'n', що вміщується -- попередження: %s" % ctext[:60])
-    cf, asked_w = confirm_recorder(True)
-    rr = vp.write_image(cl.CpsLink(rw), img_b, cf, log=quiet, safety_dir=d)
-    check(rr["written"] and "'n'" in asked_w[0], "Z5/D5: запис дозволено, але в підтвердженні стоїть попередження про базу 'n'")
-    rc2 = tcr.FakeRadioX(bytearray(spi_vp(img_a, "clobber")))
-    lvl, ctext = vp.db_conflict(cl.CpsLink(rc2))
-    check(lvl == "clobbered" and "затерті" in ctext, "Z5/D5: 'n', що не вміщується, -- підказки затерті: %s" % ctext[:60])
-    try:
-        vp.write_image(cl.CpsLink(rc2), img_b, confirm, log=quiet, safety_dir=d)
-        check(False, "Z5/D5: запис поверх бази 'n' мав бути відхилений")
-    except vp.VpError as e:
-        check(rc2.x_total == 0 and "'n'" in str(e), "Z5/D5: запис відхилено до першого запису, словами: %s" % str(e)[:70])
-    rn2 = tcr.FakeRadioX(bytearray(spi_vp(img_a, None)))
-    check(vp.db_conflict(cl.CpsLink(rn2))[0] == "none", "Z5/D5: без бази або з іншим режимом -- конфлікту нема")
-    # --- вікно охоронця ---
-    check(fg.check_windows() == [], "Z5/Z6: таблиці вікон флеш-охоронця не перетинають захищені зони")
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-#  Z6: межі запису
-# ----------------------------------------------------------------------------------------------------------------------
-
 def bounds_violations():
     """Спроби запису, які ОБОВ'ЯЗКОВО мають бути відхилені охоронцем; повертає список тих, що пройшли (має бути порожній)."""
-    radio = tcr.FakeRadioX(bytearray(spi_vp(None)))
+    radio = tcr.FakeRadioX(bytearray(spi_raw()))
     out = []
-    bad = [("voiceprompts", 0xAF3FF, 2, "байт перед областю підказок"), ("voiceprompts", 0xAF000, 8, "початок сектора перед областю"), ("voiceprompts", 0xD7FFF, 2, "через кінець області"),
-           ("voiceprompts", 0xD8000, 4, "область №2 бази"), ("voiceprompts", 0x10000, 4, "калібрування"), ("voiceprompts", 0x10FFC, 8, "кінець калібрування"),
-           ("voiceprompts", 0x20000, 4, "custom-data"), ("voiceprompts", 0x50000, 4, "база позивних"), ("voiceprompts", 0x9B000, 4, "кодплаг"), ("voiceprompts", 0xDA000, 4, "ключі AES"),
-           ("voiceprompts", 0xD9F9C, 100, "запис 0 таблиці ключів"), ("voiceprompts", 0x0, 4, "EEPROM"), ("voiceprompts", 0xAF400, vp.VP_MAX + 1, "довше за область"),
-           ("dmrdb", vp.VP_START, 4, "база не пише в підказки"), ("keys", vp.VP_START, 4, "ключі не пишуть у підказки"), ("dmrdb", 0xD7FFC, 4, "база не пише в кінець підказок"),
-           ("voiceprompts", 0x90000, 4, "між базою і кодплагом"), ("voiceprompts", 0xB0000 - 0x2000, 4, "кодплаг у флеші")]
+    bad = [("rawarea", 0xAF3FF, 2, "байт перед сирою областю"), ("rawarea", 0xAF000, 8, "початок сектора перед областю"), ("rawarea", 0xD7FFF, 2, "через кінець області"),
+           ("rawarea", 0xD8000, 4, "область №2 бази"), ("rawarea", 0x10000, 4, "калібрування"), ("rawarea", 0x10FFC, 8, "кінець калібрування"),
+           ("rawarea", 0x20000, 4, "custom-data"), ("rawarea", 0x50000, 4, "база позивних"), ("rawarea", 0x9B000, 4, "кодплаг"), ("rawarea", 0xDA000, 4, "ключі AES"),
+           ("rawarea", 0xD9F9C, 100, "запис 0 таблиці ключів"), ("rawarea", 0x0, 4, "EEPROM"), ("rawarea", 0xAF400, RAW_END - RAW_START + 1, "довше за область"),
+           ("dmrdb", RAW_START, 4, "база не пише в сиру область"), ("keys", RAW_START, 4, "ключі не пишуть у сиру область"), ("dmrdb", 0xD7FFC, 4, "база не пише в кінець сирої області"),
+           ("rawarea", 0x90000, 4, "між базою і кодплагом"), ("rawarea", 0xB0000 - 0x2000, 4, "кодплаг у флеші")]
     for w, a, n, what in bad:
         try:
             fg.write_span(radio, a, b"\xab" * n, w)
@@ -1434,17 +1201,17 @@ def bounds_violations():
 
 def test_bounds():
     check(bounds_violations() == [], "Z6: усі спроби запису за межі вікон відхилено: %r" % bounds_violations())
-    radio = tcr.FakeRadioX(bytearray(spi_vp(None)))
-    fg.write_span(radio, vp.VP_START, b"\x11" * 4, "voiceprompts")
-    fg.write_span(radio, vp.VP_END - 4, b"\x22" * 4, "voiceprompts")
-    check(bytes(radio.spi[vp.VP_START:vp.VP_START + 4]) == b"\x11" * 4 and bytes(radio.spi[vp.VP_END - 4:vp.VP_END]) == b"\x22" * 4, "Z6: крайні байти області підказок пишуться")
+    radio = tcr.FakeRadioX(bytearray(spi_raw()))
+    fg.write_span(radio, RAW_START, b"\x11" * 4, "rawarea")
+    fg.write_span(radio, RAW_END - 4, b"\x22" * 4, "rawarea")
+    check(bytes(radio.spi[RAW_START:RAW_START + 4]) == b"\x11" * 4 and bytes(radio.spi[RAW_END - 4:RAW_END]) == b"\x22" * 4, "Z6: крайні байти сирої області пишуться")
     # тест бачить зламану межу (мутація в процесі): розширене вниз вікно -> порушення з'являються
     saved = dict(fg.WINDOWS)
     try:
-        fg.WINDOWS["voiceprompts"] = (0xAF000, vp.VP_END)
-        check(bounds_violations() != [], "Z6/мутація: розширене вікно підказок (з 0xAF000) -- перевірка меж це ловить")
-        fg.WINDOWS["voiceprompts"] = (vp.VP_START, 0xDA100)
-        check(bounds_violations() != [] or fg.check_windows() != [], "Z6/мутація: вікно підказок, що наїхало на ключі AES, -- ловиться")
+        fg.WINDOWS["rawarea"] = (0xAF000, RAW_END)
+        check(bounds_violations() != [], "Z6/мутація: розширене вікно сирої області (з 0xAF000) -- перевірка меж це ловить")
+        fg.WINDOWS["rawarea"] = (RAW_START, 0xDA100)
+        check(bounds_violations() != [] or fg.check_windows() != [], "Z6/мутація: вікно сирої області, що наїхало на ключі AES, -- ловиться")
     finally:
         fg.WINDOWS.clear()
         fg.WINDOWS.update(saved)
@@ -1473,15 +1240,12 @@ def test_bounds():
 
 
 def test_combined():
-    """Усі нові дії поспіль на одному флеші: змінюються лише custom-data (0x20000..0x2FFFF) і область підказок; решта -- байт-в-байт."""
+    """Усі нові дії поспіль на одному флеші: змінюються лише custom-data (0x20000..0x2FFFF); решта (зокрема сира область 0xAF400..0xD8000) -- байт-в-байт."""
     old_sleep = t31.no_sleep()
     try:
         d = tempfile.mkdtemp(prefix="r35c_")
-        img_a, _ = vp_image(seed=11)
-        img_b, _ = vp_image(seed=12)
         spi = spi_region()
-        spi[vp.VP_START:vp.VP_END] = b"\xff" * (vp.VP_END - vp.VP_START)
-        spi[vp.VP_START:vp.VP_START + len(img_a)] = img_a
+        spi[RAW_START:RAW_END] = b"\xff" * (RAW_END - RAW_START)
         before = bytes(spi)
         radio = tcr.FakeRadioX(bytearray(spi))
         rnd = random.Random(8)
@@ -1496,28 +1260,24 @@ def test_combined():
             bm.write_melody(radio, [], skip_splash=True)
             bm.remove_melody(radio)
             bm.write_melody(radio, bm.preset("siren"))
-            vp.write_image(cl.CpsLink(radio), img_b, lambda *_: True, log=quiet, safety_dir=d)
-            vp.erase(cl.CpsLink(radio), lambda *_: True, log=quiet, safety_dir=d)
-            vp.write_image(cl.CpsLink(radio), img_a, lambda *_: True, log=quiet, safety_dir=d)
         after = bytes(radio.spi)
         changed = diff_positions(before, after)
-        allowed = lambda p: cd.FLASH_BASE <= p < cd.FLASH_BASE + 0x10000 or vp.VP_START <= p < vp.VP_END      # noqa: E731
-        check(changed and all(allowed(p) for p in changed), "Z6: змінені байти лише в custom-data й області підказок (поза: %s)" % [hex(p) for p in changed if not allowed(p)][:5])
+        allowed = lambda p: cd.FLASH_BASE <= p < cd.FLASH_BASE + 0x10000      # noqa: E731
+        check(changed and all(allowed(p) for p in changed), "Z6: змінені байти лише в custom-data (поза: %s)" % [hex(p) for p in changed if not allowed(p)][:5])
         for name, lo, hi in (("EEPROM з калібруванням", 0, 0x20000), ("база позивних (область №1)", db.AREA1_START, db.AREA1_START + db.AREA1_LEN), ("кодплаг у флеші", 0x9B000, 0xAF000),
                              ("область №2 бази", db.AREA2_START, cl.AES_KEYS_RAW_START), ("ключі AES", cl.AES_KEYS_RAW_START, cl.AES_KEYS_RAW_START + cl.AES_KEYS_RAW_LEN),
                              ("решта флеша після ключів", cl.AES_KEYS_RAW_START + cl.AES_KEYS_RAW_LEN, len(before))):
             check(before[lo:hi] == after[lo:hi], "Z6/CL6: %s після всіх нових дій побайтово та сама" % name)
         check(not radio.cal_touched, "Z6: калібрування не зачеплено")
-        # кожен виклик запису custom-data лежить у своїй області; підказок -- у своїй
+        # кожен виклик запису лежить в області custom-data
         sectors_cd = [a for a, _n in wl.calls if cd.FLASH_BASE <= a < cd.FLASH_BASE + 0x10000]
-        sectors_vp = [a for a, _n in wl.calls if vp.VP_START <= a < vp.VP_END]
-        check(len(sectors_cd) + len(sectors_vp) == len(wl.calls) and all(not (0x10000 <= a < 0x11000) for a, _n in wl.calls), "Z6: усі %d викликів запису -- або в custom-data, або в підказках" % len(wl.calls))
+        check(len(sectors_cd) == len(wl.calls) and all(not (0x10000 <= a < 0x11000) for a, _n in wl.calls), "Z6: усі %d викликів запису -- у custom-data" % len(wl.calls))
         # інші блоки області не змінилися
         reg0 = {b.type: b.payload for b in cr.parse_region(before[cd.FLASH_BASE:cd.FLASH_BASE + 0x10000]).blocks}
         reg1 = {b.type: b.payload for b in cr.parse_region(after[cd.FLASH_BASE:cd.FLASH_BASE + 0x10000]).blocks}
         same = all(reg0[t] == reg1[t] for t in (4, 5, 8, 10))
         check(same, "Z6/CL6: блоки налаштувань (ключі/теми/SMS/RCTL) після дій з картинкою, мелодією й супутниками не змінилися")
-        check(vp.read_image(cl.CpsLink(radio)) == img_a, "Z6/CL5: підказки після циклу «записати-стерти-записати» == вихідні")
+        check(before[RAW_START:RAW_END] == after[RAW_START:RAW_END], "Z6: сира область 0xAF400..0xD8000 після всіх дій не змінилась")
     finally:
         time.sleep = old_sleep
 
@@ -1565,10 +1325,10 @@ def test_gui():
         app.update()
         keys = [c.key for _g, _t, cls in SECTIONS for c in cls]
         titles = {c.key: c.title for _g, _t, cls in SECTIONS for c in cls}
-        for k in ("satellites", "splash", "melody", "voice"):
+        for k in ("satellites", "splash", "melody"):
             check(k in keys, "Z1: панель «%s» є в SECTIONS" % k)
         grp = {g: [c.key for c in cls] for g, _t, cls in SECTIONS}
-        check(all(k in grp["grp_settings"] for k in ("satellites", "splash", "melody", "voice")), "Z1/A2: усі чотири панелі -- у групі «Налаштування рації»")
+        check(all(k in grp["grp_settings"] for k in ("satellites", "splash", "melody")), "Z1/A2: усі три панелі -- у групі «Налаштування рації»")
         check(len(set(titles.values())) == len(titles), "Z1: назви розділів унікальні: %r" % [t for t in titles.values() if list(titles.values()).count(t) > 1])
         for label, spi in (("без документа", None), ("порожній", tc.base.make_spi()), ("повний", tc.make_fixture_spi())):
             if spi is not None:
@@ -1576,26 +1336,21 @@ def test_gui():
                 src = os.path.join(tmp, "%s.zip" % label.replace(" ", "_"))
                 open(src, "wb").write(data)
                 check(app.doc_open_file(src), "Z1: відкрито %s кодплаг" % label)
-            for k in ("satellites", "splash", "melody", "voice"):
+            for k in ("satellites", "splash", "melody"):
                 app.show(k)
                 _spin(app, 4)
                 p = app.get_panel(k)
                 check(p is not None and p.key == k, "Z1 (%s): панель %s відкривається" % (label, k))
-            sp, sl, mp, vpn = (app.get_panel(k) for k in ("satellites", "splash", "melody", "voice"))
+            sp, sl, mp = (app.get_panel(k) for k in ("satellites", "splash", "melody"))
             for nm, wdg in (("супутники: Прочитати", sp.read_btn), ("супутники: Записати", sp.write_btn), ("заставка: Прочитати", sl.read_btn), ("заставка: Записати", sl.write_btn),
-                            ("заставка: Прибрати", sl.remove_btn), ("мелодія: Прочитати", mp.read_btn), ("мелодія: Записати", mp.write_btn), ("мелодія: Повернути", mp.restore_btn),
-                            ("підказки: Що в рації", vpn.read_btn), ("підказки: Записати", vpn.write_btn), ("підказки: Стерти", vpn.erase_btn), ("підказки: Зберегти", vpn.save_btn)):
+                            ("заставка: Прибрати", sl.remove_btn), ("мелодія: Прочитати", mp.read_btn), ("мелодія: Записати", mp.write_btn), ("мелодія: Повернути", mp.restore_btn)):
                 check(str(wdg.cget("state")) == "disabled", "Z1 (%s): без рації «%s» вимкнено, не прибрано" % (label, nm))
-            for nm, wdg in (("супутники: Відкрити файл", sp.open_btn), ("супутники: Перевірити джерело", sp.probe_btn), ("заставка: Відкрити файл", sl.open_btn),
-                            ("підказки: Відкрити файл", vpn.open_btn)):
+            for nm, wdg in (("супутники: Відкрити файл", sp.open_btn), ("супутники: Перевірити джерело", sp.probe_btn), ("заставка: Відкрити файл", sl.open_btn)):
                 check(str(wdg.cget("state")) != "disabled", "Z1 (%s): «%s» не потребує рації -- доступна" % (label, nm))
             check(sl.boot_label.cget("text") != "" or label != "без документа", "Z1/B4 (%s): підказка про тип екрана вітання" % label)
         # ---------- радіо підроблено ----------
-        img_a, _ = vp_image(seed=21)
-        img_b, _ = vp_image(seed=22)
         spi_r = spi_region()
-        spi_r[vp.VP_START:vp.VP_END] = b"\xff" * (vp.VP_END - vp.VP_START)
-        spi_r[vp.VP_START:vp.VP_START + len(img_a)] = img_a
+        spi_r[RAW_START:RAW_END] = b"\xff" * (RAW_END - RAW_START)
         before = bytes(spi_r)
         radio = tcr.FakeRadioX(bytearray(spi_r))
         cl.open_radio = lambda *a, **k: radio
@@ -1763,60 +1518,9 @@ def test_gui():
         check(bm.read_melody(radio)[0] == bm.ST_ABSENT, "Z1/C3: «Повернути вбудовану» -- блока мелодії для прошивки нема (CL4)")
         check(not errors, "Z1: без вікон помилок (мелодія): %r" % errors)
 
-        # --- Підказки ---
-        app.show("voice")
-        vpn = app.get_panel("voice")
-        vpn._on_read()
-        _wait_idle(app)
-        check(vpn.info is not None and vpn.info.total == len(img_a) and len(vpn.tree.get_children()) == vpn.info.present, "Z1/D3: перелік фраз з рації: %d наявних" % vpn.info.present)
-        vpn.only_present.set(False)
-        vpn._redraw()
-        check(len(vpn.tree.get_children()) == 367, "Z1/D3: без фільтра -- усі 367 записів таблиці")
-        saved_p = os.path.join(tmp, "saved_vp.bin")
-        fd.asksaveasfilename = lambda **k: saved_p
-        vpn._on_save()
-        _wait_idle(app)
-        check(os.path.exists(saved_p) and open(saved_p, "rb").read() == img_a, "Z1/D2: «Зберегти з рації у файл» -- файл == область у рації")
-        listp = os.path.join(tmp, "list.txt")
-        fd.asksaveasfilename = lambda **k: listp
-        vpn._on_save_list()
-        check(os.path.exists(listp) and "PROMPT_SILENCE" in open(listp, encoding="utf-8").read(), "Z1/D3: перелік фраз збережено у файл")
-        # стерти
-        confirms.clear()
-        vpn._on_erase()
-        _wait_idle(app, 40.0)
-        check(not vp.read_info(cl.CpsLink(radio)).magic_ok and confirms, "Z1/D2/CL5: «Стерти підказки» -- заголовка 'VP' нема; було підтвердження")
-        # записати з файла
-        fd.askopenfilename = lambda **k: saved_p
-        vpn._on_open_file()
-        check(vpn.file_image == img_a and "файл saved_vp.bin" in vpn.summary_label.cget("text"), "Z1/D2: файл підказок відкрито, показано опис")
-        confirms.clear()
-        vpn._on_write()
-        _wait_idle(app, 40.0)
-        check(bytes(radio.spi[vp.VP_START:vp.VP_START + len(img_a)]) == img_a and confirms, "Z1/D2/CL5: «Записати з файла» повернув підказки; було підтвердження")
-        # хибний файл
-        badp = os.path.join(tmp, "bad.bin")
-        open(badp, "wb").write(b"\x00" * 5000)
-        fd.askopenfilename = lambda **k: badp
-        vpn.file_image = None
-        vpn._on_open_file()
-        vpn._on_write()
-        check(vpn.file_image is not None and (errors or infos), "Z1/D2: хибний файл -- записати не можна, повідомлення")
-        errors.clear()
-        # D5 у панелі
-        radio_d = tcr.FakeRadioX(bytearray(spi_vp(img_a, "clobber")))
-        cl.open_radio = lambda *a, **k: radio_d
-        vpn._on_read()
-        _wait_idle(app)
-        check("затерті" in vpn.db_label.cget("text"), "Z1/D5: панель показує попередження про базу 'n': %s" % vpn.db_label.cget("text")[:60])
-        vpn.file_image = img_b
-        vpn._on_write()
-        _wait_idle(app, 40.0)
-        check(radio_d.x_total == 0 and errors, "Z1/D5: запис поверх бази 'n' з панелі -- відмова, у рацію нічого")
-        errors.clear()
         # у кінці: все, що не мало змінюватися, -- те саме, що було (CL6)
         after = bytes(radio.spi)
-        check(before[:0x20000] == after[:0x20000] and before[db.AREA1_START:0x9B000 + 0x14000] == after[db.AREA1_START:0x9B000 + 0x14000] and before[vp.VP_END:] == after[vp.VP_END:],
+        check(before[:0x20000] == after[:0x20000] and before[db.AREA1_START:0x9B000 + 0x14000] == after[db.AREA1_START:0x9B000 + 0x14000] and before[RAW_START:] == after[RAW_START:],
               "Z1/CL6: EEPROM, база, кодплаг, ключі після всіх дій з панелей не змінились")
         check(not errors, "Z1: без вікон помилок: %r" % errors)
     finally:
@@ -1836,7 +1540,7 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     old_sleep = t31.no_sleep()
-    for t in (test_constants_match_firmware, test_tle, test_image, test_image_radio, test_melody, test_voice, test_bounds, test_combined, test_gui):
+    for t in (test_constants_match_firmware, test_tle, test_image, test_image_radio, test_melody, test_bounds, test_combined, test_gui):
         try:
             t()
         except Exception as e:  # noqa: BLE001
@@ -1847,7 +1551,7 @@ def main():
     if FAILS:
         print("test_r35: ПРОВАЛЕНО перевірок: %d" % len(FAILS))
         return 1
-    print("test_r35: усе гаразд (%d перевірок: супутники TLE, картинка заставки, мелодія вмикання, голосові підказки, межі запису, панелі)." % PASSED[0])
+    print("test_r35: усе гаразд (%d перевірок: супутники TLE, картинка заставки, мелодія вмикання, межі запису, панелі)." % PASSED[0])
     return 0
 
 
