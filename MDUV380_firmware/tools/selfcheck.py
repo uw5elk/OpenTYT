@@ -8,6 +8,9 @@
                        S2.6 база позивних (заголовок) · S2.7 голосові підказки (заголовок) · S2.8 назви з малою «я» · S3 знімок екрана проти передпоказу
   пишуть у рацію (write) S4.1 тема · S4.2 VFO · S4.3 канал «Зоря» і контакт «Надія» · S4.4 блок custom-data
   Ключі AES (S4.5) НЕ чіпаються взагалі: перевірка ключів лишається ручною.
+  R45 (лише читання): S6.1 цілісність кодплага (висячі посилання зон/каналів/контактів/списків/APRS/VFO, щільність списків зон, маска проти записів, зони й LUCZ) ·
+                       дії-кнопки панелі S6.2 «Запам'ятати стан» і S6.3 «Порівняти» (осмислена різниця після ручної операції на рації; що не мало змінитись -- калібрування,
+                       ключі AES, теми, база позивних). Нічого не виправляють.
 
 Правила безпеки (брифи R38):
   * записи ЛИШЕ після повного знімка у файл (`take_snapshot`): без нього `run()` відмовляє для будь-якого сценарію запису;
@@ -33,6 +36,8 @@ import zipfile
 
 import codeplug_edit as ced
 import codeplug_view as cv
+import cp_diff as cdf
+import cp_integrity as cint
 import contact_edit as ce
 import cps_csv as cc
 import cps_link as cl
@@ -160,6 +165,8 @@ class Ctx:
         self.halted = None              # текст, якщо запис далі небезпечний (рація в проміжному стані)
         self._cp = None
         self.sc_label = ""
+        self.state_path = None          # R45 (S6.2/S6.3): файл запам'ятованого стану кодплага (S6.2 його створює, панель передає в S6.3)
+        self.expected = None            # R45 (S6.3): cp_diff.Expected -- що користувач збирався змінити (None -- не вказано)
         self.choose = None              # R39 (S3): (заголовок, текст, [підписи]) -> індекс або None; панель підставляє діалог вибору зі списку
 
     # --- ведення ---
@@ -1460,6 +1467,102 @@ def s4_4(ctx, res):
 
 
 # =============================================================================================================================
+#  S6 (R45): цілісність кодплага й різниця після ручної операції -- ЛИШЕ ЧИТАННЯ, нічого не виправляється
+# =============================================================================================================================
+
+def guard_hashes(link):
+    """SHA-256 того, чого ручні операції на рації торкатись не повинні: калібрування, ключі AES (лише хеш), заголовки бази позивних і підказок + обидві теми."""
+    g = snapshot_invariants(link)
+    for daytime in ("day", "night"):
+        key = "тема (%s)" % te.DAYTIME_NAMES[daytime].lower()
+        try:
+            state, colors = te.read_theme(link.ser, daytime)
+            g[key] = _sha(te.encode_block(colors)) if colors is not None else "блока нема (%s)" % te.STATE_TEXT[state]
+        except (cl.CpsError, RuntimeError) as e:
+            g[key] = "не прочитано: %s" % e
+    return g
+
+
+def s6_1(ctx, res):
+    """V1: усі перевірки цілісності на свіжо прочитаному кодплазі. Знайдена проблема називає КОНКРЕТНЕ місце; підказка -- як виправити через CPS."""
+    cp = ctx.codeplug()
+    img = cc.Image.from_codeplug(cp)
+    t0 = time.time()
+    checks = cint.run_checks(img)
+    dt = time.time() - t0
+    for c in checks:
+        res.check("%s %s: %s" % (c.cid, c.title, c.summary()), "проблем немає", "проблем немає" if c.ok else c.places(), c.ok, "; ".join(c.notes[:3]))
+    res.info("час самої перевірки (без читання з рації)", "%.2f с" % dt)
+    hints = cint.hint(checks)
+    for h in hints:
+        res.notes.append("Як виправити. " + h)
+    if hints:
+        res.notes.append("Сценарій лише читає кодплаг і нічого не виправляє: виправлення -- у CPS (відкрити кодплаг, виправити поле, записати назад), потім повторити S6.1.")
+
+
+def s6_2(ctx, res):
+    """V2.1: «Запам'ятати стан» -- свіже читання кодплага + SHA-256 охоронюваного -> файл поруч зі звітом."""
+    ctx.invalidate()
+    cp = ctx.codeplug()
+    img = cc.Image.from_codeplug(cp)
+    guards = guard_hashes(ctx.link)
+    st = cdf.capture(img, guards, ctx.now)
+    os.makedirs(ctx.out_dir, exist_ok=True)
+    path = cl.unique_path(ctx.out_dir, cl.timestamp_name("selfcheck_state", ".zip", ctx.now))
+    cdf.save_state(st, path)
+    back = cdf.load_state(path)
+    res.check("файл стану перечитується й збігається зі знімком", "EEPROM і флеш однакові, SHA-256 охоронюваного те саме",
+              "однакові" if (back.eeprom == st.eeprom and back.flash == st.flash and back.guards == st.guards) else "РОЗБІЖНІ",
+              back.eeprom == st.eeprom and back.flash == st.flash and back.guards == st.guards)
+    res.info("склад запам'ятованого кодплага", "каналів %d, зон %d, контактів %d" % (len(img.channels()), len(img.zones()), len(img.contacts())))
+    res.info("охоронюване (лише SHA-256, ключів AES у файлі нема)", ", ".join(sorted(guards)))
+    ctx.state_path = path
+    res.artifacts.append(("запам'ятований стан кодплага", path))
+    res.notes.append("Тепер зроби потрібну дію на рації (видали канал, контакт, зону...), НЕ вимикаючи програму, і натисни «Порівняти».")
+
+
+def s6_3(ctx, res):
+    """V2.2/V2.3: «Порівняти» -- читає кодплаг знову й показує різницю осмислено; окремо -- що не мало змінитись."""
+    path = ctx.state_path
+    if not path:
+        res.skip_reason = "нема запам'ятованого стану: спершу «Запам'ятати стан»"
+        return
+    try:
+        before = cdf.load_state(path)
+    except cdf.StateError as e:
+        res.check("файл стану", "читається", str(e), False)
+        return
+    ctx.invalidate()
+    cp = ctx.codeplug()
+    after = cdf.capture(cc.Image.from_codeplug(cp), guard_hashes(ctx.link), ctx.now)
+    d = cdf.compare(before, after, ctx.expected)
+    res.info("стан запам'ятано", before.created)
+    res.info("що змінилось (скорочено)", d.lines()[0] if not d.any_change else "канали +%d −%d ~%d, зони +%d −%d ~%d, контакти +%d −%d ~%d; байтів EEPROM %d, флеш %d" % (
+        len(d.channels_added), len(d.channels_removed), len(d.channels_changed), len(d.zones_added), len(d.zones_removed), len(d.zones_changed),
+        len(d.contacts_added), len(d.contacts_removed), len(d.contacts_changed), d.bytes_ee, d.bytes_fl))
+    for line in d.lines():
+        res.notes.append(line)
+    # V2.3: що не мало змінитись
+    for name, changed, text in d.protected:
+        if changed is None:
+            res.info("V2.3 %s" % name, text)
+            continue
+        res.check("V2.3 %s: не мало змінитись" % name, "не змінилось", text, not changed)
+        if changed:
+            ctx.shout("після операції ЗМІНИЛОСЬ те, чого не мало: %s (%s). Перевір, чи не було запису в рацію не з того місця; знімок/бекап -- у каталозі звітів." % (name, text))
+    if d.expected_given:
+        res.check("V2.3 інші канали, зони й контакти: поза очікуваним нічого не змінилось", "нічого", "нічого" if not d.unexpected else "; ".join(d.unexpected[:SHOW_UNEXPECTED]), not d.unexpected)
+    else:
+        res.info("V2.3 інші канали, зони й контакти", "не вказано, що саме робилось -- несподіване не оцінюю (назви канали/зони/контакти в полях «Очікувано» й повтори «Порівняти»)")
+    if d.unexplained:
+        res.info("байти, яких не пояснив жоден розділ", "; ".join("0x%X..0x%X (%s)" % (a, b - 1, w) for a, b, w in d.unexplained[:SHOW_UNEXPECTED]))
+    res.artifacts.append(("стан, з яким порівнювали", path))
+
+
+SHOW_UNEXPECTED = 8
+
+
+# =============================================================================================================================
 #  Реєстр сценаріїв і ручні кроки (S5)
 # =============================================================================================================================
 
@@ -1473,6 +1576,7 @@ SCENARIOS = [
     Scenario("S2.7", "Голосові підказки: заголовок, версія, скільки фраз", RISK_READ, s2_7),
     Scenario("S2.8", "Назви з малою «я»: як закодовані (хвіст 0xFF чи 0x00)", RISK_READ, s2_8),
     Scenario("S3", "Знімок екрана: палітра й зони за темою", RISK_READ, s3, closes=("2.10",)),
+    Scenario("S6.1", "Цілісність кодплага: висячі посилання, щільність списків, маска, зони", RISK_READ, s6_1),
     Scenario("S4.1", "Тема: змінити один колір, перевірити, повернути", RISK_WRITE, s4_1,
              writes=("custom-data: блок денної теми (64 байти, один колір змінюється на мить) -> повертається", "перелік змін перевіряється: решта 31 колір і решта області не змінюються")),
     Scenario("S4.2", "VFO A: записати відоме значення, перевірити, повернути", RISK_WRITE, s4_2,
@@ -1483,7 +1587,12 @@ SCENARIOS = [
     Scenario("S4.4", "Область custom-data: записати блок, перевірити сусідів, повернути", RISK_WRITE, s4_4,
              writes=("custom-data: вміст одного живого блока (не ключі AES) на мить замінюється відомим -> повертається", "сусідні блоки мають лишитись побайтово тими самими")),
 ]
-SCENARIO_BY_ID = {s.sid: s for s in SCENARIOS}
+# R45: дії-кнопки панелі (не галочки): «Запам'ятати стан» і «Порівняти». Проходять через той самий run() і потрапляють у звіт.
+ACTIONS = [
+    Scenario("S6.2", "Запам'ятати стан кодплага (до ручної операції на рації)", RISK_READ, s6_2, default_on=False),
+    Scenario("S6.3", "Що змінила остання операція (порівняння зі станом S6.2)", RISK_READ, s6_3, default_on=False),
+]
+SCENARIO_BY_ID = {s.sid: s for s in SCENARIOS + ACTIONS}
 
 # S5. Що лишається людині. (номер чек-листа, текст, яким сценарієм перевіряється ЧАСТИНА з машинного боку)
 MANUAL = [
@@ -1532,7 +1641,8 @@ MANUAL = [
 def order(selected_ids):
     """Сценарії у порядку виконання: спершу читання, потім запис (щоб кеш читання не застарів)."""
     sel = [SCENARIO_BY_ID[i] for i in selected_ids]
-    return [s for s in SCENARIOS if s in sel and s.risk == RISK_READ] + [s for s in SCENARIOS if s in sel and s.risk == RISK_WRITE]
+    allsc = SCENARIOS + ACTIONS
+    return [s for s in allsc if s in sel and s.risk == RISK_READ] + [s for s in allsc if s in sel and s.risk == RISK_WRITE]
 
 
 def writes_confirmation_text(selected_ids, snapshot_path=None):

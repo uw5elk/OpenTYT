@@ -7,8 +7,9 @@
   * по завершенні зберігається звіт `selfcheck_РРРР-ММ-ДД_ГГ-ХХ.md` (його й надсилають) з переліком кроків, що лишаються людині (S5)."""
 import os
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import filedialog, scrolledtext, ttk
 
+import cp_diff as cdf
 import cps_link as cps
 import gui_theme as gt
 import selfcheck as sc
@@ -31,6 +32,9 @@ class SelfcheckPanel(Panel):
         self.checks = {}           # sid -> Checkbutton
         self.snapshot = None       # результат selfcheck.take_snapshot (ставиться з робочого потоку через shell.post)
         self.last_report = None
+        self.state_path = None     # R45: файл стану кодплага («Запам'ятати стан»)
+        self._exp = None           # R45: cp_diff.Expected для поточного «Порівняти»
+        self.exp_vars = {}         # R45: поля «Очікувано» для «Порівняти»: channels / zones / contacts
         self._build_ui()
 
     # --- побудова ---------------------------------------------------------------------------------
@@ -77,6 +81,8 @@ class SelfcheckPanel(Panel):
             bar.add(b)
         self.reg(self.run_btn, radio=True)
 
+        self._build_state_box()
+
         self.bar = ttk.Progressbar(self, orient="horizontal", mode="determinate", maximum=100)
         self.bar.pack(fill="x", padx=gt.PAD, pady=(gt.GAP, 2))
         self.bar_label = ttk.Label(self, text="", wraplength=600, justify="left")
@@ -87,6 +93,89 @@ class SelfcheckPanel(Panel):
         self.result_label = ttk.Label(self, text="", wraplength=600, justify="left")
         self.result_label.pack(anchor="w", padx=gt.PAD, pady=(0, gt.GAP))
         self._update_snapshot_ui()
+
+    # --- R45: стан до і після ручної операції --------------------------------------------------------
+
+    def _build_state_box(self):
+        box = ttk.LabelFrame(self, text="Що змінила остання операція на рації (лише читання)")
+        box.pack(fill="x", padx=gt.PAD, pady=(gt.GAP, gt.GAP))
+        ttk.Label(box, text=("1) «Запам'ятати стан» -- програма читає кодплаг і зберігає файл поруч зі звітом. 2) Зроби на рації потрібну дію (видали канал, контакт, зону...). "
+                             "3) «Порівняти» -- програма читає кодплаг ще раз і розповідає, що змінилось: канали, зони, контакти, сектори; окремо -- чи не змінилось те, чого не мало "
+                             "(калібрування, ключі AES, теми, база позивних). Нічого не записує."),
+                  wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=gt.GAP, pady=(gt.GAP, 2))
+        self.state_label = ttk.Label(box, text="", wraplength=600, justify="left")
+        self.state_label.pack(anchor="w", padx=gt.GAP, pady=2)
+        bar = FlowFrame(box)
+        bar.pack(fill="x", padx=gt.GAP, pady=(2, 2))
+        self.remember_btn = ttk.Button(bar, text="Запам'ятати стан", command=self._on_remember)
+        self.compare_btn = ttk.Button(bar, text="Порівняти", command=self._on_compare)
+        self.pick_btn = ttk.Button(bar, text="Вибрати файл стану...", command=self._on_pick_state)
+        equal_buttons(self.remember_btn, self.compare_btn, self.pick_btn)
+        for b in (self.remember_btn, self.compare_btn, self.pick_btn):
+            bar.add(b)
+        self.reg(self.remember_btn, radio=True)
+        self.reg(self.compare_btn, radio=True)
+        ttk.Label(box, text="Очікувано (необов'язково): що саме ти робив(ла). Тоді інші канали, зони й контакти, що змінились, буде названо несподіваними.",
+                  wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=gt.GAP, pady=(4, 2))
+        row = ttk.Frame(box)
+        row.pack(fill="x", padx=gt.GAP, pady=(0, gt.GAP))
+        for key, label, width in (("channels", "Канали (номери)", 14), ("zones", "Зони (назви через «;»)", 18), ("contacts", "Контакти (номери)", 14)):
+            var = tk.StringVar()
+            self.exp_vars[key] = var
+            ttk.Label(row, text=label).pack(side="left", padx=(0, 4))
+            ttk.Entry(row, textvariable=var, width=width).pack(side="left", padx=(0, 10))
+        self._update_state_ui()
+
+    def _update_state_ui(self):
+        if self.state_path and os.path.isfile(self.state_path):
+            self.state_label.config(text="Стан запам'ятано: %s" % self.state_path, foreground=gt.P["ok"])
+        else:
+            self.state_label.config(text="Стан ще не запам'ятовано: «Порівняти» недоступне.", foreground=gt.P["warn"])
+
+    def _expected(self):
+        """Поля «Очікувано» -> cp_diff.Expected або None; помилка в номері -> ValueError з поясненням."""
+        try:
+            return cdf.Expected.parse(self.exp_vars["channels"].get(), self.exp_vars["zones"].get(), self.exp_vars["contacts"].get())
+        except ValueError:
+            raise ValueError("У полях «Канали» і «Контакти» мають бути номери через кому, наприклад: 5, 7.")
+
+    def _on_pick_state(self):
+        path = filedialog.askopenfilename(title="Файл стану кодплага", initialdir=output_dir(), filetypes=[("Стан кодплага", "selfcheck_state_*.zip"), ("Усі файли", "*.*")])
+        if path:
+            self.state_path = path
+            self._update_state_ui()
+
+    def _on_remember(self):
+        if self.shell.busy:
+            return
+        self._exp = None
+        self._start(["S6.2"], "Запам'ятовую стан кодплага...", self._remember_done)
+
+    def _on_compare(self):
+        if self.shell.busy:
+            return
+        if not (self.state_path and os.path.isfile(self.state_path)):
+            self.result_label.config(text="Спершу «Запам'ятати стан» (або «Вибрати файл стану...»).", foreground=gt.P["warn"])
+            return
+        try:
+            self._exp = self._expected()
+        except ValueError as e:
+            self.result_label.config(text=str(e), foreground=gt.P["err"])
+            return
+        self._start(["S6.3"], "Порівнюю кодплаг зі збереженим станом...", self._run_done)
+
+    def _start(self, ids, text, on_done):
+        self.result_label.config(text="", foreground=gt.P["fg"])
+        self.log_box.config(state="normal")
+        self.log_box.delete("1.0", "end")
+        self.log_box.config(state="disabled")
+        self.shell.run_task(lambda: self.run_worker(ids), text, plain_errors=True, on_done=on_done, ok_status="Готово.", reconnect_ms=6000)
+
+    def _remember_done(self, rep):
+        if rep.ctx.state_path:
+            self.state_path = rep.ctx.state_path
+        self._update_state_ui()
+        self._run_done(rep)
 
     # --- допоміжне ----------------------------------------------------------------------------------
 
@@ -141,6 +230,8 @@ class SelfcheckPanel(Panel):
     def _make_ctx(self, link):
         ctx = sc.Ctx(link, output_dir(), log=self._log, progress=self._progress)
         ctx.snapshot = self.snapshot
+        ctx.state_path = self.state_path
+        ctx.expected = self._exp          # прочитано в основному потоці (_on_compare): Tk-змінні з робочого потоку не читаємо
         ctx.choose = self.shell.choose_from_worker
         return ctx
 

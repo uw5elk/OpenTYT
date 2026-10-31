@@ -113,6 +113,10 @@ def stock_display(screen="channel", variant="ua", daytime="day"):
 def make_spi(vp_version=9, db_records=200, with_nadiya=True, region_entries=None, display_screen="channel"):
     """Реалістична рація: кодплаг із фікстури, область custom-data (теми, селектор AES, RCTL, SMS, картинка), ключі AES 2/5/9, підказки, база позивних."""
     spi = tc.make_fixture_spi()
+    # R45: у спільній фікстурі (test_cps_link.make_spi) маска банку 3 позначає канали 385 і 386 «в роботі», але записів у них нема (0xFF) -- для тестів CSV це байдуже,
+    # а S6.1 (цілісність кодплага) слушно називає це вадою (V1.7). «Справна рація» має бути справною: прибираємо ці два фантомні біти.
+    mask3 = cl.FLASH_ADDRESS_OFFSET + cl.CP_ADDR_CHANNEL_HEADER_FLASH + 2 * (16 + cl.CP_CHANNELS_PER_BANK * cl.CP_CHANNEL_SIZE)
+    spi[mask3:mask3 + 16] = b"\x00" * 16
     spi[0x10000:0x10010] = b"CALIB-A-CALIB-A!"
     spi[tcr.QK_START:tcr.QK_END + 1] = b"\x22" * 20
     ents = region_entries or [(1, t37.payload(1, 300)), (4, te.encode_block(te.stock_colors("day"))), (5, te.encode_block(te.stock_colors("night"))),
