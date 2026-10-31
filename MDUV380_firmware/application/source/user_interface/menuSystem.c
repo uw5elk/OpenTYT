@@ -114,9 +114,15 @@ menuDataGlobal_t menuDataGlobal =
 				NULL,// Colour picker
 #endif
 #if defined(CODEPLUG_MENU_ENABLED)
-				&menuDataCodeplug,// R44: «Кодплаг»
-				NULL,// R44: «Кодплаг» -> Канали
-				NULL,// R44: «Кодплаг» -> Зони
+				/* R44-fix: ЯВНІ індекси. Масив ініціалізується позиційно, а в enum MENU_SCREENS стоять ще MENU_AES_KEYS, MENU_MESSAGES, MENU_RCTL_REMOTE, MENU_RCTL_CONFIG, MENU_CALL_REPLAY
+				 * і MENU_APRS_HUB, для яких тут NULL-заглушок нема (у них нема таблиці). Через це «&menuDataCodeplug» лягало на позицію 40, а MENU_CODEPLUG = 46: data[46] -- вже
+				 * ЗА межами масиву змінної довжини (.data[] без розміру), тож menuDisplayMenuList читав items/numItems із сусідніх змінних RAM -> сміттєвий stringOffset ->
+				 * strlen(0x1DC69F44) -> HardFault при відкритті «Кодплаг». Явний індекс тримається на місці при будь-яких #if вище; останній NULL розтягує масив до
+				 * NUM_MENU_ENTRIES, тож data[ID] для кожного меню (menuSystemPushNewMenu, Pop, батьківське меню в menuDisplayMenuList) читається в межах масиву.
+				 * Звіряє tools/check_menu_tables.py. Лише під CODEPLUG_MENU_ENABLED: збірка без розділу «Кодплаг» не змінюється. */
+				[MENU_CODEPLUG] = &menuDataCodeplug,// R44: «Кодплаг»
+				[MENU_CODEPLUG_CHANNELS] = NULL,// R44: «Кодплаг» -> Канали
+				[MENU_CODEPLUG_ZONES] = NULL,// R44: «Кодплаг» -> Зони
 #endif
 		}
 };

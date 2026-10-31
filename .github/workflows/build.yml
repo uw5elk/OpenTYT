@@ -49,6 +49,12 @@ jobs:
       # а на екрані дає кашу -- саме так виглядало сповіщення радіоперевірки до 2026-09-04.
       - name: Кодування рядків
         run: python3 MDUV380_firmware/tools/check_string_encoding.py
+      # R44-fix F3: правило «нові мовні поля -- останніми, під тим самим #if» і позиційні таблиці меню більше не тримаються на увазі. check_menu_tables.py ловить рівно ту
+      # ваду, що дала HardFault у «Кодплаг» (&menuDataCodeplug на позиції 40 замість 46); check_language_fields.py -- розбіжності структури й мовних файлів.
+      - name: Мовні поля
+        run: python3 MDUV380_firmware/tools/check_language_fields.py
+      - name: Таблиці меню проти enum
+        run: python3 MDUV380_firmware/tools/check_menu_tables.py --quiet
       # R32 T1: застарілі форми термінів (кодплаг та ін.) повертались зі старих баз бандлів і давали конфлікти зливання.
       - name: Термінологія
         run: python3 MDUV380_firmware/tools/check_terminology.py
