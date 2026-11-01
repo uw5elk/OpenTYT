@@ -172,8 +172,10 @@ def run_all(app, sizes=((1024, 768), (1920, 1080)), keys=None, doc_states=(None,
                 app.show(key)
                 spin(app, 0.35)
                 iss = probe_panel(app, key)
-                if iss:
-                    spin(app, 0.7)             # розкладка могла ще встигати за подіями: звітуємо лише про те, що не минуло
+                for _try in range(4):
+                    if not iss:
+                        break
+                    spin(app, 0.7)             # розкладка могла ще встигати за подіями (на завантаженій машині довше): звітуємо лише про те, що не минуло
                     iss = probe_panel(app, key)
                 if iss:
                     result[((W, H), "doc" if dstate else "nodoc", key)] = iss

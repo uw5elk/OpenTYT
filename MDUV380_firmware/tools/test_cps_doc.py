@@ -180,7 +180,7 @@ def test_basic_info():
     check(doc.edit_basic(callsign="UW5ELK", dmr_id=2500123) is False, "те саме значення -- змін немає")
     snap0, rev = snap(doc), doc.revision
     for kw, what in (({"callsign": "TOOLONG1"}, "позивний"), ({"callsign": "UW-5"}, "позивний"), ({"dmr_id": 0}, "DMR ID"),
-                     ({"dmr_id": ced.DMR_ID_MAX + 1}, "DMR ID"), ({"line1": "Х" * 17}, "рядок"), ({"line1": "日本語😀"}, "рядок")):
+                     ({"dmr_id": ced.DMR_ID_MAX + 1}, "DMR ID"), ({"line1": "Х" * 17}, "Talker Alias"), ({"line1": "日本語😀"}, "Talker Alias")):   # R51: у повідомленні поле названо як у розділі
         try:
             doc.edit_basic(**kw)
             check(False, "%r мало бути відмовою" % (kw,))

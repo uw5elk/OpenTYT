@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 """R50-fix: тести верстки не залежать від випадкового шрифту хоста чи CI.
 
-S1  вікно CPS (усі розділи, крім «Супутники» -- це R52; і крім Зон / Списків TG / DTMF з кодплагом на 150 % -- відомі, не виправлені, див. KNOWN_150_WITH_DOC) на 1024x768 при сценаріях шрифт × масштаб (system / DejaVu Sans × 100/125/150 %): жоден підпис, кнопка,
+S1  вікно CPS (усі розділи, крім «Супутники» -- це R52; БЕЗ інших винятків, R51) на 1024x768 при сценаріях шрифт × масштаб (system / DejaVu Sans × 100/125/150 %): жоден підпис, кнопка,
     поле чи заголовок рамки не обрізані (layout_probe). Стан «з кодплагом» -- на найбільшому масштабі кожного шрифту, «без кодплага» -- на всіх;
 S2  Q1 (область панелі при мінімальному й великому вікні): «службова» висота (меню, панель документа, журнал) росте разом із шрифтом, тому межа масштабується
     з відсотком; число для 100 % -- те саме, що в test_cps_ui (310 / 270 px);
+S5  мінімальний розмір головного вікна = 760x520 × масштаб (не більше екрана); на ньому верхня панель документа не обрізана, область панелі не менша за 200 px × масштаб;
 S3  зонд у цьому режимі справді бачить обрізання: звужене поле списку на DejaVu Sans 100 % знайдено;
 S4  «Відновити…» перевіряє test_r50.py (F2.2); тут лише підключення до run_tests.sh.
 Запуск: xvfb-run -a python3.12 tools/test_r50fix.py"""
@@ -19,9 +20,6 @@ sys.path.insert(0, HERE)
 FAILS = []
 FW = os.path.dirname(HERE)
 EXCLUDE = {"satellites"}          # розділ «Супутники» -- зона R52; його знахідки лише названо у звіті (DejaVu Sans 100 %: список джерел 375 px у полі 356 px)
-# Знайдено цим тестом, НЕ виправлено в R50-fix (стара верстка, не з R50; потребує окремого раунду): з відкритим кодплагом на масштабі 150 % у цих розділах
-# кнопки/поле виступають справа за межі (Зони, Списки TG: «← Прибрати», «Вниз ↓» на 42 px; DTMF: поле на 26 px). Без кодплага, на 100 і 125 % -- чисто.
-KNOWN_150_WITH_DOC = {"zones", "tglists", "dtmf"}
 SMALL_CHROME, BIG_CHROME = 310, 270   # межі test_cps_ui Q1 при 100 %
 
 
@@ -65,15 +63,13 @@ def test_s1_s2():
     for fam, pct in scs:
         max_pct[fam] = max(max_pct.get(fam, 0), pct)
     n_runs = 0
+    scales = []
     for sc in scs:
         app = new_app(spath, sc)
         try:
             keys = [k for k in app.section_keys() if not k.startswith("grp_") and k not in EXCLUDE]
-            if sc[1] == max_pct[sc[0]]:
-                res = lp.run_all(app, sizes=((1024, 768),), keys=keys, doc_states=(None,))
-                res.update(lp.run_all(app, sizes=((1024, 768),), keys=[k for k in keys if k not in KNOWN_150_WITH_DOC], doc_states=(mk,)))
-            else:
-                res = lp.run_all(app, sizes=((1024, 768),), keys=keys, doc_states=(None,))
+            # R51: винятків нема -- ні за масштабом, ні за станом кодплага: кожен сценарій проходить розділи і без кодплага, і з ним
+            res = lp.run_all(app, sizes=((1024, 768),), keys=keys, doc_states=(None, mk))
             lines = lp.format_report(res)
             check(not lines, "S1 [%s]: обрізаний текст у %d місцях:\n  %s" % (fs.label(sc), len(lines), "\n  ".join(l[:230] for l in lines[:10])))
             n_runs += 1
@@ -87,9 +83,37 @@ def test_s1_s2():
                 limit = int(round(chrome * k))
                 check(rh >= H - limit, "S2 [%s] %dx%d: область панелі %dx%d -- службова висота %d > %d" % (fs.label(sc), W, H, rw, rh, H - rh, limit))
                 check(rw >= W - 420 * k - 1, "S2 [%s] %dx%d: область панелі вужча, ніж треба (%d)" % (fs.label(sc), W, H, rw))
+            # S5 (R51 Б2): мінімальний розмір головного вікна росте з масштабом, а на ньому верхня панель документа й область панелі не обрізані
+            app.apply_min_size()
+            mn = app.minsize()
+            sw, sh = app.winfo_screenwidth(), app.winfo_screenheight()
+            want = (min(int(round(760 * k)), max(760, sw - 40)), min(int(round(520 * k)), max(520, sh - 80)))
+            check(abs(mn[0] - want[0]) <= 1 and abs(mn[1] - want[1]) <= 1, "S5 [%s]: мінімальний розмір вікна %r, очікувано %r (760x520 × масштаб, не більше екрана)" % (fs.label(sc), mn, want))
+            check(mn[0] >= 760 and mn[1] >= 520, "S5 [%s]: мінімум не менший за 760x520 (%r)" % (fs.label(sc), mn))
+            app.geometry("%dx%d" % tuple(mn))
+            lp.spin(app, 0.5)
+            for key in ("basic", "zones", "tglists", "dtmf"):
+                app.show(key)
+                lp.spin(app, 0.5)
+                bad = [(lp._path(w)[-40:], lp.probe_widget(w)) for w in lp.walk_viewable(app.docbar) if lp.probe_widget(w)]
+                check(not bad, "S5 [%s] %s на мінімальному розмірі %r: верхня панель обрізана: %r" % (fs.label(sc), key, mn, bad[:2]))
+                rw, rh = app.right.winfo_width(), app.right.winfo_height() - app.docbar.winfo_height()
+                check(rh >= 200 * k, "S5 [%s] %s на мінімальному розмірі %r: область панелі лише %dx%d" % (fs.label(sc), key, mn, rw, rh))
+                bad = lp.probe_panel(app, key)
+                check(not bad, "S5 [%s] %s на мінімальному розмірі %r: обрізано: %r" % (fs.label(sc), key, mn, bad[:2]))
+            scales.append((sc[1], tuple(mn)))
             app.set_document(None)
         finally:
+            try:
+                app.update()                     # виконати відкладені after_idle (refit таблиць) ДО знищення вікна -- без «invalid command name» у виводі
+            except Exception:  # noqa: BLE001
+                pass
             app.destroy()
+    by_pct = {}
+    for pct, mn in scales:
+        by_pct.setdefault(pct, []).append(mn)
+    check(min(by_pct[150])[0] > min(by_pct[125])[0] > min(by_pct[100])[0] - 1 and min(by_pct[150])[1] >= min(by_pct[125])[1] >= min(by_pct[100])[1],
+          "S5: мінімум росте з масштабом: %r" % (by_pct,))
     print("test_r50fix: S1/S2 -- сценаріїв %d, повних проходів по розділах %d" % (len(scs), n_runs))
 
 
@@ -138,6 +162,8 @@ def main():
         print("test_r50fix: нема tkinter/DISPLAY -- S1-S3 пропущено")
     if FAILS:
         print("\nПРОВАЛІВ: %d" % len(FAILS))
+        for f in FAILS[:6]:                      # run_tests.sh показує лише останні рядки виводу -- причини мають бути серед них
+            print("  -", f[:300].replace("\n", " | "))
         sys.exit(1)
     print("test_r50fix: усе гаразд")
 

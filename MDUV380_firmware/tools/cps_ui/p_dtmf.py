@@ -47,6 +47,10 @@ class DtmfPanel(EditorPanel):
                                 "Щоб прибрати контакт, натисніть «Видалити...»." % cc.DTMF_ALPHABET),
                   wraplength=420, justify="left", foreground=gt.P["muted"]).pack(anchor="w", pady=8)
 
+    def content_min_width(self):
+        """Поле коду має фіксовану ширину в символах (росте зі шрифтом): форма не вужча за поле + відступи рамки (R51: на 150 % поле виступало за край)."""
+        return max(self.code_entry.winfo_reqwidth(), self.code_apply.winfo_reqwidth()) + 2 * (gt.PAD - 4) + 8 + 24
+
     def clear_form(self):
         self._loading = True
         try:

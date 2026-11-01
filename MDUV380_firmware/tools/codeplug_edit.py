@@ -7,11 +7,11 @@ contact_edit.apply_ops, aprs_beacon_cfg.apply_callsign та імпорт CSV. Д
 образ; у рацію нічого тут не пишеться (запис -- окрема дія документа через cps_restore).
 
 Формати й довжини полів НЕ змінено: APRS-слот -- ті самі 64 байти CodeplugAPRSConfig_t (кодування полів -- ті самі функції cps_csv,
-що й в імпорті CSV: cps_csv._aprs_encode_field), позивний -- EEPROM 0x00E0 (8 Б, дописка 0xFF), DMR ID -- EEPROM 0x00E8 (4 Б BCD),
-рядки вітання -- EEPROM 0x7540 і 0x7550 (по 16 Б, дописка 0xFF; CODEPLUG_ADDR_BOOT_LINE1/2).
+що й в імпорті CSV: cps_csv._aprs_encode_field), ім'я рації / позивний APRS -- EEPROM 0x00E0 (8 Б, дописка 0xFF), мій DMR ID -- EEPROM 0x00E8 (4 Б BCD),
+рядки Talker Alias -- EEPROM 0x7540 і 0x7550 (по 16 Б, дописка 0xFF; CODEPLUG_ADDR_BOOT_LINE1/2).
 
-ГІПОТЕЗА (не перевірено на залізі): рядки вітання кодуються як назви каналів (GBK, якщо всі літери є в GB2312, інакше cp1251) --
-саме так їх читає наш переглядач; чи покаже екран привітання рації кирилицю -- залежить від шрифту прошивки.
+ГІПОТЕЗА (не перевірено на залізі): рядки Talker Alias кодуються як назви каналів (GBK, якщо всі літери є в GB2312, інакше cp1251) --
+саме так їх читає наш переглядач; чи покаже екран при вмиканні рації кирилицю -- залежить від шрифту прошивки.
 """
 import os
 import struct
@@ -122,9 +122,9 @@ def apply_basic_info(base_img, callsign=None, dmr_id=None, line1=None, line2=Non
             res.changed.append(("Основна інформація", "DMR ID: %d -> %d" % (cur["dmr_id"], dmr_id)))
     if intro_text is not None and bool(intro_text) != cur["intro_text"]:
         img.set_ee(ADDR_BOOT_INTRO, bytes([1 if intro_text else 0]))
-        res.changed.append(("Основна інформація", "екран вітання: %s -> %s" % ("текст" if cur["intro_text"] else "картинка",
-                                                                         "текст" if intro_text else "картинка")))
-    for key, addr, label in (("line1", ADDR_BOOT_LINE1, "рядок вітання 1"), ("line2", ADDR_BOOT_LINE2, "рядок вітання 2")):
+        res.changed.append(("Основна інформація", "екран при вмиканні: %s -> %s" % ("гасло" if cur["intro_text"] else "картинка",
+                                                                              "гасло" if intro_text else "картинка")))
+    for key, addr, label in (("line1", ADDR_BOOT_LINE1, "Talker Alias, частина 1"), ("line2", ADDR_BOOT_LINE2, "Talker Alias, частина 2")):
         text = line1 if key == "line1" else line2
         if text is None or text == cur[key]:
             continue

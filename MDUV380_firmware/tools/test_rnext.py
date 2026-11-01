@@ -364,7 +364,7 @@ def test_gui():
         app.show("basic")
         _spin(app)
         bp = app.get_panel("basic")
-        check(bp.intro_var.get().startswith("Текст"), "вітання: байт 0xFF показано як «Текст»")
+        check(bp.intro_var.get() == "Гасло", "вітання: байт 0xFF показано як «Гасло»")
         bp.intro_var.set("Картинка")
         bp._validate()
         _spin(app)

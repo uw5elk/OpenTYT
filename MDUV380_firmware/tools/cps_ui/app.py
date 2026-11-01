@@ -53,7 +53,7 @@ from .p_themes import ThemesPanel
 from .p_vfo import VfoPanel
 from .p_contacts import ContactsPanel
 from .p_zones import ZonesPanel
-from .layout import PaneMemory
+from .layout import FlowFrame, PaneMemory, ui_scale
 from .panel import BUSY_REASON, HINT_NO_DOC, ScrollFrame
 from .settings import Settings
 
@@ -74,7 +74,7 @@ class CpsApp(DocActions, tk.Tk):
         gt.apply(self)            # темна тема -- до створення будь-яких віджетів
         gui_clipboard.install(self)    # R36 B3: Ctrl+C/V/X/A за кодом клавіші в усіх полях і таблицях + контекстні меню (до створення віджетів)
         self.title(APP_TITLE)
-        self.minsize(760, 520)
+        self.apply_min_size()
         self.settings = settings or Settings()
         gd.GEOMETRY_STORE = self.settings          # R50: діалоги запам'ятовують розмір у тих самих налаштуваннях
         gd.install_message_boxes()                 # R50: короткі повідомлення теж зміннорозмірні (і довгий підсумок запису прокручується)
@@ -113,6 +113,23 @@ class CpsApp(DocActions, tk.Tk):
             self.after(150, lambda: self.refresh_connection(force=False))
 
     # --- вікно: розмір, закриття ----------------------------------------------------------
+
+    MIN_SIZE = (760, 520)            # мінімальний розмір вікна при масштабі екрана 100 % (96 dpi), px
+
+    def min_window_size(self):
+        """Мінімальний розмір вікна = MIN_SIZE × масштаб екрана (R51: раніше число 760x520 не росло, і на 150 % під панель документа, журнал й рядок стану
+        лишалось ~165-205 px). Не більший за екран (мінус запас під рамку й панель завдань)."""
+        k = ui_scale(self)
+        try:
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        except tk.TclError:
+            sw, sh = 10 ** 6, 10 ** 6
+        return (min(int(round(self.MIN_SIZE[0] * k)), max(self.MIN_SIZE[0], sw - 40)), min(int(round(self.MIN_SIZE[1] * k)), max(self.MIN_SIZE[1], sh - 80)))
+
+    def apply_min_size(self):
+        """Виставити мінімальний розмір за поточним масштабом (викликається при запуску; тести викликають після зміни масштабу)."""
+        self.minsize(*self.min_window_size())
+
 
     def _maximize(self):
         """Вікно відкривається розгорнутим на весь екран. «zoomed» є лише в Windows/macOS-Tk, на Linux -- атрибут «-zoomed»; якщо немає
@@ -353,10 +370,12 @@ class CpsApp(DocActions, tk.Tk):
         bar = ttk.Frame(self.right)
         bar.grid(row=0, column=0, sticky="ew")
         self.docbar = bar
-        row = ttk.Frame(bar)
+        # R51: рядок кнопок -- FlowFrame (елементи ставляться через place, кожен рядок незалежно). Раніше був grid з власним розрахунком переносу, а стовпці
+        # grid спільні для всіх рядків: широка кнопка нижнього рядка зсувала стовпець, і верхній рядок виступав за край (41 px при 760 px, 100 %).
+        row = FlowFrame(bar)
         row.pack(fill="x", padx=12, pady=(6, 2))
         self._docbtn_row = row
-        self._docbtn_items = [ttk.Label(row, text="Кодплаг:", font=("Segoe UI", 10, "bold"))]
+        row.add(ttk.Label(row, text="Кодплаг:", font=("Segoe UI", 10, "bold")))
         self.docbtn = {}
         for key, text, cmd in (("open_radio", "Відкрити з рації", lambda: self.doc_open_radio()),
                                ("open_file", "Відкрити з бекапу...", lambda: self.doc_open_file()),
@@ -365,33 +384,10 @@ class CpsApp(DocActions, tk.Tk):
                                ("discard", "Відкинути зміни", lambda: self.doc_discard())):
             b = ttk.Button(row, text=text, command=cmd)
             self.docbtn[key] = b
-            self._docbtn_items.append(b)
-        self._docbtn_layout = None
-        row.bind("<Configure>", self._relayout_docbar)
-        self._relayout_docbar()
-        self.docbar_note = ttk.Label(bar, text="", wraplength=700, justify="left", foreground=gt.P["warn"])
+            row.add(b)
+        self.docbar_note = gd.autowrap(ttk.Label(bar, text="", wraplength=700, justify="left", foreground=gt.P["warn"]), bar, margin=28)
         self._docbar_note_shown = False
         ttk.Separator(bar, orient="horizontal").pack(fill="x", pady=(4, 0), side="bottom")
-
-    def _relayout_docbar(self, _e=None):
-        """Кнопки документа в один рядок, а коли вікно вузьке -- переносяться на наступний (нічого не обрізається)."""
-        w = self._docbtn_row.winfo_width()
-        if w <= 1:
-            w = 100000                      # ще не показано: усе в один рядок, перекладемо при першому <Configure>
-        plan, x, r, c = [], 0, 0, 0
-        for it in self._docbtn_items:
-            iw = it.winfo_reqwidth() + 8
-            if c and x + iw > w:
-                r, c, x = r + 1, 0, 0
-            plan.append((it, r, c))
-            x += iw
-            c += 1
-        sig = [(id(it), rr, cc_) for it, rr, cc_ in plan]
-        if sig == self._docbtn_layout:
-            return
-        self._docbtn_layout = sig
-        for it, rr, cc_ in plan:
-            it.grid(row=rr, column=cc_, padx=(0, 8), pady=2, sticky="w")
 
     def refresh_docbar(self):
         """Стан кнопок документа й підпис-причина поруч (кодплаг заблоковано, рації нема, тип рації не той тощо)."""

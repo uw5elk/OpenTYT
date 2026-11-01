@@ -35,6 +35,16 @@ def text_px(widget, text, font=None):
     return max([f.measure(line) for line in str(text).split("\n")] or [0])
 
 
+def ui_scale(widget):
+    """Масштаб екрана відносно 96 dpi: 1.0 = 100 %, 1.25 = 125 %, 1.5 = 150 % (Windows: параметр «Масштаб» у налаштуваннях дисплея; `tk scaling` = 96/72 · масштаб).
+    Менше 1.0 не буває (мінімальні розміри лише ростуть). R51: мінімальні розміри вікна й частин панелей, що були числами в пікселях, множаться на нього."""
+    try:
+        k = float(widget.tk.call("tk", "scaling")) / (96.0 / 72.0)
+    except (tk.TclError, ValueError):
+        k = 1.0
+    return max(1.0, k)
+
+
 # --- кнопки однієї ширини ---------------------------------------------------------------------------------------------------------
 
 def equal_buttons(*buttons, minimum=0):

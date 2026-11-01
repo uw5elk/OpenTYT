@@ -13,7 +13,7 @@ import gui_dialogs as gd
 import gui_theme as gt
 import table_edit as te
 
-from .layout import FitTable, equal_buttons
+from .layout import FitTable, equal_buttons, ui_scale
 from .panel import HINT_NO_DOC, Panel
 
 
@@ -73,7 +73,7 @@ class EditorPanel(Panel):
         self.pane.add(self.right, weight=1)
         self.right.bind("<Configure>", self._on_right_resize)
         self.build_form(self.right)
-        self.shell.register_pane(self.key, self.pane, default=self._default_left, min_first=self._min_left, min_second=lambda: 320)
+        self.shell.register_pane(self.key, self.pane, default=self._default_left, min_first=self._min_left, min_second=self.min_form_width)
         self.on_document_changed()
 
     def _on_right_resize(self, e):
@@ -93,6 +93,14 @@ class EditorPanel(Panel):
 
     def relayout(self, form_width):
         """Нащадки перелаштовують форму під доступну ширину."""
+
+    def min_form_width(self):
+        """Найменша ширина форми (правої частини), за якої нічого не виступає за край: 320 px при 100 %, далі росте з масштабом екрана (R51), а нащадки
+        додають вимогу свого вмісту (`content_min_width`) -- кнопки й поля мають фіксовану ширину в символах, яка росте разом зі шрифтом."""
+        return max(int(320 * ui_scale(self)), self.content_min_width())
+
+    def content_min_width(self):
+        return 0
 
     # --- що задають нащадки -------------------------------------------------------------------------------------------
 
@@ -314,8 +322,20 @@ class MembersEditor(EditorPanel):
 
     members_where = "списку"
 
+    def _btn_w(self):
+        return max(b.winfo_reqwidth() for b in self._mid_buttons)
+
+    def _wide_need(self):
+        """Ширина форми, за якої «Доступні | кнопки | У списку» поміщаються в один ряд: два списки + стовпець кнопок + відступи (R51: раніше було число 520 px,
+        і на масштабі 150 % стовпець кнопок виступав за край)."""
+        return max(520, self._avail_fr.winfo_reqwidth() + self._cur_fr.winfo_reqwidth() + self._btn_w() + 24)
+
+    def content_min_width(self):
+        """Вузька розкладка: кнопки по дві в ряд (і два списки не вужчі за свій запит)."""
+        return max(2 * self._btn_w() + 24, self._avail_fr.winfo_reqwidth() + 16)
+
     def relayout(self, form_width):
-        wide = form_width >= 520
+        wide = form_width >= self._wide_need()
         if wide != self._wide:
             self._layout_members(wide)
 
