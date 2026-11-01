@@ -29,7 +29,7 @@ class StationBlock(ttk.LabelFrame):
     """Рамка в панелі APRS: працює з документом (host.doc), сама нічого в рацію не пише."""
 
     def __init__(self, parent, host):
-        super().__init__(parent, text="Станція (слоти) -- частина документа; у рацію іде дією «Записати кодплаг у рацію»")
+        super().__init__(parent, text="Станція (слоти) -- частина документа")
         self.host = host
         self.shell = host.shell
         self.vars = {k: tk.StringVar() for k, _l, _w in TEXT_FIELDS}
@@ -39,7 +39,7 @@ class StationBlock(ttk.LabelFrame):
         self._can_apply = False
         self._loading = False
         self._item_slot = {}
-        ttk.Label(self, text=("Конфіги станції APRS у кодплазі (до 8). Зміни потрапляють у документ; рація змінюється лише за дією «Записати в "
+        ttk.Label(self, text=("Конфіги станції APRS у кодплазі (до 8). Зміни потрапляють у документ; рація змінюється лише за дією «Записати кодплаг у "
                               "рацію» над розділами."), wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(4, 2))
         self.hint = ttk.Label(self, text=HINT_NO_DOC, foreground=gt.P["muted"])
 

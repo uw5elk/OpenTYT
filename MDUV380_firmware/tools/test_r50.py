@@ -705,9 +705,11 @@ def test_dialog_widget():
         dlg._refresh()
         check(dlg.info["kind"] == rx.KIND_REGION_BIN and st("codeplug") == "disabled" and st("keys") == "disabled" and dlg.vars["region"].get(),
               "B2/вікно: джерело «страхова копія» (.bin) -- лише область, решта вимкнено")
-        # F2.1: нічого не обрізано ні в типовому розмірі, ні в мінімальному
+        # F2.1: нічого не обрізано ні в типовому розмірі, ні в мінімальному (мінімум -- те, що вимагає вміст, а не число в пікселях)
         import layout_probe as lp
-        for label, geo in (("типовий розмір", None), ("мінімальний 640x560", "640x560")):
+        mn = dlg.minsize()
+        check(mn[0] >= 300 and mn[1] >= 300, "F2.1: мінімальний розмір діалогу задано (%r)" % (mn,))
+        for label, geo in (("типовий розмір", None), ("мінімальний %dx%d" % mn, "%dx%d" % mn)):
             if geo:
                 dlg.geometry(geo)
             for _ in range(5):
@@ -753,6 +755,91 @@ def test_dialog_widget():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_dialog_scenarios():
+    """R50-fix F2.2: вікно «Відновити…» не обрізається ні в одному зі сценаріїв шрифт × масштаб (100/125/150 %), у кількох станах (повний архів, сміття з довгим
+    повідомленням, страхова копія області) і при збереженому замалому розмірі. Окремо -- зонд справді ловить стару верстку (довгий перемикач + кнопка в рядку)."""
+    import tkinter as tk
+    from tkinter import ttk
+    import gui_dialogs as gd
+    import font_scenarios as fs
+    import layout_probe as lp
+    from cps_ui import restore_dialog as rd
+    a = full_spi(1, t31.OCC)
+    path, _d, _m, _r = t31.mk_zip(a)
+    d = os.path.dirname(path)
+    rb = os.path.join(d, "customdata_pre-restore_20260101_000000.bin")
+    open(rb, "wb").write(t30.region_of(a))
+    junk = os.path.join(d, "junk.bin")
+    open(junk, "wb").write(b"abc" * 5)
+    root = tk.Tk()
+    root.geometry("900x700+0+0")
+    root.update()
+    old = gd.GEOMETRY_STORE
+    gd.GEOMETRY_STORE = MemStore()
+    snap = fs.snapshot(root)
+    scs = fs.scenarios(root)
+    check(len(scs) >= 3 and {p for _f, p in scs} == {100, 125, 150}, "F2.2: сценарії охоплюють 100/125/150 %%: %r" % (scs,))
+    try:
+        # зонд ловить стару верстку: довгий перемикач + кнопка в одному рядку, вікно вужче, ніж треба
+        fs.apply(root, (None, 150))
+        top = tk.Toplevel(root)
+        row = ttk.Frame(top)
+        row.pack(fill="x")
+        ttk.Radiobutton(row, text="Автоматична страхова копія (CPS зберіг її сам перед записом)").pack(side="left")
+        old_btn = ttk.Button(row, text="Оновити список")
+        old_btn.pack(side="right")
+        top.update_idletasks()
+        top.geometry("%dx%d" % (640, top.winfo_reqheight()))
+        for _ in range(4):
+            top.update()
+        check(lp.probe_widget(old_btn), "F2.2: зонд бачить стиснуту кнопку старої верстки (150 %%, 640 px)")
+        top.destroy()
+        n_checked = 0
+        for sc in scs:
+            fs.apply(root, sc)
+            for src_name, src_path in (("архів", path), ("сміття", junk), ("страхова копія", rb), ("порожньо", "")):
+                gd.GEOMETRY_STORE.d["dlg_restore"] = "400x250"            # збережений замалий розмір має піднятися до мінімуму вмісту
+                dlg = rd.RestoreDialog(root, start_dir=d, initial_path=src_path)
+                for _ in range(5):
+                    root.update()
+                mn = dlg.minsize()
+                req = (dlg.winfo_reqwidth(), dlg.winfo_reqheight())
+                check(dlg.winfo_width() >= mn[0] and dlg.winfo_height() >= mn[1], "F2.2 [%s, %s]: збережений замалий розмір піднято до мінімуму %r (є %dx%d)" % (fs.label(sc), src_name, mn, dlg.winfo_width(), dlg.winfo_height()))
+                check(mn[0] >= req[0] - 2 and mn[1] >= req[1] - 2, "F2.2 [%s, %s]: мінімум %r не менший за вимогу вмісту %r" % (fs.label(sc), src_name, mn, req))
+                for geo_label, geo in (("відкритий", None), ("мінімум", "%dx%d" % mn), ("+40 px", "%dx%d" % (mn[0] + 40, mn[1] + 40))):
+                    if geo:
+                        dlg.geometry(geo)
+                    for _ in range(5):
+                        root.update()
+                    bad = [(lp._path(w)[-45:], lp.probe_widget(w)) for w in lp.walk_viewable(dlg) if lp.probe_widget(w)]
+                    check(not bad, "F2.2 [%s, %s, %s]: «Відновити…» не обрізано: %r" % (fs.label(sc), src_name, geo_label, bad[:3]))
+                    n_checked += 1
+                # усі прапорці, обидва режими джерела: підсумок і застереження найдовші -- вікно має підняти мінімум, а не обрізати
+                for mode in (rd.MODE_ARCHIVE, rd.MODE_SAFETY):
+                    dlg.mode_var.set(mode)
+                    dlg._refresh()
+                    for k in ("region", "state", "keys", "codeplug"):
+                        dlg.vars[k].set(True)
+                    dlg._on_check()
+                    for _ in range(4):
+                        root.update()
+                    mn2 = dlg.minsize()
+                    dlg.geometry("%dx%d" % mn2)
+                    for _ in range(5):
+                        root.update()
+                    bad = [(lp._path(w)[-45:], lp.probe_widget(w)) for w in lp.walk_viewable(dlg) if lp.probe_widget(w)]
+                    check(not bad, "F2.2 [%s, %s, режим %s, усе позначено]: «Відновити…» не обрізано: %r" % (fs.label(sc), src_name, mode, bad[:3]))
+                    n_checked += 1
+                dlg.destroy()
+        check(n_checked >= 3 * 4 * 3, "F2.2: перевірено достатньо комбінацій (%d)" % n_checked)
+        print("test_r50: F2.2 -- сценаріїв %d, комбінацій у вікні «Відновити…» %d" % (len(scs), n_checked))
+    finally:
+        fs.restore(root, snap)
+        gd.GEOMETRY_STORE = old
+        root.destroy()
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_wiring():
     rt = open(os.path.join(FW, "tests", "run_tests.sh"), encoding="utf-8").read()
     check("test_r50" in rt, "Z: test_r50.py підключено до tests/run_tests.sh")
@@ -769,6 +856,7 @@ def main():
         test_a_dialogs()
         test_a_messageboxes()
         test_dialog_widget()
+        test_dialog_scenarios()
         test_gui()
         test_gui_restore_flow()
     else:

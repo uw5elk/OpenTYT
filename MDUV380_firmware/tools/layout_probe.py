@@ -57,6 +57,8 @@ def _font_of(w):
 def clipped_by_ancestors(w):
     """Список (напрямок, на скільки px) вихідного за межі предка, де прокрутка неможлива."""
     out = []
+    if w.winfo_toplevel() is w:
+        return out              # R50-fix: окреме вікно (діалог) не «виступає» з головного: це інше вікно ОС, його розмір задає менеджер вікон
     x0, y0 = w.winfo_rootx(), w.winfo_rooty()
     x1, y1 = x0 + w.winfo_width(), y0 + w.winfo_height()
     a = w.master

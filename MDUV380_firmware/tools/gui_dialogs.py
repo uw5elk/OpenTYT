@@ -25,9 +25,12 @@ def _parse_size(text):
     return (w, h) if w >= MIN_DIALOG[0] and h >= MIN_DIALOG[1] else None
 
 
-def remember_window(win, key, minsize=None):
+def remember_window(win, key, minsize=None, fit=False):
     """Зробити діалог зміннорозмірним і запам'ятовувати його розмір між запусками. Збережений розмір застосовується (не більший за екран), нове
-    положення -- по центру над головним вікном. Розмір записується в GEOMETRY_STORE при закритті діалогу."""
+    положення -- по центру над головним вікном. Розмір записується в GEOMETRY_STORE при закритті діалогу.
+
+    fit=True (R50-fix): мінімальний розмір діалогу -- не число в пікселях, а розмір, якого вимагає його вміст при цьому шрифті й масштабі екрана
+    (Windows 125-150 %, інший шрифт): зменшити діалог так, щоб щось обрізалось, не можна; збережений менший розмір теж піднімається до цього."""
     win.resizable(True, True)
     if minsize:
         win.minsize(*minsize)
@@ -36,13 +39,34 @@ def remember_window(win, key, minsize=None):
     win.update_idletasks()
     w, h = win.winfo_reqwidth(), win.winfo_reqheight()
     saved = _parse_size(store.get(sk)) if store is not None else None
-    if saved:
-        w, h = saved
-    mw, mh = (minsize or (0, 0))
-    w = max(w, mw)
-    h = max(h, mh)
     try:
         sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    except tk.TclError:
+        sw = sh = 10 ** 6
+
+    def refit_height(width, height):
+        """Підписи, що переносяться (autowrap), після першого розміщення можуть захотіти більше висоти -- даємо її, поки вміщується в екран."""
+        for _ in range(3):
+            win.update_idletasks()
+            need = win.winfo_reqheight()
+            if need <= height or need > sh:
+                break
+            height = need
+            win.geometry("%dx%d" % (width, height))
+        return height
+
+    try:
+        if fit:
+            # мінімум = що вимагає вміст при ЦЬОМУ шрифті й масштабі (з урахуванням переносу підписів на цій ширині)
+            win.geometry("%dx%d" % (min(w, sw), min(h, sh)))
+            h = min(refit_height(min(w, sw), min(h, sh)), sh)
+            w = min(w, sw)
+            win.minsize(max(w, (minsize or (0, 0))[0]), max(h, (minsize or (0, 0))[1]))
+        if saved:
+            w, h = max(w, saved[0]), max(h, saved[1])
+        mw, mh = (minsize or (0, 0))
+        w = max(w, mw)
+        h = max(h, mh)
         w, h = min(w, sw), min(h, sh)
         top = win.master.winfo_toplevel()
         x = top.winfo_rootx() + max(0, (top.winfo_width() - w) // 2)
@@ -50,14 +74,8 @@ def remember_window(win, key, minsize=None):
         x = max(0, min(x, sw - w))
         y = max(0, min(y, sh - h))
         win.geometry("%dx%d+%d+%d" % (w, h, x, y))
-        if not saved:
-            # підписи, що переносяться (autowrap), після першого розміщення можуть захотіти більше висоти -- даємо її, поки вміщується в екран
-            for _ in range(3):
-                win.update_idletasks()
-                need = win.winfo_reqheight()
-                if need <= win.winfo_height() or need > sh:
-                    break
-                win.geometry("%dx%d" % (w, need))
+        if not saved and not fit:
+            h = refit_height(w, h)
     except tk.TclError:
         pass
 

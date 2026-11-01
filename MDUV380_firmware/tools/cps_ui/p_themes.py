@@ -159,7 +159,7 @@ class ThemesPanel(Panel):
         bar = FlowFrame(right)
         bar.pack(fill="x", padx=4, pady=(10, 0))
         lab = ttk.Label(bar, text="Екран:")
-        self.screen_combo = ttk.Combobox(bar, state="readonly", width=26, values=[t for _k, t in self._screens])
+        self.screen_combo = ttk.Combobox(bar, state="readonly", width=30, values=[t for _k, t in self._screens])
         self.screen_combo.current(0)
         self.screen_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_screen_change())
         bar.add(lab)

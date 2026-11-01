@@ -104,7 +104,9 @@ def test_gui():
         check(st.hint.winfo_manager() == "pack", "без документа: підказка «Відкрийте кодплаг…» у блоці станції")
         check(str(ap.write_beacon_btn.cget("state")) == "disabled" and str(ap.read_btn.cget("state")) == "disabled", "без рації: кнопки бікона вимкнені")
         # --- V4.2: два чітко відокремлені блоки ---
-        check("документ" in st.cget("text").lower() and "Записати кодплаг у рацію" in st.cget("text"), "V4.2: блок станції підписано як частину документа: %s" % st.cget("text"))
+        # R50-fix: заголовок рамки скорочено (довгий не вміщувався на крупному шрифті) -- дію «Записати кодплаг у рацію» названо підписом усередині блоку
+        inner = " ".join(str(w.cget("text")) for w in st.winfo_children() if w.winfo_class() == "TLabel")
+        check("документ" in st.cget("text").lower() and "Записати кодплаг у рацію" in inner, "V4.2: блок станції підписано як частину документа: %s | %s" % (st.cget("text"), inner[:120]))
         check("РАЦІЮ негайно" in ap.radio_box.cget("text") and "НЕ частина документа" in ap.radio_box.cget("text"), "V4.2: блок бікона підписано: %s" % ap.radio_box.cget("text"))
         texts = [w.cget("text") for w in _all(ap.radio_box) if w.winfo_class() == "TLabel"]
         check(any("перезапусти рацію" in t.lower() for t in texts), "V4.4: підказка про перезапуск лишилась")

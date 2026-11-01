@@ -83,7 +83,7 @@ class AprsPanel(Panel):
         self.vars["power"] = tk.StringVar(value="0")
         self._row(bc, "Потужність (0 -- як канал, 1..15)", lambda f: ttk.Spinbox(f, from_=0, to=15, textvariable=self.vars["power"], width=6))
         self.vars["source"] = tk.StringVar(value="Позиція каналу")
-        self._row(bc, "Джерело позиції", lambda f: ttk.Combobox(f, textvariable=self.vars["source"], values=["Позиція каналу", "GPS"], state="readonly", width=14))
+        self._row(bc, "Джерело позиції", lambda f: ttk.Combobox(f, textvariable=self.vars["source"], values=["Позиція каналу", "GPS"], state="readonly", width=17))
         self.vars["decay"] = tk.BooleanVar(value=True)
         self.vars["compressed"] = tk.BooleanVar(value=True)
         ttk.Checkbutton(bc, text="Алгоритм затухання", variable=self.vars["decay"]).pack(anchor="w", padx=8)
