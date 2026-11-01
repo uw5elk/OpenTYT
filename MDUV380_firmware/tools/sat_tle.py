@@ -37,6 +37,7 @@ REC_LEN = 100
 BLOCK_LEN = 2520                  # sizeof(codeplugSatelliteCuctsomDataUnion_t) (forceToSize)
 PAD_LEN = BLOCK_LEN - NUM_SLOTS * REC_LEN        # 20
 NAME_LEN = 8
+ADDITIONAL_LEN = 24               # AdditionalData: шлях APRS (див. sat_table.py)
 LOOKUP = "0123456789. +-*"
 MAX_AGE_DAYS = 30                 # старіші за місяць -- попередження (A5)
 
@@ -273,7 +274,7 @@ class Slot:
         self.l2 = l2
         self.rx1, self.tx1, self.ctcss, self.arm = rx1, tx1, ctcss, arm
         self.rx2, self.tx2, self.rx3, self.tx3 = rx2, tx2, rx3, tx3
-        self.extra = bytes(extra).ljust(24, b"\x00")[:24]
+        self.extra = bytes(extra).ljust(ADDITIONAL_LEN, b"\x00")[:ADDITIONAL_LEN]
 
     @classmethod
     def from_tle(cls, tle, name=None, keep=None):
@@ -332,9 +333,18 @@ class Slot:
         return out
 
     def freq_text(self):
+        """Текст для таблиці слотів і підтвердження запису. R54: «без частот», коли нульові всі шість; далі -- голос, а наявність наборів APRS/маяк позначена словами."""
         def mhz(v):
             return ("%.6f" % (v / 1e6)).rstrip("0").rstrip(".") if v else "-"
-        return "RX %s / TX %s МГц" % (mhz(self.rx1), mhz(self.tx1))
+        if not any((self.rx1, self.tx1, self.rx2, self.tx2, self.rx3, self.tx3)):
+            return "без частот"
+        t = "RX %s / TX %s МГц" % (mhz(self.rx1), mhz(self.tx1))
+        extra = []
+        if self.rx2 or self.tx2:
+            extra.append("APRS %s/%s" % (mhz(self.rx2), mhz(self.tx2)))
+        if self.rx3 or self.tx3:
+            extra.append("маяк %s" % mhz(self.rx3 or self.tx3))
+        return t + ((", " + ", ".join(extra)) if extra else "")
 
     def pack(self):
         name = self.name.encode("ascii", errors="replace")

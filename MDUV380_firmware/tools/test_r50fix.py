@@ -19,7 +19,7 @@ sys.path.insert(0, HERE)
 
 FAILS = []
 FW = os.path.dirname(HERE)
-EXCLUDE = {"satellites"}          # розділ «Супутники» -- зона R52; його знахідки лише названо у звіті (DejaVu Sans 100 %: список джерел 375 px у полі 356 px)
+EXCLUDE = set()          # R54: розділ «Супутники» знову проходить повний прохід (підпис джерела Celestrak скорочено -- не виступає з поля); винятків нема
 SMALL_CHROME, BIG_CHROME = 310, 270   # межі test_cps_ui Q1 при 100 %
 
 

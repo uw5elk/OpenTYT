@@ -7,7 +7,7 @@ A2  старих підписів («Рядок вітання», «Дані к�
 A3  логіка полів не змінилась: байт 0x7518 / рядки / позивний / ID пишуться так само (apply_basic_info, значення «Гасло» = intro_text True);
 B1  Зони / Списки TG / DTMF: нічого не виступає за край при масштабі 100/125/150 % з кодплагом (повний прохід -- test_r50fix.py S1, винятків нема);
 B2  мінімальний розмір головного вікна = 760x520 × масштаб (test_r50fix.py S5); панель документа не виступає за край ні на 760 px, ні на мінімумі;
-B3  у test_r50fix.py нема списку винятків KNOWN_150_WITH_DOC;
+B3  у test_r50fix.py нема списку винятків KNOWN_150_WITH_DOC і нема розділів-винятків (R54: «Супутники» повернено в повний прохід);
 Z   підключено до tests/run_tests.sh.
 Запуск: xvfb-run -a python3.12 tools/test_r51.py"""
 import os
@@ -96,7 +96,7 @@ def test_b3_no_exceptions():
     t = read(HERE, "test_r50fix.py")
     check("KNOWN_150_WITH_DOC" not in t, "B3: список винятків KNOWN_150_WITH_DOC прибрано з test_r50fix.py")
     check(not re.search(r"^KNOWN\w*\s*=", t, re.M), "B3: у test_r50fix.py нема змінної-списку винятків")
-    check('EXCLUDE = {"satellites"}' in t, "B3: єдиний виняток -- «Супутники» (R52)")
+    check("EXCLUDE = set()" in t, "B3: винятків нема -- «Супутники» знову в повному проході (R54)")
 
 
 def test_z_wiring():

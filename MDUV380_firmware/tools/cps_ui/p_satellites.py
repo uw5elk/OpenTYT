@@ -6,20 +6,23 @@
 
 Порядок роботи: 1) «Прочитати з рації» -- що зараз у слотах; 2) джерело: файл TLE з диска або з мережі (Celestrak; мережа -- лише кнопками, адресу спершу перевір
 «Перевірити джерело»); 3) відібрати з завантажених і покласти в слоти або оновити елементи супутників, які вже є; 4) «Записати в рацію» -- зі страховою копією блока
-й звіркою читанням. Частоти й субтони супутників у файлі TLE немає -- їх задають у формі слота (при оновленні наявних вони зберігаються)."""
+й звіркою читанням. Частоти й субтони супутників у файлі TLE немає -- R54: їх беруть із таблиці частот (формат `satellites.txt` офіційного CPS, tools/sat_table.py;
+вбудована стартова таблиця або свій файл) за номером NORAD і задають у формі слота (усі три набори та шлях APRS; при оновленні наявних вони зберігаються)."""
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import cps_link as cps
 import gui_dialogs as gd
 import gui_theme as gt
+import sat_table as stb
 import sat_tle as st
 
 from .layout import FitTable
 from .common import output_dir
 from .panel import Panel
 
-SOURCES = [("Celestrak: аматорські супутники (НЕ ПЕРЕВІРЕНО)", st.CELESTRAK_AMATEUR), ("Інша адреса", "")]
+SOURCES = [("Celestrak: аматорські (перевірено)", st.CELESTRAK_AMATEUR), ("Інша адреса", "")]
 
 
 def _mhz(v):
@@ -72,7 +75,17 @@ class SatellitesPanel(Panel):
         self.rx_var = tk.StringVar()
         self.tx_var = tk.StringVar()
         self.ctcss_var = tk.StringVar()
+        self.arm_var = tk.StringVar()
+        self.rx2_var = tk.StringVar()
+        self.tx2_var = tk.StringVar()
+        self.rx3_var = tk.StringVar()
+        self.tx3_var = tk.StringVar()
+        self.aprs_var = tk.StringVar()
+        self.table_rows = []             # R54: рядки таблиці частот (sat_table.Row)
+        self.table_notes = []            # що не вдалося прочитати
+        self.table_source = ""           # звідки таблиця (для підпису)
         self._build_ui()
+        self._load_initial_table()
         self._redraw_slots()
 
     # --- побудова ---------------------------------------------------------------------------------
@@ -104,16 +117,26 @@ class SatellitesPanel(Panel):
         self.slot_tree = slot_tbl.tree
         slot_tbl.pack(fill="x", padx=8, pady=4)
         self.slot_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_slot_selected())
+        self.slot_tree.tag_configure("nofreq", foreground=gt.P["warn"])
+        self.slot_tree.tag_configure("bad", foreground=gt.P["err"])
         self.stale_label = ttk.Label(box, text="", foreground=gt.P["warn"], wraplength=640, justify="left")
         self.stale_label.pack(anchor="w", padx=8)
+        self.issue_label = ttk.Label(box, text="", foreground=gt.P["warn"], wraplength=640, justify="left")
+        self.issue_label.pack(anchor="w", padx=8)
         form = ttk.Frame(box)
         form.pack(fill="x", padx=8, pady=(4, 8))
-        for col, (label, var, w) in enumerate((("Назва (до 8 лат. символів)", self.name_var, 12), ("RX, МГц", self.rx_var, 12), ("TX, МГц", self.tx_var, 12),
-                                               ("Субтон TX, Гц", self.ctcss_var, 8))):
-            ttk.Label(form, text=label).grid(row=0, column=col, sticky="w", padx=(0, 6))
-            ttk.Entry(form, textvariable=var, width=w).grid(row=1, column=col, sticky="w", padx=(0, 6))
+        fields = (
+            (0, 0, "Назва (до 8 лат. символів)", self.name_var, 12), (0, 1, "RX, МГц", self.rx_var, 10), (0, 2, "TX, МГц", self.tx_var, 10),
+            (0, 3, "Субтон TX, Гц", self.ctcss_var, 8), (0, 4, "Субтон взведення, Гц", self.arm_var, 8),
+            (2, 0, "Шлях APRS (напр. RS0ISS)", self.aprs_var, 12), (2, 1, "APRS RX, МГц", self.rx2_var, 10), (2, 2, "APRS TX, МГц", self.tx2_var, 10),
+            (2, 3, "Маяк RX, МГц", self.rx3_var, 10), (2, 4, "Маяк TX, МГц", self.tx3_var, 10))
+        for row, col, label, var, w in fields:
+            ttk.Label(form, text=label).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=(4 if row else 0, 0))
+            ttk.Entry(form, textvariable=var, width=w).grid(row=row + 1, column=col, sticky="w", padx=(0, 6))
         self.apply_btn = ttk.Button(form, text="Застосувати до слота", command=self._on_apply_form)
-        self.apply_btn.grid(row=1, column=4, padx=8)
+        self.apply_btn.grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(form, text="Порожньо або 0 = цього набору нема. Набір «маяк» -- лише прийом. Субтон 67 Гц вводь як 67, 88,5 -- як 88.5.",
+                  wraplength=640, justify="left", foreground=gt.P["muted"]).grid(row=5, column=0, columnspan=5, sticky="w", pady=(2, 0))
 
         src = ttk.LabelFrame(self, text="2. Джерело елементів")
         src.pack(fill="x", padx=12, pady=6)
@@ -135,12 +158,33 @@ class SatellitesPanel(Panel):
         self.open_btn.pack(side="left", padx=8)
         self.reg(self.open_btn, radio=False)
         ttk.Label(src, text=("Мережа вмикається лише кнопками: «Перевірити джерело» запитує перші ~2 КБ і показує, що прийшло; «Завантажити з мережі» кладе весь файл у "
-                             "обране тобою місце. Адресу Celestrak взято з брифу й у цій збірці НЕ перевірено -- не вважай її робочою, доки не побачив вміст. Нічого не кешується."),
+                             "обране тобою місце. Адресу Celestrak перевірено 2026-11-01: відповідь 200, text/plain, близько 16 КБ, справжні набори TLE. Нічого не кешується."),
                   wraplength=640, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 2))
         self.src_label = ttk.Label(src, text="Файл не відкрито.", foreground=gt.P["muted"], wraplength=640, justify="left")
         self.src_label.pack(anchor="w", padx=8, pady=(0, 6))
 
-        sel = ttk.LabelFrame(self, text="3. Відбір і слоти")
+        tbl = ttk.LabelFrame(self, text="3. Таблиця частот")
+        tbl.pack(fill="x", padx=12, pady=6)
+        self.table_label = ttk.Label(tbl, text="", wraplength=640, justify="left")
+        self.table_label.pack(anchor="w", padx=8, pady=(6, 2))
+        trow = ttk.Frame(tbl)
+        trow.pack(fill="x", padx=8, pady=(2, 2))
+        self.add_table_btn = ttk.Button(trow, text="Додати з таблиці", command=self._on_add_table)
+        self.add_table_btn.pack(side="left")
+        self.fill_table_btn = ttk.Button(trow, text="Заповнити порожні слоти з таблиці", command=self._on_fill_table)
+        self.fill_table_btn.pack(side="left", padx=8)
+        trow2 = ttk.Frame(tbl)
+        trow2.pack(fill="x", padx=8, pady=(2, 2))
+        self.open_table_btn = ttk.Button(trow2, text="Відкрити свою таблицю...", command=self._on_open_table)
+        self.open_table_btn.pack(side="left")
+        self.builtin_table_btn = ttk.Button(trow2, text="Вбудована таблиця", command=self._on_builtin_table)
+        self.builtin_table_btn.pack(side="left", padx=8)
+        ttk.Label(tbl, text=("Формат -- той самий, що в `satellites.txt` офіційного CPS (можна підкинути новіший файл). Частоти беруться за НОМЕРОМ NORAD; у слотах, "
+                             "прочитаних з рації, номера нема -- там збіг за назвою. Вручну введені частоти таблиця не перезаписує. Частоти з таблиці -- з документації "
+                             "(tools/satellites_sources.md), на залізі НЕ ПЕРЕВІРЕНІ."),
+                  wraplength=640, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 6))
+
+        sel = ttk.LabelFrame(self, text="4. Відбір і слоти")
         sel.pack(fill="both", expand=True, padx=12, pady=6)
         srow = ttk.Frame(sel)
         srow.pack(fill="x", padx=8, pady=(6, 2))
@@ -171,13 +215,16 @@ class SatellitesPanel(Panel):
         self.slot_tree.delete(*self.slot_tree.get_children())
         for i, s in enumerate(self.slots):
             age = s.age_days()
-            self.slot_tree.insert("", "end", iid=str(i), values=(
+            levels = {lvl for lvl, _t in stb.check_slot(s)}
+            tag = ("bad",) if "error" in levels else (("nofreq",) if "nofreq" in levels else ())
+            self.slot_tree.insert("", "end", iid=str(i), tags=tag, values=(
                 i + 1, s.name, st.epoch_text(s), ("%d" % age) if age is not None else "?", ("%.2f" % s.inclination) if s.inclination is not None else "?",
                 ("%.1f" % s.period_min) if s.period_min else "?", s.freq_text()))
         if select is not None and 0 <= select < len(self.slots):
             self.slot_tree.selection_set(str(select))
         stale = st.stale_text(self.slots)
         self.stale_label.config(text=stale)
+        self.issue_label.config(text=self.issue_summary())
         self._update_state_label()
         self._update_counts()
 
@@ -203,6 +250,18 @@ class SatellitesPanel(Panel):
         sel = self.slot_tree.selection()
         return int(sel[0]) if sel else None
 
+    def issue_summary(self):
+        """Підсумок перевірки частот робочих слотів (без вікон): помилки, попередження, слоти без частот."""
+        errors, warns, nofreq = stb.validate_slots(self.slots)
+        parts = []
+        if errors:
+            parts.append("ПОМИЛКИ (записати не вдасться): " + "; ".join(errors))
+        if warns:
+            parts.append("Попередження: " + "; ".join(warns))
+        if nofreq:
+            parts.append("Без частот: %s." % ", ".join(l.split("«")[1].split("»")[0] for l in nofreq))
+        return " ".join(parts)
+
     def _on_slot_selected(self):
         i = self.selected_slot()
         if i is None or i >= len(self.slots):
@@ -212,9 +271,16 @@ class SatellitesPanel(Panel):
         self.rx_var.set(_mhz(s.rx1))
         self.tx_var.set(_mhz(s.tx1))
         self.ctcss_var.set(("%g" % (s.ctcss / 10.0)) if s.ctcss else "")
+        self.arm_var.set(("%g" % (s.arm / 10.0)) if s.arm else "")
+        self.rx2_var.set(_mhz(s.rx2))
+        self.tx2_var.set(_mhz(s.tx2))
+        self.rx3_var.set(_mhz(s.rx3))
+        self.tx3_var.set(_mhz(s.tx3))
+        self.aprs_var.set(stb.decode_aprs(s.extra))
 
-    def apply_form(self, index, name, rx, tx, ctcss):
-        """Застосувати значення форми до слота index (логіка без вікон). SatError -- пояснення, слот не змінюється."""
+    def apply_form(self, index, name, rx, tx, ctcss, arm=None, rx2=None, tx2=None, rx3=None, tx3=None, aprs=None):
+        """Застосувати значення форми до слота index (логіка без вікон). SatError -- пояснення, слот не змінюється. Поле None -- не чіпати (старі виклики
+        з чотирма полями працюють як раніше); шлях APRS, який не змінився проти поточного, байтів не переписує."""
         s = self.slots[index].copy()
         nm = (name or "").strip()
         if not nm:
@@ -224,6 +290,18 @@ class SatellitesPanel(Panel):
         s.name = nm
         s.rx1, s.tx1 = _parse_mhz(rx), _parse_mhz(tx)
         s.ctcss = _parse_ctcss(ctcss)
+        if arm is not None:
+            s.arm = _parse_ctcss(arm)
+        if rx2 is not None:
+            s.rx2 = _parse_mhz(rx2)
+        if tx2 is not None:
+            s.tx2 = _parse_mhz(tx2)
+        if rx3 is not None:
+            s.rx3 = _parse_mhz(rx3)
+        if tx3 is not None:
+            s.tx3 = _parse_mhz(tx3)
+        if aprs is not None and aprs.strip() != stb.decode_aprs(s.extra):
+            s.extra = stb.encode_aprs(aprs, s.extra)
         self.slots[index] = s
         return s
 
@@ -233,7 +311,8 @@ class SatellitesPanel(Panel):
             messagebox.showinfo("Супутники", "Спершу вибери слот у таблиці.", parent=self.shell)
             return
         try:
-            self.apply_form(i, self.name_var.get(), self.rx_var.get(), self.tx_var.get(), self.ctcss_var.get())
+            self.apply_form(i, self.name_var.get(), self.rx_var.get(), self.tx_var.get(), self.ctcss_var.get(), arm=self.arm_var.get(),
+                            rx2=self.rx2_var.get(), tx2=self.tx2_var.get(), rx3=self.rx3_var.get(), tx3=self.tx3_var.get(), aprs=self.aprs_var.get())
         except st.SatError as e:
             messagebox.showerror("Супутники", str(e), parent=self.shell)
             return
@@ -294,11 +373,19 @@ class SatellitesPanel(Panel):
         except st.SatError as e:
             messagebox.showerror("Супутники", str(e), parent=self.shell)
             return
+        errors, warns, nofreq = stb.validate_slots(self.slots)
+        if errors:
+            messagebox.showerror("Супутники", "Записати не можна -- частоти поза смугами рації:\n\n" + "\n".join(errors) + "\n\nВиправ їх у формі слота.", parent=self.shell)
+            return
         lines = ["У рацію буде записано супутників: %d з %d." % (len(self.slots), st.NUM_SLOTS), ""]
         lines += ["  %d. %s (епоха %s, %s)" % (i + 1, s.name, st.epoch_text(s), s.freq_text()) for i, s in enumerate(self.slots)]
         stale = st.stale_text(self.slots)
         if stale:
             lines += ["", stale]
+        if warns:
+            lines += ["", "ПОПЕРЕДЖЕННЯ щодо передачі:"] + ["  " + w for w in warns]
+        if nofreq:
+            lines += ["", "Слоти без частот (екран супутників не покаже частот, передача заблокована): %s." % ", ".join(l.split("«")[1].split("»")[0] for l in nofreq)]
         if self.radio_state is None:
             lines += ["", "Рацію ще не читали: невідомо, що в ній зараз. Запис замінить блок супутників повністю."]
         lines += ["", "Це змінює рацію одразу (поза кодплагом). Спершу блок, що зараз у рації, збережеться у файл-страхову копію. Після запису відкрий екран супутників."]
@@ -411,7 +498,7 @@ class SatellitesPanel(Panel):
     def add_chosen(self, tles=None, replace=False):
         """Додати вибрані (або передані) набори в слоти. Повертає, скільки не влізло."""
         tles = self.chosen_tles() if tles is None else tles
-        self.slots, dropped = st.merge_add(self.slots, tles, replace=replace)
+        self.slots, dropped = stb.merge_add_table(self.slots, tles, stb.by_norad(self.table_rows), replace=replace)
         self._redraw_slots()
         return dropped
 
@@ -471,3 +558,106 @@ class SatellitesPanel(Panel):
             return
         self.slots = st.apply_updates(self.slots, chosen)
         self._redraw_slots()
+
+    # --- таблиця частот (R54) ---------------------------------------------------------------------
+
+    def user_table_path(self):
+        """Своя таблиця: шлях із налаштувань оболонки, а коли його нема -- ~/MD-UV390UKR/satellites.txt (якщо файл є). '' -- нема."""
+        from pathlib import Path
+        try:
+            p = self.shell.settings.get("sat_table")
+        except AttributeError:
+            p = None
+        if p and os.path.isfile(p):
+            return p
+        near = str(Path.home() / "MD-UV390UKR" / stb.TABLE_FILE)
+        return near if os.path.isfile(near) else ""
+
+    def _load_initial_table(self):
+        path = self.user_table_path()
+        if path:
+            self.load_table_file(path, remember=False)
+        else:
+            self.load_builtin_table()
+
+    def set_table(self, rows, notes, source):
+        self.table_rows, self.table_notes, self.table_source = list(rows), list(notes), source
+        text = "Таблиця: %s, рядків %d." % (source, len(rows))
+        if notes:
+            text += " Пропущено через помилки: %d.\n  " % len(notes) + "\n  ".join(notes[:8]) + ("\n  ..." if len(notes) > 8 else "")
+            for n in notes:
+                print("Таблиця частот супутників: " + n)
+        self.table_label.config(text=text)
+
+    def load_builtin_table(self):
+        rows, notes = stb.default_rows()
+        self.set_table(rows, notes, "вбудована стартова")
+
+    def load_table_file(self, path, remember=True):
+        """Прочитати свою таблицю. False -- файл не прочитано або в ньому нема жодного рядка (поточна таблиця лишається)."""
+        try:
+            rows, notes = stb.read_table_file(path)
+        except OSError as e:
+            messagebox.showerror("Супутники", "Файл таблиці не відкрито: %s" % e, parent=self.shell)
+            return False
+        if not rows:
+            messagebox.showerror("Супутники", "У файлі нема жодного придатного рядка таблиці.\n" + "\n".join(notes[:8]), parent=self.shell)
+            return False
+        self.set_table(rows, notes, "файл " + path)
+        if remember:
+            try:
+                self.shell.settings.set("sat_table", path)
+                self.shell.settings.save()
+            except AttributeError:
+                pass
+        return True
+
+    def _on_open_table(self):
+        path = filedialog.askopenfilename(parent=self.shell, title="Таблиця частот супутників (satellites.txt)", initialdir=output_dir(),
+                                          filetypes=[("Таблиця супутників", "*.txt *.csv"), ("Усі файли", "*.*")])
+        if path:
+            self.load_table_file(path)
+
+    def _on_builtin_table(self):
+        self.load_builtin_table()
+        try:
+            self.shell.settings.set("sat_table", "")
+            self.shell.settings.save()
+        except AttributeError:
+            pass
+
+    def add_from_table(self):
+        """Логіка «Додати з таблиці» без вікон -> AddReport."""
+        self.slots, rep = stb.add_from_table(self.slots, self.table_rows, self.tles)
+        self._redraw_slots()
+        return rep
+
+    def _on_add_table(self):
+        if not self.tles:
+            messagebox.showinfo("Супутники", "Спершу відкрий або завантаж файл TLE (крок 2): TLE беруться з нього за номером NORAD.", parent=self.shell)
+            return
+        if not self.table_rows:
+            messagebox.showinfo("Супутники", "Таблиця порожня.", parent=self.shell)
+            return
+        rep = self.add_from_table()
+        messagebox.showinfo("Супутники", stb.report_text(rep, len(self.table_rows)), parent=self.shell)
+
+    def fill_from_table(self):
+        """Логіка «Заповнити порожні слоти» без вікон -> (заповнено, уручну, без збігу, неоднозначних)."""
+        self.slots, filled, manual, nomatch, ambiguous = stb.fill_existing(self.slots, self.table_rows)
+        self._redraw_slots()
+        return filled, manual, nomatch, ambiguous
+
+    def _on_fill_table(self):
+        if not self.slots:
+            messagebox.showinfo("Супутники", "У слотах нічого нема -- спершу прочитай рацію або додай супутники.", parent=self.shell)
+            return
+        filled, manual, nomatch, ambiguous = self.fill_from_table()
+        lines = ["Збіг за НАЗВОЮ (у слоті немає номера NORAD).", "Заповнено: %s." % (", ".join(filled) or "нічого")]
+        if manual:
+            lines.append("Уже мають свої частоти -- не чіпаю: %s." % ", ".join(manual))
+        if nomatch:
+            lines.append("У таблиці немає такої назви: %s." % ", ".join(nomatch))
+        if ambiguous:
+            lines.append("Назва зустрічається в таблиці кілька разів -- не чіпаю: %s." % ", ".join(ambiguous))
+        messagebox.showinfo("Супутники", "\n".join(lines), parent=self.shell)
