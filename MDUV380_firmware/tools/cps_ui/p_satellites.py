@@ -8,6 +8,7 @@
 «Перевірити джерело»); 3) відібрати з завантажених і покласти в слоти або оновити елементи супутників, які вже є; 4) «Записати в рацію» -- зі страховою копією блока
 й звіркою читанням. Частоти й субтони супутників у файлі TLE немає -- R54: їх беруть із таблиці частот (формат `satellites.txt` офіційного CPS, tools/sat_table.py;
 вбудована стартова таблиця або свій файл) за номером NORAD і задають у формі слота (усі три набори та шлях APRS; при оновленні наявних вони зберігаються)."""
+import datetime
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -17,6 +18,7 @@ import gui_dialogs as gd
 import gui_theme as gt
 import sat_table as stb
 import sat_tle as st
+import sat_update as su
 
 from .layout import FitTable
 from .common import output_dir
@@ -86,6 +88,11 @@ class SatellitesPanel(Panel):
         self.table_source = ""           # звідки таблиця (для підпису)
         self.table_verified = None       # R55: datetime.date звірки (вбудована) або зміни файла (своя)
         self.now_override = None         # R55: поточний час для тестів (naive UTC datetime); None -- справжній
+        self.fetch_fn = None             # R56: функція мережі (url, timeout) -> bytes; None -- справжня (sat_update.default_fetch); тести підміняють
+        self.cache_dir = None            # R56: тека кешу TLE; None -- ~/MD-UV390UKR/cache
+        self.detail_open = False         # R56: розгорнутий блок «Детально»
+        self._snapshot_reminded = False  # R56: нагадування про повний знімок -- один раз за сесію
+        self.last_plan = None            # R56: останній план оновлення (для тестів і підсумку)
         self._build_ui()
         self._load_initial_table()
         self._redraw_slots()
@@ -93,10 +100,29 @@ class SatellitesPanel(Panel):
     # --- побудова ---------------------------------------------------------------------------------
 
     def _build_ui(self):
-        self.header("Супутники", "Елементи орбіт (TLE) для екрана супутників рації: до 25 слотів. Блок лежить в окремій області флеша рації, тому «Записати в рацію» "
-                                 "тут змінює рацію одразу, окремо від кодплага. TLE застарівають -- зі старими елементами прогноз прольотів неточний.",
-                    purpose="поновити елементи орбіт супутників у рації (прогноз прольотів і доплер).")
-        box = ttk.LabelFrame(self, text="1. Що в рації (25 слотів)")
+        self.header("Супутники", purpose="поновити TLE супутників у рації.")
+        main = ttk.Frame(self)
+        main.pack(fill="x", padx=12, pady=(0, 2))
+        self.radio_status_label = ttk.Label(main, text="Рація не прочитана", wraplength=640, justify="left")
+        self.radio_status_label.pack(anchor="w")
+        self.table_label = ttk.Label(main, text="", wraplength=640, justify="left")
+        self.table_label.pack(anchor="w")
+        self.recheck_label = ttk.Label(main, text="", wraplength=640, justify="left", foreground=gt.P["warn"])
+        act = ttk.Frame(main)
+        act.pack(fill="x", pady=(6, 2))
+        self._act_row = act
+        self.update_btn_all = ttk.Button(act, text="Оновити супутники", style="Big.TButton", command=self._on_update_all)
+        self.update_btn_all.pack(side="left")
+        self.reg(self.update_btn_all, radio=False)
+        self.detail_btn = ttk.Button(act, text="Детально ▸", command=self.toggle_detail)
+        self.detail_btn.pack(side="left", padx=16)
+        ttk.Label(main, text=("Бере свіжі TLE, показує підсумок і лише після твого підтвердження пише в рацію."),
+                  wraplength=640, justify="left", foreground=gt.P["muted"]).pack(anchor="w")
+        self.detail = ttk.Frame(self)           # R56: усе старе -- у згорнутому блоці (поведінка не змінена)
+        ttk.Label(self.detail, text=("Елементи орбіт (TLE) для екрана супутників рації: до 25 слотів. Блок лежить в окремій області флеша рації, тому «Записати в рацію» "
+                                     "тут змінює рацію одразу, окремо від кодплага. TLE застарівають -- зі старими елементами прогноз прольотів неточний."),
+                  wraplength=640, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=12, pady=(0, 4))
+        box = ttk.LabelFrame(self.detail, text="1. Що в рації (25 слотів)")
         box.pack(fill="x", padx=12, pady=6)
         bar = ttk.Frame(box)
         bar.pack(fill="x", padx=8, pady=(6, 2))
@@ -142,7 +168,7 @@ class SatellitesPanel(Panel):
         ttk.Label(form, text="Порожньо або 0 = цього набору нема. Набір «маяк» -- лише прийом. Приймання завжди без субтону. Субтон передачі 67 Гц вводь як 67, 88,5 -- як 88.5.",
                   wraplength=640, justify="left", foreground=gt.P["muted"]).grid(row=5, column=0, columnspan=5, sticky="w", pady=(2, 0))
 
-        src = ttk.LabelFrame(self, text="2. Джерело елементів")
+        src = ttk.LabelFrame(self.detail, text="2. Джерело елементів")
         src.pack(fill="x", padx=12, pady=6)
         row = ttk.Frame(src)
         row.pack(fill="x", padx=8, pady=(6, 2))
@@ -162,19 +188,20 @@ class SatellitesPanel(Panel):
         self.open_btn.pack(side="left", padx=8)
         self.reg(self.open_btn, radio=False)
         ttk.Label(src, text=("Мережа вмикається лише кнопками: «Перевірити джерело» запитує перші ~2 КБ і показує, що прийшло; «Завантажити з мережі» кладе весь файл у "
-                             "обране тобою місце. Адресу Celestrak перевірено 2026-11-01: відповідь 200, text/plain, близько 16 КБ, справжні набори TLE. Нічого не кешується."),
+                             "обране тобою місце. Адресу Celestrak перевірено 2026-11-01: відповідь 200, text/plain, близько 16 КБ, справжні набори TLE. Ці кнопки нічого не кешують; "
+                             "кнопка «Оновити супутники» кешує відповіді в теці cache поряд зі знімками і не питає Celestrak частіше, ніж раз на %d год." % su.TLE_CACHE_HOURS),
                   wraplength=640, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 2))
         self.src_label = ttk.Label(src, text="Файл не відкрито.", foreground=gt.P["muted"], wraplength=640, justify="left")
         self.src_label.pack(anchor="w", padx=8, pady=(0, 6))
 
-        tbl = ttk.LabelFrame(self, text="3. Таблиця частот")
+        tbl = ttk.LabelFrame(self.detail, text="3. Таблиця частот")
         tbl.pack(fill="x", padx=12, pady=6)
-        self.table_label = ttk.Label(tbl, text="", wraplength=640, justify="left")
-        self.table_label.pack(anchor="w", padx=8, pady=(6, 2))
-        self.recheck_label = ttk.Label(tbl, text="", wraplength=640, justify="left", foreground=gt.P["warn"])
-        self.recheck_label.pack(anchor="w", padx=8)
+        self.table_count_label = ttk.Label(tbl, text="", wraplength=640, justify="left")
+        self.table_count_label.pack(anchor="w", padx=8, pady=(6, 0))
+        self.table_notes_label = ttk.Label(tbl, text="", wraplength=640, justify="left", foreground=gt.P["warn"])
         trow = ttk.Frame(tbl)
-        trow.pack(fill="x", padx=8, pady=(2, 2))
+        trow.pack(fill="x", padx=8, pady=(6, 2))
+        self._tbl_first = trow
         self.add_table_btn = ttk.Button(trow, text="Додати з таблиці", command=self._on_add_table)
         self.add_table_btn.pack(side="left")
         self.fill_table_btn = ttk.Button(trow, text="Заповнити порожні слоти з таблиці", command=self._on_fill_table)
@@ -190,7 +217,7 @@ class SatellitesPanel(Panel):
                              "(tools/satellites_sources.md), на залізі НЕ ПЕРЕВІРЕНІ."),
                   wraplength=640, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 6))
 
-        sel = ttk.LabelFrame(self, text="4. Відбір і слоти")
+        sel = ttk.LabelFrame(self.detail, text="4. Відбір і слоти")
         sel.pack(fill="both", expand=True, padx=12, pady=6)
         srow = ttk.Frame(sel)
         srow.pack(fill="x", padx=8, pady=(6, 2))
@@ -254,6 +281,21 @@ class SatellitesPanel(Panel):
         if self.radio_info:
             text += " " + self.radio_info
         self.state_label.config(text=text)
+        self._update_radio_status()
+
+    def _update_radio_status(self):
+        """R56: рядок стану рації у головному вигляді: «У рації: N супутників, найстаріший TLE: X діб» (колір за порогами R55) або «Рація не прочитана»."""
+        radio_slots = []
+        if self.radio_state is not None and self.base_bytes is not None:
+            try:
+                radio_slots = st.parse_block(self.base_bytes).slots           # саме те, що в рації (прочитано або записано), а не робоча копія
+            except st.SatError:
+                radio_slots = []
+        text, level = su.radio_status_text(radio_slots, self.radio_state if self.base_bytes is not None else None, self.now_override)
+        if self.radio_state is not None and self.is_dirty():
+            text += "; у слотах є незаписані зміни"
+        color = {"ok": gt.P["fg"], "none": gt.P["muted"], "stale": gt.P["warn"], "old": gt.P["err"]}[level]
+        self.radio_status_label.config(text=text, foreground=color)
 
     def is_dirty(self):
         try:
@@ -438,6 +480,168 @@ class SatellitesPanel(Panel):
     def _write_done(self, text):
         messagebox.showinfo("Супутники", text, parent=self.shell)
 
+    # --- R56: «Оновити супутники» одним натисканням --------------------------------------------------
+
+    def toggle_detail(self, open_=None):
+        """Згорнути / розгорнути блок «Детально» (усе старе: таблиця слотів, форма, джерело, таблиця частот, відбір)."""
+        self.detail_open = (not self.detail_open) if open_ is None else bool(open_)
+        if self.detail_open:
+            self.detail.pack(fill="both", expand=True)
+            self.detail_btn.config(text="Детально ▾")
+        else:
+            self.detail.pack_forget()
+            self.detail_btn.config(text="Детально ▸")
+        self.after_idle(self.rewrap)
+
+    def _now(self):
+        return self.now_override or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+    def _cache_path_dir(self):
+        return self.cache_dir or os.path.join(output_dir(), "cache")
+
+    def _read_radio(self):
+        """-> (стан, Block|None) -- читання слотів із рації (у робочому потоці)."""
+        ser = cps.open_radio()
+        try:
+            state, blk, _raw = st.read_slots(ser)
+        finally:
+            ser.close()
+        return state, blk
+
+    def _on_update_all(self):
+        if self.shell.busy:
+            return
+        if not self.table_rows:
+            messagebox.showinfo("Супутники", "Таблиця частот порожня -- відкрий таблицю в «Детально» (розділ 3).", parent=self.shell)
+            return
+        need_read = bool(self.shell.conn.found) and self.radio_state is None
+        if need_read and self.is_dirty() and self.slots and not gd.confirm_dialog(
+                self.shell, "Прочитати з рації?", "Рацію ще не читали, а в слотах є незаписані зміни: читання замінить їх тим, що зараз у рації. Продовжити?",
+                yes="Прочитати", no="Скасувати"):
+            return
+        rows = list(self.table_rows)
+        self.shell.run_task(lambda: self.update_fetch(rows, need_read), "Оновлюю супутники: читаю рацію й TLE...", plain_errors=True, ok_status="Підсумок готовий.",
+                            on_done=self.update_after_fetch)
+
+    def update_fetch(self, rows, need_read):
+        """Робочий потік: прочитати слоти (якщо треба) і взяти TLE. Збій мережі НЕ кидає виняток -- інакше втратилось би прочитане з рації."""
+        radio = self._read_radio() if need_read else None
+        net_err, res = "", None
+        try:
+            res = su.fetch_tles(rows, self._now(), self._cache_path_dir(), fetch=self.fetch_fn)
+        except su.NetError as e:
+            net_err = str(e)
+        return radio, res, net_err
+
+    def update_after_fetch(self, data):
+        radio, res, net_err = data
+        if radio is not None:
+            self.apply_read(*radio)
+        if net_err:
+            messagebox.showerror("Супутники", "%s\n\n(%s)\nНічого не змінено." % (su.NO_NET_TEXT, net_err), parent=self.shell)
+            return
+        self.update_ask(res)
+
+    def update_summary_text(self, plan, res, now, have_radio, state):
+        lines = ["Підсумок оновлення. Поки що НІЧОГО не записано ні в рацію, ні в слоти.", "", su.plan_text(plan, now)]
+        if self.is_dirty():
+            lines += ["", "У слотах уже були незаписані зміни -- вони теж увійдуть у запис."]
+        if res is not None:
+            src = "з кешу" if su.GROUP_KEY in res.from_cache else "з мережі"
+            lines += ["", "TLE: група amateur Celestrak (%s); окремих запитів за номером: %d." % (src, len([u for u in res.requests if "CATNR" in u]))]
+            if res.errors:
+                lines.append("Не вдалося запитати: " + "; ".join(res.errors) + ".")
+        stale, _has_old = st.age_summary(plan.slots, now)
+        lines.append("Вік TLE у слотах після оновлення: %s" % (stale or "усі свіжі."))
+        old = st.old_slots(plan.slots, now)
+        if old:
+            lines += ["", "СТАРІ елементи (понад %d діб) лишаються: %s. Прогноз прольотів і доплер із них ненадійні; запис потребує явної згоди (кнопка нижче)." % (
+                st.TLE_AGE_STALE_DAYS, ", ".join("%s (%d діб)" % (n, d) for _i, n, d in old))]
+        if plan.warns:
+            lines += ["", "ПОПЕРЕДЖЕННЯ щодо передачі:"] + ["  " + w for w in plan.warns]
+        if plan.nofreq:
+            lines += ["", "Слоти без частот (екран супутників не покаже частот, передача заблокована): %s." % ", ".join(l.split("«")[1].split("»")[0] for l in plan.nofreq)]
+        if state in (st.ST_NOREGION, st.ST_BADLEN):
+            lines += ["", "Записати в рацію не можна: %s." % st.STATE_TEXT[state]]
+        elif not have_radio:
+            lines += ["", "Рацію не знайдено -- запис не пропонується. «Лише в документ» залишить результат у слотах (розділ «Детально») для запису пізніше."]
+        else:
+            lines += ["", "«Записати в рацію» змінює рацію одразу (поза кодплагом): спершу блок, що зараз у рації, збережеться у файл-страхову копію, потім запис і звірка читанням; "
+                          "після запису слоти буде перечитано."]
+            if not self._snapshot_reminded:
+                lines += ["", "Перед ПЕРШИМ записом за сесію зроби повний знімок рації (розділ «Бекап і відновлення»), якщо ще не робив."]
+        return "\n".join(lines)
+
+    def update_ask(self, res):
+        """Побудувати план у пам'яті, показати ОДНЕ вікно підсумку й виконати вибір. Скасувати / Лише в документ нічого не пишуть у рацію."""
+        now = self._now()
+        plan = su.build_plan(self.slots, self.table_rows, res.tles, now)
+        self.last_plan = plan
+        have_radio = bool(self.shell.conn.found)
+        state = self.radio_state
+        can_write = self.can_write_plan(plan)
+        text = self.update_summary_text(plan, res, now, have_radio, state)
+        if not plan.changed:
+            gd.text_dialog(self.shell, "Оновити супутники", text)
+            return
+        old = st.old_slots(plan.slots, now)
+        buttons = []
+        if can_write:
+            buttons.append(("Записати все одно (є старі TLE)" if old else "Записати в рацію", "radio"))
+        buttons += [("Лише в документ", "doc"), ("Скасувати", "cancel")]
+        if can_write:
+            self._snapshot_reminded = True
+        choice = gd.choice_dialog(self.shell, "Оновити супутники", text, buttons, default_index=len(buttons) - 1)
+        self.update_apply_choice(plan, choice)
+
+    def can_write_plan(self, plan):
+        """Запис у рацію дозволений: рацію знайдено й слоти прочитано, блок придатний, помилок перевірки частот нема."""
+        return bool(self.shell.conn.found) and self.radio_state not in (None, st.ST_NOREGION, st.ST_BADLEN) and not plan.errors
+
+    def update_apply_choice(self, plan, choice):
+        if choice not in ("radio", "doc"):
+            return                    # скасовано: слоти й рація не змінені
+        if choice == "radio" and not self.can_write_plan(plan):
+            messagebox.showerror("Супутники", "Записати в рацію зараз не можна (рацію не знайдено, блок непридатний або є помилки перевірки частот). Нічого не записано.", parent=self.shell)
+            return
+        try:
+            st.build_block(plan.slots)
+        except st.SatError as e:
+            messagebox.showerror("Супутники", str(e), parent=self.shell)
+            return
+        self.slots = [s.copy() for s in plan.slots]
+        self._redraw_slots()
+        if choice == "doc":
+            self.shell.set_status("Супутники: оновлено лише в слотах; у рацію не записано.", "info")
+            return
+        snapshot = [s.copy() for s in self.slots]
+        self.shell.run_task(lambda: self._update_write_worker(snapshot), "Записую супутники в рацію...", plain_errors=True, on_done=self._update_write_done)
+
+    def _update_write_worker(self, snapshot):
+        """Той самий безпечний запис, що й кнопка «Записати в рацію» (страхова копія, звірка читанням у st.write_slots), потім перечитування слотів."""
+        ser = cps.open_radio()
+        try:
+            text, _safety = st.write_slots(ser, snapshot, safety_dir=output_dir(), log=print)
+        finally:
+            ser.close()
+        print(text)
+        radio, err = None, ""
+        try:
+            radio = self._read_radio()
+        except Exception as e:  # noqa: BLE001 -- запис уже відбувся; збій перечитування не має його «скасувати»
+            err = str(e)
+        return text, radio, err
+
+    def _update_write_done(self, data):
+        text, radio, err = data
+        if radio is not None:
+            self.apply_read(*radio)
+            done = su.done_text(self.slots, self._now())
+            messagebox.showinfo("Супутники", done + "\n\n" + text, parent=self.shell)
+        else:
+            self.mark_written(self.slots)
+            messagebox.showinfo("Супутники", text + "\n\nПеречитати слоти не вдалося: %s. Натисни «Прочитати з рації» в «Детально»." % err, parent=self.shell)
+
     # --- джерело ----------------------------------------------------------------------------------
 
     def _on_source_changed(self, _e=None):
@@ -609,16 +813,30 @@ class SatellitesPanel(Panel):
     def today(self):
         return self.now_override.date() if self.now_override is not None else None
 
+    def _toggle(self, label, text, **pack):
+        """Підпис, що займає місце лише коли в ньому є текст (головний вигляд має вміщатись без прокрутки)."""
+        label.config(text=text)
+        if text and not getattr(label, "_shown", False):
+            label.pack(**pack)
+            label._shown = True
+        elif not text and getattr(label, "_shown", False):
+            label.pack_forget()
+            label._shown = False
+
     def set_table(self, rows, notes, source, verified=None, kind=None):
         """kind -- «вбудована» / «файл» для підпису дати; verified -- datetime.date звірки (вбудована) чи зміни файла (своя)."""
         self.table_rows, self.table_notes, self.table_source, self.table_verified = list(rows), list(notes), source, verified
-        text = "Таблиця: %s, рядків %d." % (stb.table_date_text(kind, verified, self.today()) if kind else source, len(rows))
+        text = "Таблиця: %s." % (stb.table_date_text(kind, verified, self.today()) if kind else source)
+        self.table_count_label.config(text="Рядків у таблиці: %d." % len(rows))
+        notes_text = ""
         if notes:
-            text += " Пропущено через помилки: %d.\n  " % len(notes) + "\n  ".join(notes[:8]) + ("\n  ..." if len(notes) > 8 else "")
+            text += " Пропущено через помилки: %d (подробиці -- «Детально»)." % len(notes)
+            notes_text = "Пропущені рядки таблиці:\n  " + "\n  ".join(notes[:8]) + ("\n  ..." if len(notes) > 8 else "")
             for n in notes:
                 print("Таблиця частот супутників: " + n)
         self.table_label.config(text=text)
-        self.recheck_label.config(text=stb.table_recheck_text(verified, self.today()))
+        self._toggle(self.table_notes_label, notes_text, anchor="w", padx=8, before=self._tbl_first)
+        self._toggle(self.recheck_label, stb.table_recheck_text(verified, self.today()), anchor="w", before=self._act_row)
 
     def load_builtin_table(self):
         rows, notes = stb.default_rows()

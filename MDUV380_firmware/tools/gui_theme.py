@@ -113,6 +113,8 @@ def apply(root):
            lightcolor=[("disabled", P["disabled_bg"]), ("active", P["button_hover"])],
            darkcolor=[("disabled", P["disabled_bg"]), ("active", P["button_hover"])])
 
+    st.configure("Big.TButton", font=("Segoe UI", 12, "bold"), padding=(20, 8))      # R56: головна дія розділу (одна велика кнопка)
+
     for name in ("TCheckbutton", "TRadiobutton"):
         st.configure(name, background=P["bg"], foreground=P["fg"], indicatorbackground=P["field"], indicatorforeground=P["accent"],
                      indicatorcolor=P["field"], focuscolor=P["accent"])

@@ -460,8 +460,7 @@ def table_recheck_text(verified, today=None):
     n = table_age_days(verified, today)
     if n is None or n <= TABLE_RECHECK_DAYS:
         return ""
-    return ("Таблицю частот звіряли %d діб тому (понад %d). Частоти й стан супутників змінюються: звір їх з AMSAT «FM Satellites» (%s)." % (
-        n, TABLE_RECHECK_DAYS, AMSAT_FM_URL))
+    return ("Таблицю звіряли %d діб тому (понад %d): звір її з AMSAT «FM Satellites», %s." % (n, TABLE_RECHECK_DAYS, AMSAT_FM_URL))
 
 
 if __name__ == "__main__":

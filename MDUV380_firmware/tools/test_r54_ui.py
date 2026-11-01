@@ -96,7 +96,7 @@ def test_u1_u6():
         p._redraw_slots()
         txt = "\n".join(labels_of(p))
         # --- U1 ---
-        check(len(p.table_rows) == 8 and "вбудована" in p.table_label.cget("text") and "рядків 8" in p.table_label.cget("text"), "U1: вбудована таблиця, 8 рядків: %s" % p.table_label.cget("text"))
+        check(len(p.table_rows) == 8 and "вбудована" in p.table_label.cget("text") and "Рядків у таблиці: 8" in p.table_count_label.cget("text"), "U1: вбудована таблиця, 8 рядків: %s" % p.table_label.cget("text"))
         check("3. Таблиця частот" in txt and "4. Відбір і слоти" in txt and "3. Відбір і слоти" not in txt, "U1: секції пронумеровані 3 і 4")
         check("НЕ ПЕРЕВІРЕНО" not in p.src_var.get() and all("НЕ ПЕРЕВІРЕНО" not in s[0] for s in __import__("cps_ui.p_satellites", fromlist=["SOURCES"]).SOURCES), "U1: біля Celestrak нема «НЕ ПЕРЕВІРЕНО»")
         check("НЕ ПЕРЕВІРЕНО" not in txt.replace("на залізі НЕ ПЕРЕВІРЕНІ", ""), "U1: у підписах розділу «НЕ ПЕРЕВІРЕНО» лишилось лише про частоти на залізі")
