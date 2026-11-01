@@ -11,6 +11,7 @@ from tkinter import ttk
 import cps_csv as cc
 import gui_dialogs as gd
 import gui_theme as gt
+import reorder as ro
 import table_edit as te
 
 from .layout import FitTable, equal_buttons, ui_scale
@@ -26,6 +27,7 @@ class EditorPanel(Panel):
     columns = ()                    # [(id, заголовок, ширина, розтягувати?)]
     hint_text = ""
     list_width = 330                # (застаріле: тепер ширина списку -- межа PanedWindow; лишається для сумісності)
+    reorderable = False             # R53: чи можна змінювати порядок записів (задають нащадки для видів reorder.KINDS)
 
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
@@ -61,10 +63,16 @@ class EditorPanel(Panel):
         self.btn_dup = ttk.Button(bars, text="Дублювати", command=self._on_dup)
         self.btn_ren = ttk.Button(bars, text="Перейменувати...", command=self._on_rename)
         self.btn_del = ttk.Button(bars, text="Видалити...", command=self._on_delete)
-        equal_buttons(self.btn_add, self.btn_dup, self.btn_ren, self.btn_del)
-        for i, b in enumerate((self.btn_add, self.btn_dup, self.btn_ren, self.btn_del)):
+        # R53: порядок записів у таблиці (для каналів, контактів, зон, списків прийому): «Вище / Нижче»; ті самі дії -- Ctrl+↑ / Ctrl+↓ і перетягування мишею
+        self.btn_item_up = ttk.Button(bars, text="Вище ↑", command=lambda: self._on_reorder(-1))
+        self.btn_item_down = ttk.Button(bars, text="Нижче ↓", command=lambda: self._on_reorder(1))
+        btns = [self.btn_add, self.btn_dup, self.btn_ren, self.btn_del] + ([self.btn_item_up, self.btn_item_down] if self.reorderable else [])
+        equal_buttons(*btns)
+        for i, b in enumerate(btns):
             b.grid(row=i // 2, column=i % 2, sticky="ew", padx=2, pady=2)
             self.reg(b, radio=False, doc=True)
+        if self.reorderable:
+            self._bind_reorder()
         bars.columnconfigure(0, weight=1, uniform="btn")
         bars.columnconfigure(1, weight=1, uniform="btn")
         self._bars = bars
@@ -171,6 +179,7 @@ class EditorPanel(Panel):
                 self.tree.see(pick)
             finally:
                 self._loading = False
+        self._move_state()
 
     def _on_select(self, _e):
         if self._loading:
@@ -197,6 +206,7 @@ class EditorPanel(Panel):
             b.config(state="normal" if one else "disabled")
         self.btn_add.config(state="normal" if enabled else "disabled")
         self.form_state(enabled and self.sel is not None)
+        self._move_state()
 
     def form_state(self, enabled):
         """Нащадки вмикають/вимикають поля форми."""
@@ -230,6 +240,113 @@ class EditorPanel(Panel):
                 self.show_message(self.msg.cget("text") + "\n" + "\n".join("Увага: " + w for w in res.warnings), "warn")
             self.shell.set_status("Документ змінено: %s." % (lines[0] if lines else "правка"), "ok")
         return True
+
+    # --- порядок записів (R53) -----------------------------------------------------------------------------------------------
+
+    def _move_state(self):
+        """«Вище / Нижче» доступні, коли вибрано запис, фільтр порожній (порядок має сенс лише для всього списку) і запис не на межі."""
+        if not self.reorderable:
+            return
+        d = self.doc
+        up = down = False
+        if d is not None and not self.shell.busy and self.sel is not None and not self._filter.get().strip():
+            order = ro.idents(d.image, self.kind)
+            if self.sel in order:
+                i = order.index(self.sel)
+                up, down = i > 0, i < len(order) - 1
+        self.btn_item_up.config(state="normal" if up else "disabled")
+        self.btn_item_down.config(state="normal" if down else "disabled")
+
+    def _bind_reorder(self):
+        t = self.tree
+        t.bind("<Control-Up>", lambda _e: self._key_reorder(-1))
+        t.bind("<Control-Down>", lambda _e: self._key_reorder(1))
+        t.bind("<ButtonPress-1>", self._drag_start, add="+")
+        t.bind("<B1-Motion>", self._drag_motion, add="+")
+        t.bind("<ButtonRelease-1>", self._drag_end, add="+")
+        t.tag_configure("drop", background=gt.P["button_hover"])
+        self._drag = None
+        self._drop_item = None
+
+    def _key_reorder(self, step):
+        self._on_reorder(step)
+        return "break"
+
+    def _reorder_blocked(self):
+        """Чому порядок зараз змінити не можна (текст) або None."""
+        if not self.reorderable or self.doc is None or self.shell.busy:
+            return "зараз недоступно"
+        if self._filter.get().strip():
+            return "Щоб змінити порядок, очистіть фільтр: порядок має сенс лише для всього списку."
+        return None
+
+    def _on_reorder(self, step, target=None):
+        """step = -1 (вище) / +1 (нижче) або target -- запис, на місце якого переносимо (перетягування). На межі -- нічого не робить, без помилки."""
+        reason = self._reorder_blocked()
+        if reason is not None:
+            if reason != "зараз недоступно":
+                self.show_message(reason, "warn")
+            return
+        if self.sel is None:
+            self.show_message("Оберіть запис у таблиці, який треба пересунути.", "warn")
+            return
+        d = self.doc
+        ident, kind = self.sel, self.kind
+        order = ro.idents(d.image, kind)
+        if ident not in order or (target is not None and target not in order):
+            return
+        if target is None and not 0 <= order.index(ident) + step < len(order):
+            return                                       # межа: кнопка і так вимкнена
+        if target is not None and target == ident:
+            return
+        new = ro.ident_after_move(d.image, kind, ident, step=step, target=target)
+        if target is None:
+            fn = lambda img: ro.move(img, kind, ident, step)       # noqa: E731
+        else:
+            fn = lambda img: ro.move_to(img, kind, ident, target)  # noqa: E731
+        self.run_edit(fn, select=new)
+
+    def _drag_start(self, e):
+        self._drag = None
+        if self.reorderable and self.doc is not None and not self.shell.busy and not self._filter.get().strip():
+            if self.tree.identify_region(e.x, e.y) == "cell":
+                item = self.tree.identify_row(e.y)
+                if item in self._item_ident:
+                    self._drag = {"item": item, "y0": e.y, "moved": False}
+
+    def _drag_motion(self, e):
+        if not self._drag:
+            return
+        if abs(e.y - self._drag["y0"]) > 6:
+            self._drag["moved"] = True
+        if self._drag["moved"]:
+            self._set_drop(self.tree.identify_row(e.y))
+            self.tree.configure(cursor="sb_v_double_arrow")
+
+    def _set_drop(self, item):
+        if self._drop_item and self._drop_item != item:
+            try:
+                self.tree.item(self._drop_item, tags=())
+            except tk.TclError:
+                pass
+        self._drop_item = item if item in self._item_ident else None
+        if self._drop_item:
+            self.tree.item(self._drop_item, tags=("drop",))
+
+    def _drag_end(self, e):
+        drag, self._drag = self._drag, None
+        self._set_drop(None)
+        self.tree.configure(cursor="")
+        if not drag or not drag["moved"]:
+            return
+        target = self.tree.identify_row(e.y)
+        if target in self._item_ident and drag["item"] in self._item_ident and target != drag["item"]:
+            self.drop_on(self._item_ident[drag["item"]], self._item_ident[target])
+
+    def drop_on(self, src_ident, dst_ident):
+        """Перенести запис src на місце запису dst (перетягування мишею; викликається і з тестів)."""
+        self.sel = src_ident
+        self._on_reorder(0, target=dst_ident)
 
     # --- кнопки -------------------------------------------------------------------------------------------------------------
 
@@ -317,6 +434,9 @@ class MembersEditor(EditorPanel):
         self._layout_members(True)
         self.avail_lb.bind("<Double-Button-1>", lambda _e: self._on_in())
         self.cur_lb.bind("<Double-Button-1>", lambda _e: self._on_out())
+        # R53: порядок ВСЕРЕДИНІ зони / списку -- теж Ctrl+↑ / Ctrl+↓ (як кнопки «Вгору ↑ / Вниз ↓»)
+        self.cur_lb.bind("<Control-Up>", lambda _e: self._key_move(-1))
+        self.cur_lb.bind("<Control-Down>", lambda _e: self._key_move(1))
         self._avail_nums, self._cur_nums = [], []
         self._reselect = []
 
@@ -474,6 +594,10 @@ class MembersEditor(EditorPanel):
                               "«Видалити...».", "err")
             return
         self._apply_members(new)
+
+    def _key_move(self, step):
+        self._on_move(step)
+        return "break"
 
     def _on_move(self, step):
         if self.doc is None or self.sel is None or self.shell.busy:
