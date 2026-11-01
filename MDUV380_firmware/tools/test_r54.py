@@ -3,7 +3,7 @@
 """R54: таблиця частот супутників у CPS (tools/sat_table.py, satellites.txt, sat_table_data.py). Хост-тести, без рації й без Tk.
 
 P1  ОРИГІНАЛЬНИЙ файл користувача на 11 рядків (tools/testdata/satellites_user_2026-11-01.txt): очікувані значення в Гц / 0,1 Гц, усі 11 проходять перевірку без помилок;
-P2  стартова таблиця: рівно 9 рядків, без NORAD 62461 і 62690, значення рядків побайтово ті самі, що в оригіналі; вбудований модуль == satellites.txt;
+P2  стартова таблиця (R55): рівно 8 рядків, без NORAD 62461, 62690 і 40931; Rx3 AO-123 = 0, тон AO-91 = 670, решта як в оригіналі; вбудований модуль == satellites.txt;
 P3  сталі звіряються з прошивкою: смуги приймання й межі передачі (trx.c), довжина імені й AdditionalData (satellite.h), зсуви шляху APRS і SSID (aprs.c), поділ на 10 (menuSatelliteScreen.c);
 P4  стійкість парсера: порожні рядки, зайві пробіли, малі літери «u», без літери, дробові субтони, CRLF/BOM, без заголовка, сміття, мало полів, довге ім'я, дублікат NORAD;
 P5  шлях APRS: кодування/розбір ↔ те, що читає прошивка; SSID лише 0..9; хвіст [14..23] зберігається;
@@ -94,21 +94,35 @@ def test_p1_original():
 
 
 def test_p2_starter():
+    """R55: стартова таблиця -- 8 рядків (IO-86 прибрано, AO-123 без Rx3); оригінал-фікстура (11 рядків) лишається незмінним (P1)."""
     rows, notes = stb.default_rows()
-    check(len(rows) == 9 and not notes, "P2: стартова таблиця -- 9 рядків (%d, %r)" % (len(rows), notes))
+    check(len(rows) == 8 and not notes, "P2: стартова таблиця -- 8 рядків (%d, %r)" % (len(rows), notes))
     nums = {r.norad for r in rows}
-    check(62461 not in nums and 62690 not in nums, "P2: POEM 4 (62461) і SO-124 (62690) прибрано")
-    check(nums == set(EXPECT) - {62461, 62690}, "P2: решта 9 на місці: %r" % sorted(nums))
+    check(62461 not in nums and 62690 not in nums and 40931 not in nums, "P2: POEM 4 (62461), SO-124 (62690) і IO-86 (40931) прибрано")
+    check(nums == set(EXPECT) - {62461, 62690, 40931}, "P2: решта 8 на місці: %r" % sorted(nums))
     for r in rows:
-        check(row_tuple(r) == EXPECT[r.norad], "P2: %d без змін проти оригіналу" % r.norad)
-    orig_lines = [ln for ln in open(ORIG, encoding="ascii").read().split("\n") if ln.strip() and not ln.startswith(("62461U", "62690U"))]
+        exp = EXPECT[r.norad]
+        if r.norad == 61781:
+            exp = exp[:7] + (0,) + exp[8:]          # AO-123: Rx3 436.210 -> 0 (R55)
+        check(row_tuple(r) == exp, "P2: %d проти оригіналу (з поправкою R55 для AO-123)" % r.norad)
+    ao123 = [r for r in rows if r.norad == 61781][0]
+    check(ao123.rx3 == 0, "P2: Rx3 AO-123 = 0")
+    check([r for r in rows if r.norad == 43017][0].ctcss == 670, "P2: тон AO-91 лишено 67 (670)")
+    orig_lines = []
+    for ln in open(ORIG, encoding="ascii").read().split("\n"):
+        if not ln.strip() or ln.startswith(("62461U", "62690U", "40931U")):
+            continue
+        if ln.startswith("61781U"):
+            ln = ln.replace("436.210", "      0")
+        orig_lines.append(ln)
     cur_lines = [ln for ln in open(os.path.join(HERE, "satellites.txt"), encoding="ascii").read().split("\n") if ln.strip()]
-    check(cur_lines == orig_lines, "P2: рядки satellites.txt побайтово збігаються з оригіналом без двох зійшлих")
+    check(cur_lines == orig_lines, "P2: рядки satellites.txt збігаються з оригіналом без трьох прибраних, AO-123 -- з Rx3 = 0")
     import sat_table_data
     check([ln for ln in cur_lines] == list(sat_table_data.LINES), "P2: sat_table_data.py синхронний з satellites.txt (перегенеруй: python3 MDUV380_firmware/tools/sat_table.py)")
+    check(sat_table_data.VERIFIED_DATE == stb.STARTER_VERIFIED_DATE == "2026-11-01", "P2: VERIFIED_DATE == 2026-11-01")
     check(os.path.isfile(os.path.join(HERE, "satellites_sources.md")), "P2: є satellites_sources.md")
     md = read(HERE, "satellites_sources.md")
-    for tag in ("2026-11-01", "⚠", "AO-91", "IO-86", "AO-123", "POEM 4", "SO-124", "JE9PEL", "SatNOGS"):
+    for tag in ("2026-11-01", "⚠", "AO-91", "AO-123", "IO-86", "POEM 4", "SO-124", "JE9PEL", "SatNOGS"):
         check(tag in md, "P2: у satellites_sources.md згадано «%s»" % tag)
 
 

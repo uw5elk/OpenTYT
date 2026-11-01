@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """R54 (Tk): розділ «Супутники» -- таблиця частот, форма всіх трьох наборів і шляху APRS, перевірка перед записом, верстка.
 
-U1  розділ відкривається з вбудованою таблицею (9 рядків); секції «3. Таблиця частот» і «4. Відбір і слоти»; біля адреси Celestrak нема «НЕ ПЕРЕВІРЕНО»;
+U1  розділ відкривається з вбудованою таблицею (R55: 8 рядків); секції «3. Таблиця частот» і «4. Відбір і слоти»; біля адреси Celestrak нема «НЕ ПЕРЕВІРЕНО»;
 U2  форма слота показує й застосовує ВСІ набори: RX/TX, субтон, субтон взведення, APRS, маяк, шлях APRS; старий виклик із чотирма полями працює; хиба -- слот не змінено;
 U3  мітки в таблиці слотів: «без частот» (тег nofreq), помилка (тег bad); підсумок перевірки під таблицею;
 U4  запис в рацію: помилка частоти -- відмова ДО підтвердження; попередження про передачу й слоти без частот -- у тексті підтвердження;
@@ -91,9 +91,12 @@ def test_u1_u6():
         app.show("satellites")
         lp.spin(app, 0.4)
         p = app.get_panel("satellites")
+        import datetime
+        p.now_override = datetime.datetime(2026, 11, 1)          # R55: вік TLE не залежить від дня запуску тесту
+        p._redraw_slots()
         txt = "\n".join(labels_of(p))
         # --- U1 ---
-        check(len(p.table_rows) == 9 and "вбудована стартова" in p.table_label.cget("text") and "рядків 9" in p.table_label.cget("text"), "U1: вбудована таблиця, 9 рядків: %s" % p.table_label.cget("text"))
+        check(len(p.table_rows) == 8 and "вбудована" in p.table_label.cget("text") and "рядків 8" in p.table_label.cget("text"), "U1: вбудована таблиця, 8 рядків: %s" % p.table_label.cget("text"))
         check("3. Таблиця частот" in txt and "4. Відбір і слоти" in txt and "3. Відбір і слоти" not in txt, "U1: секції пронумеровані 3 і 4")
         check("НЕ ПЕРЕВІРЕНО" not in p.src_var.get() and all("НЕ ПЕРЕВІРЕНО" not in s[0] for s in __import__("cps_ui.p_satellites", fromlist=["SOURCES"]).SOURCES), "U1: біля Celestrak нема «НЕ ПЕРЕВІРЕНО»")
         check("НЕ ПЕРЕВІРЕНО" not in txt.replace("на залізі НЕ ПЕРЕВІРЕНІ", ""), "U1: у підписах розділу «НЕ ПЕРЕВІРЕНО» лишилось лише про частоти на залізі")
@@ -116,7 +119,8 @@ def test_u1_u6():
         lp.spin(app, 0.2)
         got = [v.get() for v in (p.name_var, p.rx_var, p.tx_var, p.ctcss_var, p.arm_var, p.rx2_var, p.tx2_var, p.rx3_var, p.tx3_var, p.aprs_var)]
         check(got == ["ISS", "437.8", "145.99", "67", "", "145.825", "145.825", "145.8", "", "RS0ISS"], "U2: форма ISS показує всі набори: %r" % got)
-        check(p.slot_tree.item(iid["ISS"], "tags") in ((), ""), "U3: ISS без міток")
+        check("stale" in p.slot_tree.item(iid["ISS"], "tags") and p.slot_tree.set(iid["ISS"], "age") == "5 дн. застарів", "U3 (R55): ISS 5 діб -- жовте (для ISS суворіше: понад 3 доби)")
+        check(p.slot_tree.item(iid["AO-91"], "tags") in ((), ""), "U3: AO-91 5 діб -- без позначки")
         p.slot_tree.selection_set(iid["SONATE-2"])
         lp.spin(app, 0.2)
         check(p.tx_var.get() == "" and p.tx2_var.get() == "145.825" and p.aprs_var.get() == "DP0SNX", "U2: SONATE-2: Tx1 порожнє, Tx2 є, шлях DP0SNX")
@@ -184,12 +188,12 @@ def test_u1_u6():
         # --- U5: своя таблиця ---
         check(p.load_table_file(ORIG) and len(p.table_rows) == 11 and p.shell.settings.get("sat_table") == ORIG and ORIG in p.table_label.cget("text"), "U5: свою таблицю відкрито, шлях запам'ятано")
         p._on_builtin_table()
-        check(len(p.table_rows) == 9 and not p.shell.settings.get("sat_table"), "U5: повернення до вбудованої, шлях забуто")
+        check(len(p.table_rows) == 8 and not p.shell.settings.get("sat_table"), "U5: повернення до вбудованої, шлях забуто")
         bad = os.path.join(tempfile.mkdtemp(prefix="r54bad_"), "x.txt")
         open(bad, "w", encoding="utf-8").write("це не таблиця\nзовсім\n")
         dlg.errors.clear()
-        check(p.load_table_file(bad) is False and dlg.errors and len(p.table_rows) == 9, "U5: файл без придатних рядків -- помилка, поточна таблиця лишається")
-        check(p.load_table_file(os.path.join(os.path.dirname(bad), "нема.txt")) is False and len(p.table_rows) == 9, "U5: файла нема -- помилка")
+        check(p.load_table_file(bad) is False and dlg.errors and len(p.table_rows) == 8, "U5: файл без придатних рядків -- помилка, поточна таблиця лишається")
+        check(p.load_table_file(os.path.join(os.path.dirname(bad), "нема.txt")) is False and len(p.table_rows) == 8, "U5: файла нема -- помилка")
         # ~/MD-UV390UKR/satellites.txt підхоплюється
         from pathlib import Path
         home = tempfile.mkdtemp(prefix="r54home_")

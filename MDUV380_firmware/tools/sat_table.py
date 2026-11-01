@@ -10,6 +10,9 @@
 рація (downlink супутника), Tx -- те, що вона передає (uplink). Набори: 1 -- голос (FM), 2 -- APRS, 3 -- «CW Rx» (маяк, лише прийом). Tx1 = 0 НЕ означає
 «передачі нема»: набір 2 перевіряється окремо.
 
+СУБТОНИ (R55): стовпці CTCSS і ArmCTCSS -- субтон ПЕРЕДАЧІ голосового набору (CTCSS) і «взводний» субтон передачі (ArmCTCSS, SK2 + PTT). Приймання завжди без субтону:
+прошивка ставить rxTone = NONE при кожному вході на екран супутників (menuSatelliteScreen.c); у наборів APRS і маяк субтону передачі нема (satellite.c: обидва = 0).
+
 ЗВ'ЯЗОК З ПРОШИВКОЮ (усе -- з коду, не з брифу):
   * одиниці слота: частоти в Гц (menuSatelliteScreen.c, calculateActiveSatelliteData: rxFreq / 10 -> одиниці 10 Гц каналу), субтон у 0,1 Гц, ім'я 8 Б;
   * «APRS Config» -> 24 Б AdditionalData слота: [0..5] ім'я 1, [6] '0'+SSID, [7..12] ім'я 2, [13] '0'+SSID (aprs.c, aprsBeaconingPrepareSatelliteConfig:
@@ -25,6 +28,9 @@ import re
 import sat_tle as st
 
 TABLE_FILE = "satellites.txt"
+STARTER_VERIFIED_DATE = "2026-11-01"       # R55: коли стартову таблицю звірено з документацією (claude/satellite-sources.md); пишеться в sat_table_data.VERIFIED_DATE
+TABLE_RECHECK_DAYS = 90                    # R55: після цього строку CPS нагадує звірити частоти з AMSAT «FM Satellites»
+AMSAT_FM_URL = "https://www.amsat.org/live-fm-satellites/"
 
 # Смуги приймання рації, Гц (trx.c, RADIO_HARDWARE_FREQUENCY_BANDS: .minFreq/.maxFreq в одиницях 10 Гц -> ×10): VHF, 220 МГц, UHF.
 HW_BANDS_HZ = ((127_000_000, 178_000_000), (190_000_000, 282_000_000), (380_000_000, 564_000_000))
@@ -389,8 +395,9 @@ def here(*parts):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts)
 
 
-def generate_data_module(src=None, dst=None):
-    """tools/satellites.txt -> tools/sat_table_data.py (запускати після зміни стартової таблиці: python3 MDUV380_firmware/tools/sat_table.py)."""
+def generate_data_module(src=None, dst=None, verified=STARTER_VERIFIED_DATE):
+    """tools/satellites.txt -> tools/sat_table_data.py (запускати після зміни стартової таблиці: python3 MDUV380_firmware/tools/sat_table.py). verified -- дата звірки
+    таблиці (R55), потрапляє в VERIFIED_DATE."""
     src = src or here(TABLE_FILE)
     dst = dst or here("sat_table_data.py")
     with open(src, "rb") as f:
@@ -400,10 +407,61 @@ def generate_data_module(src=None, dst=None):
             '"""ЗГЕНЕРОВАНО tools/sat_table.py з tools/satellites.txt -- НЕ РЕДАГУВАТИ РУКАМИ (правити satellites.txt і перегенерувати: '
             'python3 MDUV380_firmware/tools/sat_table.py). Вбудована стартова таблиця частот супутників: PyInstaller вбудовує імпортований модуль, '
             'а файл-довідник у .exe не потрапив би (так само, як aprs_icons_data.py)."""\n'
+            'VERIFIED_DATE = %r          # коли таблицю звірено з документацією (sat_table.STARTER_VERIFIED_DATE)\n' % verified +
             'LINES = (\n' + body + ')\n')
     with open(dst, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     return dst
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+#  Дата перевірки таблиці (R55)
+# ---------------------------------------------------------------------------------------------------------------------------------
+
+def builtin_verified_date():
+    """datetime.date звірки вбудованої таблиці (sat_table_data.VERIFIED_DATE) або None."""
+    import datetime
+    import sat_table_data
+    try:
+        return datetime.date.fromisoformat(sat_table_data.VERIFIED_DATE)
+    except (AttributeError, ValueError):
+        return None
+
+
+def file_date(path):
+    """Дата зміни файла таблиці (datetime.date) або None."""
+    import datetime
+    try:
+        return datetime.date.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+        return None
+
+
+def table_age_days(verified, today=None):
+    """Скільки діб минуло від дати звірки (ціле, не менше 0); None -- дата невідома. today -- параметр для тестів."""
+    import datetime
+    if verified is None:
+        return None
+    today = today or datetime.date.today()
+    return max(0, (today - verified).days)
+
+
+def table_date_text(kind, verified, today=None):
+    """«вбудована, перевірена 2026-11-01 (3 діб тому)» / «файл, змінено 2026-10-01 (31 діб тому)» / «дата перевірки невідома»."""
+    n = table_age_days(verified, today)
+    if n is None:
+        return "%s, дата перевірки невідома" % kind
+    word = "перевірена" if kind.startswith("вбудована") else "змінено"
+    return "%s, %s %s (%d діб тому)" % (kind, word, verified.isoformat(), n)
+
+
+def table_recheck_text(verified, today=None):
+    """Жовте нагадування, коли від звірки минуло більше TABLE_RECHECK_DAYS діб; інакше ''."""
+    n = table_age_days(verified, today)
+    if n is None or n <= TABLE_RECHECK_DAYS:
+        return ""
+    return ("Таблицю частот звіряли %d діб тому (понад %d). Частоти й стан супутників змінюються: звір їх з AMSAT «FM Satellites» (%s)." % (
+        n, TABLE_RECHECK_DAYS, AMSAT_FM_URL))
 
 
 if __name__ == "__main__":

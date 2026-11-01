@@ -40,6 +40,12 @@ NAME_LEN = 8
 ADDITIONAL_LEN = 24               # AdditionalData: шлях APRS (див. sat_table.py)
 LOOKUP = "0123456789. +-*"
 MAX_AGE_DAYS = 30                 # старіші за місяць -- попередження (A5)
+# R55: вік елементів орбіти -- ПРОПОЗИЦІЯ користувача-проєкту, не стандарт (пороги в цілих добах; вік у добах показується відкиданням дробової частини)
+TLE_AGE_GOOD_DAYS = 7             # до цього включно -- без позначки
+TLE_AGE_STALE_DAYS = 30           # 8..30 діб -- жовте «застарів»; понад це -- червоне
+TLE_AGE_GOOD_DAYS_ISS = 3         # ISS маневрує -- суворіше: до 3 діб включно без позначки
+ISS_NORAD = 25544
+AGE_OK, AGE_STALE, AGE_OLD, AGE_UNKNOWN = "ok", "stale", "old", "unknown"
 
 STRUCT = struct.Struct("<8s12s28sIIHHIIII24s")
 assert STRUCT.size == REC_LEN
@@ -333,13 +339,18 @@ class Slot:
         return out
 
     def freq_text(self):
-        """Текст для таблиці слотів і підтвердження запису. R54: «без частот», коли нульові всі шість; далі -- голос, а наявність наборів APRS/маяк позначена словами."""
+        """Текст для таблиці слотів і підтвердження запису. R54: «без частот», коли нульові всі шість; далі -- голос, а наявність наборів APRS/маяк позначена словами.
+        R55: субтон -- лише на ПЕРЕДАЧУ, тож показується як «TX 67» (приймання завжди без субтону); субтон взведення -- «взведення TX 74.4»."""
         def mhz(v):
             return ("%.6f" % (v / 1e6)).rstrip("0").rstrip(".") if v else "-"
         if not any((self.rx1, self.tx1, self.rx2, self.tx2, self.rx3, self.tx3)):
             return "без частот"
         t = "RX %s / TX %s МГц" % (mhz(self.rx1), mhz(self.tx1))
         extra = []
+        if self.ctcss:
+            extra.append("TX %g Гц" % (self.ctcss / 10.0))
+        if self.arm:
+            extra.append("взведення TX %g Гц" % (self.arm / 10.0))
         if self.rx2 or self.tx2:
             extra.append("APRS %s/%s" % (mhz(self.rx2), mhz(self.tx2)))
         if self.rx3 or self.tx3:
@@ -427,6 +438,61 @@ def stale_text(slots, now=None, limit=MAX_AGE_DAYS):
     if not old:
         return ""
     return ("Елементи старші за %d днів: %s. Прогноз прольотів із застарілих елементів дедалі неточніший -- завантаж свіжі." % (limit, ", ".join(old)))
+
+
+def is_iss(slot, norad=None):
+    """ISS: за NORAD, коли він відомий, а для слотів (NORAD у блоці нема) -- за назвою «ISS»."""
+    return norad == ISS_NORAD or norm_name(slot.name) == "ISS"
+
+
+def age_level(slot, now=None, norad=None):
+    """-> (вік у цілих добах | None, рівень AGE_*). now -- naive UTC datetime (параметр для тестів). ISS суворіше (TLE_AGE_GOOD_DAYS_ISS).
+    Вік від'ємний (епоха в майбутньому -- збитий годинник) вважається 0."""
+    a = slot.age_days(now)
+    if a is None:
+        return None, AGE_UNKNOWN
+    days = max(0, int(a))
+    good = TLE_AGE_GOOD_DAYS_ISS if is_iss(slot, norad) else TLE_AGE_GOOD_DAYS
+    if days <= good:
+        return days, AGE_OK
+    if days <= TLE_AGE_STALE_DAYS:
+        return days, AGE_STALE
+    return days, AGE_OLD
+
+
+def age_text(slot, now=None, norad=None):
+    """«5 дн.», «12 дн. застарів», «40 дн. старий», «?» для колонки таблиці слотів."""
+    days, lvl = age_level(slot, now, norad)
+    if days is None:
+        return "?"
+    return {AGE_OK: "%d дн.", AGE_STALE: "%d дн. застарів", AGE_OLD: "%d дн. старий"}[lvl] % days
+
+
+def old_slots(slots, now=None):
+    """Слоти з червоним віком (понад TLE_AGE_STALE_DAYS діб) -- для окремого підтвердження запису. -> [(номер з 1, ім'я, вік у добах)]."""
+    out = []
+    for i, s in enumerate(slots):
+        days, lvl = age_level(s, now)
+        if lvl == AGE_OLD:
+            out.append((i + 1, s.name, days))
+    return out
+
+
+def age_summary(slots, now=None):
+    """-> (текст, є_червоні). Підсумок віку для підпису під таблицею слотів: червоні (понад TLE_AGE_STALE_DAYS) і жовті (застарілі). '' -- усе свіже."""
+    stale, old = [], []
+    for s in slots:
+        days, lvl = age_level(s, now)
+        if lvl == AGE_OLD:
+            old.append("%s (%d дн.)" % (s.name, days))
+        elif lvl == AGE_STALE:
+            stale.append("%s (%d дн.)" % (s.name, days))
+    parts = []
+    if old:
+        parts.append("Старі елементи, понад %d діб: %s -- прогноз прольотів ненадійний." % (TLE_AGE_STALE_DAYS, ", ".join(old)))
+    if stale:
+        parts.append("Застаріли (до %d діб добре, ISS -- до %d): %s." % (TLE_AGE_GOOD_DAYS, TLE_AGE_GOOD_DAYS_ISS, ", ".join(stale)))
+    return " ".join(parts), bool(old)
 
 
 def epoch_text(slot):

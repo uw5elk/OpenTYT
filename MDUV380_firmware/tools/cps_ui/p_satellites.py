@@ -84,6 +84,8 @@ class SatellitesPanel(Panel):
         self.table_rows = []             # R54: рядки таблиці частот (sat_table.Row)
         self.table_notes = []            # що не вдалося прочитати
         self.table_source = ""           # звідки таблиця (для підпису)
+        self.table_verified = None       # R55: datetime.date звірки (вбудована) або зміни файла (своя)
+        self.now_override = None         # R55: поточний час для тестів (naive UTC datetime); None -- справжній
         self._build_ui()
         self._load_initial_table()
         self._redraw_slots()
@@ -112,12 +114,14 @@ class SatellitesPanel(Panel):
         self.dn_btn.pack(side="left", padx=4)
         self.state_label = ttk.Label(box, text="Рацію ще не читали.", foreground=gt.P["muted"], wraplength=640, justify="left")
         self.state_label.pack(anchor="w", padx=8, pady=(0, 2))
-        slot_tbl = FitTable(box, [("n", "№", 34, 0), ("name", "Назва", 90, 0), ("epoch", "Епоха", 90, 0), ("age", "Вік, дн.", 70, 0), ("inc", "Нахил, °", 70, 0),
+        slot_tbl = FitTable(box, [("n", "№", 34, 0), ("name", "Назва", 90, 0), ("epoch", "Епоха", 90, 0), ("age", "Вік TLE", 120, 0), ("inc", "Нахил, °", 70, 0),
                                   ("period", "Період, хв", 80, 0), ("freq", "Частоти", 240, 1)], height=8)
         self.slot_tree = slot_tbl.tree
         slot_tbl.pack(fill="x", padx=8, pady=4)
         self.slot_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_slot_selected())
         self.slot_tree.tag_configure("nofreq", foreground=gt.P["warn"])
+        self.slot_tree.tag_configure("stale", foreground=gt.P["warn"])
+        self.slot_tree.tag_configure("old", foreground=gt.P["err"])
         self.slot_tree.tag_configure("bad", foreground=gt.P["err"])
         self.stale_label = ttk.Label(box, text="", foreground=gt.P["warn"], wraplength=640, justify="left")
         self.stale_label.pack(anchor="w", padx=8)
@@ -127,7 +131,7 @@ class SatellitesPanel(Panel):
         form.pack(fill="x", padx=8, pady=(4, 8))
         fields = (
             (0, 0, "Назва (до 8 лат. символів)", self.name_var, 12), (0, 1, "RX, МГц", self.rx_var, 10), (0, 2, "TX, МГц", self.tx_var, 10),
-            (0, 3, "Субтон TX, Гц", self.ctcss_var, 8), (0, 4, "Субтон взведення, Гц", self.arm_var, 8),
+            (0, 3, "Субтон передачі, Гц", self.ctcss_var, 8), (0, 4, "Субтон взведення (передача), Гц", self.arm_var, 8),
             (2, 0, "Шлях APRS (напр. RS0ISS)", self.aprs_var, 12), (2, 1, "APRS RX, МГц", self.rx2_var, 10), (2, 2, "APRS TX, МГц", self.tx2_var, 10),
             (2, 3, "Маяк RX, МГц", self.rx3_var, 10), (2, 4, "Маяк TX, МГц", self.tx3_var, 10))
         for row, col, label, var, w in fields:
@@ -135,7 +139,7 @@ class SatellitesPanel(Panel):
             ttk.Entry(form, textvariable=var, width=w).grid(row=row + 1, column=col, sticky="w", padx=(0, 6))
         self.apply_btn = ttk.Button(form, text="Застосувати до слота", command=self._on_apply_form)
         self.apply_btn.grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(form, text="Порожньо або 0 = цього набору нема. Набір «маяк» -- лише прийом. Субтон 67 Гц вводь як 67, 88,5 -- як 88.5.",
+        ttk.Label(form, text="Порожньо або 0 = цього набору нема. Набір «маяк» -- лише прийом. Приймання завжди без субтону. Субтон передачі 67 Гц вводь як 67, 88,5 -- як 88.5.",
                   wraplength=640, justify="left", foreground=gt.P["muted"]).grid(row=5, column=0, columnspan=5, sticky="w", pady=(2, 0))
 
         src = ttk.LabelFrame(self, text="2. Джерело елементів")
@@ -167,6 +171,8 @@ class SatellitesPanel(Panel):
         tbl.pack(fill="x", padx=12, pady=6)
         self.table_label = ttk.Label(tbl, text="", wraplength=640, justify="left")
         self.table_label.pack(anchor="w", padx=8, pady=(6, 2))
+        self.recheck_label = ttk.Label(tbl, text="", wraplength=640, justify="left", foreground=gt.P["warn"])
+        self.recheck_label.pack(anchor="w", padx=8)
         trow = ttk.Frame(tbl)
         trow.pack(fill="x", padx=8, pady=(2, 2))
         self.add_table_btn = ttk.Button(trow, text="Додати з таблиці", command=self._on_add_table)
@@ -214,16 +220,25 @@ class SatellitesPanel(Panel):
     def _redraw_slots(self, select=None):
         self.slot_tree.delete(*self.slot_tree.get_children())
         for i, s in enumerate(self.slots):
-            age = s.age_days()
+            _days, alvl = st.age_level(s, self.now_override)
             levels = {lvl for lvl, _t in stb.check_slot(s)}
-            tag = ("bad",) if "error" in levels else (("nofreq",) if "nofreq" in levels else ())
+            if "error" in levels:
+                tag = ("bad",)
+            elif alvl == st.AGE_OLD:
+                tag = ("old",)
+            elif alvl == st.AGE_STALE:
+                tag = ("stale",)
+            elif "nofreq" in levels:
+                tag = ("nofreq",)
+            else:
+                tag = ()
             self.slot_tree.insert("", "end", iid=str(i), tags=tag, values=(
-                i + 1, s.name, st.epoch_text(s), ("%d" % age) if age is not None else "?", ("%.2f" % s.inclination) if s.inclination is not None else "?",
+                i + 1, s.name, st.epoch_text(s), st.age_text(s, self.now_override), ("%.2f" % s.inclination) if s.inclination is not None else "?",
                 ("%.1f" % s.period_min) if s.period_min else "?", s.freq_text()))
         if select is not None and 0 <= select < len(self.slots):
             self.slot_tree.selection_set(str(select))
-        stale = st.stale_text(self.slots)
-        self.stale_label.config(text=stale)
+        stale, has_old = st.age_summary(self.slots, self.now_override)
+        self.stale_label.config(text=stale, foreground=gt.P["err"] if has_old else gt.P["warn"])
         self.issue_label.config(text=self.issue_summary())
         self._update_state_label()
         self._update_counts()
@@ -378,8 +393,8 @@ class SatellitesPanel(Panel):
             messagebox.showerror("Супутники", "Записати не можна -- частоти поза смугами рації:\n\n" + "\n".join(errors) + "\n\nВиправ їх у формі слота.", parent=self.shell)
             return
         lines = ["У рацію буде записано супутників: %d з %d." % (len(self.slots), st.NUM_SLOTS), ""]
-        lines += ["  %d. %s (епоха %s, %s)" % (i + 1, s.name, st.epoch_text(s), s.freq_text()) for i, s in enumerate(self.slots)]
-        stale = st.stale_text(self.slots)
+        lines += ["  %d. %s (епоха %s, вік %s; %s)" % (i + 1, s.name, st.epoch_text(s), st.age_text(s, self.now_override), s.freq_text()) for i, s in enumerate(self.slots)]
+        stale, _has_old = st.age_summary(self.slots, self.now_override)
         if stale:
             lines += ["", stale]
         if warns:
@@ -389,10 +404,21 @@ class SatellitesPanel(Panel):
         if self.radio_state is None:
             lines += ["", "Рацію ще не читали: невідомо, що в ній зараз. Запис замінить блок супутників повністю."]
         lines += ["", "Це змінює рацію одразу (поза кодплагом). Спершу блок, що зараз у рації, збережеться у файл-страхову копію. Після запису відкрий екран супутників."]
+        if self.confirm_old_slots() is False:
+            return
         if not gd.confirm_dialog(self.shell, "Записати супутники в рацію?", "\n".join(lines), yes="Записати", no="Скасувати"):
             return
         snapshot = [s.copy() for s in self.slots]
         self.shell.run_task(lambda: self._write_worker(snapshot), "Записую супутники в рацію...", plain_errors=True, on_done=self._write_done)
+
+    def confirm_old_slots(self):
+        """R55 (C2): слоти з червоним віком (понад %d діб) -- окреме явне підтвердження; запис НЕ блокується. None -- таких слотів нема, True / False -- відповідь.""" % st.TLE_AGE_STALE_DAYS
+        old = st.old_slots(self.slots, self.now_override)
+        if not old:
+            return None
+        text = ("Елементи орбіти цих слотів старші за %d діб:\n\n" % st.TLE_AGE_STALE_DAYS + "\n".join("  %d. %s -- %d діб" % o for o in old) +
+                "\n\nПрогноз прольотів і доплер із таких елементів ненадійні. Завантаж свіжі (крок 2) або запиши все одно.")
+        return bool(gd.confirm_dialog(self.shell, "Старі елементи орбіти", text, yes="Записати все одно", no="Скасувати"))
 
     def _write_worker(self, snapshot):
         ser = cps.open_radio()
@@ -580,18 +606,23 @@ class SatellitesPanel(Panel):
         else:
             self.load_builtin_table()
 
-    def set_table(self, rows, notes, source):
-        self.table_rows, self.table_notes, self.table_source = list(rows), list(notes), source
-        text = "Таблиця: %s, рядків %d." % (source, len(rows))
+    def today(self):
+        return self.now_override.date() if self.now_override is not None else None
+
+    def set_table(self, rows, notes, source, verified=None, kind=None):
+        """kind -- «вбудована» / «файл» для підпису дати; verified -- datetime.date звірки (вбудована) чи зміни файла (своя)."""
+        self.table_rows, self.table_notes, self.table_source, self.table_verified = list(rows), list(notes), source, verified
+        text = "Таблиця: %s, рядків %d." % (stb.table_date_text(kind, verified, self.today()) if kind else source, len(rows))
         if notes:
             text += " Пропущено через помилки: %d.\n  " % len(notes) + "\n  ".join(notes[:8]) + ("\n  ..." if len(notes) > 8 else "")
             for n in notes:
                 print("Таблиця частот супутників: " + n)
         self.table_label.config(text=text)
+        self.recheck_label.config(text=stb.table_recheck_text(verified, self.today()))
 
     def load_builtin_table(self):
         rows, notes = stb.default_rows()
-        self.set_table(rows, notes, "вбудована стартова")
+        self.set_table(rows, notes, "вбудована стартова", verified=stb.builtin_verified_date(), kind="вбудована")
 
     def load_table_file(self, path, remember=True):
         """Прочитати свою таблицю. False -- файл не прочитано або в ньому нема жодного рядка (поточна таблиця лишається)."""
@@ -603,7 +634,7 @@ class SatellitesPanel(Panel):
         if not rows:
             messagebox.showerror("Супутники", "У файлі нема жодного придатного рядка таблиці.\n" + "\n".join(notes[:8]), parent=self.shell)
             return False
-        self.set_table(rows, notes, "файл " + path)
+        self.set_table(rows, notes, "файл " + path, verified=stb.file_date(path), kind="файл " + path)
         if remember:
             try:
                 self.shell.settings.set("sat_table", path)
