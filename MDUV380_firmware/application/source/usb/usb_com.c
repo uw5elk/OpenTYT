@@ -95,6 +95,9 @@ enum CPS_ACCESS_AREA
 #include "functions/dmr_rctl_cap.h"
 #include "functions/dmr_rctl_tx.h"   // dmrRctlStockRxDiag/Reset (лічильники прийому стокових команд)
 #include "functions/dmr_rctl_cfg.h"  // dmrRctlSetInhibited (кабельне зняття блокування -- recovery)
+#if defined(ENABLE_WAKE_DIAG)
+#include "functions/wake_diag.h"   // R58: журнал пробудження (USB 0xB7)
+#endif
 static void handleCPSRequest(void);
 
 volatile int com_request = 0;
@@ -1945,6 +1948,28 @@ static void cpsHandleCommand(void)
 			hasToReply = true;
 			replyLength = 1;
 			break;
+#if defined(ENABLE_WAKE_DIAG)
+		case 0xB7: // R58 DIAG: журнал пробудження ретранслятора (tools/wake_diag.py). [2] біт0=1 -> скинути журнал (відповідь: [cmd]);
+			   //  інакше Reply: [cmd, len_hi, len_lo, ver, макс.сеансів, кількість, 0, directTx u16, 0 u16,
+			   //  далі кількість x запис по WAKE_DIAG_REC_LEN байт (LE, найновіший першим) -- див. wakeDiagDump().
+			if (com_requestbuffer[2] & 0x01)
+			{
+				wakeDiagReset();
+				usbComSendBuf[0] = com_requestbuffer[0];
+				hasToReply = true;
+				replyLength = 1;
+				break;
+			}
+			{
+				int n = wakeDiagDump((uint8_t *)&usbComSendBuf[3], COM_BUFFER_SIZE - 3);
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
+				usbComSendBuf[2] = (uint8_t)(n & 0xFF);
+				hasToReply = true;
+				replyLength = n + 3;
+				return; // bypass the trailing generic '-' reply
+			}
+#endif
 		case 0x9B: // DIAG: лічильники прийому СТОКОВИХ команд (форк як ціль).
 			   //  [2] біт0=1 -> скинути лічильники; біт1=1 -> зняти блокування кабелем (recovery).
 			   //  Reply: [cmd, len_hi, len_lo, 23x uint32 LE: seen,lastSrc,Check,Monitor,Enable,Disable,

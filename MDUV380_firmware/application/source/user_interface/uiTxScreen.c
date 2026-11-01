@@ -33,6 +33,9 @@
 #include "user_interface/uiLocalisation.h"
 #include "interfaces/clockManager.h"
 #include "functions/satellite.h"
+#if defined(ENABLE_WAKE_HOP_TEST)
+#include "functions/wake_hop.h"   // R58: прототип стрибка каналу під утримуваним PTT (лише діагностична збірка)
+#endif
 #if defined(HAS_GPS)
 #include "interfaces/gps.h"
 #endif
@@ -111,6 +114,9 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 		txErrorHoldMs = TX_ERROR_HOLD_DEFAULT_MS;
 		timeInSeconds = 0;
 		pttWasReleased = false;
+#if defined(ENABLE_WAKE_HOP_TEST)
+		wakeHopBegin();
+#endif
 		xmitErrorTimer = 0;
 		isSatelliteScreen = false;
 		ticksTimerReset(&nextSecondTimer);
@@ -409,6 +415,21 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 		}
 		else
 		{
+#if defined(ENABLE_WAKE_HOP_TEST)
+			// R58: серія запитів пробудження вичерпана, PTT ще утримується -- спробувати наступний канал зони
+			// (до 2 стрибків). Поки стрибки лишаються, вікна помилки немає. Усе з UI-задачі.
+			if ((HRC6000GetIsWakingState() == WAKING_MODE_FAILED) && trxTransmissionEnabled && (ev->buttons & BUTTON_PTT) && wakeHopTry())
+			{
+				timeInSeconds = currentChannelData->tot * 15U;   // TOT рахуємо наново для нового каналу
+				ticksTimerStart(&nextSecondTimer, PIT_COUNTS_PER_SECOND);
+				soundSetMelody(MELODY_KEY_BEEP);
+				if (isShowingLastHeard == false)
+				{
+					updateScreen();
+				}
+				return MENU_STATUS_SUCCESS;
+			}
+#endif
 			if ((HRC6000GetIsWakingState() == WAKING_MODE_FAILED) && trxTransmissionEnabled)
 			{
 				trxTransmissionEnabled = false;
@@ -591,6 +612,10 @@ static void handleEvent(uiEvent_t *ev)
 				}
 
 				HRC6000ClearIsWakingState();
+
+#if defined(ENABLE_WAKE_HOP_TEST)
+				wakeHopRestore();   // R58: повернути вихідний канал, якщо були на іншому
+#endif
 
 				menuSystemPopPreviousMenu();
 				uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN; // we need immediate redraw

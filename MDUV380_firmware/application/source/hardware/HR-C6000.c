@@ -47,6 +47,12 @@
 #include "interfaces/interrupts.h"
 #include "functions/rxPowerSaving.h"
 #include "functions/ticks.h"
+#if defined(ENABLE_WAKE_DIAG)
+#include "functions/wake_diag.h"   // R58: журнал сеансів пробудження (лише діагностична збірка)
+#endif
+#if defined(ENABLE_WAKE_HOP_TEST)
+#include "functions/wake_hop.h"   // R58: прототип HRC6000RestartWakeForRoam (стрибок каналу, лише діагностична збірка)
+#endif
 #include "interfaces/gps.h"
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 #include "hardware/radioHardwareInterface.h"
@@ -1204,6 +1210,9 @@ static inline void hrc6000SysReceivedDataInt(void)
 		if (hrc.lastTimeCode != hrc.timeCode)
 		{
 			hrc.rxTSToggled++;// timecode has toggled correctly
+#if defined(ENABLE_WAKE_DIAG)
+			wakeDiagToggle((uint8_t)((hrc.rxTSToggled > 255) ? 255 : hrc.rxTSToggled));
+#endif
 		}
 		else
 		{
@@ -1858,6 +1867,9 @@ void hrc6000TimeslotInterruptHandler(void)
 							hrc.tsAgreed = TS_IS_LOCKED; // Lock the TS
 							hrc.isWaking = WAKING_MODE_AWAKEN;
 
+#if defined(ENABLE_WAKE_DIAG)
+							wakeDiagTxStart(ticksGetMillis());   // R58: старт передачі (після AWAKEN, або «пряма» без пробудження)
+#endif
 							hrc6000TransitionToTx();
 							hrc.ambeBufferCount = 0;
 							hrc.deferredUpdateBufferOutPtr = deferredUpdateBuffer;
@@ -2303,6 +2315,9 @@ void hrc6000TimeslotInterruptHandler(void)
 				SPI0WritePageRegByte(0x04, 0x41, 0x80);
 				trxIsTransmitting = true;
 			}
+#if defined(ENABLE_WAKE_DIAG)
+			wakeDiagPacket(ticksGetMillis());   // R58: ще один пакет пробудження пішов в ефір
+#endif
 			hrc.repeaterWakeupResponseTimeout = WAKEUP_RETRY_PERIOD;
 			slotState = DMR_STATE_REPEATER_WAKE_2;
 			break;
@@ -2322,6 +2337,9 @@ void hrc6000TimeslotInterruptHandler(void)
 				slotState = DMR_STATE_RX_1;
 				trxIsTransmitting = false;
 				hrc.isWaking = WAKING_MODE_AWAKEN;
+#if defined(ENABLE_WAKE_DIAG)
+				wakeDiagAwaken(ticksGetMillis());
+#endif
 				hrc.tsLockedTS = -1;
 				hrc.qsoDataSeqCount = 0;
 				hrc.hasAudioData = false;
@@ -2853,6 +2871,12 @@ static void hrc6000Tick(void)
 				hrc.isWaking = WAKING_MODE_WAITING;
 				hrc.wakeTriesCount = 0;
 				slotState = DMR_STATE_REPEATER_WAKE_1;
+#if defined(ENABLE_WAKE_DIAG)
+				// R58: новий сеанс журналу (to0 -- залишок таймера від минулого сеансу: 0 = випадок B, R57 §1)
+				wakeDiagBegin(ticksGetMillis(), uiDataGlobal.currentSelectedChannelNumber,
+						currentRadioDevice->currentRxFrequency, currentRadioDevice->currentTxFrequency,
+						trxGetDMRColourCode(), (uint16_t)hrc.repeaterWakeupResponseTimeout);
+#endif
 			}
 
 			hrc.txSequence = 0;
@@ -2903,6 +2927,12 @@ static void hrc6000Tick(void)
 
 			if (hrc.interruptTimeout == INTERRUPT_TIMEOUT)
 			{
+#if defined(ENABLE_WAKE_DIAG)
+				if (hrc.isWaking == WAKING_MODE_WAITING)
+				{
+					wakeDiagIntTimeout();   // R58: TS-переривання зникли посеред пробудження
+				}
+#endif
 				HRC6000InitDigital();// sets 	interruptTimeout=0;
 				HRC6000ClearActiveDMRID();
 				if (uiDataGlobal.displayQSOState != QSO_DISPLAY_DEFAULT_SCREEN)
@@ -2943,10 +2973,16 @@ static void hrc6000Tick(void)
 			{
 				// The wakeup response time has expired
 				// Retry, once again (limit is set into the codeplug)
+#if defined(ENABLE_WAKE_DIAG)
+				wakeDiagZero(ticksGetMillis());   // R58: таймер дійшов до нуля
+#endif
 				hrc.wakeTriesCount++;
 				if (hrc.wakeTriesCount > codeplugGetRepeaterWakeAttempts())
 				{
 					hrc.isWaking = WAKING_MODE_FAILED;// signal that the Wake process has failed.
+#if defined(ENABLE_WAKE_DIAG)
+					wakeDiagFail(ticksGetMillis());
+#endif
 				}
 				else
 				{
@@ -3235,6 +3271,9 @@ static void hrc6000TaskFunction(void *data)
 
 void HRC6000InitTask(void)
 {
+#if defined(ENABLE_WAKE_DIAG)
+	wakeDiagInit();   // R58: журнал у CCM -- явне обнулення до старту задачі, що пише в нього
+#endif
 	xTaskCreate(hrc6000TaskFunction,            /* pointer to the task */
 			"hrc6000Task",                      /* task name for kernel awareness debugging */
 			HRC6000_TASK_STACK_WORDS,           /* task stack size -- іменована константа (HR-C6000.h) */
@@ -3258,6 +3297,29 @@ int HRC6000GetIsWakingState(void)
 {
 	return hrc.isWaking;
 }
+
+#if defined(ENABLE_WAKE_HOP_TEST)
+// R58 (прототип стрибка, R57 §2): перезапустити пробудження після того, як UI-задача перемкнула канал
+// (частоти, колір-код, DMR ID, TG) при УТРИМУВАНОМУ PTT. Скид як у HRC6000ForceDMRIdleForTx (під ENABLE_DMR_DATA, тут
+// продубльований, бо журнал може будуватись і без нього): під guard-ом переривань C6000, після виходу ISR.
+// Наступний hrc6000Tick() бачить transmissionEnabled && isWaking==NONE && slotState==IDLE і сам запускає ПОВНИЙ старт
+// пробудження (wakeTriesCount=0, timeCode=-1, лічильники синхронізації, регістри 0x21/0x22/0x40).
+// trxTransmissionEnabled тут НЕ чіпається -- PTT утримується. Викликати лише з UI-задачі.
+void HRC6000RestartWakeForRoam(void)
+{
+	interruptsDisableC6000Interrupts();
+
+	// Ensure the ISR has exited before we mutate the slot state it also writes.
+	while (hrc.inIRQHandler);
+
+	slotState = DMR_STATE_IDLE;
+	trxIsTransmitting = false;
+	hrc.isWaking = WAKING_MODE_NONE;
+	hrc.tickCount = 0;
+
+	interruptsEnableC6000Interrupts();
+}
+#endif // ENABLE_WAKE_HOP_TEST
 
 #if defined(ENABLE_DMR_DATA)
 // Force the DMR digital slot to IDLE so a host-queued data TX (functions/dmr_data.c)

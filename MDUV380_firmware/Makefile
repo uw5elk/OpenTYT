@@ -36,6 +36,28 @@ ifeq ($(ENABLE_SMS_DIAG),1)
 DEFS += -DENABLE_SMS_DIAG
 endif
 
+# R58: діагностика пробудження ретранслятора -- журнал сеансів (час до AWAKEN/FAILED, кількість пакетів WAKE_1),
+# сторінка «Журнал пробудж.» у меню «Повідомлення» і USB-команда 0xB7 (tools/wake_diag.py). Лише діагностична збірка;
+# у користувацьких НЕ вмикати. Потребує ENABLE_AES=1 ENABLE_DMR_DATA=1 (екран живе в menuMessages.c).
+ifeq ($(ENABLE_WAKE_DIAG),1)
+ifneq ($(ENABLE_AES),1)
+$(error ENABLE_WAKE_DIAG=1 потребує ENABLE_AES=1 і ENABLE_DMR_DATA=1)
+endif
+ifneq ($(ENABLE_DMR_DATA),1)
+$(error ENABLE_WAKE_DIAG=1 потребує ENABLE_AES=1 і ENABLE_DMR_DATA=1)
+endif
+DEFS += -DENABLE_WAKE_DIAG
+endif
+
+# R58: ПРОТОТИП стрибка на наступний канал зони, коли ретранслятор не відповів на пробудження (R57 §2-§3). ЕКСПЕРИМЕНТ:
+# лише для діагностичної збірки і тільки разом з ENABLE_WAKE_DIAG=1 (журнал фіксує кожен стрибок). У користувацьких НЕ вмикати.
+ifeq ($(ENABLE_WAKE_HOP_TEST),1)
+ifneq ($(ENABLE_WAKE_DIAG),1)
+$(error ENABLE_WAKE_HOP_TEST=1 потребує ENABLE_WAKE_DIAG=1)
+endif
+DEFS += -DENABLE_WAKE_HOP_TEST
+endif
+
 # AES-fix1 A2: у late entry передавати MI ПОТОЧНОГО суперфрейму (типово -- наступного, look-ahead).
 # Збірка-кандидат для польової звірки зі стоковою; потребує ENABLE_AES=1 (поза ним нічого не змінює).
 ifeq ($(AES_TX_MI_CURRENT),1)

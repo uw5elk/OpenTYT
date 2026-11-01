@@ -64,6 +64,9 @@ jobs:
       # реальні захвати зі стокової TYT байт-у-байт (див. RCTL_COMPAT.md).
       - name: Референс стокових RCTL-команд
         run: python3 MDUV380_firmware/tools/rctl_stock.py
+      # R58: діагностика пробудження (ENABLE_WAKE_DIAG / ENABLE_WAKE_HOP_TEST) -- лише під #if і лише в одному CI-джобі; типова й користувацькі збірки лишаються байт-у-байт тими самими.
+      - name: Діагностика пробудження лише під #if
+        run: python3 MDUV380_firmware/tools/check_wake_ifdef.py
       - name: Хостові тести
         run: ./MDUV380_firmware/tests/run_tests.sh
 
@@ -443,6 +446,82 @@ jobs:
           gh release upload "$TAG" "openuv380-10w-ukrainian-diag-${SHORT}.map" "openuv380-10w-ukrainian-diag-${SHORT}.elf" --clobber
           echo "OK: .map і .elf (diag) -> реліз $TAG; активи релізу зараз:"
           gh release view "$TAG" --json assets -q '.assets[].name'
+
+  # R58: ДІАГНОСТИЧНА збірка пробудження ретранслятора -- та сама користувацька (UA + AES + DMR_DATA), ПЛЮС
+  # журнал сеансів пробудження (ENABLE_WAKE_DIAG: пункт «Журнал пробудж.» в меню «Повідомлення», USB 0xB7,
+  # tools/wake_diag.py) і ПРОТОТИП стрибка на сусідній канал зони під утримуваним PTT (ENABLE_WAKE_HOP_TEST).
+  # ЛИШЕ для польового досліду (TESTING.md, блок DF) -- у користувацьку прошивку не потрапляє: дефайни
+  # є тільки тут (tools/check_wake_ifdef.py стежить за цим у джобі checks).
+  # БЕЗ ENABLE_APRS_RX_PROBE: код до кодека (фіксована адреса 0x807537C) у build-ukrainian-diag вже майже
+  # впирається в неї (виміряно R58 локально: запас ~1,7 КБ), а журнал + стрибок додають ~2,5 КБ -- ld не злінкує.
+  # Залежить від build-ukrainian: реліз ci-<sha> створює вона.
+  build-ukrainian-wake-diag:
+    needs: build-ukrainian
+    runs-on: ubuntu-latest
+    name: build (діагностична, журнал пробудження + стрибок каналу)
+    permissions:
+      contents: write
+    steps:
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
+      - name: Install ARM GNU toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "14.2.Rel1"
+      - name: Build
+        working-directory: MDUV380_firmware
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_WAKE_DIAG=1 ENABLE_WAKE_HOP_TEST=1
+      - name: Report size
+        working-directory: MDUV380_firmware
+        run: arm-none-eabi-size build/openuv380-10w.elf
+      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
+        working-directory: MDUV380_firmware
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
+      - name: Перевірити, що діагностика пробудження справді в збірці
+        working-directory: MDUV380_firmware
+        run: |
+          for sym in wakeDiagBegin wakeDiagDump wakeHopTry wakeHopRestore HRC6000RestartWakeForRoam; do
+            arm-none-eabi-nm build/openuv380-10w.elf | grep -qw "$sym" || { echo "немає символу $sym -- ENABLE_WAKE_* не спрацювали"; exit 1; }
+          done
+          echo "OK: символи журналу й стрибка є в збірці"
+      - name: Вивантажити артефакт openuv380-10w-ukrainian-wake-diag
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: openuv380-10w-ukrainian-wake-diag
+          retention-days: 2
+          compression-level: 9
+          path: |
+            MDUV380_firmware/build/*.bin
+            MDUV380_firmware/build/*.hex
+      - name: Assert Ukrainian strings are actually linked in
+        working-directory: MDUV380_firmware
+        run: |
+          python3 - <<'PY'
+          data = open("build/openuv380-10w.bin","rb").read()
+          needle = "Мова".encode("cp1251")
+          assert needle in data, "українських рядків у .bin немає -- LANGUAGE_UKRAINIAN=1 не спрацював"
+          assert "Журнал пробудж.".encode("cp1251") in data, "рядка журналу пробудження в .bin немає -- ENABLE_WAKE_DIAG не спрацював"
+          print("OK: українські рядки й пункт журналу знайдено у прошивці")
+          PY
+      - name: Додати діагностичний .bin пробудження до релізу ci-<sha>
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        working-directory: MDUV380_firmware
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          TAG="ci-${SHORT}"
+          ASSET="openuv380-10w-ukrainian-wake-diag-${SHORT}.bin"
+          cp build/openuv380-10w.bin "$ASSET"
+          gh release upload "$TAG" "$ASSET" --clobber
+          cp build/openuv380-10w.map "openuv380-10w-ukrainian-wake-diag-${SHORT}.map"
+          cp build/openuv380-10w.elf "openuv380-10w-ukrainian-wake-diag-${SHORT}.elf"
+          gh release upload "$TAG" "openuv380-10w-ukrainian-wake-diag-${SHORT}.map" "openuv380-10w-ukrainian-wake-diag-${SHORT}.elf" --clobber
+          echo "OK: $ASSET (+ .map, .elf) -> реліз $TAG"
 
   # GUI-прошивальник для простих користувачів/тестерів: один .exe із двома кнопками
   # ("Обрати донор" і "ПРОШИТИ"), без ручного pip install/копіювання libusb dll.

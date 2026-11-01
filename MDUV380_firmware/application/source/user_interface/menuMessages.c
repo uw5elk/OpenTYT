@@ -34,6 +34,9 @@
 #include "user_interface/uiUtilities.h"
 #include "functions/trx.h"
 #include "functions/dmr_sms.h"
+#if defined(ENABLE_WAKE_DIAG)
+#include "functions/wake_diag.h"   /* R58: сторінка «Журнал пробудж.» */
+#endif
 #include "functions/ticks.h"   // ticksTimer_t: реальний час замість лічби тіків
 #include "functions/codeplug.h"   /* Contact List browsing for the recipient picker */
 #include "crypto/dmr_aes.h"
@@ -185,7 +188,11 @@ static void smsWhoStr(const dmrSmsMessage_t *m, char *out, int outsz)
 	uiSmsWhoStr(m->peerId, ((m->flags & DMR_SMS_FLAG_OUTGOING) && (m->flags & DMR_SMS_FLAG_GROUP)) ? 1 : 0, out, outsz);
 }
 
-enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG, MSG_CONFIRM, MSG_LAYOUT };
+enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT, MSG_DIAG, MSG_CONFIRM, MSG_LAYOUT
+#if defined(ENABLE_WAKE_DIAG)
+	, MSG_WAKE_DIAG   /* R58: журнал пробудження ретранслятора (не залежить від ENABLE_SMS_DIAG) */
+#endif
+};
 
 static struct
 {
@@ -216,6 +223,9 @@ static struct
 	uint8_t  diagPage;      // екран «Діагностика»: 0 = лічильники, 1 = ISR + перемикачі (fix3), 2 = збирач PDU (diag5)
 	uint8_t  diagSel;       // виділений перемикач на сторінці 2 (0..DIAG_TOGGLES-1)
 	uint8_t  diagScroll;    // diag6: перший видимий рядок сторінки 4 (знімок «CRC пог»)
+#endif
+#if defined(ENABLE_WAKE_DIAG)
+	uint8_t  wakeAge;       // R58: який сеанс журналу пробудження показано (0 = найновіший)
 #endif
 } s_msg DMR_AES_CCM;   /* CCM-INIT(menuMessages) -- memset(&s_msg) на isFirstRun, до будь-якого читання */
 
@@ -267,6 +277,19 @@ static void diagEvent(uiEvent_t *ev);
 /* ui7: Нове / Вхідні / Надіслані. Монітор і режим TX -- у «Налаштування > Опції рації», шрифт --
  * у «Налаштування > Дисплей» (ті самі біти/блоки). */
 #define MSGS_HOME_ITEMS   3
+#endif
+#if defined(ENABLE_WAKE_DIAG)
+/* R58: «Журнал пробудж.» -- ОСТАННІЙ пункт, після наявних (SMS-діагностика, якщо є, лишає свій номер 3). */
+#if defined(ENABLE_SMS_DIAG)
+#define MSGS_WAKE_ITEM    4
+#else
+#define MSGS_WAKE_ITEM    3
+#endif
+#undef MSGS_HOME_ITEMS
+#define MSGS_HOME_ITEMS   (MSGS_WAKE_ITEM + 1)
+#define WAKE_REFRESH_MS   500   /* екран журналу оновлюється сам, поки оператор дивиться */
+static void wakeUpdate(void);
+static void wakeEvent(uiEvent_t *ev);
 #endif
 
 static void gotoHomeAt(int item)
@@ -323,6 +346,18 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 		}
 		return exitCode;
 	}
+
+#if defined(ENABLE_WAKE_DIAG)
+	if (s_msg.view == MSG_WAKE_DIAG)
+	{
+		if (ev->hasEvent) { wakeEvent(ev); }
+		if ((s_msg.view == MSG_WAKE_DIAG) && ticksTimerHasExpired(&s_msg.resultTimer))
+		{
+			wakeUpdate();
+		}
+		return exitCode;
+	}
+#endif
 
 #if defined(ENABLE_SMS_DIAG)
 	if (s_msg.view == MSG_DIAG)
@@ -381,6 +416,9 @@ static void homeUpdate(void)
 			case 0:  snprintf(buf, sizeof buf, MSGS_NEW);                       break;
 			case 1:  snprintf(buf, sizeof buf, MSGS_INBOX_FMT, dmrSmsCount(0)); break;
 			case 2:  snprintf(buf, sizeof buf, MSGS_SENT_FMT,  dmrSmsCount(1)); break;
+#if defined(ENABLE_WAKE_DIAG)
+			case MSGS_WAKE_ITEM: snprintf(buf, sizeof buf, WAKE_ITEM); break;   /* R58 */
+#endif
 #if defined(ENABLE_SMS_DIAG)
 			// Лічильники ланцюга квитанції -- окремий екран (2026-09-30).
 			default: snprintf(buf, sizeof buf, MSGS_DIAG); break;
@@ -479,6 +517,13 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 			case 0: startCompose(); break;
 			case 1: openFolder(0);  break;
 			case 2: openFolder(1);  break;
+#if defined(ENABLE_WAKE_DIAG)
+			case MSGS_WAKE_ITEM:   /* R58 */
+				s_msg.view = MSG_WAKE_DIAG;
+				s_msg.wakeAge = 0;
+				wakeUpdate();
+				break;
+#endif
 #if defined(ENABLE_SMS_DIAG)
 			case 3:
 				s_msg.view = MSG_DIAG;
@@ -751,6 +796,74 @@ static void diagEvent(uiEvent_t *ev)
 
 #endif /* ENABLE_SMS_DIAG: екран «Діагностика» */
 
+/* ============================ WAKE LOG (R58) ============================ */
+#if defined(ENABLE_WAKE_DIAG)
+/* Журнал сеансів пробудження ретранслятора (functions/wake_diag.c): по одному сеансу на екран, 9 рядків FONT_SIZE_1.
+ * DOWN -- старіший сеанс, UP -- новіший, довге GREEN -- скинути журнал, RED -- назад. Розшифровка -- TESTING.md, блок DF. */
+static void wakeUpdate(void)
+{
+	char buf[40];
+	wakeDiagSession_t ws;
+	unsigned total = wakeDiagCount();
+
+	displayClearBuf();
+	if (total == 0U)
+	{
+		snprintf(buf, sizeof buf, WAKE_TITLE_FMT, 0U, 0U);
+		menuDisplayTitle(buf);
+		displayPrintCentered(50, WAKE_EMPTY, FONT_SIZE_1);
+	}
+	else
+	{
+		if (s_msg.wakeAge >= total) { s_msg.wakeAge = (uint8_t)(total - 1U); }
+		(void)wakeDiagGet(s_msg.wakeAge, &ws);
+		snprintf(buf, sizeof buf, WAKE_TITLE_FMT, (unsigned)s_msg.wakeAge + 1U, total);
+		menuDisplayTitle(buf);
+		for (unsigned line = 0U; line < WAKE_DIAG_LINES; line++)
+		{
+			if (wakeDiagLine(&ws, s_msg.wakeAge, total, wakeDiagDirectTx(), line, buf, (int)sizeof buf))
+			{
+				displayPrintAt(2, (int16_t)(16 + (10 * (int)line)), buf, FONT_SIZE_1);
+			}
+		}
+	}
+	displayPrintCentered(112, WAKE_HINT, FONT_SIZE_1);
+	displayRender();
+
+	ticksTimerStart(&s_msg.resultTimer, WAKE_REFRESH_MS);
+}
+
+static void wakeEvent(uiEvent_t *ev)
+{
+	if ((ev->events & KEY_EVENT) == 0) { return; }
+	if (KEYCHECK_LONGDOWN(ev->keys, KEY_GREEN))
+	{
+		wakeDiagReset();
+		s_msg.wakeAge = 0;
+		wakeUpdate();
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		if (((unsigned)s_msg.wakeAge + 1U) < wakeDiagCount()) { s_msg.wakeAge++; }
+		wakeUpdate();
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
+	{
+		if (s_msg.wakeAge > 0U) { s_msg.wakeAge--; }
+		wakeUpdate();
+		return;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		gotoHome();
+		menuDataGlobal.currentItemIndex = MSGS_WAKE_ITEM;   // повернутись на рядок «Журнал пробудж.»
+		homeUpdate();
+	}
+}
+#endif /* ENABLE_WAKE_DIAG */
+
 /* ============================ LIST ===================================== */
 /* ui6: рядок списку -- текст 8x16 від DISPLAY_X_POS_MENU_TEXT_OFFSET (8 px), час FONT_SIZE_1 праворуч
  * (5 символів x 6 px = 30 px) з 2 px до краю підсвітки (DISPLAY_X_POS_MENU_OFFSET = 4).
@@ -985,6 +1098,9 @@ static void redrawCurrent(void)
 		case MSG_CONFIRM:      confirmUpdate();     break;
 #if defined(ENABLE_SMS_DIAG)
 		case MSG_DIAG:         diagUpdate();        break;
+#endif
+#if defined(ENABLE_WAKE_DIAG)
+		case MSG_WAKE_DIAG:    wakeUpdate();        break;
 #endif
 		default:               homeUpdate();        break;
 	}

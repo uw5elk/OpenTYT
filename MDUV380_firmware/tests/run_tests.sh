@@ -73,6 +73,8 @@ declare -A SRCS=(
 	[test_aes_txphase]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix2: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- фаза шифрування TX за ефіром при тихих burst-ах (SILENCE_AUDIO), межа 18 кадрів, B3 тиша на RX; черга кодувальника й залізо -- модель у тесті
 	[test_aes_rawdiag]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix3: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- розкладка дампу сирих LC/EMB, дедуп, блок «наші байти»
 	[test_aes_pifilter]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix6: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- класифікація PI-burst-ів до стокового фільтра, кільця, режими G2
+	[test_wake_diag]="$APP/source/functions/wake_diag.c"   # R58: СПРАВЖНІЙ wake_diag.c -- журнал сеансів пробудження (кільце, prev, HOP_START, насичення, дамп 0xB7, рядки екрана); укр. варіант -- довжина рядків
+	[test_wake_hop]="$APP/source/functions/wake_hop_sel.c"   # R58: СПРАВЖНІЙ wake_hop_sel.c -- придатність каналу, ліміт стрибків, кільце, один оберт
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 
@@ -95,6 +97,8 @@ declare -A XFLAGS=(
 	[test_codeplug_contact]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -DENABLE_CHANNEL_DELETE -DENABLE_CODEPLUG_MENU -funsigned-char -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"   # -funsigned-char: як на ARM (char без знака) -- інакше `name[0] != 0xFF` у кеші контактів хибне на x86
 	[test_dmr_rctl_stock]="-DENABLE_DMR_DATA"   # R21 З2: тест читає чергу так, як драйвер (functions/dmr_data.h)
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
+	[test_wake_diag]="-DENABLE_WAKE_DIAG"
+	[test_wake_hop]="-DENABLE_WAKE_HOP_TEST -DWAKE_HOP_HOST_TEST"
 	[test_aprs_afsk]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_rx_parse]="-DENABLE_APRS_RX"
 	[test_aprs_icons]="-DENABLE_APRS_RX"
@@ -118,7 +122,7 @@ declare -A XFLAGS=(
 SMSDIAG_TOO=(test_dmr_sms_replay)
 # ui4: тести, які ще раз збираються з -DLANGUAGE_BUILD_UKRAINIAN (бінарник <назва>_ua) --
 # кириличні розкладки існують лише в українській збірці.
-UA_TOO=(test_sms_multitap)
+UA_TOO=(test_sms_multitap test_wake_diag)
 # AES-fix1: тест ресинхронізації збирається ще й зі збіркою-кандидатом AES_TX_MI_CURRENT (бінарник <назва>_cur)
 # та з діагностикою прийому DMR_AES_DIAG_RX (<назва>_diag) -- інакше ні цей режим, ні діагностичний код у CI не компілювалися б.
 MICUR_TOO=(test_aes_resync test_aes_txphase)
@@ -174,6 +178,25 @@ for src in "$TESTS_DIR"/test_*.c; do
 		fi
 	done
 done
+
+# R58: діагностика пробудження -- мутаційна перевірка тестів (кожен мутант мусить провалити тест), розбір дампу tools/wake_diag.py і статична перевірка «усе під #if».
+if [ -z "$FILTER" ] || [[ "wake" == *"$FILTER"* ]] || [[ "$FILTER" == *"wake"* ]]; then
+	if out="$(python3 "$TESTS_DIR/mutants_wake.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            mutants_wake (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        mutants_wake (python)"; printf '%s\n' "$out" | tail -20
+	fi
+	if out="$(python3 "$TESTS_DIR/../tools/wake_diag.py" --selftest 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            wake_diag --selftest (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        wake_diag --selftest (python)"; printf '%s\n' "$out" | tail -10
+	fi
+	if out="$(python3 "$TESTS_DIR/../tools/check_wake_ifdef.py" --selftest 2>&1 && python3 "$TESTS_DIR/../tools/check_wake_ifdef.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            check_wake_ifdef (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        check_wake_ifdef (python)"; printf '%s\n' "$out" | tail -10
+	fi
+fi
 
 if [ -z "$FILTER" ] || [[ "check_ccm_init" == *"$FILTER"* ]]; then
 	# R10-fix5: кожна APRS-змінна в CCM має явну ініціалізацію (CCM при старті -- сміття): самоперевірка + перевірка коду прошивки
