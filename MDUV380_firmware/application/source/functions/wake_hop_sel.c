@@ -1,11 +1,11 @@
 /*
- * wake_hop_sel.c -- R58: чиста логіка вибору каналу для стрибка (без заліза; хостовий тест).
- * Див. wake_hop.h. Лише з -DENABLE_WAKE_HOP_TEST.
+ * wake_hop_sel.c -- R59: чиста логіка вибору каналу зі списку роумінгу (без заліза; хостовий тест).
+ * Див. wake_hop.h. Лише з -DENABLE_ROAM_RETRY.
  */
 #include "functions/wake_hop.h"
 #include <stddef.h>
 
-#if defined(ENABLE_WAKE_HOP_TEST)
+#if defined(ENABLE_ROAM_RETRY)
 
 bool wakeHopChannelUsable(const wakeHopChan_t *c)
 {
@@ -18,37 +18,31 @@ bool wakeHopChannelUsable(const wakeHopChan_t *c)
 			c->inBand && (c->inhibited == false) && (c->rxFreq != 0U) && (c->rxFreq != c->txFreq));
 }
 
-bool wakeHopMayHop(uint8_t hopsDone)
+void wakeHopTriedReset(wakeHopTried_t *t)
 {
-	return (hopsDone < WAKE_HOP_MAX_HOPS);
+	if (t != NULL)
+	{
+		t->n = 0U;
+		for (unsigned i = 0U; i < WAKE_HOP_TRIED_MAX; i++)
+		{
+			t->rx[i] = 0U;
+			t->tx[i] = 0U;
+			t->cc[i] = 0U;
+		}
+	}
 }
 
-unsigned wakeHopRingPos(unsigned start, unsigned count, unsigned k)
+bool wakeHopTriedHas(const wakeHopTried_t *t, uint32_t rx, uint32_t tx, uint8_t cc)
 {
-	return ((count == 0U) ? 0U : ((start + k) % count));
-}
-
-bool wakeHopFindNext(unsigned start, unsigned count, wakeHopUsableFn fn, void *ctx, unsigned *outPos)
-{
-	if ((fn == NULL) || (outPos == NULL) || (count < 2U))
+	if (t == NULL)
 	{
 		return false;
 	}
 
-	unsigned steps = count - 1U;   /* один оберт, без стартової позиції */
-
-	if (steps > WAKE_HOP_SCAN_CAP)
+	for (unsigned i = 0U; (i < t->n) && (i < WAKE_HOP_TRIED_MAX); i++)
 	{
-		steps = WAKE_HOP_SCAN_CAP;
-	}
-
-	for (unsigned k = 1U; k <= steps; k++)
-	{
-		unsigned pos = wakeHopRingPos(start, count, k);
-
-		if (fn(pos, ctx))
+		if ((t->rx[i] == rx) && (t->tx[i] == tx) && (t->cc[i] == cc))
 		{
-			*outPos = pos;
 			return true;
 		}
 	}
@@ -56,4 +50,74 @@ bool wakeHopFindNext(unsigned start, unsigned count, wakeHopUsableFn fn, void *c
 	return false;
 }
 
-#endif /* ENABLE_WAKE_HOP_TEST */
+bool wakeHopTriedAdd(wakeHopTried_t *t, uint32_t rx, uint32_t tx, uint8_t cc)
+{
+	if ((t == NULL) || (t->n >= WAKE_HOP_TRIED_MAX))
+	{
+		return false;
+	}
+
+	t->rx[t->n] = rx;
+	t->tx[t->n] = tx;
+	t->cc[t->n] = cc;
+	t->n++;
+
+	return true;
+}
+
+bool wakeHopCandidateOk(const wakeHopChan_t *c, const wakeHopTried_t *t)
+{
+	return (wakeHopChannelUsable(c) && (wakeHopTriedHas(t, c->rxFreq, c->txFreq, c->colourCode) == false));
+}
+
+bool wakeHopMayRoam(bool cfgEnabled, bool currentInList)
+{
+	return (cfgEnabled && currentInList);
+}
+
+bool wakeHopMayHop(uint8_t hopsDone, uint8_t maxHops)
+{
+	uint8_t lim = maxHops;
+
+	if (lim < ROAM_HOPS_MIN)
+	{
+		lim = ROAM_HOPS_MIN;
+	}
+	if (lim > ROAM_HOPS_MAX)
+	{
+		lim = ROAM_HOPS_MAX;
+	}
+
+	return (hopsDone < lim);
+}
+
+bool wakeHopShouldRestore(bool away, bool success)
+{
+	return (away && (success == false));
+}
+
+bool wakeHopFindNext(unsigned startNum, unsigned minNum, unsigned maxNum, wakeHopCandFn fn, void *ctx, unsigned *outNum)
+{
+	if ((fn == NULL) || (outNum == NULL) || (minNum == 0U) || (maxNum <= minNum) ||
+			(startNum < minNum) || (startNum > maxNum))
+	{
+		return false;
+	}
+
+	unsigned span = (maxNum - minNum) + 1U;
+
+	for (unsigned k = 1U; k < span; k++)   /* один оберт; k == span повернуло б на стартовий */
+	{
+		unsigned num = minNum + (((startNum - minNum) + k) % span);
+
+		if (fn(num, ctx))
+		{
+			*outNum = num;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+#endif /* ENABLE_ROAM_RETRY */

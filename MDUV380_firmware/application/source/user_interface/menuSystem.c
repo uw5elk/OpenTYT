@@ -123,6 +123,9 @@ menuDataGlobal_t menuDataGlobal =
 				 * Лише під CODEPLUG_MENU_ENABLED: збірка без розділів «Зона/Канали/Контакти» не змінюється. */
 				[MENU_CODEPLUG_CHANNELS] = NULL,// R46: головне меню -> «Канали»
 #endif
+#if defined(ENABLE_ROAM_RETRY)
+				[MENU_ROAM] = NULL,// R59: головне меню -> «Роумінг» (власної таблиці нема -- малює menuRoam); явний індекс, як і вище
+#endif
 		}
 };
 
@@ -197,6 +200,9 @@ static menuFunctionData_t menuFunctions[] =
 #endif
 #if defined(CODEPLUG_MENU_ENABLED)
 		{ menuCodeplugChannels,     NULL, NULL, 0 },// R46: головне меню -> «Канали»
+#endif
+#if defined(ENABLE_ROAM_RETRY)
+		{ menuRoam,                 NULL, NULL, 0 },// R59: головне меню -> «Роумінг»
 #endif
 };
 
@@ -745,6 +751,11 @@ const menuItemNewData_t mainMenuItems[] =
 #endif
 #if defined(APRS_RX) && !(defined(ENABLE_AES) && defined(ENABLE_DMR_DATA))
 	{ 257, MENU_APRS_HUB },   // R8-fix: без «Повідомлень» (немає AES/DMR_DATA) -- в кінці списку
+#endif
+#if defined(ENABLE_ROAM_RETRY)
+	// R59: «Роумінг» -- ОСТАННІЙ пункт (наявні не зсуваються). Назву малює menuDisplayMenuList.c за menuNum (текст не з stringsTable_t -- roam_ua.h),
+	// тому stringOffset тут формальний (0 -- щоб пройти перевірку `>= 0` і не читати за межами таблиці).
+	{ 0, MENU_ROAM },
 #endif
 };
 

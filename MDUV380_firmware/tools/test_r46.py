@@ -108,8 +108,8 @@ def test_w3_quickkeys():
     high = [n for n in names if enum.get(n, 0) > 31]
     check(high == ["MENU_CODEPLUG_CHANNELS"], "W3: у головному меню (R44) лише «Канали» має ID > 31; є: %r" % high)
     disp = read(os.path.join(UI, "menuDisplayMenuList.c"))
-    check(re.search(r"#if defined\(CODEPLUG_MENU_ENABLED\)\s*\n[^#]*?menuNum <= 31\)\)\s*\n#else\s*\n\s*if \(menuDataGlobal\.currentMenuList\[menuDataGlobal\.currentItemIndex\]\.menuNum != -1\)\s*\n#endif", disp, re.S) is not None,
-          "W3: SK2+цифра на пункті з ID > 31 відсікається під CODEPLUG_MENU_ENABLED, стокова гілка без змін")
+    check(re.search(r"#if defined\(CODEPLUG_MENU_ENABLED\)( \|\| defined\(ENABLE_ROAM_RETRY\))?[^\n]*\n[^#]*?menuNum <= 31\)\)\s*\n#else\s*\n\s*if \(menuDataGlobal\.currentMenuList\[menuDataGlobal\.currentItemIndex\]\.menuNum != -1\)\s*\n#endif", disp, re.S) is not None,
+          "W3: SK2+цифра на пункті з ID > 31 відсікається під CODEPLUG_MENU_ENABLED (R59: або ENABLE_ROAM_RETRY), стокова гілка без змін")
 
 
 def test_w4_wheel_independent():
@@ -159,7 +159,8 @@ def test_w5_default_unchanged():
                 continue
             for fn in FILES:
                 rel = os.path.join("application", "source", "user_interface", fn)
-                a, b = tokens_of(FW, rel, incs, defs), tokens_of(root, rel, incs, defs)
+                # R59: ENABLE_ROAM_RETRY законно додає пункт меню; без цього прапорця токени мусять збігатися з базою, тож своє дерево рахуємо без нього
+                a, b = tokens_of(FW, rel, incs, [d for d in defs if d != "-DENABLE_ROAM_RETRY"]), tokens_of(root, rel, incs, defs)
                 if a is None and b is None:
                     continue       # файл не збирається в цій конфігурації однаково в обох (напр. нема потрібних прапорців)
                 n += 1

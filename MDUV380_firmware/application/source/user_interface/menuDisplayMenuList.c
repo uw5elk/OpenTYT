@@ -30,6 +30,10 @@
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
 
+#if defined(ENABLE_ROAM_RETRY)
+#include "user_interface/roam_ui.h"   // R59: назва пункту «Роумінг» (ROAM_MENU_NAME) -- не з stringsTable_t
+#endif
+
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 #include "functions/dmr_rctl_cfg.h"
 /* Копія списку Опцій без схованих пунктів. Поля menuItemNewData_t оголошені const, тож
@@ -154,6 +158,16 @@ static void updateScreen(bool isFirstRun)
 			if (menuDataGlobal.currentMenuList[mNum].stringOffset >= 0)
 			{
 				const char *menuName = (currentLanguage->LANGUAGE_NAME + (menuDataGlobal.currentMenuList[mNum].stringOffset * LANGUAGE_TEXTS_LENGTH));
+#if defined(ENABLE_ROAM_RETRY)
+				// R59: «Роумінг» -- текст не з мовної таблиці. Голосова підказка за вказівником на таблицю тут не можлива (різниця адрес
+				// дала б сміттєвий номер підказки), тож для цього пункту підказку не додаємо.
+				bool isRoamItem = (menuDataGlobal.currentMenuList[mNum].menuNum == MENU_ROAM);
+
+				if (isRoamItem)
+				{
+					menuName = ROAM_MENU_NAME;
+				}
+#endif
 				menuDisplayEntry(i, mNum, menuName, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
 
 				if (i == 0)
@@ -163,7 +177,14 @@ static void updateScreen(bool isFirstRun)
 						voicePromptsInit();
 					}
 
+#if defined(ENABLE_ROAM_RETRY)
+					if (isRoamItem == false)
+					{
+						voicePromptsAppendLanguageString(menuName);
+					}
+#else
 					voicePromptsAppendLanguageString(menuName);
+#endif
 					promptsPlayNotAfterTx();
 				}
 			}
@@ -238,7 +259,7 @@ static void handleEvent(uiEvent_t *ev)
 	}
 	else if (KEYCHECK_SHORTUP_NUMBER(ev->keys) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2)))
 	{
-#if defined(CODEPLUG_MENU_ENABLED)
+#if defined(CODEPLUG_MENU_ENABLED) || defined(ENABLE_ROAM_RETRY)   /* R59: «Роумінг» теж має ID > 31 */
 		/* R46: QuickKey зберігає ID меню в 5 бітах (QUICKKEY_MENUID), тож для меню з ID > 31 (наше «Канали», за межею швидких клавіш) QUICKKEY_MENUVALUE записало б ID & 0x1F --
 		 * швидку клавішу на ЧУЖЕ меню. Такі пункти не запам'ятовуємо. */
 		if ((menuDataGlobal.currentMenuList[menuDataGlobal.currentItemIndex].menuNum != -1) && (menuDataGlobal.currentMenuList[menuDataGlobal.currentItemIndex].menuNum <= 31))

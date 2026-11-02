@@ -419,6 +419,9 @@ enum MENU_SCREENS
 #if defined(CODEPLUG_MENU_ENABLED)
 	MENU_CODEPLUG_CHANNELS,   // R46: головне меню -> «Канали» (раніше «Кодплаг» -> Канали, R44). ПІСЛЯ межі швидких клавіш: ID 0..31 наявних меню не зсуваються; швидкої клавіші на нього нема
 #endif
+#if defined(ENABLE_ROAM_RETRY)
+	MENU_ROAM,                // R59: головне меню -> «Роумінг» (останній пункт). ПІСЛЯ межі швидких клавіш: ID 0..31 не зсуваються; швидкої клавіші на нього нема
+#endif
 	NUM_MENU_ENTRIES
 };
 
@@ -576,6 +579,9 @@ menuStatus_t menuAESKeys(uiEvent_t *ev, bool isFirstRun);
 menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun);
 menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun);
 menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun);
+#endif
+#if defined(ENABLE_ROAM_RETRY)
+menuStatus_t menuRoam(uiEvent_t *ev, bool isFirstRun);   /* R59: «Роумінг» (menuRoam.c) */
 #endif
 #if defined(HAS_COLOURS)
 menuStatus_t menuThemeOptions(uiEvent_t *ev, bool isFirstRun);

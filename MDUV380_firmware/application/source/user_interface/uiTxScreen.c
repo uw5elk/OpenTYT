@@ -33,8 +33,8 @@
 #include "user_interface/uiLocalisation.h"
 #include "interfaces/clockManager.h"
 #include "functions/satellite.h"
-#if defined(ENABLE_WAKE_HOP_TEST)
-#include "functions/wake_hop.h"   // R58: прототип стрибка каналу під утримуваним PTT (лише діагностична збірка)
+#if defined(ENABLE_ROAM_RETRY)
+#include "functions/wake_hop.h"   // R59: «Роумінг» -- автоперехід за списком під утримуваним PTT
 #endif
 #if defined(HAS_GPS)
 #include "interfaces/gps.h"
@@ -114,7 +114,7 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 		txErrorHoldMs = TX_ERROR_HOLD_DEFAULT_MS;
 		timeInSeconds = 0;
 		pttWasReleased = false;
-#if defined(ENABLE_WAKE_HOP_TEST)
+#if defined(ENABLE_ROAM_RETRY)
 		wakeHopBegin();
 #endif
 		xmitErrorTimer = 0;
@@ -389,6 +389,10 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 			ev->buttons &= ~BUTTON_PTT; // prevent screen lockout if the operator keeps pressing the PTT button.
 		}
 
+#if defined(ENABLE_ROAM_RETRY)
+		wakeHopPoll();   // R59: помітити успіх, коли пробудження на новому каналі дійшло до AWAKEN
+#endif
+
 		// Once the PTT key has been released, it is forbidden to re-key before the whole TX chain
 		// has finished (see the first statement in handleEvent())
 		// That's important in DMR mode, otherwise quickly press/release the PTT key will left
@@ -415,9 +419,9 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 		}
 		else
 		{
-#if defined(ENABLE_WAKE_HOP_TEST)
-			// R58: серія запитів пробудження вичерпана, PTT ще утримується -- спробувати наступний канал зони
-			// (до 2 стрибків). Поки стрибки лишаються, вікна помилки немає. Усе з UI-задачі.
+#if defined(ENABLE_ROAM_RETRY)
+			// R59: серія запитів пробудження вичерпана (4 спроби), PTT ще утримується -- спробувати наступний канал
+			// зі списку роумінгу (до ліміту стрибків з меню). Поки стрибки лишаються, вікна помилки немає. Усе з UI-задачі.
 			if ((HRC6000GetIsWakingState() == WAKING_MODE_FAILED) && trxTransmissionEnabled && (ev->buttons & BUTTON_PTT) && wakeHopTry())
 			{
 				timeInSeconds = currentChannelData->tot * 15U;   // TOT рахуємо наново для нового каналу
@@ -613,8 +617,8 @@ static void handleEvent(uiEvent_t *ev)
 
 				HRC6000ClearIsWakingState();
 
-#if defined(ENABLE_WAKE_HOP_TEST)
-				wakeHopRestore();   // R58: повернути вихідний канал, якщо були на іншому
+#if defined(ENABLE_ROAM_RETRY)
+				wakeHopRestore();   // R59: повернути вихідний канал, якщо стрибали і пробудження не вдалося
 #endif
 
 				menuSystemPopPreviousMenu();

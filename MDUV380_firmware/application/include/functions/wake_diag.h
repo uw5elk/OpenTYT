@@ -3,7 +3,7 @@
  *
  * Мета -- виміряти на залізі те, чого немає в коді (R57 §9): реальний час до AWAKEN і до FAILED,
  * кількість пакетів WAKE_1, затримку Δ від «нуля» таймера до наступного пакета, а також (з
- * ENABLE_WAKE_HOP_TEST) що відбувається після стрибка на інший канал під утримуваним PTT.
+ * ENABLE_ROAM_RETRY) що відбувається після стрибка на інший канал під утримуваним PTT.
  *
  * Компілюється лише з -DENABLE_WAKE_DIAG (Makefile; у користувацьких збірках НЕ вмикати).
  * Без нього файл порожній, а виклики в HR-C6000.c / uiTxScreen.c / menuMessages.c / usb_com.c
@@ -36,7 +36,7 @@
 #define WAKE_DIAG_PREV_FAIL     2U   /* попередній завершився FAILED */
 #define WAKE_DIAG_PREV_CANCEL   3U   /* попередній обірвано (ні AWAKEN, ні FAILED) */
 #define WAKE_DIAG_FLAG_PREV_MASK 0x03U
-#define WAKE_DIAG_FLAG_HOP_START 0x04U  /* сеанс почався після стрибка (ENABLE_WAKE_HOP_TEST) */
+#define WAKE_DIAG_FLAG_HOP_START 0x04U  /* сеанс почався після стрибка (ENABLE_ROAM_RETRY) */
 
 /* Один сеанс. Часи -- мілісекунди від старту сеансу, WAKE_DIAG_NONE = не було; насичуються на 0xFFFE. */
 typedef struct
@@ -50,7 +50,7 @@ typedef struct
 	uint16_t tAwaken;     /* isWaking -> AWAKEN */
 	uint16_t tTx;         /* старт передачі після AWAKEN (hrc6000TransitionToTx) */
 	uint16_t tFail;       /* isWaking -> FAILED */
-	uint16_t hopT;        /* час стрибка з цього сеансу (ENABLE_WAKE_HOP_TEST) */
+	uint16_t hopT;        /* час стрибка з цього сеансу (ENABLE_ROAM_RETRY) */
 	uint16_t hopChan;     /* номер нового каналу після стрибка */
 	uint8_t  pkts;        /* усього пакетів WAKE_1 (може бути більше WAKE_DIAG_PKT_MAX) */
 	uint8_t  zeros;       /* усього «нулів» таймера (кожен = спроба або відмова) */

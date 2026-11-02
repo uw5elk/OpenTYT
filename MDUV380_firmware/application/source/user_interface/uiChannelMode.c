@@ -33,6 +33,11 @@
 #include "user_interface/uiLocalisation.h"
 #include "functions/voicePrompts.h"
 #include "functions/rxPowerSaving.h"
+#if defined(ENABLE_ROAM_RETRY)
+#include "functions/wake_hop.h"   // R59: roamIsActive()/roamClear() -- стан «знайдений канал»
+#include "functions/roam_cfg.h"
+#include "user_interface/roam_ui.h"   // R59: індикатори (ROAM_IND_LIST/ROAM_IND_SPARE)
+#endif
 #if defined(APRS_RX)
 #include "functions/aprs_mode.h"   // R18 Д5: aprsModeBeaconHotkey()/aprsModeBeaconOnceBusy()
 #endif
@@ -632,7 +637,21 @@ void uiChannelModeLoadChannelData(bool useChannelDataInMemory, bool loadVoicePro
 #endif
 	int previousSelectedChannelNumber = uiDataGlobal.currentSelectedChannelNumber;
 
+#if defined(ENABLE_ROAM_RETRY)
+	if (useChannelDataInMemory && roamIsActive())
+	{
+		// R59: повернення з екрана передачі/меню на канал, знайдений автопереходом -- у пам'яті саме його запис, тож
+		// лишаємо ЙОГО номер (а не «останній канал зони»): інакше збереження каналу пішло б у чужий запис.
+		uiDataGlobal.currentSelectedChannelNumber = roamActiveChannel();
+	}
+	else
+	{
+		roamClear();   // явна зміна каналу (або вихід із «знайденого») -- рація знову на каналі зони
+		uiDataGlobal.currentSelectedChannelNumber = codeplugGetLastUsedChannelNumberInCurrentZone();
+	}
+#else
 	uiDataGlobal.currentSelectedChannelNumber = codeplugGetLastUsedChannelNumberInCurrentZone();
+#endif
 
 	if (!useChannelDataInMemory)
 	{
@@ -863,6 +882,14 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 						-1;
 #endif
 
+#if defined(ENABLE_ROAM_RETRY)
+				// R59: на екрані передачі -- позначка «знайдений канал» перед таймером
+				if (roamIsActive())
+				{
+					snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%s %d ", ROAM_IND_SPARE, txTimeSecs);
+				}
+				else
+#endif
 				snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, " %d ", txTimeSecs);
 				uiUtilityDisplayInformation(buffer, DISPLAY_INFO_TX_TIMER, yOverride);
 			}
@@ -938,6 +965,27 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 						}
 					}
 
+#if defined(ENABLE_ROAM_RETRY)
+					// R59: індикатор «Роумінгу». На каналі, знайденому автопереходом, «зона Ch:N» не має сенсу (канал не з поточної зони) --
+					// показуємо «Р> канал N». Інакше, якщо функція ввімкнена і поточний канал у списку, дописуємо позначку «Р».
+					if (directChannelNumber > 0)
+					{
+						// набір номера каналу -- рядок «Перейти до каналу» лишаємо як є
+					}
+					else if (roamIsActive())
+					{
+						snprintf(nameBuf, NAME_BUFFER_LEN, ROAM_ZONE_SPARE_FMT, (int)roamActiveChannel());
+					}
+					else if (roamCfgIsEnabled() && roamCurrentInList())
+					{
+						size_t zl = strlen(nameBuf);
+
+						if ((zl + 3U) < NAME_BUFFER_LEN)
+						{
+							snprintf(nameBuf + zl, NAME_BUFFER_LEN - zl, " %s", ROAM_IND_LIST);
+						}
+					}
+#endif
 					uiUtilityDisplayInformation(nameBuf, DISPLAY_INFO_ZONE, -2);
 				}
 			}

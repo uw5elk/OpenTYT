@@ -61,6 +61,9 @@
 #include "functions/aprs_rx.h"        // R8: справжній фоновий приймач APRS (ENABLE_APRS_RX + українська)
 #include "functions/aprs_mode.h"      // R10: «Режим APRS» (PTT = маяк, тік режиму)
 #include "functions/aprs_fault.h"     // R10-fix4: обробник збою, сторож, звіт після перезавантаження (лише APRS_RX)
+#if defined(ENABLE_ROAM_RETRY)
+#include "functions/roam_cfg.h"       // R59: налаштування «Роумінгу» (custom-data блок №15)
+#endif
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -497,6 +500,9 @@ void applicationMainTask(void)
 	// custom-data блоку на флеші (callReplayPlayback.c) -- якщо блоку ще немає
 	// (нова/нечіпана рація), типове значення (Увімкнено) лишається як є.
 	callReplayConfigLoad();
+#endif
+#if defined(ENABLE_ROAM_RETRY)
+	roamCfgLoad();            // R59: «Роумінг» -- увімкнено/макс. стрибків із custom-data блоку (немає блоку -- вимкнено, 2)
 #endif
 
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)

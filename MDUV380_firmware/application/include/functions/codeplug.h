@@ -384,6 +384,11 @@ typedef enum
 	                                        * на старті прошивка переносить блок у nonVolatileSettings). 14 Б. Формат -- aprs_mode_cfg.h.
 	                                        * Номер = 14. */
 #endif
+#if defined(ENABLE_ROAM_RETRY)
+	CODEPLUG_CUSTOM_DATA_TYPE_ROAM_CFG = 15, /* R59: налаштування «Роумінгу» (автоперехід за списком): увімкнено + макс. стрибків.
+	                                        * 8 Б, пишеться прямо з рації й з CPS. Формат -- roam_cfg.h. Номер = 15 ЯВНО
+	                                        * (13/14 визначені лише з ENABLE_APRS_RX -- нумерація не має залежати від дефайнів). */
+#endif
 } CodeplugCustomDataType_t;
 
 

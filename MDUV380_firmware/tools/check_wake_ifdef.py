@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-check_wake_ifdef.py -- R58: уся діагностика пробудження (ENABLE_WAKE_DIAG / ENABLE_WAKE_HOP_TEST) живе ЛИШЕ під #if.
+check_wake_ifdef.py -- R58/R59: уся діагностика пробудження (ENABLE_WAKE_DIAG) і «Роумінг» (ENABLE_ROAM_RETRY) живуть ЛИШЕ під #if.
 
 Навіщо. Типова й користувацькі збірки мають лишатись байт-у-байт тими самими. Хостові тести цього не
 бачать, повний diff прошивки -- довгий. Тут три статичні перевірки:
 
-  1. НОВІ файли (wake_diag.[ch], wake_hop.[ch], wake_hop_sel.c, wakediag_ua.h): жодного коду
-     (оголошень, визначень) поза #if defined(ENABLE_WAKE_...) -- лише #include і захисник заголовка.
-  2. ЗМІНЕНІ файли (HR-C6000.c, uiTxScreen.c, menuMessages.c, usb_com.c): кожне згадування нових
-     ідентифікаторів (wakeDiag*, wakeHop*, HRC6000RestartWakeForRoam, MSG_WAKE_DIAG, ...) -- у гілці #if
-     з ENABLE_WAKE_* (не в #else). Коментарі не рахуються.
-  3. CI (.github/workflows/build.yml): ENABLE_WAKE_* згадується лише в джобі build-ukrainian-wake-diag --
-     у користувацькі збірки дефайни потрапити не можуть.
+  1. НОВІ файли (wake_diag.[ch], wake_hop.[ch], wake_hop_sel.c, roam_cfg.[ch], menuRoam.c, roam_ui.h, wakediag_ua.h,
+     roam_ua.h): жодного коду (оголошень, визначень) поза #if defined(ENABLE_WAKE_DIAG / ENABLE_ROAM_RETRY) -- лише
+     #include і захисник заголовка.
+  2. ЗМІНЕНІ файли (HR-C6000.c, uiTxScreen.c, uiChannelMode.c, menuSystem.[ch], menuDisplayMenuList.c, applicationMain.c,
+     codeplug.h, usb_com.c): кожне згадування нових ідентифікаторів (wakeDiag*, wakeHop*, roam*, MENU_ROAM, ROAM_*,
+     HRC6000RestartWakeForRoam, ...) -- у гілці #if з цими дефайнами (не в #else). Коментарі не рахуються.
+     menuMessages.c (журнал переїхав у «Роумінг») нових ідентифікаторів НЕ містить взагалі.
+  3. CI (.github/workflows/build.yml): ENABLE_WAKE_DIAG згадується лише в джобі build-ukrainian-roam-diag, ENABLE_ROAM_RETRY --
+     лише в build-ukrainian-roam-diag і build-ukrainian-roam -- у користувацькі збірки дефайни потрапити не можуть.
 
     python3 MDUV380_firmware/tools/check_wake_ifdef.py [--selftest]
 """
@@ -27,21 +29,37 @@ APP = os.path.join(FW, "application")
 NEW_FILES = [
     "include/functions/wake_diag.h",
     "include/functions/wake_hop.h",
+    "include/functions/roam_cfg.h",
+    "include/user_interface/roam_ui.h",
     "include/user_interface/languages/wakediag_ua.h",
+    "include/user_interface/languages/roam_ua.h",
     "source/functions/wake_diag.c",
     "source/functions/wake_hop.c",
     "source/functions/wake_hop_sel.c",
+    "source/functions/roam_cfg.c",
+    "source/user_interface/menuRoam.c",
 ]
 CHANGED_FILES = [
     "source/hardware/HR-C6000.c",
     "source/user_interface/uiTxScreen.c",
-    "source/user_interface/menuMessages.c",
+    "source/user_interface/uiChannelMode.c",
+    "source/user_interface/menuSystem.c",
+    "source/user_interface/menuDisplayMenuList.c",
+    "source/applicationMain.c",
     "source/usb/usb_com.c",
+    "include/user_interface/menuSystem.h",
+    "include/functions/codeplug.h",
 ]
-WAKE_COND = re.compile(r"ENABLE_WAKE_(DIAG|HOP_TEST)")
+# Файли, де нових ідентифікаторів не має бути ВЗАГАЛІ (R59: журнал пробудження переїхав із «Повідомлень» у «Роумінг»).
+ABSENT_FILES = [
+    "source/user_interface/menuMessages.c",
+]
+WAKE_COND = re.compile(r"ENABLE_(WAKE_DIAG|ROAM_RETRY)")
 NEW_IDENT = re.compile(
     r"\b(wakeDiag\w*|wakeHop\w*|HRC6000RestartWakeForRoam|MSG_WAKE_DIAG|MSGS_WAKE_ITEM|WAKE_REFRESH_MS|"
-    r"wakeUpdate|wakeEvent|wakeAge|WAKE_ITEM|WAKE_DIAG\w*|WAKE_HOP\w*)\b")
+    r"wakeUpdate|wakeEvent|wakeAge|WAKE_ITEM|WAKE_DIAG\w*|WAKE_HOP\w*|"
+    r"roam(Cfg|Is|Active|Clear|Current|List|Toggle|Load)\w*|ROAM_\w+|MENU_ROAM|menuRoam|"
+    r"CODEPLUG_CUSTOM_DATA_TYPE_ROAM_CFG|roam_cfg|roam_ui)\b")
 GUARD = re.compile(r"^\s*#\s*(ifndef|define|endif)\b.*_H_\b|^\s*#\s*endif\s*/[*/].*_H_")
 
 
@@ -148,6 +166,12 @@ def check_changed(name, text):
     return bad
 
 
+CI_ALLOWED = {
+    "ENABLE_WAKE_": {"build-ukrainian-roam-diag"},
+    "ENABLE_ROAM_": {"build-ukrainian-roam-diag", "build-ukrainian-roam"},
+}
+
+
 def check_ci(text):
     bad = []
     job = None
@@ -160,10 +184,14 @@ def check_ci(text):
             job = m.group(1)
         if line.lstrip().startswith("#"):
             continue   # коментар YAML (опис джоба стоїть ПЕРЕД його заголовком)
-        if "ENABLE_WAKE_" in line and job != "build-ukrainian-wake-diag":
-            bad.append("build.yml:%d: ENABLE_WAKE_* поза джобом build-ukrainian-wake-diag (джоб: %s)" % (no, job))
-    if "build-ukrainian-wake-diag" not in text:
-        bad.append("build.yml: немає джоба build-ukrainian-wake-diag")
+        for token, jobs in CI_ALLOWED.items():
+            if token in line and job not in jobs:
+                bad.append("build.yml:%d: %s* поза дозволеними джобами %s (джоб: %s)" % (no, token, sorted(jobs), job))
+    for need in ("build-ukrainian-roam-diag", "build-ukrainian-roam"):
+        if not re.search(r"(?m)^  " + re.escape(need) + r":\s*$", text):
+            bad.append("build.yml: немає джоба " + need)
+    if re.search(r"(?m)^  build-ukrainian-wake-diag:\s*$", text):
+        bad.append("build.yml: лишився старий джоб build-ukrainian-wake-diag (перейменовано в build-ukrainian-roam-diag)")
     return bad
 
 
@@ -173,12 +201,16 @@ def run():
         p = os.path.join(APP, rel)
         if not os.path.exists(p):
             bad.append("немає файла " + rel); continue
-        if rel.endswith("wakediag_ua.h"):
+        if rel.endswith("_ua.h"):
             bad += check_macros_only(rel, open(p, encoding="cp1251", errors="replace").read())
         else:
             bad += check_new(rel, open(p, encoding="utf-8", errors="replace").read())
     for rel in CHANGED_FILES:
         bad += check_changed(rel, open(os.path.join(APP, rel), encoding="utf-8", errors="replace").read())
+    for rel in ABSENT_FILES:
+        for no, line, _w, _pp in walk(open(os.path.join(APP, rel), encoding="utf-8", errors="replace").read()):
+            if NEW_IDENT.search(line):
+                bad.append("%s:%d: у цьому файлі нових ідентифікаторів бути не повинно: %s" % (rel, no, line[:80]))
     ci = os.path.join(ROOT, ".github", "workflows", "build.yml")
     if os.path.exists(ci):
         bad += check_ci(open(ci, encoding="utf-8").read())
@@ -200,13 +232,22 @@ def selftest():
     assert check_changed("c.c", "#if defined(ENABLE_WAKE_DIAG)\nint x;\n#else\nwakeDiagFail(1);\n#endif\n"), "виклик у #else має ловитись"
     assert check_changed("c.c", "// wakeDiagFail(1);\n/* wakeHopTry */\nint y;\n") == [], "коментарі не рахуються"
     assert check_changed("c.c", "#if defined(ENABLE_SMS_DIAG)\n#if defined(ENABLE_WAKE_DIAG)\nwakeEvent();\n#endif\n#endif\n") == []
-    assert check_changed("c.c", "#if defined(ENABLE_WAKE_HOP_TEST) && 1\nwakeHopBegin();\n#endif\nwakeHopTry();\n"), "виклик після #endif ловиться"
+    assert check_changed("c.c", "#if defined(ENABLE_ROAM_RETRY) && 1\nwakeHopBegin();\n#endif\nwakeHopTry();\n"), "виклик після #endif ловиться"
+    assert check_changed("c.c", "#if defined(ENABLE_ROAM_RETRY)\nroamClear();\n#else\nx();\n#endif\n") == []
+    assert check_changed("c.c", "roamIsActive();\n"), "roam* без #if ловиться"
+    assert check_changed("c.c", "#if defined(ENABLE_ROAM_RETRY)\nint a;\n#else\nroamClear();\n#endif\n"), "roam* в #else ловиться"
+    assert check_changed("c.c", "x = ROAM_MENU_NAME;\n"), "ROAM_* без #if ловиться"
+    assert check_changed("c.c", "if (nonVolatileSettings.roaming != ROAMING_OFF) {}\nCHANNEL_FLAG_ROAMING;\n") == [], "стокове «roaming» не чіпаємо"
     assert check_macros_only("m.h", "#define A \"x\"\n#define B 2\n") == []
     assert check_macros_only("m.h", "#define A 1\nint leak;\n"), "код у макро-заголовку ловиться"
-    ok = "jobs:\n  a:\n    x: 1\n  build-ukrainian-wake-diag:\n    run: make ENABLE_WAKE_DIAG=1\n"
+    ok = ("jobs:\n  a:\n    x: 1\n  build-ukrainian-roam-diag:\n    run: make ENABLE_WAKE_DIAG=1 ENABLE_ROAM_RETRY=1\n"
+          "  build-ukrainian-roam:\n    run: make ENABLE_ROAM_RETRY=1\n")
     assert check_ci(ok) == [], check_ci(ok)
     assert check_ci(ok + "  b:\n    run: make ENABLE_WAKE_DIAG=1\n"), "дефайн в іншому джобі ловиться"
-    assert check_ci("jobs:\n  a:\n    x: 1\n"), "немає джоба -- ловиться"
+    assert check_ci(ok + "  b:\n    run: make ENABLE_ROAM_RETRY=1\n"), "ROAM_RETRY в іншому джобі ловиться"
+    assert check_ci(ok.replace("make ENABLE_ROAM_RETRY=1\n", "make ENABLE_WAKE_DIAG=1\n")), "WAKE_DIAG у джобі без журналу ловиться"
+    assert check_ci("jobs:\n  a:\n    x: 1\n"), "немає джобів -- ловиться"
+    assert check_ci(ok + "  build-ukrainian-wake-diag:\n    x: 1\n"), "старий джоб ловиться"
     assert check_ci(ok.replace("  a:", "  a:\n    # ENABLE_WAKE_DIAG у коментарі")) == [], "коментар YAML не рахується"
     print("check_wake_ifdef selftest: ок")
 

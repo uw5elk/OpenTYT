@@ -50,8 +50,8 @@
 #if defined(ENABLE_WAKE_DIAG)
 #include "functions/wake_diag.h"   // R58: журнал сеансів пробудження (лише діагностична збірка)
 #endif
-#if defined(ENABLE_WAKE_HOP_TEST)
-#include "functions/wake_hop.h"   // R58: прототип HRC6000RestartWakeForRoam (стрибок каналу, лише діагностична збірка)
+#if defined(ENABLE_ROAM_RETRY)
+#include "functions/wake_hop.h"   // R59: прототип HRC6000RestartWakeForRoam (автоперехід за списком роумінгу)
 #endif
 #include "interfaces/gps.h"
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
@@ -3298,8 +3298,8 @@ int HRC6000GetIsWakingState(void)
 	return hrc.isWaking;
 }
 
-#if defined(ENABLE_WAKE_HOP_TEST)
-// R58 (прототип стрибка, R57 §2): перезапустити пробудження після того, як UI-задача перемкнула канал
+#if defined(ENABLE_ROAM_RETRY)
+// R59 (було R58-прототип стрибка, R57 §2): перезапустити пробудження після того, як UI-задача перемкнула канал
 // (частоти, колір-код, DMR ID, TG) при УТРИМУВАНОМУ PTT. Скид як у HRC6000ForceDMRIdleForTx (під ENABLE_DMR_DATA, тут
 // продубльований, бо журнал може будуватись і без нього): під guard-ом переривань C6000, після виходу ISR.
 // Наступний hrc6000Tick() бачить transmissionEnabled && isWaking==NONE && slotState==IDLE і сам запускає ПОВНИЙ старт
@@ -3319,7 +3319,7 @@ void HRC6000RestartWakeForRoam(void)
 
 	interruptsEnableC6000Interrupts();
 }
-#endif // ENABLE_WAKE_HOP_TEST
+#endif // ENABLE_ROAM_RETRY
 
 #if defined(ENABLE_DMR_DATA)
 // Force the DMR digital slot to IDLE so a host-queued data TX (functions/dmr_data.c)

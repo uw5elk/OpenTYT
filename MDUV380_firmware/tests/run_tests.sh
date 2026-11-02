@@ -74,7 +74,8 @@ declare -A SRCS=(
 	[test_aes_rawdiag]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix3: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- розкладка дампу сирих LC/EMB, дедуп, блок «наші байти»
 	[test_aes_pifilter]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix6: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- класифікація PI-burst-ів до стокового фільтра, кільця, режими G2
 	[test_wake_diag]="$APP/source/functions/wake_diag.c"   # R58: СПРАВЖНІЙ wake_diag.c -- журнал сеансів пробудження (кільце, prev, HOP_START, насичення, дамп 0xB7, рядки екрана); укр. варіант -- довжина рядків
-	[test_wake_hop]="$APP/source/functions/wake_hop_sel.c"   # R58: СПРАВЖНІЙ wake_hop_sel.c -- придатність каналу, ліміт стрибків, кільце, один оберт
+	[test_wake_hop]="$APP/source/functions/wake_hop_sel.c"   # R59: СПРАВЖНІЙ wake_hop_sel.c -- придатність каналу, випробувані (rx,tx,cc), ліміт стрибків, кільце по списку, один оберт
+	[test_roam_cfg]="$APP/source/functions/roam_cfg.c"   # R59: СПРАВЖНІЙ roam_cfg.c -- формат custom-data блоку «Роумінгу» (розбір/збірка/межі)
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
 
@@ -98,7 +99,8 @@ declare -A XFLAGS=(
 	[test_dmr_rctl_stock]="-DENABLE_DMR_DATA"   # R21 З2: тест читає чергу так, як драйвер (functions/dmr_data.h)
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
 	[test_wake_diag]="-DENABLE_WAKE_DIAG"
-	[test_wake_hop]="-DENABLE_WAKE_HOP_TEST -DWAKE_HOP_HOST_TEST"
+	[test_wake_hop]="-DENABLE_ROAM_RETRY -DWAKE_HOP_HOST_TEST -DROAM_CFG_HOST_TEST"
+	[test_roam_cfg]="-DENABLE_ROAM_RETRY -DROAM_CFG_HOST_TEST"
 	[test_aprs_afsk]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_rx_parse]="-DENABLE_APRS_RX"
 	[test_aprs_icons]="-DENABLE_APRS_RX"

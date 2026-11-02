@@ -149,13 +149,17 @@ DEFS_R44LITE=("${DEFS_R43LITE[@]}" -DENABLE_CODEPLUG_MENU)                      
 DEFS_R44NODEL=("${DEFS_R43EDIT[@]}" -DENABLE_CODEPLUG_MENU)                          # без ENABLE_CHANNEL_DELETE: розділу нема
 DEFS_R44NOEDIT=("${DEFS_R42[@]}" -DENABLE_CODEPLUG_MENU)                             # без ENABLE_ZONE_EDIT: розділу нема
 
-# R58: діагностика пробудження ретранслятора (ENABLE_WAKE_DIAG, ENABLE_WAKE_HOP_TEST) -- лише в CI-джобі build-ukrainian-wake-diag. WAKE -- та сама комбінація, що в CI (UA + AES + DMR_DATA,
-# БЕЗ CALL_REPLAY/APRS_RX/проби); WAKEDIAG -- лише журнал, без стрибка (стрибок -- окремий прапорець); WAKEEN -- англійські формати (WAKE_*_FMT у wake_diag.h) з обома прапорцями.
-DEFS_WAKE=("${DEFS_UA[@]}" -DENABLE_WAKE_DIAG -DENABLE_WAKE_HOP_TEST)                 # build-ukrainian-wake-diag (CI)
+# R58/R59: діагностика пробудження (ENABLE_WAKE_DIAG) і «Роумінг» (ENABLE_ROAM_RETRY; прототип R58 ENABLE_WAKE_HOP_TEST прибрано).
+# ROAMDIAG -- та сама комбінація, що в CI-джобі build-ukrainian-roam-diag (UA + AES + DMR_DATA, БЕЗ CALL_REPLAY/APRS_RX/проби); ROAM -- ПОВНА користувацька збірка CI (як build-ukrainian) + роумінг, без журналу, як у CI-джобі
+# build-ukrainian-roam; WAKEDIAG -- лише журнал без роумінгу (екрана журналу нема, USB 0xB7 є); ROAMEN -- англійські формати з обома прапорцями;
+# ROAMBARE -- ROAM_RETRY на мінімальній збірці без AES/DMR_DATA (функція не залежить від них; dmrRctlIsInhibited там не викликається).
+DEFS_ROAMDIAG=("${DEFS_UA[@]}" -DENABLE_WAKE_DIAG -DENABLE_ROAM_RETRY)               # build-ukrainian-roam-diag (CI)
+DEFS_ROAM=("${DEFS_R44[@]}" -DENABLE_ROAM_RETRY)                                    # build-ukrainian-roam (CI): ПОВНА користувацька збірка + роумінг, без журналу
 DEFS_WAKEDIAG=("${DEFS_UA[@]}" -DENABLE_WAKE_DIAG)                                   # лише журнал
-DEFS_WAKEEN=("${DEFS_ENDATA[@]}" -DENABLE_WAKE_DIAG -DENABLE_WAKE_HOP_TEST)          # англійська + обидва прапорці
+DEFS_ROAMEN=("${DEFS_ENDATA[@]}" -DENABLE_WAKE_DIAG -DENABLE_ROAM_RETRY)             # англійська + обидва прапорці
+DEFS_ROAMBARE=("${DEFS_COMMON[@]}" -DENABLE_ROAM_RETRY)                              # англійська без AES/DMR_DATA + ROAM_RETRY
 
-CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE R42 R42EN R42LITE R42SQL R42ZONE R43 R43EN R43LITE R43EDIT R43NOREN R44 R44EN R44LITE R44NODEL R44NOEDIT WAKE WAKEDIAG WAKEEN)
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY SMSDIAG ENDATA APRSPROBE APRSPROBEEN APRSRX APRSRXEN APRSRXLITE APRSPROBENOCR AESDIAG CHDEL CHDELEN CHDELLITE R42 R42EN R42LITE R42SQL R42ZONE R43 R43EN R43LITE R43EDIT R43NOREN R44 R44EN R44LITE R44NODEL R44NOEDIT ROAMDIAG ROAM WAKEDIAG ROAMEN ROAMBARE)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.
