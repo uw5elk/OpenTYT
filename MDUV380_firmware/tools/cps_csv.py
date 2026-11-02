@@ -53,6 +53,8 @@ ZONE_HDR = ["Zone Name"] + ["Channel%d" % i for i in range(1, 81)]
 CHANNEL_HDR = ["Channel Number", "Channel Name", "Channel Type", "Rx Frequency", "Tx Frequency", "Bandwidth (kHz)", "Colour Code",
                "Timeslot", "Contact", "TG List", "DMR ID", "TS1_TA_Tx", "TS2_TA_Tx ID", "RX Tone", "TX Tone", "Squelch", "Power",
                "Rx Only", "Zone Skip", "All Skip", "TOT", "VOX", "No Beep", "No Eco", "APRS", "Latitude", "Longitude", "Use Location"]
+# R59: колонки НАШОГО формату, яких нема в стоковому CPS (йдуть після стокових, перед «Name (readable)»). CSV без такої колонки поле каналу не чіпає.
+CHANNEL_EXT_HDR = ["Roam"]
 APRS_HDR = ["APRS config Name", "SSID", "Via1", "Via1 SSID", "Via2", "Via2 SSID", "Icon table", "Icon", "Comment text", "Ambiguity",
             "Use position", "Latitude", "Longitude", "TX Frequency", "Transmit QSY", "Baud rate setting"]
 DTMF_HDR = ["Contact Name", "Code"]
@@ -381,6 +383,7 @@ O_FLAG1, O_FLAG2, O_FLAG3, O_FLAG4, O_SQL = 48, 49, 50, 51, 55
 
 F4_SQL, F4_BW25, F4_RXONLY, F4_ALLSKIP, F4_ZONESKIP, F4_VOX, F4_POWER = 0x01, 0x02, 0x04, 0x10, 0x20, 0x40, 0x80
 FL_DMRID, FL_NOBEEP, FL_NOECO, FL_USELOC = 0x80, 0x40, 0x20, 0x08
+FL_ROAM = 0x01      # R59: CHANNEL_FLAG_ROAMING у LibreDMR_flag1 (codeplug.h): канал входить до списку «Роумінгу»
 F2_TS2 = 0x40
 
 
@@ -730,6 +733,8 @@ def _build_columns():
         r.__setitem__(slice(O_LON2, O_LON2 + 1), parse_latlon(t, 180)[2:3]))
     d, e = _flag(O_FLAG1L, FL_USELOC)
     add("Use Location", "B", True, d, e)
+    d, e = _flag(O_FLAG1L, FL_ROAM)
+    add("Roam", "B", True, d, e)          # R59: м'яка колонка -- порожня комірка або відсутня колонка лишає прапорець як був
     return cols
 
 
@@ -803,7 +808,7 @@ def export_rows(cp_or_image, dp=None):
     dp = dp or system_decimal_point()
     ctx = make_ctx_for_export(img, dp)
     out = {}
-    out["channels"] = (CHANNEL_HDR + [READABLE], [channel_row(n, rec, ctx) for n, rec in img.channels()])
+    out["channels"] = (CHANNEL_HDR + CHANNEL_EXT_HDR + [READABLE], [channel_row(n, rec, ctx) for n, rec in img.channels()])
     rows = []
     for _slot, rec in img.contacts():
         res1 = rec[23]

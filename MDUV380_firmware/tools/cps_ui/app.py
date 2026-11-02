@@ -45,6 +45,7 @@ from .p_dtmf import DtmfPanel
 from .p_flash import FlashPanel
 from .p_general import GeneralPanel
 from .p_rctl import RctlPanel
+from .p_roam import RoamPanel
 from .p_screenshot import ScreenshotPanel
 from .p_tglists import TgListsPanel
 from .p_satellites import SatellitesPanel
@@ -60,7 +61,7 @@ from .settings import Settings
 # Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
     ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
-    ("grp_codeplug", "Кодплаг", [BackupPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, VfoPanel, ZonesPanel, ContactsPanel, TgListsPanel,
+    ("grp_codeplug", "Кодплаг", [BackupPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, RoamPanel, VfoPanel, ZonesPanel, ContactsPanel, TgListsPanel,
                                   DtmfPanel, AprsPanel, CsvPanel]),
     ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel, SplashPanel, MelodyPanel, SatellitesPanel, AllSettingsPanel, DmrDbPanel]),
 ]

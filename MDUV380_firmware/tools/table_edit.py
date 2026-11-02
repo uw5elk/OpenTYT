@@ -658,6 +658,35 @@ def channel_set_aes_slot(img, number, slot):
     return res
 
 
+def roam_numbers(img):
+    """Номери каналів зі списку «Роумінгу» (прапорець CHANNEL_FLAG_ROAMING), за зростанням."""
+    return [n for n, r in img.channels() if r[cc.O_FLAG1L] & cc.FL_ROAM]
+
+
+def channels_set_roam(img, numbers, on):
+    """Виставити (on=True) або зняти прапорець «Роумінг» на каналах numbers за ОДИН прохід. Інші поля записів не змінюються ні на біт. Відсутній номер --
+    TableEditError (нічого не змінено). Повертає ImportResult, як і решта правок документа."""
+    have = dict(img.channels())
+    missing = [n for n in numbers if n not in have]
+    if missing:
+        raise TableEditError(["канал №%s не знайдено в документі" % ", ".join(str(n) for n in missing)])
+    out = cc.Image(img.eeprom, img.flash, img.base)
+    res = cc.ImportResult()
+    res.image = out
+    for n in sorted(set(numbers)):
+        rec = have[n]
+        new_rec = bytearray(rec)
+        new_rec[cc.O_FLAG1L] = (new_rec[cc.O_FLAG1L] | cc.FL_ROAM) if on else (new_rec[cc.O_FLAG1L] & ~cc.FL_ROAM & 0xFF)
+        if bytes(new_rec) != bytes(rec):
+            out.set_channel_rec(n, bytes(new_rec))
+            res.changed.append(("Канали", "№%d %s: Роумінг %s" % (n, cc.readable_text(rec[:16]), "додано до списку" if on else "прибрано зі списку")))
+    return res
+
+
+def channel_set_roam(img, number, on):
+    return channels_set_roam(img, [number], on)
+
+
 def channel_edit(img, number, changes, dp):
     """Змінити поля каналу. changes: {«Channel Name»|назва колонки CSV: текст}. Посилання (Contact / TG List / APRS) можна давати за
     назвою або «#N». Зміна типу підставляє типові значення для колонок, що стали актуальними."""
