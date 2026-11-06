@@ -280,16 +280,6 @@ roamAssign_t roamChannelAssign(int num, uint8_t list)
 	return ROAM_ASSIGN_OK;
 }
 
-roamAssign_t roamCurrentAssign(uint8_t list)
-{
-	if (menuSystemGetRootMenuNumber() != UI_CHANNEL_MODE)
-	{
-		return ROAM_ASSIGN_BAD;
-	}
-
-	return roamChannelAssign(uiDataGlobal.currentSelectedChannelNumber, list);
-}
-
 unsigned roamListCount(uint8_t list)
 {
 	unsigned n = 0U;

@@ -28,7 +28,7 @@ PREVIEW_SCALE = 4
 
 class ThemesPanel(Panel):
     key = "themes"
-    title = "Тема: файл .gtm для стокового CPS"
+    title = "Тема"
     scroll = False          # список кольорів має власну прокрутку, перегляд лишається на місці
 
     def __init__(self, parent, shell):

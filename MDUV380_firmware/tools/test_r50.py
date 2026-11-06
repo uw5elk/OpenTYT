@@ -559,7 +559,7 @@ def test_gui():
         check(app.get_panel("satellites").write_btn.cget("text") == "Записати в рацію...", "C1: «Супутники» не чіпано (R52)")
         check(app._buttons["write"].cget("text") == "Записати кодплаг у рацію" if hasattr(app, "_buttons") else True, "C1: кнопка над розділами -- «Записати кодплаг у рацію»")
         titles = {c.key: c.title for _g, _t, cls in __import__("cps_ui.app", fromlist=["SECTIONS"]).SECTIONS for c in cls}
-        check(titles["themes"] == "Тема: файл .gtm для стокового CPS" and titles["allsettings"] == "Усі налаштування (custom-data)",
+        check(titles["themes"] == "Тема" and titles["allsettings"] == "Усі налаштування (custom-data)",
               "C1: назви розділів: %r / %r" % (titles["themes"], titles["allsettings"]))
         # D1
         app.show("dmrdb")

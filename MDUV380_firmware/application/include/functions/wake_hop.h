@@ -112,7 +112,6 @@ typedef enum { ROAM_ASSIGN_OK = 0, ROAM_ASSIGN_ERR, ROAM_ASSIGN_UNSUITABLE, ROAM
  * codeplugChannelSaveDataForIndex, решта кодплагу не чіпається. Список 0 дозволений завжди; список > 0 -- лише для придатного каналу.
  * Якщо num -- поточний вибраний канал, оновлює й екранну копію. */
 roamAssign_t roamChannelAssign(int num, uint8_t list);
-roamAssign_t roamCurrentAssign(uint8_t list);                       /* те саме для поточного каналу (лише режим каналів) */
 
 unsigned roamListCount(uint8_t list);                               /* скільки каналів у списку (скан усього кодплагу) */
 int      roamListStep(uint8_t list, int fromNum, int dir);          /* наступний (dir>0) чи попередній (dir<0) канал списку від fromNum по колу; fromNum=0 -- перший/останній; 0 -- списку нема */

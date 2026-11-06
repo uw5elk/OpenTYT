@@ -635,7 +635,7 @@ def test_gui():
         keys = [c.key for _g, _t, cls in SECTIONS for c in cls]
         check("contacts" in keys and "viewer" not in keys, "Q1/Z6: розділ «Контакти» є, «Перегляд кодплага» прибрано: %s" % [k for k in keys if k in ("contacts", "viewer")])
         titles = {c.key: c.title for _g, _t, cls in SECTIONS for c in cls}
-        check(titles.get("contacts") == "Контакти" and titles.get("themes") == "Тема: файл .gtm для стокового CPS", "Q1/R1/Z6: назви розділів «Контакти» і «Тема: файл .gtm для стокового CPS» (R50): %r %r" % (titles.get("contacts"), titles.get("themes")))
+        check(titles.get("contacts") == "Контакти" and titles.get("themes") == "Тема", "Q1/R1/Z6: назви розділів «Контакти» і «Тема: файл .gtm для стокового CPS» (R50): %r %r" % (titles.get("contacts"), titles.get("themes")))
         check("Перегляд кодплага" not in titles.values() and "Теми екрана" not in titles.values(), "Q2/R1: старі назви розділів прибрано")
 
         for label, spi in (("без документа", None), ("порожній", tc.base.make_spi()), ("повний", tc.make_fixture_spi())):

@@ -42,7 +42,7 @@ EXPECTED = [
     ("grp_settings", "Налаштування рації", ""),
     ("aes", "AES-ключі", "grp_settings"),
     ("rctl", "Віддалене керування (RCTL)", "grp_settings"),
-    ("themes", "Тема: файл .gtm для стокового CPS", "grp_settings"),
+    ("themes", "Тема", "grp_settings"),
     ("splash", "Заставка", "grp_settings"),
     ("melody", "Мелодія вмикання", "grp_settings"),
     ("satellites", "Супутники", "grp_settings"),

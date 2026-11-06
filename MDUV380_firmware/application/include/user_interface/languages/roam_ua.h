@@ -16,7 +16,6 @@
 #define ROAM_MENU_NAME        "Роумінг"
 #define ROAM_ROW_AUTO_FMT     "Автоперехід:%s"
 #define ROAM_ROW_HOPS_FMT     "Макс.стрибків:%u"
-#define ROAM_ROW_CHLIST_FMT   "Спис.каналу:%s%s"      /* значення (Вимк, 1..10) і «*», поки зміну не збережено зеленою */
 #define ROAM_ROW_LISTS_S      "Списки"
 #define ROAM_ON_S             "Увімк"
 #define ROAM_OFF_S            "Вимк"

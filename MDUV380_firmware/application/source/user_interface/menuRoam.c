@@ -1,8 +1,7 @@
 /*
  * menuRoam.c -- R59/R60: пункт головного меню «Роумінг» (ENABLE_ROAM_RETRY).
  *
- * Головний екран: «Автоперехід» (Вимк/Увімк), «Макс.стрибків» (1..5), «Спис.каналу» (Вимк, 1..10 -- список ПОТОЧНОГО каналу; лівий/правий
- * міняє значення, зелена ЗБЕРІГАЄ: один запис каналу; поки не збережено, поруч «*»), «Списки» (перегляд і редагування) і, з ENABLE_WAKE_DIAG,
+ * Головний екран: «Автоперехід» (Вимк/Увімк), «Макс.стрибків» (1..5), «Списки» (перегляд і редагування) і, з ENABLE_WAKE_DIAG,
  * «Журнал пробудж.» (R58, перенесено сюди з «Повідомлень»; логіка журналу й USB 0xB7 без змін).
  *
  * «Списки» (R60): вибір номера 1..10 -> члени списку (номер каналу + ім'я; зелена на члені -- прибрати зі списку після підтвердження;
@@ -36,14 +35,13 @@
 
 enum { ROAM_VIEW_MAIN = 0, ROAM_VIEW_PICK, ROAM_VIEW_MEMBERS, ROAM_VIEW_ADD, ROAM_VIEW_CFM_REMOVE, ROAM_VIEW_CFM_MOVE, ROAM_VIEW_WAKE };
 
-enum { ROAM_ROW_AUTO = 0, ROAM_ROW_HOPS, ROAM_ROW_CHLIST, ROAM_ROW_LISTS
+enum { ROAM_ROW_AUTO = 0, ROAM_ROW_HOPS, ROAM_ROW_LISTS
 #if defined(ENABLE_WAKE_DIAG)
 	, ROAM_ROW_WAKE
 #endif
 	, ROAM_ROWS };
 
 #define ROAM_REFRESH_MS    500    /* журнал оновлюється сам, поки оператор дивиться */
-#define ROAM_PEND_NONE     0xFFU  /* «Спис.каналу»: зміну ще не робили */
 #define ROAM_JUMP          10     /* лівий/правий у виборі каналу: через стільки пунктів */
 
 /* Видимі рядки списку: від -MENU_START_ITERATION_VALUE позицій над курсором до MENU_END_ITERATION_VALUE під ним. */
@@ -55,7 +53,6 @@ static struct
 {
 	uint8_t  view;
 	uint8_t  list;        /* вибраний список 1..10 (перегляд, додавання) */
-	uint8_t  pend;        /* «Спис.каналу»: очікуване значення 0..10 або ROAM_PEND_NONE */
 	uint8_t  cfmFrom;     /* підтвердження «Перенести»: список, з якого переносимо */
 	uint8_t  mainIdx;     /* рядок головного екрана, куди повернутись */
 	uint8_t  pickIdx;     /* рядок вибору списку, куди повернутись */
@@ -95,7 +92,6 @@ menuStatus_t menuRoam(uiEvent_t *ev, bool isFirstRun)
 	{
 		memset(&s_roam, 0, sizeof(s_roam));
 		s_roam.view = ROAM_VIEW_MAIN;
-		s_roam.pend = ROAM_PEND_NONE;
 		menuDataGlobal.currentItemIndex = 0;
 		menuDataGlobal.numItems = ROAM_ROWS;
 		listUpdate();
@@ -173,25 +169,10 @@ static void setView(uint8_t view, int numItems, int idx)
 /* Текст рядка mNum головного екрана (buf або константа). Малюється спільним listUpdate(). */
 static const char *mainRow(int mNum, char *buf, size_t len)
 {
-	char val[8];
-
 	switch (mNum)
 	{
 		case ROAM_ROW_AUTO: snprintf(buf, len, ROAM_ROW_AUTO_FMT, (roamCfgIsEnabled() ? ROAM_ON_S : ROAM_OFF_S)); break;
 		case ROAM_ROW_HOPS: snprintf(buf, len, ROAM_ROW_HOPS_FMT, (unsigned)roamCfgMaxHops()); break;
-		case ROAM_ROW_CHLIST:
-			/* У режимі VFO поточного «каналу кодплагу» нема -- показуємо «-» (дія дасть пояснення). */
-			if (inChannelMode())
-			{
-				roamListText((s_roam.pend == ROAM_PEND_NONE) ? roamCurrentList() : s_roam.pend, val, sizeof val);
-			}
-			else
-			{
-				val[0] = '-';
-				val[1] = 0;
-			}
-			snprintf(buf, len, ROAM_ROW_CHLIST_FMT, val, (s_roam.pend == ROAM_PEND_NONE) ? "" : "*");
-			break;
 		case ROAM_ROW_LISTS: return ROAM_ROW_LISTS_S;
 #if defined(ENABLE_WAKE_DIAG)
 		case ROAM_ROW_WAKE:  return WAKE_ITEM;
@@ -216,28 +197,6 @@ static const char *assignMessage(roamAssign_t r, const char *okMsg)
 }
 
 
-/* Зберегти «Спис.каналу» (green): один запис поточного каналу. */
-static void commitChannelList(void)
-{
-	uint8_t was = roamCurrentList();
-	uint8_t want = s_roam.pend;
-	const char *msg = NULL;
-
-	s_roam.pend = ROAM_PEND_NONE;   /* і при успіху, і при відмові показуємо те, що справді в записі */
-
-	if (want != was)   /* вибрали те, що вже є -- нічого не пишемо і не повідомляємо */
-	{
-		msg = assignMessage(roamCurrentAssign(want), ((want == 0U) ? ROAM_MSG_REMOVED : ((was == 0U) ? ROAM_MSG_ADDED : ROAM_MSG_MOVED)));
-	}
-
-	listUpdate();
-
-	if (msg != NULL)
-	{
-		uiNotificationShowShort(1500, msg, true);
-	}
-}
-
 /* Лівий/правий/зелена на рядку головного екрана (вгору/вниз/червона -- спільні, listEvent). */
 static void mainKey(bool left, bool right, bool green)
 {
@@ -260,28 +219,6 @@ static void mainKey(bool left, bool right, bool green)
 			listUpdate();
 			break;
 		}
-		case ROAM_ROW_CHLIST:
-			if (inChannelMode() == false)
-			{
-				uiNotificationShowShort(1500, ROAM_MSG_NOT_CHANNEL, true);
-			}
-			else if (green)
-			{
-				if (s_roam.pend != ROAM_PEND_NONE)
-				{
-					commitChannelList();
-				}
-			}
-			else
-			{
-				/* Лівий/правий лише міняють очікуване значення (0..10 по колу); запис -- зеленою, щоб гортання не пекло флеш. */
-				int v = (s_roam.pend == ROAM_PEND_NONE) ? (int)roamCurrentList() : (int)s_roam.pend;
-				int span = (int)ROAM_LISTS_COUNT + 1;
-
-				s_roam.pend = (uint8_t)((v + (left ? (span - 1) : 1)) % span);
-				listUpdate();
-			}
-			break;
 		case ROAM_ROW_LISTS:
 			if (green)
 			{
