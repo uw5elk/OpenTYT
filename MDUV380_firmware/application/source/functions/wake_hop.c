@@ -118,6 +118,27 @@ void roamRecSetList(CodeplugChannel_t *rec, uint8_t list)
 	codeplugChannelSetFlag(rec, CHANNEL_FLAG_ROAMING, 0U);
 }
 
+/* Крок списку запису на dir (+1/-1) без обертання: на межі 0 / ROAM_LISTS_COUNT нічого не міняє (true). false -- крок вгору відхилено,
+ * бо канал не може бути в списку; крок вниз (зняти зі списку) дозволено завжди. */
+bool roamRecStepList(CodeplugChannel_t *rec, int dir)
+{
+	int cur = (int)roamRecList(rec);
+	int want = cur + dir;
+
+	if ((want < 0) || (want > (int)ROAM_LISTS_COUNT))
+	{
+		return true;
+	}
+
+	if ((dir > 0) && (roamRecSuitable(rec) == false))
+	{
+		return false;
+	}
+
+	roamRecSetList(rec, (uint8_t)want);
+	return true;
+}
+
 uint8_t roamCurrentList(void)
 {
 	return roamRecList(currentChannelData);

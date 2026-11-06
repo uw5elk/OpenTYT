@@ -100,6 +100,7 @@ void     roamClear(void);           /* будь-яка явна зміна ка�
 uint8_t  roamRecList(const CodeplugChannel_t *rec);                 /* список запису (з байта 37) */
 void     roamRecSetList(CodeplugChannel_t *rec, uint8_t list);      /* виставити список у записі й ЗНЯТИ старий прапорець R59 */
 bool     roamRecSuitable(const CodeplugChannel_t *rec);             /* запис придатний бути в списку (цифровий ретранслятор, ...) */
+bool     roamRecStepList(CodeplugChannel_t *rec, int dir);                 /* «Деталі каналу»: список запису ±1 без обертання; false -- вгору відхилено (канал непридатний) */
 uint8_t  roamChannelList(int num);                                  /* список каналу num кодплагу (читається один байт; не зайнятий -> 0) */
 uint8_t  roamCurrentList(void);                                     /* список поточного каналу */
 bool     roamCurrentSuitable(void);                                 /* поточний канал придатний для списку */

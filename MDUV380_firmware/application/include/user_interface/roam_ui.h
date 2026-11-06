@@ -38,6 +38,12 @@
 #define ROAM_IND_SPARE        "R>"
 #define ROAM_ZONE_SPARE_FMT   "R> chan %d"
 #endif
+
+#include <stddef.h>
+#include <stdint.h>
+
+/* Текст значення списку для рядків меню й «Деталей каналу»: 0 -> «Вимк», 1..10 -> число (menuRoam.c). */
+void roamListText(uint8_t list, char *buf, size_t len);
 #endif /* ENABLE_ROAM_RETRY */
 
 #endif /* USER_INTERFACE_ROAM_UI_H_ */

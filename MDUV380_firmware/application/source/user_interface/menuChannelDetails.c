@@ -751,13 +751,9 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 						{
 							rightSideConst = currentLanguage->n_a;
 						}
-						else if (roamRecList(&tmpChannel) == 0U)
-						{
-							rightSideConst = ROAM_OFF_S;
-						}
 						else
 						{
-							snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u", (unsigned)roamRecList(&tmpChannel));
+							roamListText(roamRecList(&tmpChannel), rightSideVar, SCREEN_LINE_BUFFER_SIZE);
 						}
 						break;
 #endif
@@ -1460,16 +1456,9 @@ static void handleEvent(uiEvent_t *ev)
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 				case CH_DETAILS_ROAM_LIST:
-					if ((rootMenuIsVFO == false) && (roamRecList(&tmpChannel) < ROAM_LISTS_COUNT))
+					if ((rootMenuIsVFO == false) && (roamRecStepList(&tmpChannel, 1) == false))
 					{
-						if (roamRecSuitable(&tmpChannel))
-						{
-							roamRecSetList(&tmpChannel, (uint8_t)(roamRecList(&tmpChannel) + 1U));
-						}
-						else
-						{
-							uiNotificationShowShort(1500, ROAM_MSG_UNSUITABLE, true);   // аналог, DMO, симплекс, лише прийом, поза діапазоном
-						}
+						uiNotificationShowShort(1500, ROAM_MSG_UNSUITABLE, true);   // аналог, DMO, симплекс, лише прийом, поза діапазоном
 					}
 					break;
 #endif
@@ -1743,9 +1732,9 @@ static void handleEvent(uiEvent_t *ev)
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 				case CH_DETAILS_ROAM_LIST:
-					if ((rootMenuIsVFO == false) && (roamRecList(&tmpChannel) > 0U))
+					if (rootMenuIsVFO == false)
 					{
-						roamRecSetList(&tmpChannel, (uint8_t)(roamRecList(&tmpChannel) - 1U));   // зняти зі списку завжди можна
+						(void)roamRecStepList(&tmpChannel, -1);   // зняти зі списку завжди можна
 					}
 					break;
 #endif
