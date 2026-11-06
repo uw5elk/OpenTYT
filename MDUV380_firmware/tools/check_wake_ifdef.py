@@ -13,8 +13,7 @@ check_wake_ifdef.py -- R58/R59: уся діагностика пробуджен
      HRC6000RestartWakeForRoam, ...) -- у гілці #if з цими дефайнами (не в #else). Коментарі не рахуються.
      menuMessages.c (журнал переїхав у «Роумінг») нових ідентифікаторів НЕ містить взагалі.
   3. CI (.github/workflows/build.yml): ENABLE_WAKE_DIAG згадується лише в джобі build-ukrainian-roam-diag, ENABLE_ROAM_RETRY --
-     лише в build-ukrainian-roam-diag, build-ukrainian-roam і (R60C, після перевірки на залізі) build-ukrainian -- ENABLE_WAKE_DIAG у користувацькі збірки
-     потрапити не може.
+     лише в build-ukrainian-roam-diag і build-ukrainian-roam -- у користувацькі збірки дефайни потрапити не можуть.
 
     python3 MDUV380_firmware/tools/check_wake_ifdef.py [--selftest]
 """
@@ -169,7 +168,7 @@ def check_changed(name, text):
 
 CI_ALLOWED = {
     "ENABLE_WAKE_": {"build-ukrainian-roam-diag"},
-    "ENABLE_ROAM_": {"build-ukrainian-roam-diag", "build-ukrainian-roam", "build-ukrainian"},     # R60C: роумінг -- в основній українській збірці
+    "ENABLE_ROAM_": {"build-ukrainian-roam-diag", "build-ukrainian-roam"},
 }
 
 
@@ -246,8 +245,6 @@ def selftest():
     assert check_ci(ok) == [], check_ci(ok)
     assert check_ci(ok + "  b:\n    run: make ENABLE_WAKE_DIAG=1\n"), "дефайн в іншому джобі ловиться"
     assert check_ci(ok + "  b:\n    run: make ENABLE_ROAM_RETRY=1\n"), "ROAM_RETRY в іншому джобі ловиться"
-    assert check_ci(ok + "  build-ukrainian:\n    run: make ENABLE_ROAM_RETRY=1\n") == [], "R60C: ROAM_RETRY в основній українській збірці дозволено"
-    assert check_ci(ok + "  build-ukrainian:\n    run: make ENABLE_WAKE_DIAG=1\n"), "R60C: журнал в основній українській збірці заборонено"
     assert check_ci(ok.replace("make ENABLE_ROAM_RETRY=1\n", "make ENABLE_WAKE_DIAG=1\n")), "WAKE_DIAG у джобі без журналу ловиться"
     assert check_ci("jobs:\n  a:\n    x: 1\n"), "немає джобів -- ловиться"
     assert check_ci(ok + "  build-ukrainian-wake-diag:\n    x: 1\n"), "старий джоб ловиться"
