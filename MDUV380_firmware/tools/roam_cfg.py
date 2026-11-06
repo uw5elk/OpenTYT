@@ -3,8 +3,10 @@
 """roam_cfg.py -- R59: налаштування «Роумінгу» (автоперехід на наступний канал зі списку, коли ретранслятор не відповідає на пробудження під PTT).
 
 Що де лежить (одне джерело істини для кожного):
-  * СПИСОК роумінгу -- прапорець каналу CHANNEL_FLAG_ROAMING (LibreDMR_flag1, маска 0x01) У КОДПЛАЗІ. Редагується як решта кодплага: колонка «Роум.» у «Каналах»,
-    колонка «Roam» у CSV, кнопки панелі «Роумінг»; у рацію потрапляє дією «Записати кодплаг у рацію».
+  * СПИСКИ роумінгу (R60: їх 10) -- НОМЕР СПИСКУ каналу (0 = жодного, 1..10) У КОДПЛАЗІ, у байті 37 запису каналу з міткою: 0xC0 | N. Канал належить
+    ОДНОМУ списку. Редагується як решта кодплага: колонка «Роум. список» у «Каналах», колонка «RoamList» у CSV, розділ «Роумінг»; у рацію потрапляє дією
+    «Записати кодплаг у рацію». Радіо редагує ті самі списки з меню «Роумінг» (запис ОДНОГО запису каналу). Формат дзеркалить roam_cfg.h (прошивка).
+    СТАРИЙ прапорець R59 (CHANNEL_FLAG_ROAMING, LibreDMR_flag1 0x01) прошивка R60 не читає: CPS одноразово переносить його в список 1 (з підтвердженням).
   * НАЛАШТУВАННЯ -- custom-data блок типу 15 (CODEPLUG_CUSTOM_DATA_TYPE_ROAM_CFG), 8 байтів, поза кодплагом: пишеться в рацію негайно власною кнопкою.
     Блока немає (нова/нечіпана рація) -- автоперехід ВИМКНЕНО, макс. стрибків 2 (так само читає прошивка).
 
@@ -30,7 +32,14 @@ VERSION = 1
 PAYLOAD_LEN = 8
 HOPS_MIN, HOPS_MAX, HOPS_DEFAULT = 1, 5, 2        # ROAM_HOPS_MIN / MAX / DEFAULT
 
-# біти запису каналу (cps_csv.py): прапорець роумінгу і «примусово DMO» (CODEPLUG_CHANNEL_LIBREDMR_FLAG1_FORCE_DMO)
+# R60: байт номера списку в записі каналу (дзеркалить roam_cfg.h: ROAM_LIST_BYTE_OFFSET / TAG / TAG_MASK / VALUE_MASK / ROAM_LISTS_COUNT)
+LISTS_COUNT = 10
+LIST_BYTE_OFFSET = 37
+LIST_TAG = 0xC0
+LIST_TAG_MASK = 0xF0
+LIST_VALUE_MASK = 0x0F
+
+# біти запису каналу (cps_csv.py): СТАРИЙ прапорець роумінгу R59 і «примусово DMO» (CODEPLUG_CHANNEL_LIBREDMR_FLAG1_FORCE_DMO)
 FL_ROAM = 0x01
 FL_FORCE_DMO = 0x04
 F4_RXONLY = 0x04              # LibreDMR_flag4: «лише прийом»
@@ -81,19 +90,45 @@ def parse_payload(payload):
 #  Список роумінгу у кодплазі (образ документа)
 # ---------------------------------------------------------------------------------------------------------------------------------
 
+def list_from_byte(b):
+    """Байт запису -> номер списку 0..10; нерозпізнане (0x00, 0xFF, 0xCB..0xCF, чужа мітка) -> 0. Як roamListFromByte()."""
+    n = b & LIST_VALUE_MASK
+    if (b & LIST_TAG_MASK) != LIST_TAG or not 1 <= n <= LISTS_COUNT:
+        return 0
+    return n
+
+
+def list_to_byte(n):
+    """Номер списку -> байт запису: поза 1..10 -> 0x00; N -> 0xC0|N. Як roamListToByte()."""
+    if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= LISTS_COUNT:
+        return 0
+    return LIST_TAG | n
+
+
+def list_of(rec):
+    """Номер списку каналу 0..10."""
+    return list_from_byte(rec[LIST_BYTE_OFFSET])
+
+
 def is_listed(rec):
+    return list_of(rec) != 0
+
+
+def legacy_flag(rec):
+    """Старий прапорець R59 (лише для одноразового перенесення в список 1)."""
     return bool(rec[38] & FL_ROAM)
 
 
-def roam_channels(img):
-    """[(номер, запис)] каналів зі списку, за зростанням номера (як у прошивці: «за номерами»)."""
-    return [(n, r) for n, r in img.channels() if is_listed(r)]
+def roam_channels(img, lst=None):
+    """[(номер, запис)] каналів зі списку lst (None -- з будь-якого), за зростанням номера (як у прошивці: «за номерами»)."""
+    return [(n, r) for n, r in img.channels() if (list_of(r) == lst if lst is not None else list_of(r) != 0)]
 
 
-def with_flag(rec, on):
-    """Копія запису каналу з виставленим/знятим прапорцем; решта байтів не змінюється ні на біт."""
+def with_list(rec, lst):
+    """Копія запису каналу з номером списку lst (0 -- без списку); старий прапорець R59 знімається (як це робить прошивка); решта байтів -- ні на біт."""
     r = bytearray(rec)
-    r[38] = (r[38] | FL_ROAM) if on else (r[38] & ~FL_ROAM & 0xFF)
+    r[LIST_BYTE_OFFSET] = list_to_byte(lst)
+    r[38] &= ~FL_ROAM & 0xFF
     return bytes(r)
 
 
@@ -126,34 +161,49 @@ def check_list(img, enabled=False, block_absent=False):
     from cps_csv import readable_text
     out = []
     ch = roam_channels(img)
-    if enabled and len(ch) < 2:
-        out.append("Автоперехід увімкнено, а у списку %d %s: потрібно щонайменше 2 канали (поточний і запасний), інакше переходити нікуди." % (
-            len(ch), "канал" if len(ch) == 1 else "каналів"))
+    by_list = {k: [] for k in range(1, LISTS_COUNT + 1)}
     for n, r in ch:
-        why = problem_of(r)
-        if why:
-            out.append("Канал №%d «%s» у списку, але %s -- прошивка його пропустить." % (n, readable_text(r[:16]), why))
-    seen = {}
-    for n, r in ch:
-        k = pair_key(r)
-        if k in seen:
-            out.append("Канали №%d і №%d у списку мають однакові частоти й колір-код -- другий прошивка вважатиме вже випробуваним." % (seen[k], n))
-        else:
-            seen[k] = n
+        by_list[list_of(r)].append((n, r))
+    if enabled and not any(len(v) >= 2 for v in by_list.values()):
+        out.append("Автоперехід увімкнено, а жоден список не має 2 і більше каналів (поточний і запасний): переходити нікуди.")
+    elif enabled:
+        for k, v in by_list.items():
+            if len(v) == 1:
+                out.append("У списку %d лише один канал (№%d): переходити нікуди." % (k, v[0][0]))
+    for k, v in by_list.items():
+        seen = {}
+        for n, r in v:
+            why = problem_of(r)
+            if why:
+                out.append("Канал №%d «%s» у списку %d, але %s -- прошивка його пропустить." % (n, readable_text(r[:16]), k, why))
+        for n, r in v:
+            key = pair_key(r)
+            if key in seen:
+                out.append("Канали №%d і №%d у списку %d мають однакові частоти й колір-код -- другий прошивка вважатиме вже випробуваним." % (seen[key], n, k))
+            else:
+                seen[key] = n
+    old = legacy_channels(img)
+    if old:
+        out.append("Каналів зі СТАРИМ прапорцем роумінгу R59 (без списку): %d. Прошивка R60 його не читає -- натисніть «Перенести старі позначки в список 1»." % len(old))
     if block_absent and ch:
-        out.append("У кодплазі позначено каналів: %d, але блока налаштувань «Роумінгу» в рації немає -- автоперехід вимкнено. "
-                   "Запишіть налаштування або зніміть позначки." % len(ch))
+        out.append("У кодплазі каналів у списках: %d, але блока налаштувань «Роумінгу» в рації немає -- автоперехід вимкнено. "
+                   "Запишіть налаштування або приберіть канали зі списків." % len(ch))
     return out
 
 
-def clear_flags(img):
-    """-> новий образ без прапорців роумінгу на всіх каналах і кількість знятих."""
+def legacy_channels(img):
+    """Номери каналів зі старим прапорцем R59, які ще не в жодному списку (їх перенос ще попереду)."""
+    return [n for n, r in img.channels() if legacy_flag(r) and list_of(r) == 0]
+
+
+def clear_lists(img):
+    """-> новий образ без списків на всіх каналах (старий прапорець теж знято) і кількість змінених каналів."""
     import cps_csv as cc
     out = cc.Image(img.eeprom, img.flash, img.base)
     n = 0
     for num, rec in img.channels():
-        if is_listed(rec):
-            out.set_channel_rec(num, with_flag(rec, False))
+        if is_listed(rec) or legacy_flag(rec):
+            out.set_channel_rec(num, with_list(rec, 0))
             n += 1
     return out, n
 

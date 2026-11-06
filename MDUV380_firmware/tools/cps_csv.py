@@ -53,8 +53,10 @@ ZONE_HDR = ["Zone Name"] + ["Channel%d" % i for i in range(1, 81)]
 CHANNEL_HDR = ["Channel Number", "Channel Name", "Channel Type", "Rx Frequency", "Tx Frequency", "Bandwidth (kHz)", "Colour Code",
                "Timeslot", "Contact", "TG List", "DMR ID", "TS1_TA_Tx", "TS2_TA_Tx ID", "RX Tone", "TX Tone", "Squelch", "Power",
                "Rx Only", "Zone Skip", "All Skip", "TOT", "VOX", "No Beep", "No Eco", "APRS", "Latitude", "Longitude", "Use Location"]
-# R59: колонки НАШОГО формату, яких нема в стоковому CPS (йдуть після стокових, перед «Name (readable)»). CSV без такої колонки поле каналу не чіпає.
-CHANNEL_EXT_HDR = ["Roam"]
+# R59/R60: колонки НАШОГО формату, яких нема в стоковому CPS (йдуть після стокових, перед «Name (readable)»). CSV без такої колонки поле каналу не чіпає.
+# R60: «RoamList» -- номер списку роумінгу 0..10 (0 = жодного). Старий стовпець R59 «Roam» (Yes/No) ЛИШЕ читається (див. LEGACY_ROAM_COL), не пишеться.
+CHANNEL_EXT_HDR = ["RoamList"]
+LEGACY_ROAM_COL = "Roam"
 APRS_HDR = ["APRS config Name", "SSID", "Via1", "Via1 SSID", "Via2", "Via2 SSID", "Icon table", "Icon", "Comment text", "Ambiguity",
             "Use position", "Latitude", "Longitude", "TX Frequency", "Transmit QSY", "Baud rate setting"]
 DTMF_HDR = ["Contact Name", "Code"]
@@ -383,7 +385,9 @@ O_FLAG1, O_FLAG2, O_FLAG3, O_FLAG4, O_SQL = 48, 49, 50, 51, 55
 
 F4_SQL, F4_BW25, F4_RXONLY, F4_ALLSKIP, F4_ZONESKIP, F4_VOX, F4_POWER = 0x01, 0x02, 0x04, 0x10, 0x20, 0x40, 0x80
 FL_DMRID, FL_NOBEEP, FL_NOECO, FL_USELOC = 0x80, 0x40, 0x20, 0x08
-FL_ROAM = 0x01      # R59: CHANNEL_FLAG_ROAMING у LibreDMR_flag1 (codeplug.h): канал входить до списку «Роумінгу»
+FL_ROAM = 0x01      # R59: СТАРИЙ CHANNEL_FLAG_ROAMING у LibreDMR_flag1 (codeplug.h); R60-прошивка його не читає -- лише для одноразового перенесення в список 1
+# R60: номер списку роумінгу -- байт 37 запису з міткою 0xC0|N (дзеркалить roam_cfg.h і tools/roam_cfg.py; збіг стережуть тести)
+O_ROAMLIST, ROAM_TAG, ROAM_TAG_MASK, ROAM_LISTS = 37, 0xC0, 0xF0, 10
 F2_TS2 = 0x40
 
 
@@ -687,6 +691,37 @@ def _sql_enc(r, t, c):
     r[O_SQL] = parse_sql(t)
 
 
+def roam_list_of(r):
+    """Номер списку роумінгу 0..10 із запису каналу (мітка 0xC0|N, інакше 0) -- як roamListFromByte() у прошивці."""
+    b = r[O_ROAMLIST]
+    n = b & 0x0F
+    return n if (b & ROAM_TAG_MASK) == ROAM_TAG and 1 <= n <= ROAM_LISTS else 0
+
+
+def roam_list_set(r, n):
+    """Записати номер списку (0 = без списку); старий прапорець R59 знімається, як це робить прошивка."""
+    r[O_ROAMLIST] = (ROAM_TAG | n) if 1 <= n <= ROAM_LISTS else 0
+    r[O_FLAG1L] &= ~FL_ROAM & 0xFF
+
+
+def _roamlist_dec(r, c):
+    return str(roam_list_of(r))
+
+
+def _roamlist_enc(r, t, c):
+    tl = (t or "").strip().casefold()
+    if tl in ("", "off", "no", "none"):
+        n = 0
+    else:
+        try:
+            n = parse_scaled(tl, 0)
+        except ValueError:
+            raise ValueError("RoamList: номер списку 0..%d (0 = без списку), а не %r" % (ROAM_LISTS, t))
+    if not 0 <= n <= ROAM_LISTS:
+        raise ValueError("RoamList: номер списку 0..%d (0 = без списку), а не %r" % (ROAM_LISTS, t))
+    roam_list_set(r, n)
+
+
 def _build_columns():
     cols = []
 
@@ -733,8 +768,7 @@ def _build_columns():
         r.__setitem__(slice(O_LON2, O_LON2 + 1), parse_latlon(t, 180)[2:3]))
     d, e = _flag(O_FLAG1L, FL_USELOC)
     add("Use Location", "B", True, d, e)
-    d, e = _flag(O_FLAG1L, FL_ROAM)
-    add("Roam", "B", True, d, e)          # R59: м'яка колонка -- порожня комірка або відсутня колонка лишає прапорець як був
+    add("RoamList", "B", True, _roamlist_dec, _roamlist_enc)    # R60: м'яка колонка -- порожня комірка або відсутня колонка лишає список як був
     return cols
 
 
@@ -1559,6 +1593,8 @@ def _sec_channels(s, tab):
         return
     ir = tab.col(READABLE)
     cols = {c["name"]: tab.col(c["name"]) for c in CH_COLUMNS}
+    legacy_i = tab.col(LEGACY_ROAM_COL) if cols.get("RoamList") is None else None     # R60: старий стовпець R59 «Roam» читаємо, лише якщо нового нема
+    legacy_n = 0
     oldch = dict(s.old.channels())
     nmax = cl.CP_CHANNELS_BANKS * cl.CP_CHANNELS_PER_BANK
 
@@ -1651,6 +1687,17 @@ def _sec_channels(s, tab):
                 continue
             if bytes(rec) != before:
                 changed_cols.append(col["name"])
+        if legacy_i is not None and legacy_i < len(row) and (row[legacy_i] or "").strip() and roam_list_of(rec) == 0:
+            # R60: старий CSV (R59) -- «Roam» = Yes означає «у списку»; тепер списків 10, тож такий канал іде в СПИСОК 1 (видно у звіті, як і решта змін)
+            try:
+                on = parse_bool(row[legacy_i])
+            except ValueError:
+                on = False
+                s.warn("%s, рядок %d, колонка «%s»: %r -- не Yes/No, поле лишено як було." % (f, ln, LEGACY_ROAM_COL, row[legacy_i]))
+            if on:
+                roam_list_set(rec, 1)
+                legacy_n += 1
+                changed_cols.append("RoamList (з «Roam»=Yes -> список 1)")
         if old is not None and bytes(rec) == bytes(old):
             final[num] = old
             continue
@@ -1659,6 +1706,9 @@ def _sec_channels(s, tab):
             s.res.added.append(("Канали", "№%d %s" % (num, readable_text(rec[:16]))))
         else:
             s.res.changed.append(("Канали", "№%d %s: %s" % (num, readable_text(rec[:16]), ", ".join(changed_cols) or "назва")))
+    if legacy_n:
+        s.warn("%s: старий стовпець «%s» (R59, прапорець «у списку») перенесено так: %d канал(ів) із «Yes» -> СПИСОК 1 (списків тепер 10, стовпець «RoamList»). "
+               "«No» і порожнє нічого не змінює. Перевірте у звіті й підтвердіть." % (f, LEGACY_ROAM_COL, legacy_n))
     # 2) записуємо
     for num, rec in final.items():
         if num not in oldch or bytes(rec) != oldch[num]:

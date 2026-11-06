@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Розділ «Кодплаг → Роумінг» (R59): автоперехід на наступний канал зі списку, коли ретранслятор не відповідає на пробудження під утримуваним PTT.
+"""Розділ «Кодплаг → Роумінг» (R59/R60): автоперехід на наступний канал зі СПИСКУ, коли ретранслятор не відповідає на пробудження під утримуваним PTT.
+R60: списків 10; канал належить ОДНОМУ списку (номер у байті 37 запису каналу, tools/roam_cfg.py). Перехід іде лише по каналах того самого списку.
 
 ДВА шляхи запису, чітко розділені (як в «APRS»):
   * «Налаштування в рації» (автоперехід увімк./вимк., макс. стрибків 1..5) -- custom-data блок типу 15 (tools/roam_cfg.py). Пишеться в РАЦІЮ негайно власною кнопкою,
     поза кодплагом; перед записом попередній блок зберігається у файл-страхову копію, після запису -- звірка читанням. Потрібна рація у звичайному режимі.
-  * «Список у кодплазі» -- прапорець «Роумінг» на каналах (колонка «Роум.» в «Каналах» і «Roam» у CSV). Це частина ДОКУМЕНТА: у рацію потрапляє дією «Записати
-    кодплаг у рацію». Тут його зручно набирати: позначити канали в таблиці й натиснути «Додати поточно виділений канал».
-Попередження (не блокують запис): автоперехід увімкнено, а в списку менше 2 каналів; канал зі списку аналоговий / DMO / симплекс / лише прийом (прошивка його
-пропустить); два канали з однаковими частотами й колір-кодом; прапорці є, а блока налаштувань у рації немає (з пропозицією зняти позначки).
-Діє лише у збірці прошивки «роумінг» (ENABLE_ROAM_RETRY); в інших збірках блок і прапорці ігноруються."""
+  * «Списки в кодплазі» -- номер списку на каналах (колонка «Роум.» в «Каналах», поле «Роум. список», колонка «RoamList» у CSV). Це частина ДОКУМЕНТА: у рацію
+    потрапляє дією «Записати кодплаг у рацію». Тут його зручно набирати: обрати список, виділити канали в таблиці й натиснути «Додати виділені до списку».
+    Ті самі списки рація редагує сама (меню «Роумінг» → «Списки»): склад однаковий у CPS і в рації.
+Попередження (не блокують запис): автоперехід увімкнено, а в жодному списку нема 2 каналів; у списку лише один канал; канал зі списку аналоговий / DMO / симплекс / лише
+прийом (прошивка його пропустить); два канали одного списку з однаковими частотами й колір-кодом; старий прапорець R59 без списку; списки є, а блока налаштувань у рації нема.
+Діє лише у збірці прошивки «роумінг» (ENABLE_ROAM_RETRY); в інших збірках блок і списки ігноруються."""
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -23,21 +25,24 @@ from .layout import FitTable, equal_buttons
 from .panel import Panel
 
 COLUMNS = (("n", "№", 45, False), ("name", "Назва", 150, True), ("rx", "RX, МГц", 85, False), ("tx", "TX, МГц", 85, False),
-           ("cc", "CC", 35, False), ("roam", "Роум.", 50, False), ("note", "Примітка", 170, True))
+           ("cc", "CC", 35, False), ("roam", "Список", 55, False), ("note", "Примітка", 170, True))
 
 
-def channel_rows(img, dp, only_listed=False, needle=""):
-    """[(номер, (№, назва, RX, TX, CC, ✓|"", примітка))] для таблиці. Примітка -- причина, чому прошивка пропустить канал зі списку (для каналів не зі списку порожня)."""
+def channel_rows(img, dp, only_listed=False, needle="", lst=None):
+    """[(номер, (№, назва, RX, TX, CC, номер списку|"", примітка))] для таблиці. lst -- показати лише канали цього списку (1..10); only_listed -- лише канали
+    будь-якого списку. Примітка -- причина, чому прошивка пропустить канал зі списку (для каналів не зі списку порожня)."""
     ctx = cc.make_ctx_for_export(img, dp)
     rx, tx = cc.CH_COLUMN_BY_NAME["Rx Frequency"]["dec"], cc.CH_COLUMN_BY_NAME["Tx Frequency"]["dec"]
     needle = (needle or "").strip().casefold()
     out = []
     for n, r in img.channels():
-        listed = rc.is_listed(r)
-        if only_listed and not listed:
+        mine = rc.list_of(r)
+        if lst is not None and mine != lst:
+            continue
+        if only_listed and not mine:
             continue
         vals = (n, cc.readable_text(r[:16]), rx(r, ctx).strip("\t").strip(), tx(r, ctx).strip("\t").strip(),
-                str(r[cc.O_COLOR]) if r[cc.O_MODE] else "", "✓" if listed else "", (rc.problem_of(r) or "") if listed else "")
+                str(r[cc.O_COLOR]) if r[cc.O_MODE] else "", str(mine) if mine else "", (rc.problem_of(r) or "") if mine else "")
         if needle and not any(needle in str(v).casefold() for v in vals):
             continue
         out.append((n, vals))
@@ -91,15 +96,20 @@ class RoamPanel(Panel):
                                      justify="left")
         self.radio_label.pack(anchor="w", padx=8, pady=(0, 6))
 
-        # --- список у кодплазі ---
-        lst = ttk.LabelFrame(self, text="Список у кодплазі -- частина документа (у рацію потрапляє дією «Записати кодплаг у рацію»)")
+        # --- списки у кодплазі ---
+        lst = ttk.LabelFrame(self, text="Списки в кодплазі -- частина документа (у рацію: «Записати кодплаг у рацію»)")
         lst.pack(fill="both", expand=True, padx=12, pady=4)
         top = ttk.Frame(lst)
         top.pack(fill="x", padx=8, pady=(4, 2))
-        self.count_label = ttk.Label(top, text="", font=("Segoe UI", 10, "bold"))
-        self.count_label.pack(side="left")
+        ttk.Label(top, text="Список:").pack(side="left")
+        self.v_list = tk.StringVar(value=self._list_label(1, 0))
+        self.cb_list = ttk.Combobox(top, textvariable=self.v_list, values=[self._list_label(k, 0) for k in range(1, rc.LISTS_COUNT + 1)], state="readonly", width=22)
+        self.cb_list.pack(side="left", padx=4)
+        self.cb_list.bind("<<ComboboxSelected>>", lambda _e: self._fill())
         self.v_only = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Лише канали зі списку", variable=self.v_only, command=self._fill).pack(side="right")
+        ttk.Checkbutton(top, text="Лише канали цього списку", variable=self.v_only, command=self._fill).pack(side="right")
+        self.count_label = ttk.Label(lst, text="", wraplength=620, justify="left")
+        self.count_label.pack(anchor="w", padx=8, pady=(0, 2))
         frow = ttk.Frame(lst)
         frow.pack(fill="x", padx=8)
         ttk.Label(frow, text="Фільтр:").pack(side="left")
@@ -112,15 +122,20 @@ class RoamPanel(Panel):
         self.table.pack(fill="both", expand=True, padx=8, pady=4)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self.refresh_state())
         bars = ttk.Frame(lst)
-        bars.pack(fill="x", padx=8, pady=(0, 6))
-        self.add_btn = ttk.Button(bars, text="Додати поточно виділений канал", command=lambda: self._set_selected(True))
-        self.rem_btn = ttk.Button(bars, text="Прибрати", command=lambda: self._set_selected(False))
-        self.clr_btn = ttk.Button(bars, text="Прибрати всі...", command=self._clear_all)
+        bars.pack(fill="x", padx=8, pady=(0, 2))
+        self.add_btn = ttk.Button(bars, text="Додати виділені до списку", command=lambda: self._set_selected(True))
+        self.rem_btn = ttk.Button(bars, text="Прибрати зі списків", command=lambda: self._set_selected(False))
+        self.clr_btn = ttk.Button(bars, text="Очистити список...", command=self._clear_list)
         equal_buttons(self.add_btn, self.rem_btn, self.clr_btn)
         for i, b in enumerate((self.add_btn, self.rem_btn, self.clr_btn)):
             b.grid(row=0, column=i, sticky="ew", padx=2)
             self.reg(b, radio=False, doc=True)
             bars.columnconfigure(i, weight=1, uniform="rb")
+        bars2 = ttk.Frame(lst)
+        bars2.pack(fill="x", padx=8, pady=(0, 6))
+        self.mig_btn = ttk.Button(bars2, text="Перенести старі позначки R59 у список 1", command=self._migrate)
+        self.mig_btn.pack(side="left", padx=2)
+        self.reg(self.mig_btn, radio=False, doc=True)
         self.msg = ttk.Label(lst, text="", wraplength=620, justify="left")
         self.msg.pack(anchor="w", padx=8, pady=(0, 4))
 
@@ -133,6 +148,17 @@ class RoamPanel(Panel):
     def on_document_changed(self):
         self._fill()
 
+    @staticmethod
+    def _list_label(k, count):
+        return "%d (%d)" % (k, count)
+
+    def current_list(self):
+        """Номер списку, обраного в селекторі (1..10)."""
+        try:
+            return int(str(self.v_list.get()).split(" ")[0])
+        except ValueError:
+            return 1
+
     def _fill(self):
         d = self.doc
         self.tree.delete(*self.tree.get_children())
@@ -141,11 +167,24 @@ class RoamPanel(Panel):
             self.count_label.config(text="Відкрийте кодплаг з рації або з бекапу")
             self.refresh_warnings()
             return
-        for n, vals in channel_rows(d.image, self.dp, only_listed=self.v_only.get(), needle=self.v_filter.get()):
+        counts = {k: len(te.roam_numbers(d.image, k)) for k in range(1, rc.LISTS_COUNT + 1)}
+        cur = self.current_list()
+        self.cb_list.config(values=[self._list_label(k, counts[k]) for k in range(1, rc.LISTS_COUNT + 1)])
+        self.v_list.set(self._list_label(cur, counts[cur]))
+        lst = cur if self.v_only.get() else None
+        for n, vals in channel_rows(d.image, self.dp, needle=self.v_filter.get(), lst=lst):
             item = self.tree.insert("", "end", values=vals)
             self._item_num[item] = n
-        self.count_label.config(text="У списку каналів: %d" % len(te.roam_numbers(d.image)))
+        self.count_label.config(text="Каналів у списках: %s. Усього: %d." % (
+            ", ".join("%d: %d" % (k, c) for k, c in counts.items() if c) or "жодного", sum(counts.values())))
         self.refresh_warnings()
+        self.after_refresh()
+
+    def after_refresh(self):
+        """Кнопка перенесення старих позначок R59 доступна, лише коли такі позначки є в документі (поверх загального правила «потрібен документ»)."""
+        d = self.doc
+        if getattr(self, "mig_btn", None) is not None and (d is None or not rc.legacy_channels(d.image)):
+            self.mig_btn.config(state="disabled")
 
     def selected_numbers(self):
         return [self._item_num[i] for i in self.tree.selection() if i in self._item_num]
@@ -175,25 +214,53 @@ class RoamPanel(Panel):
                 self.tree.selection_add(item)
         return True
 
+    def moving_from_other(self, nums, lst):
+        """[(номер, його список)] серед nums, які вже належать ІНШОМУ списку (їх додавання до lst -- перенос)."""
+        d = self.doc
+        have = dict(d.image.channels())
+        return [(n, rc.list_of(have[n])) for n in nums if n in have and rc.list_of(have[n]) not in (0, lst)]
+
     def _set_selected(self, on):
         nums = self.selected_numbers()
         if not nums:
             self._say("Спершу виділіть у таблиці один або кілька каналів.", "warn")
             return
-        self._apply(lambda img: te.channels_set_roam(img, nums, on), "додано до списку" if on else "прибрано зі списку")
+        if not on:
+            self._apply(lambda img: te.channels_set_roam(img, nums, 0), "прибрано зі списків")
+            return
+        lst = self.current_list()
+        moved = self.moving_from_other(nums, lst)
+        if moved and not messagebox.askokcancel("Перенести з інших списків?", "Канал належить одному списку. %d з виділених уже в інших списках (%s) і буде ПЕРЕНЕСЕНО "
+                                                "до списку %d. Продовжити?" % (len(moved), ", ".join("№%d: список %d" % x for x in moved[:8]) + (" ..." if len(moved) > 8 else ""), lst)):
+            return
+        self._apply(lambda img: te.channels_set_roam(img, nums, lst), "додано до списку %d" % lst)
 
-    def _clear_all(self):
+    def _clear_list(self):
         d = self.doc
         if d is None:
             return
-        nums = te.roam_numbers(d.image)
+        lst = self.current_list()
+        nums = te.roam_numbers(d.image, lst)
         if not nums:
-            self._say("У списку немає каналів.", "muted")
+            self._say("У списку %d немає каналів." % lst, "muted")
             return
-        if not messagebox.askokcancel("Прибрати всі позначки?", "Прапорець «Роумінг» буде знято з %d каналів документа. Інші поля каналів не змінюються. "
-                                      "Рація зміниться лише після «Записати кодплаг у рацію». Продовжити?" % len(nums)):
+        if not messagebox.askokcancel("Очистити список %d?" % lst, "Зі списку %d буде прибрано %d каналів документа (канали лишаються, інші поля не змінюються). "
+                                      "Рація зміниться лише після «Записати кодплаг у рацію». Продовжити?" % (lst, len(nums))):
             return
-        self._apply(lambda img: te.channels_set_roam(img, nums, False), "прибрано всі позначки")
+        self._apply(lambda img: te.channels_set_roam(img, nums, 0), "очищено список %d" % lst)
+
+    def _migrate(self):
+        d = self.doc
+        if d is None:
+            return
+        old = rc.legacy_channels(d.image)
+        if not old:
+            self._say("Старих позначок R59 немає.", "muted")
+            return
+        if not messagebox.askokcancel("Перенести старі позначки?", "Прошивка R60 старий прапорець «Роумінг» не читає. %d каналів зі старою позначкою (без списку) буде додано "
+                                      "до СПИСКУ 1, а позначку знято. Продовжити?" % len(old)):
+            return
+        self._apply(te.roam_migrate_legacy, "старі позначки перенесено в список 1")
 
     # ------------------------------------------------------------------ попередження
 

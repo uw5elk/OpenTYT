@@ -9,6 +9,7 @@ from tkinter import ttk
 import cps_csv as cc
 import gui_dialogs as gd
 import gui_theme as gt
+import roam_cfg as rc
 import table_edit as te
 
 from .editor_base import EditorPanel
@@ -18,7 +19,7 @@ CTCSS = ("67.0 69.3 71.9 74.4 77.0 79.7 82.5 85.4 88.5 91.5 94.8 97.4 100.0 103.
          "151.4 156.7 159.8 162.2 165.5 167.9 171.3 173.8 177.3 179.9 183.5 186.2 189.9 192.8 196.6 199.5 203.5 206.5 210.7 218.1 225.7 229.1 "
          "233.6 241.8 250.3 254.1").split()
 
-# (група, [(колонка CSV, підпис, тип поля)]). Типи: name, type, number, entry, bw, tone, sql, spin, ts, ref:<вид>, ta, power, tot, check, aes (лише редактор; у CSV колонки нема)
+# (група, [(колонка CSV, підпис, тип поля)]). Типи: name, type, number, entry, bw, tone, sql, spin, ts, ref:<вид>, ta, power, tot, check, roamlist, aes (лише редактор; у CSV колонки нема)
 GROUPS = [
     ("Основне", [("Channel Name", "Назва", "name"), ("Channel Type", "Тип", "type"), ("Channel Number", "Номер", "number")]),
     ("Частоти", [("Rx Frequency", "RX, МГц", "entry"), ("Tx Frequency", "TX, МГц", "entry"), ("Bandwidth (kHz)", "Смуга, кГц (аналог)", "bw")]),
@@ -31,7 +32,7 @@ GROUPS = [
     ("Опції", [("Power", "Потужність", "power"), ("Rx Only", "Лише прийом", "check"), ("Zone Skip", "Пропуск у зоні", "check"),
                ("All Skip", "Пропуск у всіх", "check"), ("TOT", "TOT, с (Off -- вимкнено)", "tot"), ("VOX", "VOX", "check"),
                ("No Beep", "Без звуку", "check"), ("No Eco", "Без еко", "check"),
-               ("Roam", "Роумінг: у списку автопереходу", "check")]),
+               ("RoamList", "Роум. список (0 -- без списку)", "roamlist")]),
     ("APRS і позиція", [("APRS", "Конфіг APRS", "ref:aprs"), ("Latitude", "Широта, °", "entry"), ("Longitude", "Довгота, °", "entry"),
                         ("Use Location", "Використовувати позицію", "check")]),
 ]
@@ -53,8 +54,9 @@ class ChannelsPanel(EditorPanel):
     columns = (("n", "№", 45, False), ("name", "Назва", 140, True), ("type", "Тип", 50, False), ("rx", "RX, МГц", 80, False), ("roam", "Роум.", 45, False))
 
     def entities(self, img):
-        roam = set(te.roam_numbers(img))
-        return [(n, (n, name, "Ц" if ty == "Digital" else "А", rx, "✓" if n in roam else "")) for n, name, ty, rx in te.channels(img, self.dp)]
+        # R60: у колонці «Роум.» -- номер списку 1..10 (порожньо -- канал у жодному списку)
+        roam = {n: rc.list_of(img.channel_rec(n)) for n in te.roam_numbers(img)}
+        return [(n, (n, name, "Ц" if ty == "Digital" else "А", rx, str(roam[n]) if n in roam else "")) for n, name, ty, rx in te.channels(img, self.dp)]
 
     # ------------------------------------------------------------------ форма
 
@@ -138,6 +140,8 @@ class ChannelsPanel(EditorPanel):
             w = ttk.Spinbox(parent, textvariable=var, from_=0, to=15, width=8, command=lambda: self.commit(col))
         elif ftype == "ts":
             w = ttk.Combobox(parent, textvariable=var, values=["1", "2"], state="readonly", width=24)
+        elif ftype == "roamlist":
+            w = ttk.Combobox(parent, textvariable=var, values=self._roam_labels(), state="readonly", width=24)
         elif ftype.startswith("ref:"):
             w = ttk.Combobox(parent, textvariable=var, values=[NONE_LABEL], state="readonly", width=36)
         elif ftype == "aes":
@@ -189,6 +193,8 @@ class ChannelsPanel(EditorPanel):
                     var.set(vals["Channel Number"])
                 elif ftype == "check":
                     var.set(vals[col].strip().casefold() in ("yes", "on", "true"))
+                elif ftype == "roamlist":
+                    var.set(self._roam_label(rc.list_of(img.channel_rec(self.sel))))
                 elif ftype.startswith("ref:"):
                     kind = ftype[4:]
                     opts = te.ref_options(img, kind)
@@ -213,6 +219,13 @@ class ChannelsPanel(EditorPanel):
         finally:
             self._loading = False
         self.after_refresh()
+
+    @staticmethod
+    def _roam_label(n):
+        return "0 -- без списку" if n == 0 else str(n)
+
+    def _roam_labels(self):
+        return [self._roam_label(k) for k in range(0, rc.LISTS_COUNT + 1)]
 
     def _display(self, col):
         f = self.fields[col]
@@ -270,7 +283,7 @@ class ChannelsPanel(EditorPanel):
             else:
                 ok = enabled and (col in ("Channel Name", "Channel Type") or te.applicable(col, self._digital))
             w, ftype = f["widget"], f["type"]
-            if ftype in ("type", "bw", "ts", "ta", "power", "aes") or ftype.startswith("ref:"):
+            if ftype in ("type", "bw", "ts", "ta", "power", "aes", "roamlist") or ftype.startswith("ref:"):
                 w.config(state="readonly" if ok else "disabled")
             else:
                 w.config(state="normal" if ok else "disabled")
@@ -284,6 +297,8 @@ class ChannelsPanel(EditorPanel):
             return "Digital" if v == TYPE_LABELS["Digital"] else "Analogue"
         if ftype == "check":
             return "Yes" if v else "No"
+        if ftype == "roamlist":
+            return str(v).split(" ")[0] or "0"
         if ftype.startswith("ref:"):
             n = self._ref_numbers.get(col, {}).get(v, 0)
             return te.ref_token(img, ftype[4:], n)

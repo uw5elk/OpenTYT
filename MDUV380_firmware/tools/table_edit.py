@@ -658,14 +658,19 @@ def channel_set_aes_slot(img, number, slot):
     return res
 
 
-def roam_numbers(img):
-    """Номери каналів зі списку «Роумінгу» (прапорець CHANNEL_FLAG_ROAMING), за зростанням."""
-    return [n for n, r in img.channels() if r[cc.O_FLAG1L] & cc.FL_ROAM]
+def roam_numbers(img, lst=None):
+    """Номери каналів зі списку роумінгу lst (1..10); lst=None -- з будь-якого списку. За зростанням."""
+    import roam_cfg as rc
+    return [n for n, r in img.channels() if (rc.list_of(r) == lst if lst is not None else rc.list_of(r) != 0)]
 
 
-def channels_set_roam(img, numbers, on):
-    """Виставити (on=True) або зняти прапорець «Роумінг» на каналах numbers за ОДИН прохід. Інші поля записів не змінюються ні на біт. Відсутній номер --
-    TableEditError (нічого не змінено). Повертає ImportResult, як і решта правок документа."""
+def channels_set_roam(img, numbers, lst):
+    """R60: призначити каналам numbers СПИСОК роумінгу lst (0 = прибрати зі списку, 1..10) за ОДИН прохід. Канал належить одному списку, тож перенос з іншого
+    списку -- те саме дія (у звіті «Канали» видно «зі списку M -> до списку N»). Старий прапорець R59 при цьому знімається (як у прошивці); інші байти записів не
+    змінюються ні на біт. Відсутній номер або список поза 0..10 -- TableEditError (нічого не змінено). Повертає ImportResult, як і решта правок документа."""
+    import roam_cfg as rc
+    if isinstance(lst, bool) or not isinstance(lst, int) or not 0 <= lst <= rc.LISTS_COUNT:
+        raise TableEditError(["список роумінгу: ціле 0..%d, а не %r" % (rc.LISTS_COUNT, lst)])
     have = dict(img.channels())
     missing = [n for n in numbers if n not in have]
     if missing:
@@ -675,16 +680,24 @@ def channels_set_roam(img, numbers, on):
     res.image = out
     for n in sorted(set(numbers)):
         rec = have[n]
-        new_rec = bytearray(rec)
-        new_rec[cc.O_FLAG1L] = (new_rec[cc.O_FLAG1L] | cc.FL_ROAM) if on else (new_rec[cc.O_FLAG1L] & ~cc.FL_ROAM & 0xFF)
-        if bytes(new_rec) != bytes(rec):
-            out.set_channel_rec(n, bytes(new_rec))
-            res.changed.append(("Канали", "№%d %s: Роумінг %s" % (n, cc.readable_text(rec[:16]), "додано до списку" if on else "прибрано зі списку")))
+        new_rec = rc.with_list(rec, lst)
+        if new_rec != bytes(rec):
+            out.set_channel_rec(n, new_rec)
+            was = rc.list_of(rec)
+            what = ("прибрано зі списку %d" % was) if lst == 0 else (("додано до списку %d" % lst) if was == 0 else ("перенесено зі списку %d до списку %d" % (was, lst)))
+            res.changed.append(("Канали", "№%d %s: Роумінг %s" % (n, cc.readable_text(rec[:16]), what)))
     return res
 
 
-def channel_set_roam(img, number, on):
-    return channels_set_roam(img, [number], on)
+def channel_set_roam(img, number, lst):
+    return channels_set_roam(img, [number], lst)
+
+
+def roam_migrate_legacy(img):
+    """R60: одноразове перенесення СТАРОГО прапорця R59 (LibreDMR_flag1 0x01) у СПИСОК 1: канали з прапорцем і без списку потрапляють до списку 1, прапорець
+    знімається. Канали, що вже мають список, не чіпаються. Повертає ImportResult (порожній -- переносити нічого)."""
+    import roam_cfg as rc
+    return channels_set_roam(img, rc.legacy_channels(img), 1)
 
 
 def channel_edit(img, number, changes, dp):

@@ -185,7 +185,7 @@ def test_format_and_roundtrip():
             check(b"\r\n" in raw and raw.count(b"\n") == raw.count(b"\r\n"), "кінці рядків CRLF")
             hdr = raw.split(b"\r\n")[0].decode("utf-8").split(";")
             check(hdr[:len(cc.CHANNEL_HDR)] == cc.CHANNEL_HDR and hdr[-1] == cc.READABLE, "заголовок Channels.csv: CPS-колонки + «Name (readable)»")
-            check([c["name"] for c in cc.CH_COLUMNS] == cc.CHANNEL_HDR[2:] + cc.CHANNEL_EXT_HDR, "колонки CH_COLUMNS == заголовок CPS (без №, назви) + наші колонки (R59: Roam)")
+            check([c["name"] for c in cc.CH_COLUMNS] == cc.CHANNEL_HDR[2:] + cc.CHANNEL_EXT_HDR, "колонки CH_COLUMNS == заголовок CPS (без №, назви) + наші колонки (R60: RoamList)")
             rows = read_csv_rows(os.path.join(d, "Channels.csv"))
             by_num = {r[0]: r for r in rows[1:]}
             check(rows[0].index("Rx Frequency") == 3 and by_num["1"][3] == "\t446" + dp + "00625", "частота з табуляцією попереду: %r" % by_num["1"][3])

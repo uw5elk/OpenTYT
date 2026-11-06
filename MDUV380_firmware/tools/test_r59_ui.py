@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""R59 (Tk): розділ «Роумінг» і колонка/прапорець «Роум.» у «Каналах».
+"""R59/R60 (Tk): розділ «Роумінг» (10 списків) і колонка «Роум.» / поле «Роум. список» у «Каналах».
 
 V1  розділ є в дереві «Кодплаг» одразу після «Каналів»; без кодплага кнопки списку вимкнені, кнопки рації залежать від рації;
-V2  список: усі канали з позначкою ✓, лічильник, «Лише канали зі списку», фільтр; примітка біля каналу, який прошивка пропустить;
-V3  «Додати поточно виділений канал» / «Прибрати» / «Прибрати всі...» міняють ЛИШЕ прапорець (документ позначено зміненим, виділення збережено); без виділення -- підказка;
-V4  «Канали»: колонка «Роум.» (✓) і прапорець у формі «Опції» -- клацання міняє документ, решта запису не змінюється;
+V2  список: усі канали з номером списку, лічильники по списках, «Лише канали цього списку», вибір списку, фільтр; примітка біля каналу, який прошивка пропустить;
+V3  «Додати виділені до списку» / «Прибрати зі списків» / «Очистити список...» міняють ЛИШЕ байт списку (документ позначено зміненим, виділення збережено); без виділення -- підказка;
+    канал з іншого списку -- питання про ПЕРЕНОС (відмова нічого не міняє); «Перенести старі позначки R59 у список 1» -- з питанням, лише коли вони є;
+V4  «Канали»: колонка «Роум.» (номер списку) і випадний список «Роум. список» у формі «Опції» -- вибір міняє документ (байт 37), решта запису не змінюється;
 V5  рація (підміна): читання підставляє значення; запис передає значення форми в roam_cfg.write_state; погане число -- вікно помилки й НІЯКОГО запису;
     після читання «блока нема» при наявних прапорцях -- попередження про блок із пропозицією зняти позначки;
 V6  попередження на панелі: увімкнено при <2 каналів; аналог / симплекс; чисто -- порожньо;
@@ -110,11 +111,17 @@ def test_v1_v6():
             check(state(b) == "normal", "V2: з кодплагом кнопка списку доступна: %s" % b.cget("text"))
         r = rows(p)
         check(len(r) == 5 and [str(x[0]) for x in r] == ["1", "2", "3", "4", "5"], "V2: усі 5 каналів: %r" % [x[0] for x in r])
-        check([x[5] for x in r] == ["✓", "✓", "", "", "✓"], "V2: позначка ✓ рівно на 1, 2, 5: %r" % [x[5] for x in r])
-        check("3" in p.count_label.cget("text"), "V2: лічильник: %s" % p.count_label.cget("text"))
+        check([x[5] for x in r] == ["1", "1", "", "", "1"], "V2: номер списку рівно на 1, 2, 5: %r" % [x[5] for x in r])
+        check("1: 3" in p.count_label.cget("text") and "Усього: 3" in p.count_label.cget("text"), "V2: лічильник по списках: %s" % p.count_label.cget("text"))
+        check(p.cb_list.cget("values")[0] == "1 (3)" and p.cb_list.cget("values")[1] == "2 (0)" and len(p.cb_list.cget("values")) == 10, "V2: у випадному списку 10 списків із лічильниками: %r" % (p.cb_list.cget("values"),))
         p.v_only.set(True)
         p._fill()
-        check([str(x[0]) for x in rows(p)] == ["1", "2", "5"], "V2: «Лише канали зі списку»: %r" % [x[0] for x in rows(p)])
+        check([str(x[0]) for x in rows(p)] == ["1", "2", "5"], "V2: «Лише канали цього списку» (список 1): %r" % [x[0] for x in rows(p)])
+        p.v_list.set("2 (0)")
+        p._fill()
+        check(rows(p) == [] and p.current_list() == 2, "V2: вибір списку 2 -- порожньо: %r" % rows(p))
+        p.v_list.set("1 (3)")
+        p._fill()
         p.v_only.set(False)
         p.v_filter.set("RM4")
         lp.spin(app, 0.2)
@@ -130,14 +137,17 @@ def test_v1_v6():
         app.set_document(doc)
         lp.spin(app, 0.3)
         # --- V3: додати/прибрати ---
+        p.v_only.set(False)
+        p._fill()
         p._set_selected(True)
         check("Спершу виділіть" in p.msg.cget("text") and not doc.modified, "V3: без виділення -- підказка і документ не змінено")
         pick(p, [3, 4])
         p.add_btn.invoke()
         lp.spin(app, 0.2)
-        check(te.roam_numbers(doc.image) == [1, 2, 3, 4, 5] and doc.modified, "V3: додано 3 і 4: %r" % te.roam_numbers(doc.image))
+        check(te.roam_numbers(doc.image, 1) == [1, 2, 3, 4, 5] and doc.modified, "V3: додано 3 і 4 до списку 1: %r" % te.roam_numbers(doc.image))
+        check(len(dlg.asks) == 0, "V3: канали без списку додаються без питання")
         check(set(p.selected_numbers()) == {3, 4}, "V3: виділення збережено: %r" % p.selected_numbers())
-        check("5" in p.count_label.cget("text"), "V3: лічильник оновлено: %s" % p.count_label.cget("text"))
+        check("1: 5" in p.count_label.cget("text"), "V3: лічильник оновлено: %s" % p.count_label.cget("text"))
         pick(p, [1, 2])
         p.rem_btn.invoke()
         lp.spin(app, 0.2)
@@ -146,14 +156,43 @@ def test_v1_v6():
         pick(p, [3])
         p.add_btn.invoke()
         check(t59.rec_of(doc.image, 3) == before, "V3: повторне додавання нічого не змінює")
+        # --- перенос між списками ---
+        p.v_list.set("2 (0)")
+        pick(p, [3, 1])
+        n_ask = len(dlg.asks)
         dlg.answer = False
+        p.add_btn.invoke()
+        check(len(dlg.asks) == n_ask + 1 and "ПЕРЕНЕСЕНО" in dlg.asks[-1] and "№3" in dlg.asks[-1], "V3: канал 3 уже в списку 1 -- питання про перенос: %r" % dlg.asks[-1:])
+        check(te.roam_numbers(doc.image, 1) == [3, 4, 5] and te.roam_numbers(doc.image, 2) == [], "V3: відмова від переносу нічого не змінила")
+        dlg.answer = True
+        p.add_btn.invoke()
+        lp.spin(app, 0.2)
+        check(te.roam_numbers(doc.image, 2) == [1, 3] and te.roam_numbers(doc.image, 1) == [4, 5], "V3: після підтвердження 1 і 3 у списку 2 (1 з нього не було -- без питання): %r %r" % (te.roam_numbers(doc.image, 1), te.roam_numbers(doc.image, 2)))
+        # --- очищення вибраного списку ---
+        p.v_list.set("1 (2)")
+        dlg.answer = False
+        n_ask = len(dlg.asks)
         p.clr_btn.invoke()
-        check(te.roam_numbers(doc.image) == [3, 4, 5] and len(dlg.asks) == 1, "V3: «Прибрати всі...» без підтвердження нічого не робить")
+        check(te.roam_numbers(doc.image, 1) == [4, 5] and len(dlg.asks) == n_ask + 1, "V3: «Очистити список...» без підтвердження нічого не робить")
         dlg.answer = True
         p.clr_btn.invoke()
         lp.spin(app, 0.2)
-        check(te.roam_numbers(doc.image) == [] and len(dlg.asks) == 2, "V3: «Прибрати всі...» з підтвердженням зняла все")
-        doc.apply(te.channels_set_roam(doc.image, [1, 2, 5], True))
+        check(te.roam_numbers(doc.image, 1) == [] and te.roam_numbers(doc.image, 2) == [1, 3], "V3: «Очистити список...» зняла лише вибраний список: %r %r" % (te.roam_numbers(doc.image, 1), te.roam_numbers(doc.image, 2)))
+        check(state(p.mig_btn) == "disabled", "V3: старих позначок нема -- кнопка перенесення вимкнена")
+        # --- перенесення старих позначок R59 ---
+        old_img = t59.set_flag(t59.set_flag(doc.image, 4, True), 5, True)
+        doc.apply(type("Res", (), {"image": old_img, "changed": [("Канали", "тест")], "added": [], "removed": [], "warnings": [], "any_change": lambda self: True})())
+        lp.spin(app, 0.2)
+        check(state(p.mig_btn) == "normal" and "СТАРИМ" in p.warn_label.cget("text"), "V3: є старі позначки -- кнопка доступна, попередження показано: %r" % p.warn_label.cget("text"))
+        dlg.answer = False
+        p.mig_btn.invoke()
+        check(rc.legacy_channels(doc.image) == [4, 5], "V3: перенесення без підтвердження нічого не робить")
+        dlg.answer = True
+        p.mig_btn.invoke()
+        lp.spin(app, 0.2)
+        check(rc.legacy_channels(doc.image) == [] and te.roam_numbers(doc.image, 1) == [4, 5], "V3: старі позначки -> список 1: %r" % te.roam_numbers(doc.image, 1))
+        doc.apply(te.channels_set_roam(doc.image, te.roam_numbers(doc.image), 0))
+        doc.apply(te.channels_set_roam(doc.image, [1, 2, 5], 1))
         lp.spin(app, 0.2)
         # --- V4: «Канали» ---
         app.show("channels")
@@ -161,24 +200,27 @@ def test_v1_v6():
         ch = app.get_panel("channels")
         check(ch.columns[-1][:2] == ("roam", "Роум."), "V4: колонка «Роум.» у таблиці каналів")
         vals = {int(ch.tree.item(i, "values")[0]): ch.tree.item(i, "values")[-1] for i in ch.tree.get_children()}
-        check(vals[1] == "✓" and vals[2] == "✓" and vals[5] == "✓" and vals[3] == "" and vals[4] == "", "V4: ✓ на каналах зі списку: %r" % vals)
-        check("Roam" in ch.fields and ch.fields["Roam"]["type"] == "check", "V4: прапорець «Roam» у формі")
+        check(vals[1] == "1" and vals[2] == "1" and vals[5] == "1" and vals[3] == "" and vals[4] == "", "V4: номер списку на каналах зі списку: %r" % vals)
+        check("RoamList" in ch.fields and ch.fields["RoamList"]["type"] == "roamlist" and "Roam" not in ch.fields, "V4: випадний список «Роум. список» у формі")
+        check(list(ch.fields["RoamList"]["widget"].cget("values")) == ["0 -- без списку"] + [str(k) for k in range(1, 11)], "V4: у ньому «0 -- без списку», 1..10")
         for item, ident in ch._item_ident.items():
             if ident == 3:
                 ch.tree.selection_set(item)
         ch.update()
         lp.spin(app, 0.3)
-        check(ch.sel == 3 and ch.fields["Roam"]["var"].get() is False, "V4: форма каналу №3: прапорець знято")
+        check(ch.sel == 3 and ch.fields["RoamList"]["var"].get() == "0 -- без списку", "V4: форма каналу №3: без списку")
         old = t59.rec_of(doc.image, 3)
-        ch.fields["Roam"]["var"].set(True)
-        ch.commit("Roam")
+        ch.fields["RoamList"]["var"].set("7")
+        ch.commit("RoamList")
         lp.spin(app, 0.2)
         new = t59.rec_of(doc.image, 3)
-        check(te.roam_numbers(doc.image) == [1, 2, 3, 5], "V4: клацання прапорця у формі додало канал №3: %r" % te.roam_numbers(doc.image))
-        check([i for i in range(56) if old[i] != new[i]] == [38], "V4: змінився лише байт 38")
-        ch.fields["Roam"]["var"].set(False)
-        ch.commit("Roam")
-        check(te.roam_numbers(doc.image) == [1, 2, 5], "V4: і зняття")
+        check(te.roam_numbers(doc.image, 7) == [3] and te.roam_numbers(doc.image, 1) == [1, 2, 5], "V4: вибір «7» у формі поклав канал №3 у список 7: %r" % te.roam_numbers(doc.image))
+        check([i for i in range(56) if old[i] != new[i]] == [37] and new[37] == 0xC7, "V4: змінився лише байт 37 (0xC7)")
+        ch.load_form()
+        check(ch.fields["RoamList"]["var"].get() == "7", "V4: форма показує 7 після перезавантаження")
+        ch.fields["RoamList"]["var"].set("0 -- без списку")
+        ch.commit("RoamList")
+        check(te.roam_numbers(doc.image) == [1, 2, 5] and t59.rec_of(doc.image, 3)[37] == 0, "V4: і зняття (байт 37 = 0)")
         # --- V5: рація (підміна) ---
         app.show("roam")
         lp.spin(app, 0.3)
@@ -235,21 +277,21 @@ def test_v1_v6():
             cps_link.open_radio, rc.read_state, rc.write_state, p.shell.run_task = old
         # --- V6: попередження ---
         p.v_enabled.set(True)
-        doc.apply(te.channels_set_roam(doc.image, te.roam_numbers(doc.image), False))
-        doc.apply(te.channels_set_roam(doc.image, [1], True))
+        doc.apply(te.channels_set_roam(doc.image, te.roam_numbers(doc.image), 0))
+        doc.apply(te.channels_set_roam(doc.image, [1], 1))
         p._fill()
         t = p.warn_label.cget("text")
-        check("щонайменше 2" in t, "V6: увімкнено, 1 канал: %r" % t)
-        doc.apply(te.channels_set_roam(doc.image, [1, 2, 5], True))
+        check("жоден список" in t, "V6: увімкнено, 1 канал: %r" % t)
+        doc.apply(te.channels_set_roam(doc.image, [1, 2, 5], 1))
         p._fill()
         check(p.warn_label.cget("text") == "", "V6: чистий список -- без попереджень: %r" % p.warn_label.cget("text"))
-        doc.apply(te.channels_set_roam(doc.image, [3, 4], True))
+        doc.apply(te.channels_set_roam(doc.image, [3, 4], 1))
         p._fill()
         t = p.warn_label.cget("text")
         check("№3" in t and "симплекс" in t and "№4" in t and "аналог" in t, "V6: симплекс і аналог: %r" % t)
         p.v_enabled.set(False)
         p.refresh_warnings()
-        check("щонайменше" not in p.warn_label.cget("text"), "V6: вимкнено -- про кількість не нагадуємо")
+        check("жоден список" not in p.warn_label.cget("text"), "V6: вимкнено -- про кількість не нагадуємо")
     finally:
         dlg.restore()
         app.destroy()
@@ -298,7 +340,7 @@ def main():
     if FAILS:
         print("test_r59_ui: %d провалів" % len(FAILS))
         return 1
-    print("test_r59_ui: усе гаразд (%d перевірок: список, кнопки, «Канали», рація, попередження, верстка)." % PASSED[0])
+    print("test_r59_ui: усе гаразд (%d перевірок: 10 списків, перенос, кнопки, «Канали», рація, попередження, верстка)." % PASSED[0])
     return 0
 
 
