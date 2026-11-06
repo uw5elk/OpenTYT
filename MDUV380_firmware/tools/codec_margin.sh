@@ -13,14 +13,14 @@
 #
 # Використання (з каталогу MDUV380_firmware, після `make`, навіть невдалого лінкування):
 #   tools/codec_margin.sh [підпис]
-# Змінні: BUILD (типово build), TARGET (типово openuv380-10w). Код виходу завжди 0 -- це лише інформація, крок CI не повинен ламати збірку.
+# Змінні: BUILD (типово build), TARGET (типово openuv380-10w), LD (типово STM32F405VGTX_FLASH.ld). Код виходу завжди 0 -- це лише інформація, крок CI не повинен ламати збірку.
 
 BUILD=${BUILD:-build}
 TARGET=${TARGET:-openuv380-10w}
 CROSS=${CROSS:-arm-none-eabi-}
 LABEL=${1:-$TARGET}
 CODEC=$((0x0807537C))
-LD=STM32F405VGTX_FLASH.ld
+LD=${LD:-STM32F405VGTX_FLASH.ld}   # R63C: для збірки з ENABLE_RODATA_AFTER_CODEC=1 викликати з LD=STM32F405VGTX_FLASH_RODATA_AFTER_CODEC.ld
 MARGIN_TARGET=codec-margin
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/codec_margin.XXXXXX") || { echo "codec_margin: не вдалося створити тимчасовий каталог"; exit 0; }

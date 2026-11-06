@@ -206,6 +206,10 @@ endif
 
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -Os -g3 -ffunction-sections -fdata-sections -Wall -MMD -MP
 LDSCRIPT = STM32F405VGTX_FLASH.ld
+# R63C: ТЕСТОВА збірка -- .rodata ПІСЛЯ блока кодека (див. шапку STM32F405VGTX_FLASH_RODATA_AFTER_CODEC.ld). Без прапорця лінкер-скрипт і .bin ті самі.
+ifeq ($(ENABLE_RODATA_AFTER_CODEC),1)
+LDSCRIPT = STM32F405VGTX_FLASH_RODATA_AFTER_CODEC.ld
+endif
 LDFLAGS = $(CPU) -T$(LDSCRIPT) --specs=nano.specs -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map -lc -lm -lnosys
 
 C_SRCS   = $(shell find Core Drivers Middlewares USB_DEVICE application -name *.c ! -name languages_builder.c ! -name *_template.c)
