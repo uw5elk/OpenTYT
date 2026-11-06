@@ -3,6 +3,9 @@
  * Див. wake_hop.h. Лише з -DENABLE_ROAM_RETRY. Усі виклики -- із задачі UI (uiTxScreen.c, меню «Роумінг»):
  * кодплаг, дисплей і мелодії з ISR/задачі HRC6000 не чіпаємо (R57 §6).
  *
+ * R60: списків 10; номер списку каналу -- байт 37 запису (з міткою, roam_cfg.h). Кандидат -- канал з ТИМ САМИМ номером списку,
+ * що й у поточного (вихідного) каналу; решта правил R59 без змін.
+ *
  * Принципи:
  *  - кодплаг при ПЕРЕХОДІ не змінюється, «останній канал зони» (LUCZ) і nonVolatileSettings не змінюються --
  *    після перезапуску рація стартує з каналу, збереженого в зоні;
@@ -83,20 +86,41 @@ static void fillChanInfo(const CodeplugChannel_t *ch, wakeHopChan_t *info)
 	info->colourCode = ch->txColor;
 }
 
-/* Чи канал num у списку роумінгу: зайнятий запис кодплагу з прапорцем ROAMING (читається лише один байт). */
-static bool chanInList(int num)
+/* R60: байт списку в записі каналу -- це саме поле _UNUSED_1 (зсув 37); змінилась розкладка структури -- збірка зупиниться тут, а не мовчки читатиме не той байт. */
+_Static_assert(offsetof(CodeplugChannel_t, _UNUSED_1) == ROAM_LIST_BYTE_OFFSET, "ROAM_LIST_BYTE_OFFSET != offsetof(CodeplugChannel_t, _UNUSED_1)");
+
+/* R60: номер списку каналу num кодплагу: зайнятий запис -> з байта 37 (читається лише він), інакше 0. */
+uint8_t roamChannelList(int num)
 {
 	CodeplugChannel_t tmp;
 
 	if (codeplugAllChannelsIndexIsInUse(num) == false)
 	{
-		return false;
+		return 0U;
 	}
 
-	tmp.LibreDMR_flag1 = 0U;
-	codeplugChannelGetDataWithOffsetAndLengthForIndex(num, &tmp, (uint8_t)offsetof(CodeplugChannel_t, LibreDMR_flag1), 1);
+	tmp._UNUSED_1 = 0U;
+	codeplugChannelGetDataWithOffsetAndLengthForIndex(num, &tmp, (uint8_t)ROAM_LIST_BYTE_OFFSET, 1);
 
-	return ((tmp.LibreDMR_flag1 & CODEPLUG_CHANNEL_LIBREDMR_FLAG1_ROAMING) != 0U);
+	return roamListFromByte(tmp._UNUSED_1);
+}
+
+uint8_t roamRecList(const CodeplugChannel_t *rec)
+{
+	return roamListFromByte(rec->_UNUSED_1);
+}
+
+void roamRecSetList(CodeplugChannel_t *rec, uint8_t list)
+{
+	rec->_UNUSED_1 = roamListToByte(list);
+	/* Старий прапорець R59 прошивка більше не читає; знімаємо його, щоб одноразове перетворення «старий прапорець -> список 1» у CPS
+	 * не оживило канал, якому список уже явно задано (або скасовано). */
+	codeplugChannelSetFlag(rec, CHANNEL_FLAG_ROAMING, 0U);
+}
+
+uint8_t roamCurrentList(void)
+{
+	return roamRecList(currentChannelData);
 }
 
 static bool candidateIsOk(unsigned num, void *ctx)
@@ -106,7 +130,8 @@ static bool candidateIsOk(unsigned num, void *ctx)
 
 	(void)ctx;
 
-	if (chanInList((int)num) == false)
+	/* Той самий номер списку, що й у вихідного/поточного каналу (на знайденому каналі він такий самий). Дешевий відсів: один байт. */
+	if (wakeHopListMatch(roamCurrentList(), roamChannelList((int)num)) == false)
 	{
 		return false;
 	}
@@ -174,53 +199,88 @@ static void roamLoadChannel(int num)
 	trxConfigurePA_DAC_ForFrequencyBand();
 }
 
-bool roamCurrentInList(void)
+bool roamRecSuitable(const CodeplugChannel_t *rec)
 {
-	return (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_ROAMING) != 0);
+	wakeHopChan_t info;
+
+	fillChanInfo(rec, &info);
+	info.inhibited = false;   /* віддалене блокування -- тимчасовий стан, а не властивість запису: у список канал це не забороняє */
+
+	return wakeHopChannelUsable(&info);
 }
 
 bool roamCurrentSuitable(void)
 {
-	wakeHopChan_t info;
-
-	fillChanInfo(currentChannelData, &info);
-
-	return (wakeHopChannelUsable(&info) && (uiDataGlobal.currentSelectedChannelNumber >= CODEPLUG_CHANNELS_MIN) &&
+	return (roamRecSuitable(currentChannelData) && (uiDataGlobal.currentSelectedChannelNumber >= CODEPLUG_CHANNELS_MIN) &&
 			(uiDataGlobal.currentSelectedChannelNumber <= CODEPLUG_CHANNELS_MAX));
 }
 
-bool roamToggleCurrent(void)
+roamAssign_t roamChannelAssign(int num, uint8_t list)
 {
 	CodeplugChannel_t rec;
-	int num = uiDataGlobal.currentSelectedChannelNumber;
-	bool want = (roamCurrentInList() == false);
+	uint8_t oldByte;
+	bool oldFlag;
 
-	if ((menuSystemGetRootMenuNumber() != UI_CHANNEL_MODE) || (num < CODEPLUG_CHANNELS_MIN) || (num > CODEPLUG_CHANNELS_MAX))
+	if ((num < CODEPLUG_CHANNELS_MIN) || (num > CODEPLUG_CHANNELS_MAX) || (list > ROAM_LISTS_COUNT) || (codeplugAllChannelsIndexIsInUse(num) == false))
 	{
-		return false;
+		return ROAM_ASSIGN_BAD;
 	}
 
-	/* Свіжий запис із кодплагу (а не екранна копія з тимчасовими правками в ОЗП), міняємо лише прапорець. */
+	if (settingsIsOptionBitSet(BIT_CHANNELS_ARE_READ_ONLY))
+	{
+		return ROAM_ASSIGN_READONLY;
+	}
+
+	/* Свіжий запис із кодплагу (а не екранна копія з тимчасовими правками в ОЗП); міняємо лише байт списку й старий прапорець. */
 	codeplugChannelGetDataForIndex(num, &rec);
-	codeplugChannelSetFlag(&rec, CHANNEL_FLAG_ROAMING, (want ? 1U : 0U));
 
-	if (codeplugChannelSaveDataForIndex(num, &rec) == false)
+	if ((list != 0U) && (roamRecSuitable(&rec) == false))
 	{
-		return false;
+		return ROAM_ASSIGN_UNSUITABLE;
 	}
 
-	codeplugChannelSetFlag(currentChannelData, CHANNEL_FLAG_ROAMING, (want ? 1U : 0U));
+	oldByte = rec._UNUSED_1;
+	oldFlag = (codeplugChannelGetFlag(&rec, CHANNEL_FLAG_ROAMING) != 0U);
+	roamRecSetList(&rec, list);
 
-	return true;
+	if ((rec._UNUSED_1 != oldByte) || oldFlag)   /* вже саме це -- не пишемо (знос флеша/EEPROM) */
+	{
+		if (codeplugChannelSaveDataForIndex(num, &rec) == false)
+		{
+			return ROAM_ASSIGN_ERR;
+		}
+	}
+
+	if ((menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) && (uiDataGlobal.currentSelectedChannelNumber == num))
+	{
+		roamRecSetList(currentChannelData, list);
+	}
+
+	return ROAM_ASSIGN_OK;
 }
 
-unsigned roamListCount(void)
+roamAssign_t roamCurrentAssign(uint8_t list)
+{
+	if (menuSystemGetRootMenuNumber() != UI_CHANNEL_MODE)
+	{
+		return ROAM_ASSIGN_BAD;
+	}
+
+	return roamChannelAssign(uiDataGlobal.currentSelectedChannelNumber, list);
+}
+
+unsigned roamListCount(uint8_t list)
 {
 	unsigned n = 0U;
 
+	if ((list < 1U) || (list > ROAM_LISTS_COUNT))
+	{
+		return 0U;
+	}
+
 	for (int num = CODEPLUG_CHANNELS_MIN; num <= CODEPLUG_CHANNELS_MAX; num++)
 	{
-		if (chanInList(num))
+		if (roamChannelList(num) == list)
 		{
 			n++;
 		}
@@ -229,7 +289,7 @@ unsigned roamListCount(void)
 	return n;
 }
 
-int roamListStep(int fromNum, int dir)
+static int stepCircle(int fromNum, int dir, uint8_t list, bool anyInUse)
 {
 	int span = (CODEPLUG_CHANNELS_MAX - CODEPLUG_CHANNELS_MIN) + 1;
 	int start = ((fromNum >= CODEPLUG_CHANNELS_MIN) && (fromNum <= CODEPLUG_CHANNELS_MAX)) ? fromNum : ((dir >= 0) ? (CODEPLUG_CHANNELS_MIN - 1) : (CODEPLUG_CHANNELS_MAX + 1));
@@ -241,13 +301,28 @@ int roamListStep(int fromNum, int dir)
 		/* По колу в межах CODEPLUG_CHANNELS_MIN..MAX. */
 		num = ((num - CODEPLUG_CHANNELS_MIN) % span + span) % span + CODEPLUG_CHANNELS_MIN;
 
-		if (chanInList(num))
+		if (anyInUse ? codeplugAllChannelsIndexIsInUse(num) : (roamChannelList(num) == list))
 		{
 			return num;
 		}
 	}
 
 	return 0;
+}
+
+int roamListStep(uint8_t list, int fromNum, int dir)
+{
+	if ((list < 1U) || (list > ROAM_LISTS_COUNT))
+	{
+		return 0;
+	}
+
+	return stepCircle(fromNum, dir, list, false);
+}
+
+int roamChannelStep(int fromNum, int dir)
+{
+	return stepCircle(fromNum, dir, 0U, true);
 }
 
 void wakeHopBegin(void)
@@ -264,7 +339,7 @@ void wakeHopBegin(void)
 
 	/* Роумінг -- лише в режимі каналів, цифровий канал, не хотспот/реверс/talkaround, функція увімкнена,
 	 * поточний канал у списку. Одне рішення на PTT. */
-	if (wakeHopMayRoam(roamCfgIsEnabled(), roamCurrentInList()) &&
+	if (wakeHopMayRoam(roamCfgIsEnabled(), roamCurrentList()) &&
 			(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&
 			(trxGetMode() == RADIO_MODE_DIGITAL) &&
 			(settingsUsbMode != USB_MODE_HOTSPOT) &&

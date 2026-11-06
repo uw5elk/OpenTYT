@@ -976,11 +976,19 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 					{
 						snprintf(nameBuf, NAME_BUFFER_LEN, ROAM_ZONE_SPARE_FMT, (int)roamActiveChannel());
 					}
-					else if (roamCfgIsEnabled() && roamCurrentInList())
+					else if (roamCfgIsEnabled() && (roamCurrentList() != 0U))
 					{
+						// R60: «Р» з номером списку (« Р1»..« Р10»); не вміщається з номером -- голе « Р»; зовсім нема місця -- без позначки,
+						// наявні елементи рядка не зсуваємо.
 						size_t zl = strlen(nameBuf);
+						char indBuf[8];
+						size_t il = (size_t)snprintf(indBuf, sizeof(indBuf), " %s%u", ROAM_IND_LIST, (unsigned)roamCurrentList());
 
-						if ((zl + 3U) < NAME_BUFFER_LEN)
+						if ((zl + il) < NAME_BUFFER_LEN)
+						{
+							memcpy(nameBuf + zl, indBuf, il + 1U);
+						}
+						else if ((zl + 3U) < NAME_BUFFER_LEN)
 						{
 							snprintf(nameBuf + zl, NAME_BUFFER_LEN - zl, " %s", ROAM_IND_LIST);
 						}

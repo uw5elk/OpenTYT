@@ -36,6 +36,26 @@ typedef struct
 	uint8_t reserved;    /* 0 */
 } roamOnFlashCfg_t;
 
+/*
+ * R60: НОМЕР СПИСКУ роумінгу каналу (0 = канал у жодному списку, 1..10). Зберігається в запису каналу кодплагу, у байті 37
+ * (CodeplugChannel_t._UNUSED_1 -- прошивка його більше ніде не читає й не пише; наш CPS теж не чіпав), З МІТКОЮ, за зразком мітки
+ * слота AES (0xA0): байт = 0xC0 | N, N = 1..10 (тобто 0xC1..0xCA). Будь-що інше (0x00, 0xFF, випадкове значення від стороннього
+ * CPS, 0xCB..0xCF) = «списку нема». Так сміття у вільному байті не стає списком само собою.
+ * Старий прапорець R59 (CHANNEL_FLAG_ROAMING, біт 0x01 LibreDMR_flag1) прошивка більше НЕ читає; кожен запис списку прошивкою
+ * знімає його, щоб одноразове перетворення в CPS не оживило вже скасований список. Формат читає й пише також CPS
+ * (tools/roam_cfg.py: LIST_BYTE_OFFSET, LIST_TAG) -- змінюючи тут, змінюй там.
+ */
+#define ROAM_LISTS_COUNT       10U
+#define ROAM_LIST_BYTE_OFFSET  37U      /* зсув у 56-байтовому записі каналу */
+#define ROAM_LIST_TAG          0xC0U
+#define ROAM_LIST_TAG_MASK     0xF0U
+#define ROAM_LIST_VALUE_MASK   0x0FU
+
+/* Байт запису -> номер списку 0..10 (нерозпізнане -> 0). */
+uint8_t roamListFromByte(uint8_t b);
+/* Номер списку -> байт запису: 0 (і число поза 1..10) -> 0x00; N -> 0xC0 | N. */
+uint8_t roamListToByte(uint8_t list);
+
 /* Обмежити число стрибків діапазоном 1..5; 0 і нісенітниця -> типове значення. */
 uint8_t roamCfgClampHops(uint8_t hops);
 

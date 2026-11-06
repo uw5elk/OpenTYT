@@ -33,6 +33,10 @@
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
 #include "interfaces/gps.h"
+#if defined(ENABLE_ROAM_RETRY)
+#include "functions/wake_hop.h"       /* R60: номер списку роумінгу каналу (roamRecList/roamRecSetList/roamRecSuitable) */
+#include "user_interface/roam_ui.h"
+#endif
 #if defined(ENABLE_AES)
 #include "functions/channelVox.h"   /* ui8: одна умова «VOX доступний» для показу й обробників */
 #if defined(APRS_R21_NAMES)
@@ -121,6 +125,9 @@ enum
 	CH_DETAILS_DMR_FORCE_DMO,
 #if defined(ENABLE_AES)
 	CH_DETAILS_ENCRYPT,// per-channel AES TX key (codeplug encrypt byte); appended last so entryIds don't shift
+#endif
+#if defined(ENABLE_ROAM_RETRY)
+	CH_DETAILS_ROAM_LIST,// R60: список роумінгу каналу (Вимк, 1..10); ОСТАННІЙ пункт, тож номери наявних пунктів (швидкі клавіші) не зсуваються
 #endif
 	NUM_CH_DETAILS_ITEMS
 };// The last item in the list is used so that we automatically get a total number of items in the list
@@ -734,6 +741,23 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 						else
 						{
 							snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "Key %u", codeplugChannelGetAesKeySlot(&tmpChannel));
+						}
+						break;
+#endif
+#if defined(ENABLE_ROAM_RETRY)
+					case CH_DETAILS_ROAM_LIST:
+						leftSide = ROAM_DET_LABEL;
+						if (rootMenuIsVFO)
+						{
+							rightSideConst = currentLanguage->n_a;
+						}
+						else if (roamRecList(&tmpChannel) == 0U)
+						{
+							rightSideConst = ROAM_OFF_S;
+						}
+						else
+						{
+							snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u", (unsigned)roamRecList(&tmpChannel));
 						}
 						break;
 #endif
@@ -1434,6 +1458,21 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
+#if defined(ENABLE_ROAM_RETRY)
+				case CH_DETAILS_ROAM_LIST:
+					if ((rootMenuIsVFO == false) && (roamRecList(&tmpChannel) < ROAM_LISTS_COUNT))
+					{
+						if (roamRecSuitable(&tmpChannel))
+						{
+							roamRecSetList(&tmpChannel, (uint8_t)(roamRecList(&tmpChannel) + 1U));
+						}
+						else
+						{
+							uiNotificationShowShort(1500, ROAM_MSG_UNSUITABLE, true);   // аналог, DMO, симплекс, лише прийом, поза діапазоном
+						}
+					}
+					break;
+#endif
 				case CH_DETAILS_DMR_FORCE_DMO:
 					if (tmpChannel.chMode == RADIO_MODE_DIGITAL)
 					{
@@ -1699,6 +1738,14 @@ static void handleEvent(uiEvent_t *ev)
 						int eidx = ((slot >= 1) && (slot <= 15)) ? slot : 0;
 						if (eidx > 0) { eidx--; }
 						codeplugChannelSetAesKeySlot(&tmpChannel, (eidx == 0) ? 0xFF : (uint8_t)eidx);
+					}
+					break;
+#endif
+#if defined(ENABLE_ROAM_RETRY)
+				case CH_DETAILS_ROAM_LIST:
+					if ((rootMenuIsVFO == false) && (roamRecList(&tmpChannel) > 0U))
+					{
+						roamRecSetList(&tmpChannel, (uint8_t)(roamRecList(&tmpChannel) - 1U));   // зняти зі списку завжди можна
 					}
 					break;
 #endif

@@ -8,6 +8,28 @@
 
 #include <string.h>
 
+uint8_t roamListFromByte(uint8_t b)
+{
+	uint8_t n = (uint8_t)(b & ROAM_LIST_VALUE_MASK);
+
+	if (((b & ROAM_LIST_TAG_MASK) != ROAM_LIST_TAG) || (n < 1U) || (n > ROAM_LISTS_COUNT))
+	{
+		return 0U;
+	}
+
+	return n;
+}
+
+uint8_t roamListToByte(uint8_t list)
+{
+	if ((list < 1U) || (list > ROAM_LISTS_COUNT))
+	{
+		return 0U;
+	}
+
+	return (uint8_t)(ROAM_LIST_TAG | list);
+}
+
 uint8_t roamCfgClampHops(uint8_t hops)
 {
 	if ((hops < ROAM_HOPS_MIN) || (hops > ROAM_HOPS_MAX))

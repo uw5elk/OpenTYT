@@ -70,9 +70,14 @@ bool wakeHopCandidateOk(const wakeHopChan_t *c, const wakeHopTried_t *t)
 	return (wakeHopChannelUsable(c) && (wakeHopTriedHas(t, c->rxFreq, c->txFreq, c->colourCode) == false));
 }
 
-bool wakeHopMayRoam(bool cfgEnabled, bool currentInList)
+bool wakeHopMayRoam(bool cfgEnabled, uint8_t currentList)
 {
-	return (cfgEnabled && currentInList);
+	return (cfgEnabled && (currentList >= 1U) && (currentList <= ROAM_LISTS_COUNT));
+}
+
+bool wakeHopListMatch(uint8_t curList, uint8_t candList)
+{
+	return ((curList >= 1U) && (curList <= ROAM_LISTS_COUNT) && (curList == candList));
 }
 
 bool wakeHopMayHop(uint8_t hopsDone, uint8_t maxHops)

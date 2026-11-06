@@ -2,9 +2,11 @@
  * wake_hop.h -- R59: «Роумінг»: автоперехід на наступний канал зі списку роумінгу, коли ретранслятор не відповідає
  * на пробудження під УТРИМУВАНИМ PTT (з R58-прототипу «стрибка на сусідній канал»).
  *
- * Список роумінгу -- канали кодплагу з прапорцем CHANNEL_FLAG_ROAMING (будь-яких зон, у порядку номерів,
- * по колу від поточного). Працює лише якщо ПОТОЧНИЙ канал сам у списку. Канал поза поточною зоною
+ * R60: списків роумінгу 10. Канал належить до ОДНОГО списку N (1..10, байт 37 запису каналу з міткою, див. roam_cfg.h) або
+ * до жодного (0). Кандидати для переходу -- ІНШІ канали кодплагу (будь-яких зон) з ТИМ САМИМ номером списку, у порядку номерів,
+ * по колу від поточного. Працює лише якщо ПОТОЧНИЙ канал сам у списку (N != 0). Канал поза поточною зоною
  * вантажиться через roamLoadChannel() БЕЗ запису в кодплаг і БЕЗ зміни «останнього каналу зони».
+ * (R59 мав один список -- прапорець CHANNEL_FLAG_ROAMING; прошивка його більше не читає.)
  *
  * Компілюється лише з -DENABLE_ROAM_RETRY (Makefile). Без дефайна файл порожній, а виклики в uiTxScreen.c /
  * uiChannelMode.c / menuSystem.c загорнуті в той самий #if -- типова збірка байт-у-байт та сама.
@@ -20,6 +22,10 @@
 #include "functions/roam_cfg.h"
 
 #if defined(ENABLE_ROAM_RETRY)
+
+#if !defined(WAKE_HOP_HOST_TEST)
+#include "functions/codeplug.h"   /* CodeplugChannel_t для функцій списків нижче */
+#endif
 
 /* Скільки різних «ключів» (rx, tx, колір-код) пам'ятаємо за одне утримання PTT: вихідний + до ROAM_HOPS_MAX стрибків. */
 #define WAKE_HOP_TRIED_MAX   (ROAM_HOPS_MAX + 1U)
@@ -58,8 +64,12 @@ bool wakeHopTriedAdd(wakeHopTried_t *t, uint32_t rx, uint32_t tx, uint8_t cc);  
 /* Кандидат підходить: придатний І його (rx, tx, cc) ще не пробували в цьому PTT. */
 bool wakeHopCandidateOk(const wakeHopChan_t *c, const wakeHopTried_t *t);
 
-/* Чи взагалі роумити у цьому PTT: функція ввімкнена І поточний канал у списку. */
-bool wakeHopMayRoam(bool cfgEnabled, bool currentInList);
+/* Чи взагалі роумити у цьому PTT: функція ввімкнена І поточний канал у списку 1..ROAM_LISTS_COUNT. */
+bool wakeHopMayRoam(bool cfgEnabled, uint8_t currentList);
+
+/* Чи кандидат з номером списку candList годиться поточному каналу зі списком curList: обидва в 1..ROAM_LISTS_COUNT і однакові.
+ * Список 0 («нема») не збігається ні з чим -- навіть з іншим каналом зі списком 0. */
+bool wakeHopListMatch(uint8_t curList, uint8_t candList);
 
 /* Чи можна ще стрибати (hopsDone вже зроблено, ліміт maxHops; обмежується діапазоном 1..ROAM_HOPS_MAX). */
 bool wakeHopMayHop(uint8_t hopsDone, uint8_t maxHops);
@@ -86,12 +96,26 @@ bool     roamIsActive(void);
 uint16_t roamActiveChannel(void);   /* номер каналу кодплагу, коли roamIsActive() */
 void     roamClear(void);           /* будь-яка явна зміна каналу користувачем скидає стан */
 
-/* Для меню «Роумінг». */
-bool roamCurrentInList(void);       /* поточний канал має прапорець ROAMING */
-bool roamCurrentSuitable(void);     /* поточний канал придатний для роумінгу (цифровий, ретранслятор, ...) */
-bool roamToggleCurrent(void);       /* перемкнути прапорець поточного каналу стандартним збереженням; true -- виконано */
-unsigned roamListCount(void);       /* скільки каналів у списку (скан усього кодплагу) */
-int  roamListStep(int fromNum, int dir);   /* наступний (dir>0) чи попередній (dir<0) канал списку від fromNum по колу; fromNum=0 -- перший/останній; 0 -- списку нема */
+/* Для меню «Роумінг» і «Деталей каналу». Номер списку 0 = «нема», 1..ROAM_LISTS_COUNT. */
+uint8_t  roamRecList(const CodeplugChannel_t *rec);                 /* список запису (з байта 37) */
+void     roamRecSetList(CodeplugChannel_t *rec, uint8_t list);      /* виставити список у записі й ЗНЯТИ старий прапорець R59 */
+bool     roamRecSuitable(const CodeplugChannel_t *rec);             /* запис придатний бути в списку (цифровий ретранслятор, ...) */
+uint8_t  roamChannelList(int num);                                  /* список каналу num кодплагу (читається один байт; не зайнятий -> 0) */
+uint8_t  roamCurrentList(void);                                     /* список поточного каналу */
+bool     roamCurrentSuitable(void);                                 /* поточний канал придатний для списку */
+
+/* Результат призначення списку. */
+typedef enum { ROAM_ASSIGN_OK = 0, ROAM_ASSIGN_ERR, ROAM_ASSIGN_UNSUITABLE, ROAM_ASSIGN_READONLY, ROAM_ASSIGN_BAD } roamAssign_t;
+
+/* Призначити каналу num (1..CODEPLUG_CHANNELS_MAX, зайнятому) список 0..ROAM_LISTS_COUNT: ОДИН запис каналу через
+ * codeplugChannelSaveDataForIndex, решта кодплагу не чіпається. Список 0 дозволений завжди; список > 0 -- лише для придатного каналу.
+ * Якщо num -- поточний вибраний канал, оновлює й екранну копію. */
+roamAssign_t roamChannelAssign(int num, uint8_t list);
+roamAssign_t roamCurrentAssign(uint8_t list);                       /* те саме для поточного каналу (лише режим каналів) */
+
+unsigned roamListCount(uint8_t list);                               /* скільки каналів у списку (скан усього кодплагу) */
+int      roamListStep(uint8_t list, int fromNum, int dir);          /* наступний (dir>0) чи попередній (dir<0) канал списку від fromNum по колу; fromNum=0 -- перший/останній; 0 -- списку нема */
+int      roamChannelStep(int fromNum, int dir);                     /* те саме для ВСІХ зайнятих каналів кодплагу (вибір каналу для додавання) */
 
 /* Реалізація -- у HR-C6000.c. Оголошено ТУТ, а не в HR-C6000.h: той заголовок підключає пів прошивки, і зміна в ньому
  * міняла б токени невідомих цьому прототипу файлів у діагностичній конфігурації (tools/test_r46.py W5, test_r47.py V2). */

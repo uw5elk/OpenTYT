@@ -1,7 +1,8 @@
 /*
- * test_wake_hop.c -- R59: вибір каналу зі СПИСКУ РОУМІНГУ (СПРАВЖНІЙ application/source/functions/wake_hop_sel.c).
+ * test_wake_hop.c -- R59/R60: вибір каналу зі СПИСКУ РОУМІНГУ (СПРАВЖНІЙ application/source/functions/wake_hop_sel.c).
  * Чиста логіка: придатність каналу, випробувані (rx, tx, колір-код), ліміт стрибків, кільце по номерах, один оберт,
- * «роумити лише якщо поточний у списку», «повертати вихідний лише без успіху». Збирається з
+ * «роумити лише якщо поточний у списку», «повертати вихідний лише без успіху». R60: 10 списків -- кандидат лише з ТИМ САМИМ
+ * номером списку, що й у поточного; список 0 -- не роумимо. Збирається з
  * -DENABLE_ROAM_RETRY -DWAKE_HOP_HOST_TEST -DROAM_CFG_HOST_TEST.
  *
  * Клей wake_hop.c (кодплаг, трансівер) на хості не збирається; тут його цикл повторено в simulate() з тих самих
@@ -20,7 +21,7 @@ static int fails = 0;
 
 typedef struct
 {
-	bool inList;
+	uint8_t list;          /* R60: номер списку роумінгу каналу 0..10 (0 -- нема) */
 	bool alive;            /* ретранслятор на цьому каналі відповідає на пробудження */
 	wakeHopChan_t info;
 } ch_t;
@@ -42,9 +43,14 @@ static void reset(void)
 	}
 }
 
-static void setList(const unsigned *nums, unsigned n)
+static void setListN(const unsigned *nums, unsigned n, uint8_t list)
 {
-	for (unsigned i = 0U; i < n; i++) { tbl[nums[i]].inList = true; }
+	for (unsigned i = 0U; i < n; i++) { tbl[nums[i]].list = list; }
+}
+
+static void setList(const unsigned *nums, unsigned n)   /* список №1 -- для сценаріїв R59 з одним списком */
+{
+	setListN(nums, n, 1U);
 }
 
 typedef struct
@@ -58,6 +64,7 @@ typedef struct
 } res_t;
 
 static unsigned badCalls;   /* скільки разів колбек спитали про номер поза 1..NCH */
+static uint8_t simList = 1U;   /* список поточного (вихідного) каналу -- як roamCurrentList() у клеї */
 
 static bool candFn(unsigned num, void *ctx)
 {
@@ -67,7 +74,7 @@ static bool candFn(unsigned num, void *ctx)
 		return false;
 	}
 
-	return tbl[num].inList && wakeHopCandidateOk(&tbl[num].info, (const wakeHopTried_t *)ctx);
+	return wakeHopListMatch(simList, tbl[num].list) && wakeHopCandidateOk(&tbl[num].info, (const wakeHopTried_t *)ctx);
 }
 
 /* Повторює цикл wake_hop.c: wakeHopBegin() + wakeHopTry() після кожного FAILED + wakeHopRestore(). Вихідний канал мертвий. */
@@ -81,7 +88,9 @@ static res_t simulate(unsigned cur, bool enabled, unsigned maxHops)
 	memset(&r, 0, sizeof(r));
 	wakeHopTriedReset(&t);
 
-	if (wakeHopMayRoam(enabled, tbl[cur].inList))
+	simList = tbl[cur].list;
+
+	if (wakeHopMayRoam(enabled, tbl[cur].list))
 	{
 		r.roamed = true;
 		(void)wakeHopTriedAdd(&t, tbl[cur].info.rxFreq, tbl[cur].info.txFreq, tbl[cur].info.colourCode);
@@ -302,7 +311,106 @@ int main(void)
 	CHECK(!wakeHopShouldRestore(true, true),   "стрибали й вдалось -- НЕ повертати (лишаємось на знайденому)");
 
 	/* ---- «роумити лише з поточного у списку» ---- */
-	CHECK(wakeHopMayRoam(true, true) && !wakeHopMayRoam(true, false) && !wakeHopMayRoam(false, true) && !wakeHopMayRoam(false, false), "MayRoam: потрібні обидві умови");
+	CHECK(wakeHopMayRoam(true, 1) && !wakeHopMayRoam(true, 0) && !wakeHopMayRoam(false, 1) && !wakeHopMayRoam(false, 0), "MayRoam: потрібні обидві умови (функція увімкнена, поточний у списку)");
+	CHECK(wakeHopMayRoam(true, 10) && !wakeHopMayRoam(true, 11) && !wakeHopMayRoam(true, 255), "MayRoam: списки 1..10; 11 і 255 -- не список");
+
+	/* ---- R60: збіг номерів списків ---- */
+	CHECK(wakeHopListMatch(1, 1) && wakeHopListMatch(10, 10) && wakeHopListMatch(7, 7), "ListMatch: однакові 1..10 -- збіг");
+	CHECK(!wakeHopListMatch(1, 2) && !wakeHopListMatch(2, 1) && !wakeHopListMatch(9, 10), "ListMatch: різні списки -- не збіг");
+	CHECK(!wakeHopListMatch(0, 0), "ListMatch: список 0 не збігається навіть з іншим каналом зі списком 0");
+	CHECK(!wakeHopListMatch(0, 1) && !wakeHopListMatch(1, 0), "ListMatch: 0 і 1 -- не збіг");
+	CHECK(!wakeHopListMatch(11, 11) && !wakeHopListMatch(255, 255), "ListMatch: числа поза 1..10 не є списками");
+
+	/* ---- R60: кілька списків ---- */
+	{
+		res_t r;
+
+		/* DH-сценарій: список 1 = {6, 7}, список 2 = {8, 9}, канал 12 без списку */
+		reset();
+		{ const unsigned A[] = { 6, 7 }; const unsigned B[] = { 8, 9 }; setListN(A, 2, 1); setListN(B, 2, 2); }
+		tbl[7].alive = true;
+		r = simulate(6, true, 5);
+		CHECK(r.roamed && r.hops == 1 && r.path[0] == 7 && r.success && !r.restored && r.finalChan == 7, "DH3: 6 (список 1) мертвий -> 7, а не 8 чи 9");
+		tbl[7].alive = false;
+		r = simulate(8, true, 5);
+		CHECK(r.roamed && r.hops == 1 && r.path[0] == 9 && !r.success && r.restored && r.finalChan == 8, "DH4: 8 (список 2), усі мертві -> лише 9, потім повернення на 8; 6 і 7 не чіпаємо");
+		r = simulate(12, true, 5);
+		CHECK(!r.roamed && r.hops == 0 && r.finalChan == 12, "DH5: 12 без списку -- переходу нема");
+		tbl[7].list = 2U;   /* DH6: 7 перенесено до списку 2 */
+		tbl[7].alive = true;
+		r = simulate(6, true, 5);
+		CHECK(r.roamed && r.hops == 0 && !r.restored && r.finalChan == 6, "DH6: 7 тепер у списку 2 -- 6 його не бачить, стрибати нікуди");
+		r = simulate(8, true, 5);
+		CHECK(r.hops == 2 && r.path[0] == 9 && r.path[1] == 7 && r.success && r.finalChan == 7, "DH6: з 8 (список 2) тепер доступний 7 (після 9 по колу)");
+
+		/* різні списки не бачать один одного */
+		reset(); { const unsigned a[] = { 5 }; const unsigned b[] = { 10 }; setListN(a, 1, 1); setListN(b, 1, 2); } tbl[10].alive = true;
+		r = simulate(5, true, 2);
+		CHECK(r.roamed && r.hops == 0, "5 (список 1) і 10 (список 2): кандидатів нема");
+
+		/* чергування нумерації: непарні -- список 1, парні -- список 2 */
+		reset();
+		for (unsigned i = 1U; i <= 10U; i++) { tbl[i].list = (uint8_t)((i & 1U) ? 1U : 2U); }
+		r = simulate(1, true, 5);
+		CHECK(r.hops == 4 && r.path[0] == 3 && r.path[1] == 5 && r.path[2] == 7 && r.path[3] == 9 && r.restored, "список 1: кроки 3,5,7,9 -- парних (список 2) немає; 4 стрибки, далі кандидатів нема");
+		r = simulate(2, true, 5);
+		CHECK(r.hops == 4 && r.path[0] == 4 && r.path[1] == 6 && r.path[2] == 8 && r.path[3] == 10, "список 2: кроки 4,6,8,10");
+
+		/* усі 10 списків: пара каналів у кожному */
+		reset();
+		for (unsigned l = 1U; l <= 10U; l++)
+		{
+			tbl[(l * 100U) + 1U].list = (uint8_t)l;
+			tbl[(l * 100U) + 2U].list = (uint8_t)l;
+			tbl[(l * 100U) + 2U].alive = true;
+		}
+		for (unsigned l = 1U; l <= 10U; l++)
+		{
+			r = simulate((l * 100U) + 1U, true, 2);
+			CHECK(r.roamed && r.hops == 1 && r.path[0] == (l * 100U) + 2U && r.success && r.finalChan == (l * 100U) + 2U, "список %u: з %u на %u", l, (l * 100U) + 1U, (l * 100U) + 2U);
+		}
+
+		/* обгортка через межу 1024 всередині списку */
+		reset(); { const unsigned E[] = { 1, 1024 }; setListN(E, 2, 3); } tbl[1].alive = true;
+		r = simulate(1024, true, 2);
+		CHECK(r.hops == 1 && r.path[0] == 1 && r.success, "список 3 = {1, 1024}: з 1024 по колу на 1");
+
+		/* непридатні й дублікати працюють усередині списку; чужий список непридатність не рятує */
+		reset(); { const unsigned S[] = { 20, 30, 40 }; setListN(S, 3, 4); } tbl[40].alive = true;
+		tbl[30].info.digital = false;
+		r = simulate(20, true, 2);
+		CHECK(r.hops == 1 && r.path[0] == 40, "список 4: аналоговий 30 пропущено");
+		tbl[30].info = goodInfo(43000000U + (30U * 12500U), 1U);
+		tbl[30].info.rxFreq = tbl[20].info.rxFreq; tbl[30].info.txFreq = tbl[20].info.txFreq;   /* 30 -- дублікат 20 */
+		r = simulate(20, true, 2);
+		CHECK(r.hops == 1 && r.path[0] == 40, "список 4: 30 дублює 20 за (rx, tx, кк) -- пропущено");
+		{
+			const unsigned X[] = { 25 }; setListN(X, 1, 5); tbl[25].info = tbl[20].info; tbl[25].alive = true;   /* дублікат у ЧУЖОМУ списку */
+			r = simulate(20, true, 2);
+			CHECK(r.hops == 1 && r.path[0] == 40, "канал 25 зі списку 5 (навіть дублікат) списку 4 не заважає й не береться");
+		}
+
+		/* ліміт стрибків і один оберт у межах списку */
+		reset(); { const unsigned Q[] = { 1, 2, 3, 4, 5, 6, 7, 8 }; setListN(Q, 8, 6); const unsigned Z[] = { 9, 10 }; setListN(Z, 2, 7); }
+		tbl[9].alive = true; tbl[10].alive = true;
+		r = simulate(1, true, 2);
+		CHECK(r.hops == 2 && r.restored && r.finalChan == 1 && !r.success, "список 6, ліміт 2: два стрибки, усі мовчать -> вихідний; живі 9 і 10 (список 7) недосяжні");
+		r = simulate(1, true, 5);
+		CHECK(r.hops == 5 && r.restored && r.finalChan == 1, "список 6, ліміт 5: п'ять стрибків");
+
+		/* список з одного каналу й порожній */
+		reset(); { const unsigned S[] = { 5 }; setListN(S, 1, 9); }
+		r = simulate(5, true, 2);
+		CHECK(r.roamed && r.hops == 0 && !r.restored && r.finalChan == 5, "список 9 з одного каналу -- стрибати нікуди");
+		reset();
+		r = simulate(5, true, 2);
+		CHECK(!r.roamed && r.hops == 0, "канал без списку (порожня таблиця) -- не роумимо");
+
+		/* вимкнена функція ігнорує списки */
+		reset(); { const unsigned S[] = { 5, 6 }; setListN(S, 2, 8); } tbl[6].alive = true;
+		r = simulate(5, false, 2);
+		CHECK(!r.roamed && r.finalChan == 5, "функція вимкнена -- списки не діють");
+	}
 
 	printf(fails ? "ПРОВАЛ: %d\n" : "ВСІ ПЕРЕВІРКИ ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;
