@@ -24,6 +24,7 @@
 #include "functions/settings.h"
 #include "user_interface/uiNameEditor.h"
 #include "io/keyboard.h"
+#include "user_interface/move_ui.h"   /* R66C: MV_* (Вгору/Вниз) */
 
 #define RXG_BUF        (uiDataGlobal.MessageBox.message)
 #define RXG_VIEW       (RXG_BUF[28])
@@ -35,7 +36,7 @@
 #define RXG_FROMLAST   (RXG_BUF[34])
 #define RXG_STATE_LEN  40
 
-enum { RXG_VIEW_LIST = 0, RXG_VIEW_ACTIONS, RXG_VIEW_MEMBERS, RXG_VIEW_PICK, RXG_VIEW_CFM_RM, RXG_VIEW_CFM_DEL, RXG_VIEW_RENAME };
+enum { RXG_VIEW_LIST = 0, RXG_VIEW_ACTIONS, RXG_VIEW_MEMBERS, RXG_VIEW_PICK, RXG_VIEW_CFM_RM, RXG_VIEW_CFM_DEL, RXG_VIEW_RENAME, RXG_VIEW_MEMACT };   /* R66C: MEMACT -- дії над контактом складу: Вгору / Вниз / Вийняти (`#`) */
 enum { RXG_ACT_ROW_MEMBERS = 0, RXG_ACT_ROW_RENAME, RXG_ACT_ROW_DELETE, RXG_ACT_ROWS };
 
 static void rxgUpdate(void);
@@ -229,6 +230,20 @@ static void rxgListUpdate(void)
 	{
 		txt = (RXG_NEW != 0) ? RXG_PICK_FIRST_TITLE : RXG_PICK_TITLE;
 	}
+	else if (view == RXG_VIEW_MEMACT)
+	{
+		/* R66C: у заголовку -- який контакт рухаємо */
+		count = codeplugRxGroupGetMembers(RXG_SLOT, mem);
+		if ((int)RXG_RMPOS < count)
+		{
+			rxgContactName(mem[(int)RXG_RMPOS], title);
+		}
+		else
+		{
+			title[0] = 0;
+		}
+		txt = title;
+	}
 	menuDisplayTitle(txt);
 
 	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
@@ -251,6 +266,9 @@ static void rxgListUpdate(void)
 					codeplugRxGroupGetName(codeplugRxGroupNthSlot(mNum), nm);
 					txt = nm;
 				}
+				break;
+			case RXG_VIEW_MEMACT:
+				txt = (mNum == 0) ? MV_ACT_UP : ((mNum == 1) ? MV_ACT_DOWN : MV_ACT_REMOVE);
 				break;
 			case RXG_VIEW_ACTIONS:
 				txt = (mNum == RXG_ACT_ROW_MEMBERS) ? RXG_ACT_MEMBERS : ((mNum == RXG_ACT_ROW_RENAME) ? RXG_ACT_RENAME : RXG_ACT_DELETE);
@@ -519,6 +537,81 @@ static void rxgDeleteRun(void)
 	}
 }
 
+/* R66C: `#` на контакті складу -- дії Вгору / Вниз / Вийняти. Позиція контакту -- у RXG_RMPOS (байт [33], його ж використовує «Вийняти»). */
+static void rxgMemActOpen(int pos)
+{
+	RXG_RMPOS = (char)pos;
+	RXG_MEMIDX = (uint8_t)pos;
+	rxgSetView(RXG_VIEW_MEMACT, 3, 0);
+	rxgUpdate();
+}
+
+/* Після обміну контактів lo і lo+1: індекс вибраного TG усередині списку (currentIndexInTRxGroupList -- ПОЗИЦІЯ, не номер списку) іде за тим самим контактом,
+ * якщо відповідний режим (канал / VFO A / VFO B) використовує ЦЕЙ список. Решту режимів не чіпаємо. Кеш складу примусово перечитується. */
+static void rxgMoveSync(int slot, int lo)
+{
+	uint8_t grp[3];
+
+	lastLoadedRxGroup = -1;
+	grp[SETTINGS_CHANNEL_MODE] = channelScreenChannelData.rxGroupList;
+	grp[SETTINGS_VFO_A_MODE] = settingsVFOChannel[0].rxGroupList;
+	grp[SETTINGS_VFO_B_MODE] = settingsVFOChannel[1].rxGroupList;
+
+	for (int i = 0; i < 3; i++)
+	{
+		int idx = nonVolatileSettings.currentIndexInTRxGroupList[i];
+
+		if (grp[i] != (uint8_t)slot)
+		{
+			continue;
+		}
+		if (idx == lo)
+		{
+			settingsSet(nonVolatileSettings.currentIndexInTRxGroupList[i], lo + 1);
+		}
+		else if (idx == (lo + 1))
+		{
+			settingsSet(nonVolatileSettings.currentIndexInTRxGroupList[i], lo);
+		}
+	}
+}
+
+/* Зелена в діях контакту: 0 -- вгору, 1 -- вниз, 2 -- вийняти (з підтвердженням). Один крок = обмін з сусідом = ОДИН запис 4 байтів. */
+static void rxgMemActRun(void)
+{
+	int act = (int)menuDataGlobal.currentItemIndex;
+	int pos = (int)RXG_RMPOS;
+	uint16_t mem[CODEPLUG_RXGROUP_MEMBERS_MAX];
+	int n = codeplugRxGroupGetMembers(RXG_SLOT, mem);
+	int dir;
+	CodeplugRxGroupResult_t r;
+
+	if (act == 2)
+	{
+		rxgRemoveOpen(pos);
+		return;
+	}
+	if (rxgReadOnly()) { return; }
+	if ((pos < 0) || (pos >= n)) { rxgMembersShow(0); return; }
+
+	dir = (act == 0) ? -1 : 1;
+	if (((pos + dir) < 0) || ((pos + dir) >= n))
+	{
+		uiNotificationShowShort(1500, (dir < 0) ? MV_MSG_FIRST : MV_MSG_LAST, true);
+		return;
+	}
+	r = codeplugRxGroupMoveMember(RXG_SLOT, pos, dir);
+	if (r == CODEPLUG_RXGROUP_OK)
+	{
+		rxgMoveSync((int)RXG_SLOT, (pos < (pos + dir)) ? pos : (pos + dir));
+		rxgMembersShow(pos + dir);   /* курсор іде за переміщеним контактом */
+	}
+	else
+	{
+		uiNotificationShowShort(1500, MV_MSG_SAVE_ERR, true);
+	}
+}
+
 static void rxgGreen(void)
 {
 	int cur = (int)menuDataGlobal.currentItemIndex;
@@ -545,6 +638,9 @@ static void rxgGreen(void)
 		case RXG_VIEW_MEMBERS:
 			if (cur >= (int)(menuDataGlobal.numItems - 1)) { rxgPickOpen(); }
 			else { rxgRemoveOpen(cur); }
+			break;
+		case RXG_VIEW_MEMACT:
+			rxgMemActRun();
 			break;
 		case RXG_VIEW_PICK:
 			rxgPickSelect();
@@ -584,6 +680,9 @@ static void rxgRed(menuStatus_t *ec)
 			{
 				rxgMembersShow(RXG_MEMIDX);
 			}
+			break;
+		case RXG_VIEW_MEMACT:
+			rxgMembersShow(RXG_RMPOS);   /* R66C: назад до складу на тому ж контакті */
 			break;
 		case RXG_VIEW_CFM_RM:
 			rxgMembersShow(RXG_RMPOS);
@@ -638,6 +737,10 @@ menuStatus_t menuRxGroups(uiEvent_t *ev, bool isFirstRun)
 		else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 		{
 			rxgGreen();
+		}
+		else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (RXG_VIEW == RXG_VIEW_MEMBERS) && ((int)menuDataGlobal.currentItemIndex < ((int)menuDataGlobal.numItems - 1)))
+		{
+			rxgMemActOpen((int)menuDataGlobal.currentItemIndex);   /* R66C: `#` на контакті складу -- Вгору / Вниз / Вийняти */
 		}
 		else if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) && (RXG_VIEW == RXG_VIEW_LIST) && ((int)menuDataGlobal.currentItemIndex < codeplugRxGroupCount()))
 		{

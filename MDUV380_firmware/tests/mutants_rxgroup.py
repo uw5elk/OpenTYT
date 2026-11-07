@@ -31,6 +31,11 @@ MUTANTS = [
     ("контакт 1025 дозволено", "(members[i] > CODEPLUG_CONTACTS_MAX)", "(members[i] > 1025)"),
     ("створення бере не перший вільний слот", "if (codeplugRXGroupCache[i - 1] == 0)\n\t\t{\n\t\t\tslot = i;\n\t\t\tbreak;", "if (codeplugRXGroupCache[i - 1] == 0)\n\t\t{\n\t\t\tslot = i;"),
     ("склад пише 80 байтів", "(uint8_t *)buf, (int)sizeof(buf)))", "(uint8_t *)buf, (int)sizeof(buf) + 1))"),
+    ("R66C: переміщення TG не міняє місцями", "pair[0] = m[lo + 1];\n\tpair[1] = m[lo];\n\treturn SPI_Flash_write", "pair[0] = m[lo];\n\tpair[1] = m[lo + 1];\n\treturn SPI_Flash_write"),
+    ("R66C: переміщення TG пише не туди (позиція pos, а не lo)", "CODEPLUG_RXGROUP_NAME_LEN + (lo * (int)sizeof(uint16_t)), (uint8_t *)pair", "CODEPLUG_RXGROUP_NAME_LEN + (pos * (int)sizeof(uint16_t)), (uint8_t *)pair"),
+    ("R66C: переміщення TG без перевірки кроку", "if (!codeplugRxGroupExists(slot) || ((dir != -1) && (dir != 1)))", "if (!codeplugRxGroupExists(slot))"),
+    ("R66C: переміщення TG пише 6 байтів", "(uint8_t *)pair, (int)sizeof(pair)) ? CODEPLUG_RXGROUP_OK", "(uint8_t *)pair, (int)sizeof(pair) + 2) ? CODEPLUG_RXGROUP_OK"),
+    ("R66C: переміщення TG дозволяє вихід за кінець", "if ((pos < 0) || (pos >= n) || (to < 0) || (to >= n))\n\t{\n\t\treturn CODEPLUG_RXGROUP_BAD_ARG;\n\t}\n\tlo =", "if ((pos < 0) || (pos >= n) || (to < 0))\n\t{\n\t\treturn CODEPLUG_RXGROUP_BAD_ARG;\n\t}\n\tlo ="),
 ]
 
 

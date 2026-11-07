@@ -569,6 +569,54 @@ int main(void)
 		}
 	}
 
+	/* ---------- G11 (R66C): переміщення TG у списку -- обмін двох сусідів, один запис ---------- */
+	{
+		uint16_t m[32];
+		world(); snapshot();
+		s_nwrites = 0; s_passes = 0;
+		CHECK(codeplugRxGroupMoveMember(1, 0, +1) == CODEPLUG_RXGROUP_OK, "G11: слот 1, позиція 0 вниз -- OK");
+		CHECK(s_nwrites == 1 && s_passes == 1, "G11: один запис, один прохід сектора (записів %d, проходів %d)", s_nwrites, s_passes);
+		CHECK(mem(1, 0) == 2 && mem(1, 1) == 1 && mem(1, 2) == 3, "G11: склад 2 1 3 (є %u %u %u)", (unsigned)mem(1, 0), (unsigned)mem(1, 1), (unsigned)mem(1, 2));
+		{
+			range_t al[1] = { R_flash(ADDR_RX + 16, 4) };
+			CHECK(strayChanges(al, 1) == 0, "G11: змінились ЛИШЕ 4 байти пари (сторонніх: %d), назва й довжина ціла", strayChanges(al, 1));
+		}
+		CHECK(*lenPtr(1) == 3 && memcmp(bodyPtr(1), "Alfa", 4) == 0 && cacheMatchesFlash(), "G11: довжина 3, назва ціла, кеш довжин == флеш");
+		CHECK(codeplugRxGroupGetMembers(1, m) == 3 && m[0] == 2 && m[1] == 1 && m[2] == 3, "G11: стоковий читач бачить новий порядок");
+		restore(); snapshot();
+		CHECK(codeplugRxGroupMoveMember(1, 2, -1) == CODEPLUG_RXGROUP_OK && mem(1, 1) == 3 && mem(1, 2) == 2 && mem(1, 0) == 1, "G11: позиція 2 вгору -- 1 3 2");
+		restore(); snapshot();
+		CHECK(codeplugRxGroupMoveMember(1, 0, -1) == CODEPLUG_RXGROUP_BAD_ARG, "G11: перший вгору -- BAD_ARG");
+		CHECK(codeplugRxGroupMoveMember(1, 2, +1) == CODEPLUG_RXGROUP_BAD_ARG, "G11: останній вниз -- BAD_ARG");
+		CHECK(codeplugRxGroupMoveMember(1, 3, -1) == CODEPLUG_RXGROUP_BAD_ARG && codeplugRxGroupMoveMember(1, -1, +1) == CODEPLUG_RXGROUP_BAD_ARG, "G11: позиція поза списком -- BAD_ARG");
+		CHECK(codeplugRxGroupMoveMember(1, 0, 0) == CODEPLUG_RXGROUP_BAD_ARG && codeplugRxGroupMoveMember(1, 0, 2) == CODEPLUG_RXGROUP_BAD_ARG, "G11: крок не +-1 -- BAD_ARG");
+		CHECK(codeplugRxGroupMoveMember(3, 0, +1) == CODEPLUG_RXGROUP_BAD_ARG, "G11: список з одного TG -- переміщати нікуди");
+		CHECK(codeplugRxGroupMoveMember(2, 0, +1) == CODEPLUG_RXGROUP_BAD_ARG && codeplugRxGroupMoveMember(0, 0, +1) == CODEPLUG_RXGROUP_BAD_ARG && codeplugRxGroupMoveMember(77, 0, +1) == CODEPLUG_RXGROUP_BAD_ARG, "G11: вільний слот, 0 і 77 -- BAD_ARG");
+		{ range_t none[1] = { R_flash(0, 0) }; CHECK(strayChanges(none, 1) == 0 && s_nwrites == 0, "G11: відмови нічого не записали (записів %d)", s_nwrites); }
+		/* збій запису: список цілий */
+		restore(); s_budget = 0;
+		CHECK(codeplugRxGroupMoveMember(1, 0, +1) == CODEPLUG_RXGROUP_WRITE_ERROR, "G11: збій запису -- WRITE_ERROR");
+		s_budget = -1; reinit();
+		CHECK(mem(1, 0) == 1 && mem(1, 1) == 2 && mem(1, 2) == 3, "G11: після збою склад без змін");
+		/* обрив після КОЖНОГО запису: кожен TG рівно один раз */
+		{
+			int nw;
+			restore(); s_budget = -1; s_nwrites = 0;
+			(void)codeplugRxGroupMoveMember(1, 1, +1);
+			nw = s_nwrites;
+			for (int k = 0; k <= nw; k++)
+			{
+				int seen[8] = { 0 }, ok = 1;
+				restore(); s_budget = k;
+				(void)codeplugRxGroupMoveMember(1, 1, +1);
+				s_budget = -1; reinit();
+				for (int i = 0; i < 3; i++) { if (mem(1, i) < 8) { seen[mem(1, i)]++; } }
+				ok = (seen[1] == 1) && (seen[2] == 1) && (seen[3] == 1) && (*lenPtr(1) == 3) && (memcmp(bodyPtr(1), "Alfa", 4) == 0) && cacheMatchesFlash();
+				CHECK(ok, "G11: обрив після %d записів: кожен TG рівно один раз, довжина 3, назва ціла", k);
+			}
+		}
+	}
+
 	printf("%s (%d)\n", fails ? "ПРОВАЛ" : "усе гаразд", fails);
 	return fails ? 1 : 0;
 }

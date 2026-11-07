@@ -69,6 +69,7 @@ declare -A SRCS=(
 	[test_codeplug_zoneedit]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R43: СПРАВЖНІЙ codeplug.c -- додати канал у кінець, вийняти зі зсувом, створити й видалити зону, ординал поточної зони, межі, збої запису, автовизначення розкладки 16/80; EEPROM -- образ у пам'яті
 	[test_codeplug_contact]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R44: СПРАВЖНІЙ codeplug.c -- видалення контакту з каскадом (поле «контакт» у каналах -> 0), лічильник каналів із контактом; EEPROM і NOR-флеш -- образи в пам'яті
 	[test_codeplug_rxgroup]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R65B: СПРАВЖНІЙ codeplug.c -- редактор списків прийому (створити/перейменувати/склад/видалити з каскадом), порядок записів, обрив живлення в кожній точці
+	[test_codeplug_zonemove]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R66C: СПРАВЖНІЙ codeplug.c -- переміщення каналу в зоні (обмін сусідів, один запис 4 Б, LUCZ, межа сектора, обрив після кожного запису)
 	[test_sql_open_delay]=""   # R42: чиста логіка затримки відкриття шумодава (application/include/functions/sql_open_delay.h) -- лише заголовок
 	[test_aes_resync]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix1: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- ресинхронізація MI, захист від хибного CRC4, обидві конвенції late entry; залізо -- заглушки в тесті
 	[test_aes_txphase]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix2: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- фаза шифрування TX за ефіром при тихих burst-ах (SILENCE_AUDIO), межа 18 кадрів, B3 тиша на RX; черга кодувальника й залізо -- модель у тесті
@@ -99,6 +100,7 @@ declare -A XFLAGS=(
 	[test_codeplug_zoneedit]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
 	[test_codeplug_contact]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -DENABLE_CHANNEL_DELETE -DENABLE_CODEPLUG_MENU -funsigned-char -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"   # -funsigned-char: як на ARM (char без знака) -- інакше `name[0] != 0xFF` у кеші контактів хибне на x86
 	[test_codeplug_rxgroup]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -DENABLE_CHANNEL_DELETE -DENABLE_CODEPLUG_MENU -DENABLE_RXGROUP_EDIT -funsigned-char -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
+	[test_codeplug_zonemove]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -DENABLE_CHANNEL_DELETE -DENABLE_CODEPLUG_MENU -funsigned-char -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
 	[test_dmr_rctl_stock]="-DENABLE_DMR_DATA"   # R21 З2: тест читає чергу так, як драйвер (functions/dmr_data.h)
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
 	[test_wake_diag]="-DENABLE_WAKE_DIAG"
@@ -191,6 +193,15 @@ if [ -z "$FILTER" ] || [[ "rxgroup" == *"$FILTER"* ]] || [[ "$FILTER" == *"rxgro
 		pass=$((pass + 1)); echo "ok            mutants_rxgroup (python)"
 	else
 		fail=$((fail + 1)); echo "ПРОВАЛ        mutants_rxgroup (python)"; printf '%s\n' "$out" | tail -20
+	fi
+fi
+
+# R66C: мутанти переміщення каналу в зоні (codeplugZoneMoveChannel) -- кожен мутант мусить провалити test_codeplug_zonemove
+if [ -z "$FILTER" ] || [[ "zonemove" == *"$FILTER"* ]] || [[ "$FILTER" == *"zonemove"* ]]; then
+	if out="$(python3 "$TESTS_DIR/mutants_zonemove.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            mutants_zonemove (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        mutants_zonemove (python)"; printf '%s\n' "$out" | tail -20
 	fi
 fi
 

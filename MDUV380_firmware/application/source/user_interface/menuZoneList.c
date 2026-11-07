@@ -33,6 +33,9 @@
 #include "user_interface/uiNameEditor.h"   /* R64: спільний редактор назви (multitap) -- раніше жив тут */
 #endif
 #if defined(ZONE_EDIT_ENABLED)
+#if defined(ZONE_MOVE_ENABLED)
+#include "user_interface/move_ui.h"   /* R66C: MV_* (Вгору/Вниз) */
+#endif
 #include "functions/codeplug_zoneedit.h"   /* R43: codeplugZoneListFind -- позначка «канал уже в зоні» у списку вибору */
 #endif
 
@@ -80,6 +83,10 @@ static void zrHandleEvent(uiEvent_t *ev);
 #define ZE_ST_ZCHANS     4   /* R44: «Канали зони» -- список каналів зони: перший рядок «Додати канал», далі канали (зелена на каналі -- вийняти) */
 #define ZE_ST_RMCONFIRM  5   /* R44: підтвердження «Вийняти?» для каналу зі списку «Канали зони» */
 #define ZE_ZCHCUR    ZR_BUF[36]   /* курсор «Каналів зони», збережений на час вибору каналу (повертаємось на нього) */
+#if defined(ZONE_MOVE_ENABLED)
+#define ZE_ST_ZCHACT     6   /* R66C: `#` на каналі зони -- дії: Вгору / Вниз / Вийняти (рядок каналу в списку -- у ZE_ZCHCUR) */
+#define ZE_ZCHACT_COUNT  3
+#endif
 #endif
 static void zeToList(int selectOrdinal);
 static void zeStartCreate(void);
@@ -543,6 +550,25 @@ static void zeDraw(void)
 		codeplugUtilConvertBufToDisplayString(zoneBuf.name, nameBuf, 16);
 		menuDisplayTitle(nameBuf);
 	}
+#if defined(ZONE_MOVE_ENABLED)
+	else if (ZE_STATE == ZE_ST_ZCHACT)
+	{
+		/* R66C: у заголовку -- який канал рухаємо («N ім'я») */
+		CodeplugChannel_t mvCh;
+		int mvPos = (int)ZE_ZCHCUR - 1;
+		int mvChan = 0;
+
+		codeplugZoneGetDataForNumber((uint8_t)ZR_ZN, &zoneBuf);
+		if ((mvPos >= 0) && (mvPos < zoneBuf.NOT_IN_CODEPLUGDATA_numChannelsInZone))
+		{
+			mvChan = zoneBuf.channels[mvPos];
+		}
+		codeplugChannelGetDataWithOffsetAndLengthForIndex(mvChan, &mvCh, 0, 16);
+		codeplugUtilConvertBufToDisplayString(mvCh.name, nameBuf, 16);
+		snprintf(buf, sizeof(buf), "%d %s", mvChan, nameBuf);
+		menuDisplayTitle(buf);
+	}
+#endif
 #endif
 	else
 	{
@@ -571,6 +597,12 @@ static void zeDraw(void)
 		{
 			snprintf(buf, sizeof(buf), "%s", zeActionLabel(mNum));
 		}
+#if defined(ZONE_MOVE_ENABLED)
+		else if (ZE_STATE == ZE_ST_ZCHACT)
+		{
+			snprintf(buf, sizeof(buf), "%s", (mNum == 0) ? MV_ACT_UP : ((mNum == 1) ? MV_ACT_DOWN : MV_ACT_REMOVE));
+		}
+#endif
 #if defined(CODEPLUG_MENU_ENABLED)
 		else if (ZE_STATE == ZE_ST_ZCHANS)
 		{
@@ -777,6 +809,68 @@ static void zeRemoveConfirmed(void)
 	zeToZChans(pos + 1);   // курсор лишається поруч (на наступному каналі, що зайняв місце)
 }
 
+#if defined(ZONE_MOVE_ENABLED)
+// R66C: `#` на каналі зі списку «Канали зони» -- дії «Вгору / Вниз / Вийняти». «Канали лише для читання» -- як у «Вийняти» (кодплаг не пишемо).
+static void zeToZChAct(void)
+{
+	if (settingsIsOptionBitSet(BIT_CHANNELS_ARE_READ_ONLY))
+	{
+		char msg[NOTIFICATION_MESSAGE_LEN_MAX];
+
+		snprintf(msg, sizeof(msg), "%s\n%s", currentLanguage->aprs_channel, currentLanguage->locked);
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2500, msg, false);
+		return;
+	}
+	ZE_ZCHCUR = (char)menuDataGlobal.currentItemIndex;   // рядок каналу в списку (позиція в зоні + 1)
+	ZE_STATE = ZE_ST_ZCHACT;
+	menuDataGlobal.numItems = ZE_ZCHACT_COUNT;
+	menuDataGlobal.currentItemIndex = 0;
+	menuZoneExitCode |= MENU_STATUS_LIST_TYPE;
+	zeDraw();
+}
+
+// Зелена в діях каналу: 0 -- вгору, 1 -- вниз, 2 -- вийняти (з підтвердженням, як зеленою на каналі). Один крок = обмін з сусідом = ОДИН запис списку зони.
+static void zeZChActRun(void)
+{
+	int act = menuDataGlobal.currentItemIndex;
+	int pos = (int)ZE_ZCHCUR - 1;
+	CodeplugZone_t z;
+	CodeplugZoneEditResult_t r;
+	int dir;
+
+	if (act == 2)
+	{
+		zeToZChans((int)ZE_ZCHCUR);   // список «Канали зони» на цьому каналі (відновлює numItems/курсор), далі -- «Вийняти?» так само, як зеленою на каналі
+		zeToRmConfirm();
+		return;
+	}
+
+	dir = (act == 0) ? -1 : 1;
+	if (!codeplugZoneGetDataForNumber((uint8_t)ZR_ZN, &z) || (pos < 0) || (pos >= z.NOT_IN_CODEPLUGDATA_numChannelsInZone))
+	{
+		uiNotificationShowShort(1500U, currentLanguage->error, false);
+		zeToZChans((int)ZE_ZCHCUR);
+		return;
+	}
+	if (((pos + dir) < 0) || ((pos + dir) >= z.NOT_IN_CODEPLUGDATA_numChannelsInZone))
+	{
+		uiNotificationShowShort(1500U, (dir < 0) ? MV_MSG_FIRST : MV_MSG_LAST, false);
+		return;
+	}
+
+	r = codeplugZoneMoveChannel((uint8_t)ZR_ZN, pos, dir);
+	if (r == CODEPLUG_ZONE_EDIT_OK)
+	{
+		uiChannelModeColdStart();   // примусове перечитування зони й каналу при поверненні на екран каналу (LUCZ міг змінитися)
+		zeToZChans(pos + dir + 1);   // курсор іде за переміщеним каналом
+	}
+	else
+	{
+		uiNotificationShowShort(1500U, (r == CODEPLUG_ZONE_EDIT_SECTOR_EDGE) ? MV_MSG_EDGE : MV_MSG_SAVE_ERR, false);
+	}
+}
+#endif
+
 // Список зон («Зона» в головному меню): зелена -- дії над зоною (або «Нова зона» на останньому рядку), червона -- назад до головного меню.
 // Швидкі клавіші, як у стоковому списку: SK2+цифра на зоні запам'ятовує її (ID меню 2 + номер рядка), збережена швидка клавіша перемикає зону одразу.
 static void zeListEvent(uiEvent_t *ev)
@@ -896,6 +990,12 @@ static void zeHandleEvent(uiEvent_t *ev)
 		zeDraw();
 		menuZoneExitCode |= MENU_STATUS_LIST_TYPE;
 	}
+#if defined(ZONE_MOVE_ENABLED)
+	else if ((ZE_STATE == ZE_ST_ZCHANS) && (menuDataGlobal.currentItemIndex > 0) && KEYCHECK_SHORTUP(ev->keys, KEY_HASH))
+	{
+		zeToZChAct();   // R66C: `#` на каналі зони -- Вгору / Вниз / Вийняти
+	}
+#endif
 	else if ((ZE_STATE == ZE_ST_PICKER) && (KEYCHECK_PRESS(ev->keys, KEY_RIGHT) || KEYCHECK_PRESS(ev->keys, KEY_LEFT)))
 	{
 		// До 1024 каналів: вліво/вправо -- через 10
@@ -919,6 +1019,12 @@ static void zeHandleEvent(uiEvent_t *ev)
 		{
 			zeAddSelected();
 		}
+#if defined(ZONE_MOVE_ENABLED)
+		else if (ZE_STATE == ZE_ST_ZCHACT)
+		{
+			zeZChActRun();
+		}
+#endif
 #if defined(CODEPLUG_MENU_ENABLED)
 		else if (ZE_STATE == ZE_ST_ZCHANS)
 		{
@@ -971,6 +1077,12 @@ static void zeHandleEvent(uiEvent_t *ev)
 			zeToActions();
 #endif
 		}
+#if defined(ZONE_MOVE_ENABLED)
+		else if (ZE_STATE == ZE_ST_ZCHACT)
+		{
+			zeToZChans((int)ZE_ZCHCUR);   // R66C: назад до списку на той самий канал
+		}
+#endif
 #if defined(CODEPLUG_MENU_ENABLED)
 		else if (ZE_STATE == ZE_ST_ZCHANS)
 		{

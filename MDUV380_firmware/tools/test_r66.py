@@ -13,6 +13,11 @@ B  R66B: шпаргалка розкладки в редакторах назв�
    B3 клавіша, що закрила шпаргалку, -- її відпускання ковтається один раз (зелена не зберігає), наступна клавіша -- ні; валкодер (натискання+відпускання разом) нічого не ковтає;
    B4 довге утримання не закриває; текст і режим набору шпаргалка не змінює; мутанти (6) ловляться;
    B5 усі споживачі редактора викликають nameEdSheetEvent ДО обробки зеленої/червоної; рядки в cp1251 вміщаються; APRS-налаштування (user-only APRS_R66_SHEET).
+C  R66C: переміщення (канал у зоні, TG у списку прийому):
+   C1 move_ua.h -- cp1251, не UTF-8; кожен рядок повідомлення <= 16 символів (FONT_SIZE_3 = 8 px, екран 128 px); рядки дій теж <= 16 символів (рядок списку меню);
+   C2 набір #define в move_ui.h (англ.) збігається з move_ua.h; англ. рядки ASCII;
+   C3 codeplugZoneMoveChannel / codeplugRxGroupMoveMember викликаються лише з menuZoneList.c / menuRxGroups.c, в першому -- під ZONE_MOVE_ENABLED;
+   C4 move_ui.h підключається у menuZoneList.c під ZONE_MOVE_ENABLED, в menuRxGroups.c -- у блоці RXGROUP_UI_ENABLED;
 Запуск: python3 tools/test_r66.py"""
 import os
 import re
@@ -232,6 +237,48 @@ def section_b():
         check(len(val) <= 26, "B5: %s: %d знаків (>26 для шрифту 6x8 на 160 px)" % (mm.group(1), len(val)))
 
 
+def section_c():
+    ua_b = open(os.path.join(INC, "user_interface", "languages", "move_ua.h"), "rb").read()
+    try:
+        ua_b.decode("utf-8")
+        utf = True
+    except UnicodeDecodeError:
+        utf = False
+    check(not utf, "C1: move_ua.h -- cp1251, не валідний UTF-8")
+    ua = ua_b.decode("cp1251")
+    en = open(os.path.join(INC, "user_interface", "move_ui.h"), encoding="utf-8").read()
+    en = en[en.index("#else"):]
+    pat = re.compile(r'#define\s+(MV_\w+)\s+"([^"]*)"')
+    u = dict(pat.findall(ua))
+    e = dict(pat.findall(en))
+    check(set(u) == set(e) and len(u) == 7, "C2: однаковий набір MV_* (укр %d, англ %d)" % (len(u), len(e)))
+    for k, v in u.items():
+        lines = v.replace("\\n", "\n").split("\n")
+        lim = 16
+        check(all(len(x) <= lim for x in lines), "C1: %s %r -- рядки <= %d символів" % (k, v, lim))
+    for k, v in e.items():
+        check(all(ord(c) < 128 for c in v), "C2: англ. %s -- ASCII" % k)
+        lim = 16
+        check(all(len(x) <= lim for x in v.replace("\\n", "\n").split("\n")), "C2: англ. %s -- рядки <= %d" % (k, lim))
+    ui = os.path.join(ROOT, "application", "source", "user_interface")
+    zl = open(os.path.join(ui, "menuZoneList.c"), encoding="cp1251", errors="replace").read()
+    rg = open(os.path.join(ui, "menuRxGroups.c"), encoding="cp1251", errors="replace").read()
+    check("codeplugZoneMoveChannel" in zl and "codeplugRxGroupMoveMember" in rg, "C3: виклики на місці")
+    # перший виклик у menuZoneList.c -- всередині #if defined(ZONE_MOVE_ENABLED)
+    i = zl.index("codeplugZoneMoveChannel")
+    pre = zl[:i]
+    depth_ok = pre.rfind("#if defined(ZONE_MOVE_ENABLED)") > pre.rfind("#endif")
+    check(depth_ok, "C3: codeplugZoneMoveChannel у menuZoneList.c -- під #if ZONE_MOVE_ENABLED")
+    for dirn, _, files in os.walk(ui):
+        for f in files:
+            if f.endswith(".c") and f not in ("menuZoneList.c", "menuRxGroups.c"):
+                t = open(os.path.join(dirn, f), encoding="cp1251", errors="replace").read()
+                check("codeplugZoneMoveChannel" not in t and "codeplugRxGroupMoveMember" not in t, "C3: %s не викликає функції переміщення" % f)
+    check(zl.count('#include "user_interface/move_ui.h"') == 1 and zl.rfind("#if defined(ZONE_MOVE_ENABLED)", 0, zl.index("move_ui.h")) > zl.rfind("#endif", 0, zl.index("move_ui.h")), "C4: menuZoneList.c підключає move_ui.h під ZONE_MOVE_ENABLED")
+    j = rg.index("move_ui.h")
+    check(rg.rfind("RXGROUP_UI_ENABLED", 0, j) > rg.rfind("#endif", 0, j), "C4: menuRxGroups.c підключає move_ui.h у блоці RXGROUP_UI_ENABLED")
+
+
 def main():
     ua = F.load(os.path.join(INC, "hardware", "HX8353E_charset_UA.h"))
     lat = F.load(os.path.join(INC, "hardware", "HX8353E_charset.h"))
@@ -264,6 +311,7 @@ def main():
     check(m2 is not None and m2.group(1) == val, "A4: англійський варіант збігається з українським")
 
     section_b()
+    section_c()
     print("test_r66: %d перевірок, провалів %d" % (PASSED[0], len(FAILS)))
     return 1 if FAILS else 0
 

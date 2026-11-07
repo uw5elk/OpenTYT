@@ -652,6 +652,68 @@ CodeplugZoneEditResult_t codeplugZoneRemoveChannelAt(int zoneNum, int pos)
 	return CODEPLUG_ZONE_EDIT_OK;
 }
 
+#if defined(ZONE_MOVE_ENABLED)
+/*
+ * R66C: обмін двох СУСІДНІХ каналів списку зони (dir -1 -- вгору, +1 -- вниз). Список ЩІЛЬНИЙ, тож обмін двох елементів лишає його щільним; ОДИН запис 4 байтів
+ * (два сусідні uint16) -> один прогін сектора. Порядок: спершу список, потім LUCZ (позиція «останнього каналу в зоні» мусить іти за тим самим каналом: поміняли p і p+1
+ * місцями -- LUCZ p стає p+1 і навпаки). Обрив між ними: список уже новий, LUCZ вказує на сусідній канал зони -- нешкідливо (при вході в зону відкриється сусід).
+ * Якщо 4 байти перетинають межу 4 КіБ сектора, обмін НЕ атомарний (два прогони: між ними канал був би двічі, а сусід загубився б) -- такий обмін відхиляємо
+ * (CODEPLUG_ZONE_EDIT_SECTOR_EDGE), щоб після обриву живлення кожен канал лишався в зоні рівно один раз.
+ */
+CodeplugZoneEditResult_t codeplugZoneMoveChannel(int zoneNum, int pos, int dir)
+{
+	CodeplugZone_t z;
+	uint16_t pair[2];
+	int bit = codeplugZoneRealBit(zoneNum);
+	int num;
+	int to = pos + dir;
+	int lo;
+	int addr;
+	int idx;
+	int newIdx;
+
+	if (bit < 0)
+	{
+		return CODEPLUG_ZONE_EDIT_NOT_REAL;
+	}
+	if (((dir != -1) && (dir != 1)) || !codeplugZoneGetDataForNumber(zoneNum, &z))
+	{
+		return CODEPLUG_ZONE_EDIT_NOT_REAL;
+	}
+
+	num = z.NOT_IN_CODEPLUGDATA_numChannelsInZone;
+	if ((pos < 0) || (pos >= num) || (to < 0) || (to >= num))
+	{
+		return CODEPLUG_ZONE_EDIT_BAD_POSITION;
+	}
+
+	lo = (pos < to) ? pos : to;
+	addr = codeplugZoneRecordAddr(bit) + 16 + (int)(sizeof(uint16_t) * lo);
+	if (((addr / 4096) != ((addr + 3) / 4096)))
+	{
+		return CODEPLUG_ZONE_EDIT_SECTOR_EDGE;
+	}
+
+	pair[0] = z.channels[lo + 1];
+	pair[1] = z.channels[lo];
+	if (!EEPROM_Write(addr, (uint8_t *)pair, (int)sizeof(pair)))
+	{
+		return CODEPLUG_ZONE_EDIT_WRITE_ERROR;
+	}
+
+	idx = codeplugGetLastUsedChannelInZone(bit);
+	newIdx = (idx == lo) ? (lo + 1) : ((idx == (lo + 1)) ? lo : idx);
+	if (newIdx != idx)
+	{
+		codeplugSetLastUsedChannelInZone(bit, (int16_t)newIdx);
+		codeplugSaveLastUsedChannelInZone();
+	}
+
+	codeplugZoneRefreshCurrent(bit, zoneNum);
+	return CODEPLUG_ZONE_EDIT_OK;
+}
+#endif
+
 /* Перерахунок збереженої поточної зони після зміни маски: див. codeplugZoneCurrentAfterChange. oldMask -- маска ДО зміни. */
 static void codeplugZoneFixCurrent(const uint8_t *oldMask, int16_t *curZoneOrdinal)
 {
@@ -2173,6 +2235,32 @@ CodeplugRxGroupResult_t codeplugRxGroupSetMembers(int slot, const uint16_t *memb
 		return CODEPLUG_RXGROUP_WRITE_ERROR;
 	}
 	return CODEPLUG_RXGROUP_OK;
+}
+
+/* R66C: обмін двох СУСІДНІХ контактів у складі (dir -1 -- вгору, +1 -- вниз). ОДИН запис 4 байтів у межах запису 80 Б (запис не перетинає межу сектора, див. G1 у
+ * test_codeplug_rxgroup.c) -> один прогін сектора. Довжина не змінюється, кеш довжин не чіпаємо. Обрив живлення: або старий порядок, або новий (4 байти -- одна
+ * сторінка запису), дублів і втрат контакту нема. */
+CodeplugRxGroupResult_t codeplugRxGroupMoveMember(int slot, int pos, int dir)
+{
+	uint16_t m[CODEPLUG_RXGROUP_MEMBERS_MAX];
+	uint16_t pair[2];
+	int n;
+	int to = pos + dir;
+	int lo;
+
+	if (!codeplugRxGroupExists(slot) || ((dir != -1) && (dir != 1)))
+	{
+		return CODEPLUG_RXGROUP_BAD_ARG;
+	}
+	n = codeplugRxGroupGetMembers(slot, m);
+	if ((pos < 0) || (pos >= n) || (to < 0) || (to >= n))
+	{
+		return CODEPLUG_RXGROUP_BAD_ARG;
+	}
+	lo = (pos < to) ? pos : to;
+	pair[0] = m[lo + 1];
+	pair[1] = m[lo];
+	return SPI_Flash_write(codeplugRxGroupBodyAddr(slot) + CODEPLUG_RXGROUP_NAME_LEN + (lo * (int)sizeof(uint16_t)), (uint8_t *)pair, (int)sizeof(pair)) ? CODEPLUG_RXGROUP_OK : CODEPLUG_RXGROUP_WRITE_ERROR;
 }
 
 /* Поле «список прийому» каналу (1 байт; 0 -- «Немає»). */

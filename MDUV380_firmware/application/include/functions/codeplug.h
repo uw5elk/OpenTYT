@@ -582,6 +582,9 @@ typedef enum
 	CODEPLUG_ZONE_EDIT_NAME_EMPTY,         // порожня назва нової зони
 	CODEPLUG_ZONE_EDIT_NAME_TOO_LONG,      // назва задовга або 16 байтів із «я» наприкінці (див. CODEPLUG_ZONE_RENAME_AMBIGUOUS_TAIL)
 	CODEPLUG_ZONE_EDIT_WRITE_ERROR
+#if defined(ENABLE_CODEPLUG_MENU)   // R66C: без меню кодплага перелік не змінюється (токени R43-збірок як були)
+	,CODEPLUG_ZONE_EDIT_SECTOR_EDGE// R66C: обмін двох сусідніх каналів перетинає межу 4 КіБ сектора -- не атомарний, відхилено (див. codeplugZoneMoveChannel)
+#endif
 } CodeplugZoneEditResult_t;
 
 CodeplugZoneEditResult_t codeplugZoneAddChannel(int zoneNum, int channelIndex);           // канал -- у КІНЕЦЬ списку зони; zoneNum -- номер у списку зон
@@ -599,6 +602,9 @@ int codeplugZoneEditNthChannel(int n);                                          
  * Контакти: стокове видалення НЕ перевіряло канали, що посилаються на контакт (канал читав зі стертого слота ім'я 0xFF, TG 0, тип 0xFF), тож тут -- каскад. */
 #if defined(ENABLE_CODEPLUG_MENU) && defined(CHANNEL_DELETE_ENABLED) && defined(ZONE_EDIT_ENABLED)
 #define CODEPLUG_MENU_ENABLED 1
+/* R66C: переміщення каналу в зоні («Канали зони»: Вгору/Вниз) -- той самий набір прапорців, що й меню кодплага; обмін = один запис 4 байтів. */
+#define ZONE_MOVE_ENABLED 1
+CodeplugZoneEditResult_t codeplugZoneMoveChannel(int zoneNum, int pos, int dir);   // dir -1/+1; обмін з сусідом; список → LUCZ; SECTOR_EDGE -- відхилено
 int codeplugContactCountChannels(int contactIndex);   // у скількох каналах (справжніх, у масці «в роботі») поле «контакт» == contactIndex
 bool codeplugContactDelete(int contactIndex);         // канали з цим контактом -> «Немає» (0), далі стирання слота контакту; false -- збій запису
 
@@ -629,6 +635,7 @@ int  codeplugRxGroupGetMembers(int slot, uint16_t *out32);              // но�
 CodeplugRxGroupResult_t codeplugRxGroupNameCheck(const char *name, int exceptSlot);   // правила назви; exceptSlot -- слот, який перейменовують (0 -- новий)
 CodeplugRxGroupResult_t codeplugRxGroupCreate(const char *name, const uint16_t *members, int n, int *slotOut);   // n 1..32; запис: тіло -> довжина -> кеш
 CodeplugRxGroupResult_t codeplugRxGroupRename(int slot, const char *name);               // пише лише 16 байтів назви
+CodeplugRxGroupResult_t codeplugRxGroupMoveMember(int slot, int pos, int dir);          // R66C: обмін двох сусідніх контактів складу (dir -1/+1), ОДИН запис 4 Б
 CodeplugRxGroupResult_t codeplugRxGroupSetMembers(int slot, const uint16_t *members, int n);   // n 1..32; запис: номери контактів -> довжина (якщо змінилась)
 int  codeplugRxGroupCountChannels(int slot);                            // у скількох каналах (у масці «в роботі») стоїть цей список
 CodeplugRxGroupResult_t codeplugRxGroupDelete(int slot);                // канали і обидва VFO -> «Немає»; далі довжина = 0, кеш, тіло -> нулі
