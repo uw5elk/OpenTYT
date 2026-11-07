@@ -11,4 +11,6 @@
 #define AESK_MSG_RENAMED      "Ім'я ключа\nзбережено"
 #define AESK_MSG_SAVE_ERR     "Помилка запису"
 
+#define AESK_DET_LABEL_SHORT  "Ключ"   /* R65A: короткий підпис рядка ключа в «Деталях каналу», коли в ключа є ім'я (з «Шифр. TX» ім'я не вміщається в 16 символів) */
+
 #endif /* USER_INTERFACE_LANGUAGES_AESKEYS_UA_H_ */

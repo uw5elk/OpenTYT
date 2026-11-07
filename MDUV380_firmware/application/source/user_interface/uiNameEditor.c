@@ -177,4 +177,30 @@ bool nameEdHandleKey(char *buf, const char *title, uiEvent_t *ev)
 	return false;
 }
 
+/* R65A: див. заголовок. */
+void nameEdFitLabel(char *out, unsigned num, const char *name, unsigned total)
+{
+	char head[8];
+	unsigned h = (unsigned)snprintf(head, sizeof(head), "%u ", num);
+	unsigned room = (total > h) ? (total - h) : 0U;
+	unsigned n = (unsigned)strlen(name);
+
+	memcpy(out, head, h);
+	if (n <= room)
+	{
+		memcpy(out + h, name, n + 1U);
+	}
+	else if (room >= 3U)
+	{
+		memcpy(out + h, name, room - 2U);
+		out[h + room - 2U] = '.';
+		out[h + room - 1U] = '.';
+		out[h + room] = 0;
+	}
+	else
+	{
+		out[h] = 0;
+	}
+}
+
 #endif /* UI_NAME_EDITOR */

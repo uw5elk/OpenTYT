@@ -33,7 +33,11 @@
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
 #include "interfaces/gps.h"
+#include "user_interface/uiNameEditor.h"   /* R65A: nameEdFitLabel() */
 #include "functions/aes_key_name.h"   /* R64C: ім'я ключа в «Деталях каналу» (лише з ENABLE_AES_KEY_NAMES) */
+#if defined(AES_KEY_NAMES_ENABLED)
+#include "user_interface/languages/aeskeys_ua.h"
+#endif
 #if defined(ENABLE_ROAM_RETRY)
 #include "functions/wake_hop.h"       /* R60: номер списку роумінгу каналу (roamRecList/roamRecSetList/roamRecSuitable) */
 #include "user_interface/roam_ui.h"
@@ -750,7 +754,9 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 
 								if (dmrAesKeyNameGet((uint8_t)codeplugChannelGetAesKeySlot(&tmpChannel), keyNm) != 0)
 								{
-									snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u %s", (unsigned)codeplugChannelGetAesKeySlot(&tmpChannel), keyNm);
+									/* R65A: з повним підписом «Шифр. TX:» ім'я не вміщалось і обривалось посеред слова -- короткий підпис і скорочення з «..» */
+									leftSide = AESK_DET_LABEL_SHORT;
+									nameEdFitLabel(rightSideVar, (unsigned)codeplugChannelGetAesKeySlot(&tmpChannel), keyNm, (SCREEN_LINE_BUFFER_SIZE - 1U) - (unsigned)strlen(AESK_DET_LABEL_SHORT) - 1U);
 								}
 							}
 #endif
@@ -776,7 +782,7 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 								if (roamNameGet(roamRecList(&tmpChannel), roamNm) && (roamNm[0] != 0))
 								{
 									leftSide = ROAM_DET_LABEL_SHORT;
-									snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u %s", (unsigned)roamRecList(&tmpChannel), roamNm);
+									nameEdFitLabel(rightSideVar, (unsigned)roamRecList(&tmpChannel), roamNm, (SCREEN_LINE_BUFFER_SIZE - 1U) - (unsigned)strlen(ROAM_DET_LABEL_SHORT) - 1U);   /* R65A: «..» як ознака обрізання */
 								}
 							}
 #endif

@@ -102,9 +102,13 @@ class RoamPanel(Panel):
         self.v_names = [tk.StringVar(value="") for _ in range(rc.LISTS_COUNT)]
         grid = ttk.Frame(nbox)
         grid.pack(fill="x", padx=8, pady=(4, 2))
+        self.name_labels = []
         for k in range(rc.LISTS_COUNT):
             r, c = k % 5, k // 5
-            ttk.Label(grid, text="Список %d" % (k + 1), width=9).grid(row=r, column=2 * c, sticky="w", pady=1)
+            # R65A: БЕЗ фіксованої width (у символах «0» -- на Windows «Список 10» обрізалось до «Список 1(»): клітинка = природна ширина тексту + відступ
+            lb = ttk.Label(grid, text="Список %d" % (k + 1))
+            lb.grid(row=r, column=2 * c, sticky="w", padx=(0, 8), pady=1)
+            self.name_labels.append(lb)
             ttk.Entry(grid, textvariable=self.v_names[k], width=22).grid(row=r, column=2 * c + 1, sticky="w", padx=(0, 14), pady=1)
         nbtn = ttk.Frame(nbox)
         nbtn.pack(fill="x", padx=8, pady=6)
@@ -172,8 +176,13 @@ class RoamPanel(Panel):
         self._fill()
 
     @staticmethod
-    def _list_label(k, count):
-        return "%d (%d)" % (k, count)
+    def _list_label(k, count, name=""):
+        """«1 (2)» або, коли в рації задано ім'я списку, «1 Робочий (2)» (R65A)."""
+        return "%d %s(%d)" % (k, (name + " ") if name else "", count)
+
+    def _sel_name(self, k):
+        nm = getattr(self, "_radio_names", None)
+        return nm[k - 1] if nm else ""
 
     def current_list(self):
         """Номер списку, обраного в селекторі (1..10)."""
@@ -192,8 +201,8 @@ class RoamPanel(Panel):
             return
         counts = {k: len(te.roam_numbers(d.image, k)) for k in range(1, rc.LISTS_COUNT + 1)}
         cur = self.current_list()
-        self.cb_list.config(values=[self._list_label(k, counts[k]) for k in range(1, rc.LISTS_COUNT + 1)])
-        self.v_list.set(self._list_label(cur, counts[cur]))
+        self.cb_list.config(values=[self._list_label(k, counts[k], self._sel_name(k)) for k in range(1, rc.LISTS_COUNT + 1)])
+        self.v_list.set(self._list_label(cur, counts[cur], self._sel_name(cur)))
         lst = cur if self.v_only.get() else None
         for n, vals in channel_rows(d.image, self.dp, needle=self.v_filter.get(), lst=lst):
             item = self.tree.insert("", "end", values=vals)
@@ -374,15 +383,31 @@ class RoamPanel(Panel):
             names.append(nm)
         return names
 
+    @staticmethod
+    def names_status(names):
+        """Текст статусу після читання імен з рації (R65A): скільки імен задано (з коректною відміною) і які саме."""
+        given = [(k + 1, names[k]) for k in range(rc.LISTS_COUNT) if names and names[k]]
+        n = len(given)
+        if n == 0:
+            return "Прочитано з рації: імен не задано (рація показує «Список N»)."
+        if n % 10 == 1 and n % 100 != 11:
+            word = "задано %d ім'я" % n
+        elif n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+            word = "задано %d імені" % n
+        else:
+            word = "задано %d імен" % n
+        return "Прочитано з рації: %s -- %s." % (word, "; ".join("%d: %s" % g for g in given))
+
     def _apply_names(self, names, raw):
-        """Головний потік: підставити імена, прочитані з рації (None -- блока нема, усі порожні)."""
+        """Головний потік: підставити імена, прочитані з рації (None -- блока нема, усі порожні). Усі 10 полів перезаписуються (R65A: старий вміст не лишається)."""
+        self._radio_names = list(names) if names else None
         for k, v in enumerate(self.v_names):
             v.set(names[k] if names else "")
         if names is None:
             self.names_label.config(text="Блока імен у рації немає -- усі імена порожні (рація показує «Список N»).", foreground=gt.P["warn"])
         else:
-            self.names_label.config(text="Прочитано з рації: " + ("; ".join(rc.list_title(names, k + 1) for k in range(rc.LISTS_COUNT) if names[k]) or "імен нема") + ".",
-                                    foreground=gt.P["ok"])
+            self.names_label.config(text=self.names_status(names), foreground=gt.P["ok"])
+        self._fill()
 
     def _on_read_names(self):
         if not self.shell.busy:

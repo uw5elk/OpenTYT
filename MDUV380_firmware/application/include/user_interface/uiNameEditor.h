@@ -37,5 +37,9 @@ void nameEdDraw(const char *buf, const char *title);
 /* Текстові клавіші (цифри, «*», «#» -- режим) і ЛІВОРУЧ (стерти). true -- подію спожито (екран перемальовано). Зелену/червону викликач обробляє сам. */
 bool nameEdHandleKey(char *buf, const char *title, uiEvent_t *ev);
 
+/* R65A: «N ім'я» у вільні total символів рядка (рядок меню збирається як «підпис:значення» у 16 символів, решту snprintf мовчки відрізав би посеред слова).
+ * Не влазить -- ім'я скорочується, а в кінці стоять дві крапки як ознака обрізання. total мусить вміщати хоча б номер і пробіл; out >= total+1 байт. */
+void nameEdFitLabel(char *out, unsigned num, const char *name, unsigned total);
+
 #endif
 #endif /* USER_INTERFACE_UINAMEEDITOR_H_ */
