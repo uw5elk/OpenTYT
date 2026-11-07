@@ -18,8 +18,8 @@ from .layout import FitTable
 from .panel import HINT_NO_DOC
 
 TEXT_FIELDS = (("name", "Назва (до 8 байтів)", 12), ("ssid", "SSID (0..15)", 5), ("via1", "Via 1", 8), ("via1_ssid", "Via 1 SSID (0..15)", 5),
-               ("via2", "Via 2", 8), ("via2_ssid", "Via 2 SSID (0..15)", 5), ("icon_table", "Таблиця символів (0..255)", 6),
-               ("icon", "Символ (0..255)", 6), ("comment", "Коментар (до 24 символів)", 30), ("ambiguity", "Неточність позиції (0..7)", 5),
+               ("via2", "Via 2", 8), ("via2_ssid", "Via 2 SSID (0..15)", 5), ("icon_table", "Таблиця символів (0 основна, 1 додаткова)", 6),
+               ("icon", "Символ (індекс = код - 33, 0..93)", 6), ("comment", "Коментар (до 24 символів)", 30), ("ambiguity", "Неточність позиції (0..7)", 5),
                ("lat", "Широта, ° (±90)", 12), ("lon", "Довгота, ° (±180)", 12), ("tx_freq", "Частота TX, МГц (0 -- не задано)", 12))
 FLAG_FIELDS = (("use_position", "Використовувати позицію з цього конфіга"), ("qsy", "Додавати QSY-інформацію (частоту)"),
                ("baud300", "300 бод (замість 1200)"), ("silent", "Без звуку при передачі бікона"))
@@ -122,8 +122,7 @@ class StationBlock(ttk.LabelFrame):
             text, color = "Символ у слоті не розпізнано. Оберіть його: «Обрати символ...».", gt.P["warn"]
         else:
             if asym.is_known(*nums):
-                t = asym.table_char(nums[0])
-                img = asym.photo(self, t, nums[1], scale=2)
+                img = asym.photo_raw(self, nums[0], nums[1], scale=2)
                 text = asym.symbol_text(*nums)
             else:
                 text, color = asym.unknown_text(*nums), gt.P["warn"]
@@ -137,7 +136,7 @@ class StationBlock(ttk.LabelFrame):
     def _on_pick_symbol(self):
         nums = self._symbol_numbers()
         if nums is None or not asym.is_known(*nums):
-            nums = (nums[0] if nums and asym.table_char(nums[0]) else asym.PRIMARY, ord(">"))      # сітка відкривається на звичайному символі, не на «порожньому»
+            nums = (0 if not nums or nums[0] == 0 else 1, ord(">") - 33)      # сітка відкривається на звичайному символі ('>', індекс 29), не на «порожньому»
             known = False
         else:
             known = True

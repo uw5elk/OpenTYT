@@ -521,6 +521,29 @@ static uint8_t clampU8(uint8_t v, uint8_t lo, uint8_t hi)
 	return (v < lo) ? lo : ((v > hi) ? hi : v);
 }
 
+#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU)
+/* R69 B2 + R70 A1: GPS-приймача нема, тож недосяжні стани приводимо до єдиного можливого. Одне місце для ВСІХ шляхів (старт із блока, старт без блока, перечитування
+ * блока, відкриття сесії налаштувань):
+ *  - джерело «GPS» -> «канал / вручну»: стоковий бікон із джерелом «GPS» без приймача після першої передачі мовчить (gpsPVTIsValid() завжди хибне);
+ *  - режим «Розумний» (потребує швидкості/курсу) -> «Авто»;
+ *  - «Затухання» -- вимкнено: без зсуву позиції більше 15 м множник інтервалу лише росте (x2 ... x32) і не скидається, тож інтервал розтягується до максимуму.
+ * Сам блок у флеші не переписується (пишеться лише з меню чи CPS). Повернути: прибрати FORK_NO_GPS_MENU (applicationMain.h). */
+static void noGpsForce(aprsBeaconingSettings_t *st)
+{
+	if (((uint8_t)st->state & (uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U)
+	{
+		st->state = (aprsBeaconingStates_t)(((uint8_t)st->state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_GPS)) | (uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
+	}
+	if (st->mode == APRS_BEACONING_MODE_SMART_BEACONING)
+	{
+		st->mode = APRS_BEACONING_MODE_AUTO;
+	}
+	st->state = (aprsBeaconingStates_t)((uint8_t)st->state & (uint8_t)~(APRS_BEACONING_STATE_DECAY_ALGO_ENABLED));
+}
+#else
+#define noGpsForce(st)  ((void)0)
+#endif
+
 /* Блок -> налаштування `st` (решта полів -- поточні). Спільне для старту й для перечитування при відкритті сесії налаштувань. */
 static void cfgToSettings(const aprsBeaconCfg_t *c, aprsBeaconingSettings_t *st)
 {
@@ -536,20 +559,7 @@ static void cfgToSettings(const aprsBeaconCfg_t *c, aprsBeaconingSettings_t *st)
 	st->smart.turnAngle = clampU8(c->turnAngle, APRS_SMART_BEACON_TURN_ANGLE_MIN, APRS_SMART_BEACON_TURN_ANGLE_MAX);
 	st->smart.turnSlope = clampU8(c->turnSlope, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX);
 	st->smart.turnTime = clampU8(c->turnTime, APRS_SMART_BEACON_TURN_TIME_MIN, APRS_SMART_BEACON_TURN_TIME_MAX);
-#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU)
-	/* R69 B2: GPS-приймача нема, а блок могли записати з CPS зі станом «GPS» або режимом «Розумний», і меню налаштувань при цьому не відкривали. Стоковий бікон із
-	 * джерелом «GPS» без приймача після першої ж передачі мовчки перестає слати (після кешування позиції gpsPVTIsValid() завжди хибне), «Розумний» потребує швидкості/курсу.
-	 * Тому на КОЖНОМУ завантаженні блока (старт і перечитування) -- ті самі підміни, що на відкритті сесії налаштувань: джерело «канал / вручну», «Розумний» -> «Авто».
-	 * Сам блок у флеші не міняється (пишеться лише з меню чи CPS); «Затухання» не чіпаємо (рішення за власником). Повернути: прибрати FORK_NO_GPS_MENU (applicationMain.h). */
-	if (((uint8_t)st->state & (uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U)
-	{
-		st->state = (aprsBeaconingStates_t)(((uint8_t)st->state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_GPS)) | (uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
-	}
-	if (st->mode == APRS_BEACONING_MODE_SMART_BEACONING)
-	{
-		st->mode = APRS_BEACONING_MODE_AUTO;
-	}
-#endif
+	noGpsForce(st);
 }
 
 /* Блок -> працюючі налаштування (на старті, ПЕРЕД aprsBeaconingInit()). restoreDefaults == true (скидання налаштувань при вмиканні) -- блок НЕ застосовується,
@@ -572,6 +582,15 @@ void aprsBeaconCfgBoot(bool restoreDefaults)
 		aprsRxBcnWinSetMode(c.bcnWin);
 		return;
 	}
+#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU)
+	{
+		aprsBeaconingSettings_t cur;   /* R70 A1: блока нема -- типові налаштування стокового бікона мають затухання ВВІМКНЕНИМ; без меню воно б діяло, тож знімаємо його до створення блока */
+
+		aprsBeaconingGetSettings(&cur);
+		noGpsForce(&cur);
+		aprsBeaconingBootSet(&cur);
+	}
+#endif
 	(void)aprsBeaconCfgStore();
 }
 
@@ -1047,24 +1066,7 @@ bool aprsModeSettingsSessionOpen(void)
 	aprsModeEffective(&m->cfg, &m->def, &m->eff);
 	(void)aprsBeaconCfgReload();   /* APRS-fix N2.1: сесія починається з того, що реально лежить у флеші (ПК міг переписати блок) */
 	aprsBeaconingGetSettings(&aprsSettingsCopy);   /* стокові параметри бікона редагуються в копії (як у стоковому меню) і застосовуються при закритті сесії */
-#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU)
-	/* APRS-ui M5 + APRS-fix N1: GPS у рації нема, відповідні рядки приховані, тож недосяжні стани приводимо до єдиного можливого у чернетці (на закритті сесії зміна
-	 * збережеться тим самим шляхом, що й решта):
-	 *  - джерело позиції -- «з каналу / вручну» (знімаємо біт «GPS»);
-	 *  - режим «Розумний маяк» (потребує швидкості/курсу) -- «Авто»;
-	 *  - «Затухання» -- вимкнено (без зсуву позиції скидання не настає, інтервал розтягується до максимуму й там лишається).
-	 * Значення енуму, поля блока й GPS-логіка не змінюються: для рації з GPS усе повертається прибиранням FORK_NO_GPS_MENU (applicationMain.h). */
-	if ((aprsSettingsCopy.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U)
-	{
-		aprsSettingsCopy.state = (aprsBeaconingStates_t)(((uint8_t)aprsSettingsCopy.state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_GPS)) |
-				(uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
-	}
-	if (aprsSettingsCopy.mode == APRS_BEACONING_MODE_SMART_BEACONING)
-	{
-		aprsSettingsCopy.mode = APRS_BEACONING_MODE_AUTO;
-	}
-	aprsSettingsCopy.state = (aprsBeaconingStates_t)((uint8_t)aprsSettingsCopy.state & (uint8_t)~(APRS_BEACONING_STATE_DECAY_ALGO_ENABLED));
-#endif
+	noGpsForce(&aprsSettingsCopy);   /* APRS-ui M5 + APRS-fix N1 + R70: недосяжні стани (джерело GPS, «Розумний», «Затухання») -- до єдиного можливого, на закритті сесії збережеться як решта */
 	u = aprsModeUi();
 	memset(u, 0, sizeof(*u));
 	u->page = APRS_MODE_PAGE_SETTINGS;

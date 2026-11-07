@@ -90,7 +90,8 @@ class AprsPanel(Panel):
             self._row(bc, "Джерело позиції", lambda f: ttk.Combobox(f, textvariable=self.vars["source"], values=["Позиція каналу", "GPS"], state="readonly", width=17))
         self.vars["decay"] = tk.BooleanVar(value=True)
         self.vars["compressed"] = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bc, text="Алгоритм затухання", variable=self.vars["decay"]).pack(anchor="w", padx=8)
+        if not abc_.FORK_NO_GPS:    # R70 A3: без GPS затухання вимкнено скрізь -- чекбокс прихований, у рацію йде «вимкнено»
+            ttk.Checkbutton(bc, text="Алгоритм затухання", variable=self.vars["decay"]).pack(anchor="w", padx=8)
         ttk.Checkbutton(bc, text="Стиснений формат позиції", variable=self.vars["compressed"]).pack(anchor="w", padx=8)
         ttk.Label(bc, text=("Яку позицію рація передає: якщо в слоті APRS увімкнено «Використовувати позицію» -- координати слота; інакше -- координати, збережені в рації. "
                             "Немає ні тих, ні тих -- кадр не передається."),

@@ -137,12 +137,18 @@ def test_callsign_flow():
         check(not radio3.requests if hasattr(radio3, "requests") else True, "поганий позивний -- рацію не чіпали")
 
 
+def no_decay_on(r):
+    return bool(r["decay"])
+
+
 def test_no_gps_apply():
     """R69 B1/B2: без GPS -- «канал» і «Авто» замість «Розумного»; решта полів і формат блока не змінюються."""
-    d0 = dict(ab.DEFAULT_BEACON, mode=4, source="gps", decay=False, slow=11, fast=33, low=4, high=66, angle=33, slope=44, time=55, bcnwin=2, power=7)
+    d0 = dict(ab.DEFAULT_BEACON, mode=4, source="gps", decay=True, slow=11, fast=33, low=4, high=66, angle=33, slope=44, time=55, bcnwin=2, power=7)
     r = ab.no_gps_apply(d0)
     check(r["mode"] == 3 and r["source"] == "channel", "Розумний+GPS -> Авто+канал")
-    check({k: v for k, v in r.items() if k not in ("mode", "source")} == {k: v for k, v in d0.items() if k not in ("mode", "source")}, "решта полів без змін")
+    check(r["decay"] is False and no_decay_on(r) is False, "R70 A3: затухання знято")
+    check({k: v for k, v in r.items() if k not in ("mode", "source", "decay")} == {k: v for k, v in d0.items() if k not in ("mode", "source", "decay")}, "решта полів без змін")
+    check(ab.no_gps_apply(dict(d0, decay=True))["decay"] is False and ab.beacon_build(ab.no_gps_apply(dict(d0, decay=True)))[6] & 4 == 0, "R70 A3: біт затухання в блоці знято")
     check(d0["mode"] == 4 and d0["source"] == "gps", "вхідний dict не змінено")
     for m in (0, 1, 2, 3):
         check(ab.no_gps_apply(dict(d0, mode=m))["mode"] == m, "режим %d не змінюється" % m)
@@ -197,12 +203,18 @@ def test_gui():
         app.show("aprs")                 # CPS-shell: APRS -- панель дерева, а не окреме вікно
         w = app.get_panel("aprs")
         w.update()
-        d0 = dict(ab.DEFAULT_BEACON, mode=4, power=3, interval=6, source="gps", decay=False, compressed=True, slow=11, fast=33, low=4, high=66, angle=33, slope=44, time=55, bcnwin=1)
+        d0 = dict(ab.DEFAULT_BEACON, mode=4, power=3, interval=6, source="gps", decay=True, compressed=True, slow=11, fast=33, low=4, high=66, angle=33, slope=44, time=55, bcnwin=1)
         w._apply_state({"call": "UW5ELK", "sql": 5, "beacon": d0})
         d, sql = w._collect()
         check(d == ab.no_gps_apply(d0) and sql == 5, "вікно: стан -> поля -> стан (без GPS: канал + «Авто»): %r" % d)
-        check(d["mode"] == 3 and d["source"] == "channel" and all(d[k] == d0[k] for k in ("slow", "fast", "low", "high", "angle", "slope", "time", "decay", "bcnwin", "power", "interval")),
-              "R69 B2: «Розумний»+GPS у вікні -> «Авто»+канал, решта полів (розумний маяк, затухання) збережена")
+        check(d["mode"] == 3 and d["source"] == "channel" and all(d[k] == d0[k] for k in ("slow", "fast", "low", "high", "angle", "slope", "time", "bcnwin", "power", "interval")),
+              "R69 B2: «Розумний»+GPS у вікні -> «Авто»+канал, решта полів (розумний маяк) збережена")
+        check(d["decay"] is False and d0["decay"] is True, "R70 A3: затухання в блоці знято")
+        w._apply_state({"beacon": dict(d0, decay=True)})
+        check(w.vars["decay"].get() is False, "R70 A3: блок із затуханням показано вимкненим")
+        w.vars["decay"].set(True)
+        check(w._collect()[0]["decay"] is False, "R70 A3: навіть ввімкнена змінна пишеться вимкненою")
+        check(not any(c.winfo_class() == "TCheckbutton" and c.cget("text") == "Алгоритм затухання" for c in w.beacon_frame.winfo_children()), "R70 A3: чекбоксу затухання нема")
         # R69 B1/B3: що видно у вікні
         w.update()
         check(w.smart_frame.winfo_manager() == "", "R69 B1: панель «Розумний маяк» не показана")

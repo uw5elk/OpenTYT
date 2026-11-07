@@ -50,10 +50,14 @@ def test_symbol_data():
     check(not bad, "зображення CPS збігаються з aprs_icons.c байт у байт; розбіжні: %r" % bad[:5])
     rows = asym.decode(asym.ICONS["/>"][1])
     check(len(rows) == 24 and all(len(r) == 24 for r in rows) and any("#" in r for r in rows), "декодування дає 24x24 з пікселями")
-    check(asym.table_char(47) == "/" and asym.table_char(92) == "\\" and asym.table_char(ord("5")) == "\\" and asym.table_char(ord("a")) is None,
-          "таблиці: «/» і «\\», накладки 0-9/A-Z -- додаткова (як aprsIconFind), решта -- нема")
-    check("Авто" in asym.symbol_text(47, ord(">")) or "авто" in asym.symbol_text(47, ord(">")), "підпис містить назву з txt: %s" % asym.symbol_text(47, ord(">")))
-    check("накладка '5'" in asym.symbol_text(ord("5"), ord("#")), "підпис накладки")
+    # R70: слот у форматі ПРОШИВКИ -- таблиця 0/1, індекс = код - 33
+    check(asym.raw_to_pair(0, 29) == ("/", ord(">")) and asym.raw_to_pair(1, 0) == ("\\", ord("!")) and asym.raw_to_pair(5, 93) == ("\\", ord("~")) and asym.raw_to_pair(0, 94) is None,
+          "R70: (0,29) = '/' '>', (1,0) = '\\' '!', таблиця >0 -- додаткова, індекс 94 -- поза набором")
+    check(asym.pair_to_raw("/", ord(">")) == (0, 29) and asym.pair_to_raw("\\", ord("~")) == (1, 93), "R70: зворотне перетворення")
+    check("авто" in asym.symbol_text(0, 29).lower(), "підпис містить назву з txt: %s" % asym.symbol_text(0, 29))
+    check("людина" in asym.symbol_text(0, 58) and asym.is_known(0, 58) and "відсутн" not in asym.symbol_text(0, 58), "R70/B3: (0,58) = '[' людина, без попередження: %s" % asym.symbol_text(0, 58))
+    check(not asym.is_known(0, 94) and "поза набором" in asym.unknown_text(0, 94) and "підставить '>'" in asym.unknown_text(0, 94), "R70/B3: індекс 94 -- правдиве попередження")
+    check("читає як додаткову" in asym.symbol_text(2, 58), "R70/B3: таблиця 2 -- сказано, що рація читає її як додаткову")
 
 
 def _all(w):
@@ -121,16 +125,20 @@ def test_gui():
         _spin(app)
         check(st.hint.winfo_manager() == "" and len(st.tree.get_children()) == 1, "з документом: слот у списку")
         # --- V2.4: іконка поруч із числами ---
-        st.vars["icon_table"].set("47")
-        st.vars["icon"].set("62")
+        st.vars["icon_table"].set("0")
+        st.vars["icon"].set("29")
         _spin(app)
         check(st.symbol_preview.cget("image") != "" and "авто" in st.symbol_info.cget("text").lower(), "V2.4: поруч із полями іконка й підпис: %s" % st.symbol_info.cget("text"))
-        st.vars["icon"].set("34")
+        st.vars["icon"].set("1")      # '"' (індекс 1) -- у наборі зображення нема
         _spin(app)
         check("немає в наборі рації" in st.symbol_info.cget("text") and st.symbol_preview.cget("image") == "", "Y1.3: код без зображення: пояснено словами: %s" % st.symbol_info.cget("text"))
-        st.vars["icon"].set("0")
+        st.vars["icon"].set("58")
         _spin(app)
-        check("не обрано" in st.symbol_info.cget("text"), "Y1.3: код 0 -- «Символ не обрано»")
+        check(st.symbol_preview.cget("image") != "" and "людина" in st.symbol_info.cget("text") and "немає" not in st.symbol_info.cget("text"),
+              "R70/B3: слот (0,58) -- людина, без попередження: %s" % st.symbol_info.cget("text"))
+        st.vars["icon"].set("120")
+        _spin(app)
+        check("поза набором" in st.symbol_info.cget("text") and st.symbol_preview.cget("image") == "", "R70/B3: індекс 120 -- правдиве попередження: %s" % st.symbol_info.cget("text"))
         # Y1.1: числових полів символу нема взагалі
         num_entries = [w for w in _all(st.form) if w.winfo_class() == "TEntry" and str(w.cget("textvariable")) in (str(st.vars["icon_table"]), str(st.vars["icon"]))]
         check(not num_entries and "icon" not in st.entries and "icon_table" not in st.entries, "Y1.1: у слоті нема полів вводу таблиці й символу")
@@ -160,8 +168,8 @@ def test_gui():
                 check(len(labs) == len(order), "сітка таблиці «%s»: %d іконок із %d" % (tab, len(labs), len(order)))
                 labs[order.index(code)].event_generate("<Enter>")
                 win.update()
-                info = [w for w in kids if w.winfo_class() == "TLabel" and "код" in str(w.cget("text"))]
-                check(info and ("(код %d)" % code) in info[0].cget("text"), "під курсором -- код і назва: %r" % [i.cget("text") for i in info])
+                info = [w for w in kids if w.winfo_class() == "TLabel" and "індекс" in str(w.cget("text"))]
+                check(info and ("(індекс %d)" % (code - 33)) in info[0].cget("text"), "під курсором -- код і назва: %r" % [i.cget("text") for i in info])
                 labs[order.index(code)].event_generate("<Button-1>")
                 win.update()
                 if then == "ok":
@@ -169,21 +177,21 @@ def test_gui():
                 else:
                     [w for w in kids if w.winfo_class() == "TButton" and w.cget("text") == "Скасувати"][0].invoke()
             app.after(150, run)
-        drive("Основна", ord("["))              # перемикач у першу таблицю; «[» -- людина
+        drive("Основна", ord("-"))              # перемикач у першу таблицю; «-» -- будинок (фікстура вже має (0,58))
         st._on_pick_symbol()
         grid_vals = (st.vars["icon_table"].get(), st.vars["icon"].get())
-        check(grid_vals == ("47", str(ord("["))), "W1: сітка (основна, «[») поклала в поля %r" % (grid_vals,))
+        check(grid_vals == ("0", str(ord("-") - 33)), "W1/R70: сітка (основна, «-») поклала в поля формат прошивки (0, 12): %r" % (grid_vals,))
         st._on_apply()
         _spin(app)
         rec = dict(app.doc.image.aprs())[0]
         rv = ced.aprs_values(rec)
-        check((rv["icon_table"], rv["icon"]) == ("47", str(ord("["))) and app.doc.modified, "W1: у документі (47, 91), документ змінено: %r" % ((rv["icon_table"], rv["icon"]),))
+        check((rv["icon_table"], rv["icon"]) == ("0", "12") and app.doc.modified, "W1/R70: у документі (0, 12), документ змінено: %r" % ((rv["icon_table"], rv["icon"]),))
         # те саме вручну на другому слоті: порівняння записів
         st._on_new()
         _spin(app)
         st.vars["name"].set("РУЧ")
-        st.vars["icon_table"].set("92")
-        st.vars["icon"].set(str(ord("#")))
+        st.vars["icon_table"].set("1")
+        st.vars["icon"].set(str(ord("#") - 33))
         st._on_apply()
         _spin(app)
         manual = dict(app.doc.image.aprs())[1]
@@ -197,20 +205,20 @@ def test_gui():
         grid = dict(app.doc.image.aprs())[2]
         # Z4: уся 64-байтова запис слота після вибору в сітці = запис, який дає той самий набір значень «вручну» (API без сітки)
         base = app.doc.image
-        again = ced.apply_aprs_slot(base, 2, dict(ced.aprs_values(grid), icon_table="92", icon=str(ord("#")))).image
+        again = ced.apply_aprs_slot(base, 2, dict(ced.aprs_values(grid), icon_table="1", icon=str(ord("#") - 33))).image
         check(bytes(dict(again.aprs())[2]) == bytes(grid), "Z4: запис слота з сітки == запис із тих самих чисел без сітки (64 байти)")
         gv, mv = ced.aprs_values(grid), ced.aprs_values(manual)
-        check((gv["icon_table"], gv["icon"]) == (mv["icon_table"], mv["icon"]) == ("92", str(ord("#"))),
+        check((gv["icon_table"], gv["icon"]) == (mv["icon_table"], mv["icon"]) == ("1", str(ord("#") - 33)),
               "W1: додаткова таблиця -- у записі ті самі числа, що при ручному вводі: %r / %r" % ((gv["icon_table"], gv["icon"]), (mv["icon_table"], mv["icon"])))
-        # накладка зберігається, скасування нічого не міняє
-        st.vars["icon_table"].set(str(ord("5")))
-        st.vars["icon"].set(str(ord("#")))
+        # R70: накладок слот не зберігає; скасування нічого не міняє
+        st.vars["icon_table"].set("1")
+        st.vars["icon"].set(str(ord("#") - 33))
         drive("Додаткова", ord("*"))
         st._on_pick_symbol()
-        check(st.vars["icon_table"].get() == str(ord("5")) and st.vars["icon"].get() == str(ord("*")), "накладка «5» лишилась при виборі з додаткової таблиці")
+        check(st.vars["icon_table"].get() == "1" and st.vars["icon"].get() == str(ord("*") - 33), "R70: вибір з додаткової таблиці -- (1, код - 33)")
         drive("Основна", ord("<"), then="cancel")
         st._on_pick_symbol()
-        check(st.vars["icon_table"].get() == str(ord("5")) and st.vars["icon"].get() == str(ord("*")), "«Скасувати» поля не змінює")
+        check(st.vars["icon_table"].get() == "1" and st.vars["icon"].get() == str(ord("*") - 33), "«Скасувати» поля не змінює")
 
         # --- W3: слот -> документ «змінено»; бікон -> документ не змінюється, пишеться в рацію ---
         import gui_dialogs as gd

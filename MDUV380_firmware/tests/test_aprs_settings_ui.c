@@ -440,8 +440,10 @@ static void testNoGps(void)
 		CHECK(s_stockSettings.mode == APRS_BEACONING_MODE_AUTO, "B2: старт -- «Розумний» з блока став «Авто» (%d)", (int)s_stockSettings.mode);
 		CHECK((s_stockSettings.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) == 0U && (s_stockSettings.state & APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL) != 0U,
 				"B2: старт -- джерело «канал» (state %02X)", (unsigned)s_stockSettings.state);
-		CHECK((s_stockSettings.state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) != 0U && (s_stockSettings.state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0U,
-				"B2: старт -- затухання й стиснення з блока не чіпано (state %02X)", (unsigned)s_stockSettings.state);
+		/* R70 A1: СВІДОМО замінено перевірку R69 «затухання з блока не чіпано» на «затухання знято» (рішення власника: без GPS затухання вимкнено скрізь);
+		 * стиснення, як і раніше, береться з блока як є */
+		CHECK((s_stockSettings.state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) == 0U && (s_stockSettings.state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0U,
+				"B2/R70: старт -- затухання знято, стиснення з блока лишилось (state %02X)", (unsigned)s_stockSettings.state);
 		CHECK(s_stockSettings.initialInterval == 5 && s_bcnWin == 1, "B2: старт -- решта полів блока застосована (інтервал %d, вікно %d)", s_stockSettings.initialInterval, s_bcnWin);
 		CHECK(memcmp(before, s_bflash, sizeof(before)) == 0, "B2: старт -- блок у флеші не переписано");
 
@@ -449,8 +451,19 @@ static void testNoGps(void)
 		s_stockSettings.mode = APRS_BEACONING_MODE_PTT; s_stockSettings.state = (aprsBeaconingStates_t)(APRS_BEACONING_STATE_LOCATION_FROM_GPS); s_stockSettings.smart.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT;
 		CHECK(aprsBeaconCfgReload(), "B2: перечитування блока");
 		CHECK(s_stockSettings.mode == APRS_BEACONING_MODE_AUTO && (s_stockSettings.state & APRS_BEACONING_STATE_LOCATION_FROM_GPS) == 0U &&
-				(s_stockSettings.state & APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL) != 0U, "B2: перечитування -- «Авто» + «канал» (режим %d, state %02X)", (int)s_stockSettings.mode, (unsigned)s_stockSettings.state);
+				(s_stockSettings.state & APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL) != 0U && (s_stockSettings.state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) == 0U,
+				"B2/R70: перечитування -- «Авто» + «канал», без затухання (режим %d, state %02X)", (int)s_stockSettings.mode, (unsigned)s_stockSettings.state);
 		CHECK(memcmp(before, s_bflash, sizeof(before)) == 0, "B2: перечитування -- блок у флеші не переписано");
+
+		/* R70 A1: блока нема -- типові налаштування мають затухання ввімкненим; після старту воно знято, блок створено вже без нього */
+		resetWorld();
+		memset(&s_stockSettings, 0, sizeof(s_stockSettings));
+		s_stockSettings.mode = APRS_BEACONING_MODE_AUTO; s_stockSettings.initialInterval = 2; s_stockSettings.smart.slowRate = APRS_SMART_BEACON_SLOW_RATE_DEFAULT;
+		s_stockSettings.state = (aprsBeaconingStates_t)(APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL | APRS_BEACONING_STATE_DECAY_ALGO_ENABLED | APRS_BEACONING_STATE_COMPRESSED_FORMAT);
+		aprsBeaconCfgBoot(false);
+		CHECK((s_stockSettings.state & APRS_BEACONING_STATE_DECAY_ALGO_ENABLED) == 0U && (s_stockSettings.state & APRS_BEACONING_STATE_COMPRESSED_FORMAT) != 0U,
+				"R70: блока нема -- затухання знято, стиснення лишилось (state %02X)", (unsigned)s_stockSettings.state);
+		CHECK(aprsBeaconCfgFromBytes(&rb, s_bflash, APRSB_BLOCK_LEN) && (rb.stateBits & 0x04U) == 0U && (rb.stateBits & 0x08U) != 0U, "R70: створений блок без затухання (stateBits %02X)", rb.stateBits);
 
 		/* звичайний блок (PTT + канал) не змінюється */
 		blockSet((uint8_t)APRS_BEACONING_MODE_PTT, 7, 0x09, 0);

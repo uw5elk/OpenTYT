@@ -159,7 +159,7 @@ def aprs_values(rec):
 
 def new_aprs_values():
     """Типові значення нового слота (форма «Додати»)."""
-    return {"name": "", "ssid": "0", "via1": "WIDE1", "via1_ssid": "1", "via2": "WIDE2", "via2_ssid": "1", "icon_table": "47", "icon": "0",
+    return {"name": "", "ssid": "0", "via1": "WIDE1", "via1_ssid": "1", "via2": "WIDE2", "via2_ssid": "1", "icon_table": "0", "icon": "29",
             "comment": "", "ambiguity": "0", "use_position": False, "lat": "0.0000", "lon": "0.0000", "tx_freq": "0", "qsy": False,
             "baud300": False, "silent": False}
 

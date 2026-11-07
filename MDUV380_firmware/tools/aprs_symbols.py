@@ -5,29 +5,21 @@
 генерується application/source/functions/aprs_icons.c; байти збігаються з пулом прошивки, це перевіряє тест). Нічого не перемальовано.
 Частина без Tk (decode, symbol_text) тестується без дисплея; Tk потрібен лише для PhotoImage і діалогу вибору.
 
-У кодплазі «таблиця» й «символ» -- два байти (0..255) -- ASCII-коди: таблиця '/' (47) первинна, '\\' (92) додаткова; символ -- '!'..'~' (33..126).
-Решта значень таблиці в додатковій таблиці APRS -- накладка (цифра або літера поверх символу): іконка тоді береться з додаткової таблиці, а накладка зберігається.
-(Логіка збігається з aprsIconFind() у aprs_icons.c: '/' -- первинна, '\\' і накладки 0-9, A-Z -- додаткова, інакше іконки нема.)"""
+У слоті кодплага два байти -- у ФОРМАТІ ПРОШИВКИ (R70): таблиця 0 -- основна '/', будь-що інше (1) -- додаткова '\\'; індекс = код символу - 33 ('!' -> 0 ... '~' -> 93).
+Так їх читає рація: aprs.c (`iconIndex + '!'`, `iconTable == 0 ? '/' : '\\'`) і aprs_mode_cfg.c. Усі функції нижче, що беруть (table_raw, index_raw), працюють саме в цьому форматі;
+пара (ASCII-таблиця, ASCII-код) потрібна лише для малювання піктограм (ICONS ключується '/'+код або '\\'+код). Накладки (цифра/літера поверх символу) слот не зберігає.
+(Логіка збігається з aprsIconFind() у aprs_icons.c.)
+"""
 try:
     from aprs_icons_data import ICONS
 except ImportError:      # не повинно статися: файл у репозиторії; без нього сітка просто недоступна, а числа працюють
     ICONS = {}
 
 W = H = 24
-PRIMARY, ALTERNATE = ord("/"), ord("\\")
 
 
 def available():
     return bool(ICONS)
-
-
-def table_char(table_value):
-    """'/' для первинної таблиці, '\\' для додаткової (і для накладок), None -- значення не схоже на таблицю."""
-    if table_value == PRIMARY:
-        return "/"
-    if table_value == ALTERNATE or 0x30 <= table_value <= 0x39 or 0x41 <= table_value <= 0x5A:      # накладка -- цифра або велика літера (як aprsIconFind)
-        return "\\"
-    return None
 
 
 def codes(table):
@@ -48,35 +40,49 @@ def decode(data_hex):
     return rows
 
 
-def is_known(table_value, code_value):
-    """Чи є в наборі рації зображення для цього символу (інакше рація малює рамку зі знаком символу)."""
-    t = table_char(table_value)
-    return t is not None and entry(t, code_value) is not None
+ICON_MAX = 93             # найбільший індекс ('~' - '!'), APRSM_ICON_MAX у прошивці
 
 
-def unknown_text(table_value, code_value):
-    """Словами: чому символа в слоті нема в наборі рації й що робити (Y1.3). Чисел для вводу не пропонуємо."""
-    if code_value == 0:
-        return "Символ не обрано. Оберіть його: «Обрати символ...»."
-    where = "у цій таблиці" if table_char(table_value) else "у такій таблиці"
-    return ("У слоті записано символ, якого немає в наборі рації (таблиця %d, код %d: %s). Рація намалює для нього рамку зі знаком. "
-            "Оберіть інший: «Обрати символ...»." % (table_value, code_value, where))
+def raw_to_pair(table_raw, index_raw):
+    """(таблиця, індекс) слота -> (ASCII-таблиця '/' або '\\', ASCII-код) -- ТАК РАЦІЯ ЧИТАЄ слот (aprs.c:581-582: таблиця != 0 -- додаткова). None -- індекс поза '!'..'~'."""
+    if not (0 <= index_raw <= ICON_MAX):
+        return None
+    return ("/" if table_raw == 0 else "\\"), index_raw + 33
 
 
-def symbol_text(table_value, code_value):
-    """Підпис під полями: «'>' (код 62) -- Авто» або чому зображення нема."""
-    t = table_char(table_value)
-    ch = chr(code_value) if 0x21 <= code_value <= 0x7E else None
-    if ch is None:
-        return "код %d: символ APRS -- це '!'...'~' (33..126)" % code_value
-    ent = entry(t, code_value) if t else None
-    tn = "основна '/'" if t == "/" else "додаткова '\\'"
-    if t is None:
-        return "'%s' (код %d): таблиця %d не схожа на '/' чи '\\'" % (ch, code_value, table_value)
+def pair_to_raw(table, code):
+    """(ASCII-таблиця '/' або '\\', ASCII-код '!'..'~') -> байти слота (0/1, код - 33)."""
+    return (0 if table == "/" else 1), code - 33
+
+
+def is_known(table_raw, index_raw):
+    """Чи є в наборі рації зображення для цього символу слота (інакше рація малює рамку зі знаком символу)."""
+    p = raw_to_pair(table_raw, index_raw)
+    return p is not None and entry(*p) is not None
+
+
+def unknown_text(table_raw, index_raw):
+    """Словами: чому символа слота нема в наборі рації. Формат -- прошивки (таблиця 0/1, індекс = код - 33)."""
+    if not (0 <= index_raw <= ICON_MAX):
+        return ("У слоті індекс %d поза набором (0..%d). Стоковий бікон передасть за ним байт %d, який не є символом APRS, а «Режим APRS» підставить '>'. "
+                "Оберіть символ: «Обрати символ...»." % (index_raw, ICON_MAX, (index_raw + 33) & 0xFF))
+    tbl, code = raw_to_pair(table_raw, index_raw)
+    return ("У слоті записано символ '%s' (%s таблиця, індекс %d), якого немає в наборі рації. Рація намалює для нього рамку зі знаком. Оберіть інший: «Обрати символ...»."
+            % (chr(code), "основна" if tbl == "/" else "додаткова", index_raw))
+
+
+def symbol_text(table_raw, index_raw):
+    """Підпис під полями -- ЯК РАЦІЯ ПРОЧИТАЄ слот: «'>' (індекс 29), основна '/' таблиця -- авто»; таблиця > 1 прошивка читає як додаткову (з поясненням)."""
+    p = raw_to_pair(table_raw, index_raw)
+    if p is None:
+        return unknown_text(table_raw, index_raw)
+    tbl, code = p
+    tn = "основна '/'" if tbl == "/" else "додаткова '\\'"
+    ent = entry(tbl, code)
+    extra = "; таблицю %d рація читає як додаткову" % table_raw if table_raw > 1 else ""
     if ent is None:
-        return "'%s' (код %d), %s таблиця -- зображення в наборі рації нема (код зарезервований)" % (ch, code_value, tn)
-    extra = "" if table_value in (PRIMARY, ALTERNATE) else "; накладка '%s'" % chr(table_value)
-    return "'%s' (код %d), %s таблиця -- %s%s" % (ch, code_value, tn, ent[0], extra)
+        return "'%s' (індекс %d), %s таблиця -- зображення в наборі рації нема (код зарезервований)%s" % (chr(code), index_raw, tn, extra)
+    return "'%s' (індекс %d), %s таблиця -- %s%s" % (chr(code), index_raw, tn, ent[0], extra)
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------
@@ -97,9 +103,15 @@ def photo(master, table, code, scale=1, ink="#e8eaef", paper=None):
     return img.zoom(scale, scale) if scale > 1 else img
 
 
+def photo_raw(master, table_raw, index_raw, scale=1, ink="#e8eaef", paper=None):
+    """Піктограма слота (формат прошивки) або None."""
+    p = raw_to_pair(table_raw, index_raw)
+    return photo(master, p[0], p[1], scale, ink, paper) if p else None
+
+
 def pick_symbol(parent, table_value, code_value, preselect=True):
-    """Сітка піктограм: перемикач таблиць, підпис під курсором, «Обрати». Повертає (таблиця, символ) як числа або None.
-    Якщо поточна таблиця -- накладка (не '/' і не '\\'), при виборі з додаткової таблиці накладка лишається."""
+    """Сітка піктограм: перемикач таблиць, підпис під курсором, «Обрати». Приймає й повертає (таблиця, індекс) слота у ФОРМАТІ ПРОШИВКИ (0/1, код - 33) або None.
+    Накладок слот не зберігає, тому їх у сітці нема."""
     import tkinter as tk
     from tkinter import ttk
     import gui_dialogs as gd
@@ -107,8 +119,8 @@ def pick_symbol(parent, table_value, code_value, preselect=True):
 
     win = gd._small_window(parent, "Символ APRS")
     win.minsize(560, 420)
-    cur_t = table_char(table_value) or "/"
-    state = {"table": cur_t, "code": code_value if (preselect and entry(cur_t, code_value)) else None, "result": None}
+    cur_t = "/" if table_value == 0 else "\\"
+    state = {"table": cur_t, "code": (code_value + 33) if (preselect and 0 <= code_value <= ICON_MAX and entry(cur_t, code_value + 33)) else None, "result": None}
     tvar = tk.StringVar(value=cur_t)
     top = ttk.Frame(win)
     top.pack(fill="x", padx=12, pady=(12, 4))
@@ -130,10 +142,8 @@ def pick_symbol(parent, table_value, code_value, preselect=True):
         if code is None:
             info.config(text="Оберіть символ: наведіть курсор -- побачите код і назву.")
         else:
-            tv = ord(state["table"])
-            if state["table"] == "\\" and table_char(table_value) == "\\" and table_value != ALTERNATE:
-                tv = table_value
-            info.config(text=symbol_text(tv, code))
+            tr, ir = pair_to_raw(state["table"], code)
+            info.config(text=symbol_text(tr, ir))
         ok_btn.config(state="normal" if state["code"] is not None else "disabled")
         for c, lab in cells.items():
             lab.config(bg=gt.P["select_bg"] if c == state["code"] else gt.P["field"])
@@ -145,10 +155,7 @@ def pick_symbol(parent, table_value, code_value, preselect=True):
     def finish():
         if state["code"] is None:
             return
-        t = ord(state["table"])
-        if state["table"] == "\\" and table_char(table_value) == "\\" and table_value != ALTERNATE:
-            t = table_value          # накладку не губимо
-        state["result"] = (t, state["code"])
+        state["result"] = pair_to_raw(state["table"], state["code"])
         win.destroy()
     ok_btn.config(command=finish)
 
