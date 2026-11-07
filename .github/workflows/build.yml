@@ -277,7 +277,7 @@ jobs:
         # ENABLE_APRS_RX=1 -- R8 (2026-10-11): справжній фоновий приймач APRS (Опції рації -> «APRS станції»,
         # банер, повідомлення нам). Діагностичний екран «APRS проба» (ENABLE_APRS_RX_PROBE) у користувацьку
         # збірку НЕ входить -- він у окремій роботі build-ukrainian-diag нижче.
-        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1 ENABLE_RODATA_AFTER_CODEC=1
       # R62A: запас (або перевищення) до фіксованої адреси кодека 0x0807537C у байтах -- видно і коли лінкування не вдалось
       # (там нема ні .bin, ні повної .map). Додаткове лінкування з тимчасовою копією лінкер-скрипта у build/codec-margin.*,
       # яке одразу видаляється: .bin/.elf/.map збірки і сам лінкер-скрипт не чіпаються. Див. tools/codec_margin.sh.
@@ -285,7 +285,7 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         working-directory: MDUV380_firmware
-        run: tools/codec_margin.sh "${{ github.job }}"
+        run: LD=STM32F405VGTX_FLASH_RODATA_AFTER_CODEC.ld tools/codec_margin.sh "${{ github.job }}"
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
@@ -324,6 +324,22 @@ jobs:
           echo "firmware .bin size: $sz bytes"
           test "$sz" -ge 728876 || { echo "ERROR: .bin too small to receive the AMBE codec merge (FM-only)"; exit 1; }
           echo "OK: reserved codec region present, ready for flash-time merge."
+      # R64A: .rodata лежить ПІСЛЯ кодека (ENABLE_RODATA_AFTER_CODEC=1): кодек на місці, область кодека в .bin = плейсхолдер, .rodata далі за кодеком.
+      - name: Перевірити розміщення (.rodata після кодека, область кодека)
+        working-directory: MDUV380_firmware
+        run: |
+          python3 - <<'PY'
+          import re, subprocess
+          out = subprocess.run(["arm-none-eabi-objdump", "-h", "build/openuv380-10w.elf"], capture_output=True, text=True, check=True).stdout
+          sec = {m.group(1): (int(m.group(3), 16), int(m.group(2), 16)) for m in re.finditer(r"^\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s", out, re.M)}
+          codec_end = sec[".codec_bin_section_1"][0] + sec[".codec_bin_section_1"][1]
+          assert codec_end == 0x0807537C + 0x48BB0, "кінець кодека не там: 0x%08X" % codec_end
+          assert sec[".rodata"][0] >= codec_end, ".rodata не після кодека: 0x%08X" % sec[".rodata"][0]
+          data = open("build/openuv380-10w.bin", "rb").read()
+          ph = open("application/source/linkerdata/codec_bin_section_1.bin", "rb").read()
+          assert data[0x6937C:0x6937C + len(ph)] == ph, "область кодека в .bin не збігається з плейсхолдером"
+          print("OK: .rodata на 0x%08X (після кодека до 0x%08X), .bin %d Б" % (sec[".rodata"][0], codec_end, len(data)))
+          PY
       - name: Assert Ukrainian strings are actually linked in
         working-directory: MDUV380_firmware
         run: |
@@ -590,7 +606,7 @@ jobs:
           release: "14.2.Rel1"
       - name: Build
         working-directory: MDUV380_firmware
-        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1 ENABLE_RODATA_AFTER_CODEC=1
       # R62A: запас (або перевищення) до фіксованої адреси кодека 0x0807537C у байтах -- видно і коли лінкування не вдалось
       # (там нема ні .bin, ні повної .map). Додаткове лінкування з тимчасовою копією лінкер-скрипта у build/codec-margin.*,
       # яке одразу видаляється: .bin/.elf/.map збірки і сам лінкер-скрипт не чіпаються. Див. tools/codec_margin.sh.
@@ -598,7 +614,7 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         working-directory: MDUV380_firmware
-        run: tools/codec_margin.sh "${{ github.job }}"
+        run: LD=STM32F405VGTX_FLASH_RODATA_AFTER_CODEC.ld tools/codec_margin.sh "${{ github.job }}"
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
@@ -613,73 +629,6 @@ jobs:
           done
           if arm-none-eabi-nm build/openuv380-10w.elf | grep -qw wakeDiagBegin; then echo "журнал пробудження потрапив у збірку без прапорця журналу"; exit 1; fi
           echo "OK: роумінг є, журналу нема"
-
-  # R63C: ТЕСТОВА збірка -- повна користувацька (ті самі прапорці, що в build-ukrainian) + ENABLE_RODATA_AFTER_CODEC=1: .rodata лежить ПІСЛЯ
-  # блока кодека (STM32F405VGTX_FLASH_RODATA_AFTER_CODEC.ld), тож до адреси кодека 0x0807537C лишається запас. Це перевірка можливості, не
-  # основна прошивка: у реліз НЕ публікується, build-ukrainian і решту джобів не змінено.
-  build-ukrainian-rodata-after-codec:
-    runs-on: ubuntu-latest
-    name: build (ТЕСТ -- українська користувацька, .rodata після кодека)
-    steps:
-      - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
-      - name: Install ARM GNU toolchain
-        uses: carlosperate/arm-none-eabi-gcc-action@v1
-        with:
-          release: "14.2.Rel1"
-      - name: Build
-        working-directory: MDUV380_firmware
-        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1 ENABLE_RODATA_AFTER_CODEC=1
-      - name: Запас до адреси кодека (0x0807537C)
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        working-directory: MDUV380_firmware
-        run: LD=STM32F405VGTX_FLASH_RODATA_AFTER_CODEC.ld tools/codec_margin.sh "${{ github.job }}"
-      - name: Report size
-        working-directory: MDUV380_firmware
-        run: arm-none-eabi-size build/openuv380-10w.elf
-      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
-        working-directory: MDUV380_firmware
-        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
-      - name: Перевірити розміщення (.rodata після кодека, кодек на місці, роумінг є)
-        working-directory: MDUV380_firmware
-        run: |
-          for sym in wakeHopTry wakeHopPoll wakeHopRestore roamCfgSave menuRoam; do
-            arm-none-eabi-nm build/openuv380-10w.elf | grep -qw "$sym" || { echo "немає символу $sym"; exit 1; }
-          done
-          python3 - <<'PY'
-          import re, subprocess
-          out = subprocess.run(["arm-none-eabi-objdump", "-h", "build/openuv380-10w.elf"], capture_output=True, text=True, check=True).stdout
-          sec = {m.group(1): (int(m.group(3), 16), int(m.group(2), 16)) for m in re.finditer(r"^\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s", out, re.M)}
-          rod, codec = sec[".rodata"][0], sec[".codec_bin_section_1"][0]
-          # Секція .codec_bin_section_1 у objdump починається з прокладки (де закінчується код), а закінчується в кінці кодека.
-          codec_end = codec + sec[".codec_bin_section_1"][1]
-          assert codec_end == 0x0807537C + 0x48BB0, "кінець кодека не 0x%08X: 0x%08X" % (0x0807537C + 0x48BB0, codec_end)
-          assert rod >= codec_end, ".rodata не після кодека: 0x%08X" % rod
-          data = open("build/openuv380-10w.bin", "rb").read()
-          ph = open("application/source/linkerdata/codec_bin_section_1.bin", "rb").read()
-          assert len(data) >= 0x6937C + 0x48BB0, ".bin замалий для вшивання кодека"
-          assert data[0x6937C:0x6937C + len(ph)] == ph, "область кодека в .bin не збігається з плейсхолдером"
-          print("OK: .rodata на 0x%08X (після кодека, що закінчується на 0x%08X), .bin %d Б" % (rod, codec_end, len(data)))
-          PY
-      - name: Assert Ukrainian strings are actually linked in
-        working-directory: MDUV380_firmware
-        run: |
-          python3 - <<'PY'
-          data = open("build/openuv380-10w.bin","rb").read()
-          assert "Мова".encode("cp1251") in data, "українських рядків у .bin немає"
-          print("OK: українські рядки знайдено у прошивці")
-          PY
-      - name: Вивантажити артефакт openuv380-10w-ukrainian-rodata-after-codec
-        uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: openuv380-10w-ukrainian-rodata-after-codec-${{ github.sha }}
-          retention-days: 2
-          compression-level: 9
-          path: |
-            MDUV380_firmware/build/openuv380-10w.bin
-            MDUV380_firmware/build/openuv380-10w.hex
 
   # GUI-прошивальник для простих користувачів/тестерів: один .exe із двома кнопками
   # ("Обрати донор" і "ПРОШИТИ"), без ручного pip install/копіювання libusb dll.

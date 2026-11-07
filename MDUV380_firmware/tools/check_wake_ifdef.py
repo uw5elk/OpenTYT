@@ -169,7 +169,7 @@ def check_changed(name, text):
 
 CI_ALLOWED = {
     "ENABLE_WAKE_": {"build-ukrainian-roam-diag"},
-    "ENABLE_ROAM_": {"build-ukrainian-roam-diag", "build-ukrainian-roam", "build-ukrainian", "build-ukrainian-rodata-after-codec"},     # R60C: роумінг -- в основній українській збірці; R63C: ТЕСТОВИЙ джоб з .rodata після кодека (та сама конфігурація, що build-ukrainian)
+    "ENABLE_ROAM_": {"build-ukrainian-roam-diag", "build-ukrainian-roam", "build-ukrainian"},     # R60C: роумінг -- в основній українській збірці
 }
 
 
