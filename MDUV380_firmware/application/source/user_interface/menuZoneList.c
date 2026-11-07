@@ -413,6 +413,11 @@ static void zrHandleEvent(uiEvent_t *ev)
 		return;
 	}
 
+	if (nameEdSheetEvent(ZR_BUF, ZR_TITLE(), ev))   /* R66B: шпаргалка розкладки (ВНИЗ) */
+	{
+		return;
+	}
+
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
 		zrSave();

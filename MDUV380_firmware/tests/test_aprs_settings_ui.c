@@ -19,6 +19,7 @@ void displayPrintAt(uint16_t x, uint16_t y, const char *t, ucFont_t f) { (void)x
 	if (s_nrows < 64) { snprintf(s_rows[s_nrows++], 80, "%s", t); }
 	if ((int)strlen(t) > s_maxWidth) { s_maxWidth = (int)strlen(t); } }
 void displayPrintCentered(uint16_t y, const char *t, ucFont_t f) { displayPrintAt(0, y, t, f); }
+void uiSmsKeyLayoutDraw(uint8_t mode, const char *title, const char *hint) { (void)mode; (void)title; (void)hint; }   /* R66B: шпаргалка розкладки -- малюється лише на справжньому екрані */
 int displayPrintCore(int16_t x, int16_t y, const char *t, ucFont_t f, ucTextAlign_t a, bool inv) { (void)a; (void)inv; displayPrintAt((uint16_t)x, (uint16_t)y, t, f); return 0; }
 void displayDrawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool inv) { (void)x; (void)y; (void)w; (void)h; (void)inv; }
 void displayFillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool inv) { (void)x; (void)y; (void)w; (void)h; (void)inv; }

@@ -359,6 +359,8 @@ static void rxgRenameEvent(uiEvent_t *ev)
 	}
 	if ((ev->events & KEY_EVENT) == 0) { return; }
 
+	if (nameEdSheetEvent(RXG_BUF, (RXG_NEW != 0) ? RXG_NEW_TITLE : RXG_REN_TITLE, ev)) { return; }   /* R66B: шпаргалка розкладки (ВНИЗ) */
+
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
 		nameEdCommit(RXG_BUF);

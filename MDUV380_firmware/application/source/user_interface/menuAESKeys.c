@@ -398,6 +398,12 @@ static void nameHandleEvent(uiEvent_t *ev)
 		return;
 	}
 
+	nameTitle(title, sizeof title);
+	if (nameEdSheetEvent(AESK_ED_BUF, title, ev))   /* R66B: шпаргалка розкладки (ВНИЗ) */
+	{
+		return;
+	}
+
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
 		nameEdCommit(AESK_ED_BUF);

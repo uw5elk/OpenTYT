@@ -7,9 +7,16 @@ A  R66A: індикатор роумінгу на екрані передачі 
    A2 передумова: кириличні гліфи в 16x32 є лише для А И Й К Л М О П Т У;
    A3 у малих шрифтах (6x8, 8x16) код 0xD0 -- кирилична «Р» (відрізняється від латинської «D з рискою»), тож індикатор «Р<N>» на екрані каналу малюється правильно;
    A4 ROAM_IND_SPARE (його малює 16x32): лише ASCII, і кожен символ має непорожній гліф у 16x32; мутант «кирилична Р» ловиться.
+B  R66B: шпаргалка розкладки в редакторах назви (uiNameEditor.c, хост з заглушками):
+   B1 ВНИЗ відкриває шпаргалку, символ, що гортається, підтверджено в текст; редактор малює шпаргалку (а не поле набору);
+   B2 поки шпаргалка відкрита, жодна клавіша (зелена/червона теж) не доходить до викликача (nameEdSheetEvent повертає true);
+   B3 клавіша, що закрила шпаргалку, -- її відпускання ковтається один раз (зелена не зберігає), наступна клавіша -- ні; валкодер (натискання+відпускання разом) нічого не ковтає;
+   B4 довге утримання не закриває; текст і режим набору шпаргалка не змінює; мутанти (6) ловляться;
+   B5 усі споживачі редактора викликають nameEdSheetEvent ДО обробки зеленої/червоної; рядки в cp1251 вміщаються; APRS-налаштування (user-only APRS_R66_SHEET).
 Запуск: python3 tools/test_r66.py"""
 import os
 import re
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +61,177 @@ def indicator_ok(value, f32):
     return True
 
 
+
+B_HARNESS = r'''
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include "user_interface/uiGlobals.h"
+#include "user_interface/menuSystem.h"
+#include "user_interface/uiLocalisation.h"
+#include "user_interface/uiNameEditor.h"
+#include "functions/sms_multitap.h"
+
+uiDataGlobal_t uiDataGlobal;
+static stringsTable_t s_lang;
+const stringsTable_t *currentLanguage = &s_lang;
+static uint32_t s_now;
+uint32_t ticksGetMillis(void) { return s_now; }
+static char s_rec[2048];
+static void rec(const char *fmt, ...) { va_list a; va_start(a, fmt); size_t n = strlen(s_rec); vsnprintf(s_rec + n, sizeof s_rec - n, fmt, a); va_end(a); }
+void displayClearBuf(void) { rec("CLR;"); }
+void displayRender(void) { rec("RND;"); }
+void menuDisplayTitle(const char *t) { rec("TITLE[%s];", t); }
+void displayThemeApply(themeItem_t fg, themeItem_t bg) { (void)fg; (void)bg; }
+int displayPrintCore(int16_t x, int16_t y, const char *t, ucFont_t f, ucTextAlign_t a, bool inv) { (void)x;(void)y;(void)f;(void)a;(void)inv; rec("CORE[%s];", t); return 0; }
+void displayFillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool inv) { (void)x;(void)y;(void)w;(void)h;(void)inv; }
+void displayPrintAt(uint16_t x, uint16_t y, const char *t, ucFont_t f) { (void)x;(void)y;(void)f; rec("AT[%s];", t); }
+void displayPrintCentered(uint16_t y, const char *t, ucFont_t f) { (void)f; rec("CEN(%u)[%s];", y, t); }
+void uiSmsKeyLayoutDraw(uint8_t mode, const char *title, const char *hint) { rec("SHEET(%d)[%s][%s];", (int)mode, title, hint); }
+
+static int fails;
+#define CK(c, ...) do { if (!(c)) { fails++; printf("ПРОВАЛ: " __VA_ARGS__); printf("\n"); } } while (0)
+static uiEvent_t ke(char key, int event) { uiEvent_t e; memset(&e, 0, sizeof e); e.hasEvent = true; e.events = KEY_EVENT; e.keys.key = key; e.keys.event = (uint8_t)event; return e; }
+
+int main(void)
+{
+	char *b = uiDataGlobal.MessageBox.message;
+	uiEvent_t e;
+
+	/* B1: ВНИЗ відкриває шпаргалку; гортаний символ підтверджено */
+	memset(b, 0, 68);
+	nameEdInit(b, "Ab");
+	s_now = 100000;
+	e = ke('2', KEY_MOD_PRESS); (void)nameEdHandleKey(b, "T", &e);   /* гортаємо клавішу 2 */
+	CK(b[17] == '2', "B1: символ гортається (key=%d)", b[17]);
+	s_rec[0] = 0;
+	e = ke(KEY_DOWN, KEY_MOD_PRESS | KEY_MOD_DOWN);
+	CK(nameEdHandleKey(b, "T", &e), "B1: ВНИЗ спожито");
+	CK(b[21] == 1, "B1: шпаргалку відкрито");
+	CK(b[17] == 0, "B1: символ, що гортався, підтверджено (key=%d)", b[17]);
+	CK(strstr(s_rec, "SHEET(") != NULL && strstr(s_rec, "AT[") == NULL, "B1: малюється шпаргалка, не поле набору: %s", s_rec);
+	CK(strlen(b) == 3, "B1: підтверджений символ у тексті (len=%d)", (int)strlen(b));
+	{
+		char before[17]; uint8_t mode = (uint8_t)b[19];
+		memcpy(before, b, 17);
+		/* B2: жодна клавіша не доходить до викликача, шпаргалка лишається, поки не НАТИСКАННЯ */
+		e = ke(KEY_DOWN, KEY_MOD_UP);
+		CK(nameEdSheetEvent(b, "T", &e) && b[21] == 1, "B2: відпускання ВНИЗ не закриває");
+		e = ke(KEY_GREEN, KEY_MOD_PRESS | KEY_MOD_LONG);
+		CK(nameEdSheetEvent(b, "T", &e) && b[21] == 1, "B4: довге утримання не закриває");
+		e = ke(KEY_GREEN, KEY_MOD_PRESS);
+		CK(nameEdSheetEvent(b, "T", &e), "B2: натискання зеленої спожито");
+		CK(b[21] == 0 && b[22] == KEY_GREEN, "B3: закрито, чекаємо відпускання зеленої (sheet=%d swallow=%d)", b[21], b[22]);
+		e = ke(KEY_GREEN, KEY_MOD_UP);
+		CK(nameEdSheetEvent(b, "T", &e), "B3: відпускання зеленої ковтнуто (не збереження)");
+		CK(b[22] == 0, "B3: ковтання зняте");
+		e = ke(KEY_GREEN, KEY_MOD_UP);
+		CK(!nameEdSheetEvent(b, "T", &e), "B3: наступна зелена -- вже звичайна (зберегти)");
+		CK(memcmp(before, b, 17) == 0 && (uint8_t)b[19] == mode, "B4: текст і режим шпаргалка не змінила");
+	}
+	/* B3: червона так само */
+	e = ke(KEY_DOWN, KEY_MOD_PRESS); (void)nameEdHandleKey(b, "T", &e);
+	e = ke(KEY_RED, KEY_MOD_PRESS); CK(nameEdSheetEvent(b, "T", &e), "B3: червона закриває, спожита");
+	e = ke(KEY_RED, KEY_MOD_UP);    CK(nameEdSheetEvent(b, "T", &e), "B3: відпускання червоної ковтнуто");
+	/* B3: інша клавіша після закриття скидає ковтання */
+	e = ke(KEY_DOWN, KEY_MOD_PRESS); (void)nameEdHandleKey(b, "T", &e);
+	e = ke('5', KEY_MOD_PRESS); CK(nameEdSheetEvent(b, "T", &e) && b[22] == '5', "B3: цифра закрила, чекаємо її відпускання");
+	e = ke(KEY_RED, KEY_MOD_PRESS); CK(!nameEdSheetEvent(b, "T", &e) && b[22] == 0, "B3: нова клавіша -- ковтання скинуто, подія звичайна");
+	/* B3: валкодер -- натискання й відпускання однією подією: нічого не ковтаємо */
+	e = ke(KEY_DOWN, KEY_MOD_PRESS); (void)nameEdHandleKey(b, "T", &e);
+	e = ke(KEY_GREEN, KEY_MOD_PRESS | KEY_MOD_UP); CK(nameEdSheetEvent(b, "T", &e) && b[22] == 0 && b[21] == 0, "B3: натискання+відпускання разом -- нічого не ковтаємо");
+	/* без шпаргалки подія не чіпається */
+	e = ke(KEY_GREEN, KEY_MOD_UP); CK(!nameEdSheetEvent(b, "T", &e), "B2: без шпаргалки -- подія звичайна");
+	/* не клавіша */
+	{ uiEvent_t f; memset(&f, 0, sizeof f); f.hasEvent = true; f.events = FUNCTION_EVENT; CK(!nameEdSheetEvent(b, "T", &f), "B2: не KEY_EVENT -- не чіпаємо"); }
+	/* ініціалізація чистить стан шпаргалки */
+	b[21] = 1; b[22] = 7; nameEdInit(b, ""); CK(b[21] == 0 && b[22] == 0, "B1: nameEdInit скидає шпаргалку");
+	/* перемалювання при відкритій шпаргалці лишає шпаргалку */
+	b[21] = 1; s_rec[0] = 0; nameEdDraw(b, "T"); CK(strstr(s_rec, "SHEET(") != NULL, "B1: перемалювання лишає шпаргалку");
+	/* підказка під полем набору (шпаргалка закрита) */
+	b[21] = 0; s_rec[0] = 0; nameEdDraw(b, "T"); CK(strstr(s_rec, "CEN(96)[") != NULL, "B1: підказка про ВНИЗ під полем набору");
+	printf(fails ? "ПРОВАЛІВ: %d\n" : "B_OK\n", fails);
+	return fails ? 1 : 0;
+}
+'''
+
+B_MUTANTS = [
+    ("ВНИЗ не відкриває шпаргалку", "NE_SHEET(buf) = 1;", "NE_SHEET(buf) = 0;"),
+    ("шпаргалка не пропускає подій до викликача (повертає false)", "		return true;   // поки шпаргалка відкрита", "		return false;   // поки шпаргалка відкрита"),
+    ("відпускання закривальної клавіші не ковтається", "NE_SWALLOW(buf) = (char)((ev->keys.event & KEY_MOD_UP) ? 0 : ev->keys.key);", "NE_SWALLOW(buf) = 0;"),
+    ("довге утримання закриває", "if ((ev->keys.event & KEY_MOD_PRESS) && ((ev->keys.event & KEY_MOD_LONG) == 0))\n\t\t{\n\t\t\tNE_SHEET(buf) = 0;", "if (ev->keys.event & KEY_MOD_PRESS)\n\t\t{\n\t\t\tNE_SHEET(buf) = 0;"),
+    ("символ не підтверджується перед шпаргалкою", "		nameEdCommit(buf);\n		NE_SHEET(buf) = 1;", "		NE_SHEET(buf) = 1;"),
+    ("перемалювання ховає шпаргалку", "	if (NE_SHEET(buf) != 0)\n	{\n		/* R66B: шпаргалка", "	if (0)\n	{\n		/* R66B: шпаргалка"),
+]
+
+
+def b_build(td, src_text, tag):
+    import test_r64_editor as t64
+    hc = os.path.join(td, "h_%s.c" % tag)
+    open(hc, "w", encoding="utf-8").write(B_HARNESS)
+    sc = os.path.join(td, "ne_%s.c" % tag)
+    open(sc, "w", encoding="utf-8").write(src_text)
+    exe = os.path.join(td, "b_%s" % tag)
+    cmd = ["gcc", "-O1", "-w", "-std=gnu11"] + t64.incs() + t64.DEFS + ["-DENABLE_ZONE_RENAME", hc, sc, t64.MULTITAP, "-Wl,--unresolved-symbols=ignore-all", "-o", exe]
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+    return exe if r.returncode == 0 else None, r.stderr[-400:]
+
+
+def section_b():
+    import shutil
+    import tempfile
+    if not shutil.which("gcc"):
+        print("test_r66: нема gcc -- розділ B пропущено")
+        return
+    src = open(os.path.join(ROOT, "application", "source", "user_interface", "uiNameEditor.c"), encoding="utf-8").read()
+    with tempfile.TemporaryDirectory() as td:
+        exe, err = b_build(td, src, "ok")
+        check(exe is not None, "B: збірка тесту: " + err)
+        if exe is None:
+            return
+        r = subprocess.run([exe], capture_output=True, text=True, errors="replace", timeout=60)
+        check(r.returncode == 0 and "B_OK" in r.stdout, "B1-B4: хост-тест редактора: " + r.stdout[-600:])
+        for i, (name, old, new) in enumerate(B_MUTANTS):
+            old = old.replace("\\n", "\n").replace("\\t", "\t")
+            new = new.replace("\\n", "\n").replace("\\t", "\t")
+            if src.count(old) != 1:
+                check(False, "B4: мутант «%s»: шаблон знайдено %d раз(ів), треба 1 (код змінився -- онови мутант)" % (name, src.count(old)))
+                continue
+            exe2, err2 = b_build(td, src.replace(old, new, 1), "m%d" % i)
+            if exe2 is None:
+                check(False, "B4: мутант «%s» не збирається: %s" % (name, err2))
+                continue
+            r2 = subprocess.run([exe2], capture_output=True, text=True, errors="replace", timeout=60)
+            check(r2.returncode != 0, "B4: мутант «%s» -- тест мусить провалитись" % name)
+
+    # B5: порядок викликів у споживачах + рядки
+    ui = os.path.join(ROOT, "application", "source", "user_interface")
+    for fn, buf in (("menuZoneList.c", "ZR_BUF"), ("menuRoam.c", "ROAM_ED_BUF"), ("menuAESKeys.c", "AESK_ED_BUF"), ("menuRxGroups.c", "RXG_BUF")):
+        t = open(os.path.join(ui, fn), encoding="utf-8").read()
+        i = t.find("nameEdSheetEvent(" + buf)
+        g = t.find("KEYCHECK_SHORTUP(ev->keys, KEY_GREEN)", i) if i >= 0 else -1
+        check(i >= 0 and g > i, "B5: %s: nameEdSheetEvent викликається ДО обробки зеленої" % fn)
+    t = open(os.path.join(ui, "menuAprsSettings.c"), encoding="utf-8").read()
+    depth_in = False
+    outside = []
+    for ln in t.split("\n"):
+        if ln.startswith("#if defined(APRS_R66_SHEET)"):
+            depth_in = True
+        elif depth_in and ln.startswith("#endif"):
+            depth_in = False
+        elif (not depth_in) and ("NAMED_" in ln or ".layout" in ln or ".swallowUp" in ln or "uiSmsKeyLayoutDraw" in ln):
+            outside.append(ln.strip())
+    check(t.count("#if defined(APRS_R66_SHEET)") == 5 and not outside, "B5: APRS-налаштування: усі правки R66B під APRS_R66_SHEET (поза блоками: %r)" % outside)
+    cfg = open(os.path.join(INC, "functions", "aprs_rx_cfg.h"), encoding="utf-8").read()
+    m = re.search(r"#if defined\(ENABLE_APRS_RX\) && !defined\(ENABLE_APRS_RX_PROBE\)\n#define APRS_R66_SHEET 1", cfg)
+    check(m is not None, "B5: APRS_R66_SHEET -- лише user (не probe/diag)")
+    h = open(os.path.join(INC, "user_interface", "languages", "nameed_ua.h"), "rb").read().decode("cp1251")
+    for mm in re.finditer(r'#define\s+(NAMED_\w+)\s+"((?:[^"\\]|\\.)*)"', h):
+        val = mm.group(2).replace("%s", "XXXX")
+        check(len(val) <= 26, "B5: %s: %d знаків (>26 для шрифту 6x8 на 160 px)" % (mm.group(1), len(val)))
+
+
 def main():
     ua = F.load(os.path.join(INC, "hardware", "HX8353E_charset_UA.h"))
     lat = F.load(os.path.join(INC, "hardware", "HX8353E_charset.h"))
@@ -85,6 +263,7 @@ def main():
     m2 = re.search(r'#define\s+ROAM_IND_SPARE\s+"([^"]*)"', rui)
     check(m2 is not None and m2.group(1) == val, "A4: англійський варіант збігається з українським")
 
+    section_b()
     print("test_r66: %d перевірок, провалів %d" % (PASSED[0], len(FAILS)))
     return 1 if FAILS else 0
 

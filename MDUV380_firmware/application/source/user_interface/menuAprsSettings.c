@@ -22,6 +22,9 @@
 #include "user_interface/languages/aprsmode_ua.h"
 #include "user_interface/languages/aprsrx_ua.h"
 #include "user_interface/uiSmsKeys.h"   /* підказка літер і шпаргалка розкладки -- спільні з SMS */
+#if defined(APRS_R66_SHEET)
+#include "user_interface/languages/nameed_ua.h"   /* R66B: NAMED_* (підказка про шпаргалку) */
+#endif
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
@@ -381,6 +384,10 @@ static void editOpen(int field)
 	const aprsModeEff_t *e = aprsModeEff();
 
 	memset(ed, 0, sizeof(*ed));
+#if defined(APRS_R66_SHEET)
+	u->msg.layout = 0U;      /* R66B: шпаргалка розкладки закрита (msg.layout спільне з набором повідомлення APRS -- вони не відкриті разом) */
+	u->msg.swallowUp = 0U;
+#endif
 	ed->active = 1U;
 	ed->field = (uint8_t)field;
 	if (field == APRSM_F_SYMBOL)
@@ -446,6 +453,18 @@ static void editDraw(void)
 		symEditDraw();
 		return;
 	}
+#if defined(APRS_R66_SHEET)
+	if (aprsModeUi()->msg.layout && (numeric == false))
+	{
+		/* R66B: шпаргалка розкладки (ВНИЗ) -- та сама, що в «Повідомленнях» і при наборі повідомлення APRS */
+		char sheetTitle[24];
+
+		snprintf(sheetTitle, sizeof(sheetTitle), NAMED_SHEET_TITLE_FMT, smsMtModeLabel(ed->mtMode));
+		uiSmsKeyLayoutDraw(ed->mtMode, sheetTitle, NAMED_SHEET_HINT);
+		displayRender();
+		return;
+	}
+#endif
 	displayClearBuf();
 	menuDisplayTitle(fieldLabel(ed->field));
 	if (numeric)
@@ -476,6 +495,12 @@ static void editDraw(void)
 	{
 		printRow(row++, APRSM_E_EMPTY_CANCEL);
 	}
+#if defined(APRS_R66_SHEET)
+	else
+	{
+		printRow(row++, NAMED_DOWN_HINT);   /* R66B: підказка про шпаргалку (ВНИЗ) */
+	}
+#endif
 	if (ed->err)
 	{
 		printRow(8, APRSM_E_ERR);
@@ -658,6 +683,42 @@ static bool editEvent(uiEvent_t *ev)
 	{
 		return false;
 	}
+#if defined(APRS_R66_SHEET)
+	if (numeric == false)
+	{
+		/* R66B: шпаргалка розкладки. Відкрита -- лише нове НАТИСКАННЯ закриває її (відпускання ВНИЗ -- ні) і ніщо не доходить до зеленої/червоної;
+		 * клавіша, що закрила, -- її відпускання ковтаємо (як у menuAprsMode.c). */
+		aprsModeUi_t *u = aprsModeUi();
+
+		if (u->msg.layout)
+		{
+			if ((ev->keys.event & KEY_MOD_PRESS) && ((ev->keys.event & KEY_MOD_LONG) == 0))
+			{
+				u->msg.layout = 0U;
+				u->msg.swallowUp = (ev->keys.event & KEY_MOD_UP) ? 0U : (uint8_t)ev->keys.key;
+			}
+			return true;
+		}
+		if (u->msg.swallowUp != 0U)
+		{
+			if ((ev->keys.key == (char)u->msg.swallowUp) && (ev->keys.event & KEY_MOD_UP))
+			{
+				u->msg.swallowUp = 0U;
+				return false;
+			}
+			if (ev->keys.event & KEY_MOD_PRESS)
+			{
+				u->msg.swallowUp = 0U;
+			}
+		}
+		if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+		{
+			smsMtCommit(&ed->mt, &ed->pos);   /* символ, що гортається, -- у текст */
+			u->msg.layout = 1U;
+			return true;
+		}
+	}
+#endif
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
 		ed->active = 0U;

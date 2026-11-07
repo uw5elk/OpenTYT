@@ -620,6 +620,9 @@ static void renameEvent(uiEvent_t *ev)
 
 	if ((ev->events & KEY_EVENT) == 0) { return; }
 
+	renameTitle(title, sizeof title);
+	if (nameEdSheetEvent(ROAM_ED_BUF, title, ev)) { return; }   /* R66B: шпаргалка розкладки (ВНИЗ) */
+
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
 		nameEdCommit(ROAM_ED_BUF);

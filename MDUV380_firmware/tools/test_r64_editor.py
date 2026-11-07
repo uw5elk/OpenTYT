@@ -108,6 +108,9 @@ void displayThemeApply(themeItem_t fg, themeItem_t bg) { rec("TH%d,%d;", (int)fg
 int displayPrintCore(int16_t x, int16_t y, const char *t, ucFont_t f, ucTextAlign_t a, bool inv) { rec("CORE(%d,%d,%s,%d,%d,%d);", x, y, t, (int)f, (int)a, (int)inv); return 0; }
 void displayFillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool inv) { rec("FILL(%d,%d,%d,%d,%d);", x, y, w, h, (int)inv); }
 void displayPrintAt(uint16_t x, uint16_t y, const char *t, ucFont_t f) { rec("AT(%u,%u,%s,%d);", x, y, t, (int)f); }
+/* R66B: рядок-підказка «Вниз: розкладка клавіш» (y=96) -- НОВИЙ, у старому редакторі зони його не було; тут не записується (розділ B у test_r66.py). Шпаргалка -- заглушка. */
+void displayPrintCentered(uint16_t y, const char *t, ucFont_t f) { (void)y; (void)t; (void)f; }
+void uiSmsKeyLayoutDraw(uint8_t mode, const char *title, const char *hint) { rec("SHEET(%d,%s,%s);", (int)mode, title, hint); }
 
 void old_start(const char *name);
 void old_event(uiEvent_t *ev);

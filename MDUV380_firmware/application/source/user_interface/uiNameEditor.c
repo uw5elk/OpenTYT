@@ -14,11 +14,15 @@
 #include "functions/sms_multitap.h"
 #include "functions/ticks.h"
 #include "io/keyboard.h"
+#include "user_interface/uiSmsKeys.h"      /* R66B: uiSmsKeyLayoutDraw() -- шпаргалка розкладки, та сама, що в «Повідомленнях» */
+#include "user_interface/languages/nameed_ua.h"   /* R66B: NAMED_* */
 #include "user_interface/languages/aprsmode_ua.h"   /* APRSM_L_MTHINT -- підказка "#:режим", та сама, що в редакторі контакту */
 
 #define NE_KEY(b)   ((b)[17])
 #define NE_IDX(b)   ((b)[18])
 #define NE_MODE(b)  ((b)[19])
+#define NE_SHEET(b)   ((b)[21])   /* R66B: 1 = показано шпаргалку розкладки */
+#define NE_SWALLOW(b) ((b)[22])   /* R66B: клавіша, що закрила шпаргалку: її відпускання не обробляється (зелена/червона не мають зберегти/вийти) */
 
 static uint32_t neGetMs(const char *buf)
 {
@@ -78,6 +82,17 @@ void nameEdDraw(const char *buf, const char *title)
 	const char *lbl = smsMtModeLabel(neMode(buf));
 	int16_t chipW = (int16_t)((strlen(lbl) * 6U) + 4U);
 
+	if (NE_SHEET(buf) != 0)
+	{
+		/* R66B: шпаргалка -- усі клавіші режиму; кожне перемалювання екрана редактора (таймер, повернення) лишає її на екрані */
+		char sheetTitle[24];
+
+		snprintf(sheetTitle, sizeof(sheetTitle), NAMED_SHEET_TITLE_FMT, lbl);
+		uiSmsKeyLayoutDraw(neMode(buf), sheetTitle, NAMED_SHEET_HINT);
+		displayRender();
+		return;
+	}
+
 	if (n > NAME_ED_CAP)
 	{
 		n = NAME_ED_CAP;
@@ -99,6 +114,7 @@ void nameEdDraw(const char *buf, const char *title)
 	displayFillRect(0, 108, chipW, 10, false);
 	displayPrintCore(2, 109, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
 	displayPrintAt((uint16_t)(chipW + 4), 109, APRSM_L_MTHINT, FONT_SIZE_1);
+	displayPrintCentered(96, NAMED_DOWN_HINT, FONT_SIZE_1);   /* R66B: підказка про шпаргалку (ВНИЗ) */
 	snprintf(cnt, sizeof(cnt), "%d/%d", (int)strlen(buf), NAME_ED_CAP);
 	displayPrintCore(0, 109, cnt, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
 	displayRender();
@@ -147,8 +163,52 @@ static bool neKey(char *buf, uiEvent_t *ev)
 	return true;
 }
 
+/* R66B: див. заголовок. Лише нове НАТИСКАННЯ закриває шпаргалку (відпускання ВНИЗ, якою її відкрили, -- ні); клавіша, що закрила, не
+ * має далі зберегти (зелена) чи вийти (червона), тож її відпускання ковтаємо. Викликати ДО обробки зеленої/червоної. */
+bool nameEdSheetEvent(char *buf, const char *title, uiEvent_t *ev)
+{
+	if ((ev->events & KEY_EVENT) == 0)
+	{
+		return false;
+	}
+
+	if (NE_SHEET(buf) != 0)
+	{
+		if ((ev->keys.event & KEY_MOD_PRESS) && ((ev->keys.event & KEY_MOD_LONG) == 0))
+		{
+			NE_SHEET(buf) = 0;
+			NE_SWALLOW(buf) = (char)((ev->keys.event & KEY_MOD_UP) ? 0 : ev->keys.key);   /* валкодер: натискання й відпускання разом -- ковтати нічого */
+			nameEdDraw(buf, title);
+		}
+		return true;   // поки шпаргалка відкрита, жодна клавіша не доходить до зберігання/виходу
+	}
+
+	if (NE_SWALLOW(buf) != 0)
+	{
+		if ((ev->keys.key == (char)NE_SWALLOW(buf)) && (ev->keys.event & KEY_MOD_UP))
+		{
+			NE_SWALLOW(buf) = 0;
+			return true;
+		}
+		if (ev->keys.event & KEY_MOD_PRESS)
+		{
+			NE_SWALLOW(buf) = 0;   // уже інша клавіша
+		}
+	}
+	return false;
+}
+
 bool nameEdHandleKey(char *buf, const char *title, uiEvent_t *ev)
 {
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		/* R66B: ВНИЗ -- шпаргалка розкладки поточного режиму (як у «Повідомленнях»); символ, що гортається, спершу підтверджуємо */
+		nameEdCommit(buf);
+		NE_SHEET(buf) = 1;
+		nameEdDraw(buf, title);
+		return true;
+	}
+
 	if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
 	{
 		smsMt_t mt = { NE_KEY(buf), (uint8_t)NE_IDX(buf) };
