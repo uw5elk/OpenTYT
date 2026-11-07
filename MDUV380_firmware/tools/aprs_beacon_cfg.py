@@ -37,6 +37,12 @@ SQL_MAX = 21                  # APRSM_SQL_MAX: 0 -- типовий; 1..21 -- 0..
 MODE_OV_MIGRATED = 0x4000     # APRSM_OV_MIGRATED
 
 MODE_NAMES = ["Вимкнено", "Вручну", "PTT", "Авто", "Розумний"]
+MODE_SMART, MODE_AUTO = 4, 3
+
+# R69 B1: у рації НЕМА GPS-приймача (аналог FORK_NO_GPS_MENU в applicationMain.h). Один прапорець ховає в CPS «Джерело позиції», панель «Розумний маяк» і значення
+# «Розумний» у «Режимі»; формат блока (16 Б), його читання й запис не змінюються -- значення полів зберігаються як прочитані. Для рації з GPS: FORK_NO_GPS = False.
+FORK_NO_GPS = True
+MODE_NAMES_UI = MODE_NAMES[:MODE_SMART] if FORK_NO_GPS else MODE_NAMES    # що показує список «Режим»
 INITIAL_SECS = [12, 30, 60, 120, 180, 300, 600, 1200, 1800, 3600]       # initialIntervalsInSecs[]
 BCNWIN_NAMES = ["Усі", "Лише нові", "Вимкнено"]
 
@@ -87,6 +93,17 @@ def beacon_build(d):
     b[14] = d["bcnwin"]
     b[15] = sum8(b[:15])
     return bytes(b)
+
+
+def no_gps_apply(d):
+    """R69 B2: dict бікона -> копія, приведена до єдиного можливого стану рації без GPS (джерело «канал», «Розумний» -> «Авто»); решта полів, зокрема «затухання»
+    й параметри розумного маяка, -- без змін. FORK_NO_GPS = False -- повертає копію як є. Те саме прошивка робить при завантаженні блока (cfgToSettings())."""
+    r = dict(d)
+    if FORK_NO_GPS:
+        r["source"] = "channel"
+        if r["mode"] == MODE_SMART:
+            r["mode"] = MODE_AUTO
+    return r
 
 
 def beacon_parse(b):

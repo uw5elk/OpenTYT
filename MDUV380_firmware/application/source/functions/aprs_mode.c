@@ -536,6 +536,20 @@ static void cfgToSettings(const aprsBeaconCfg_t *c, aprsBeaconingSettings_t *st)
 	st->smart.turnAngle = clampU8(c->turnAngle, APRS_SMART_BEACON_TURN_ANGLE_MIN, APRS_SMART_BEACON_TURN_ANGLE_MAX);
 	st->smart.turnSlope = clampU8(c->turnSlope, APRS_SMART_BEACON_TURN_SLOPE_MIN, APRS_SMART_BEACON_TURN_SLOPE_MAX);
 	st->smart.turnTime = clampU8(c->turnTime, APRS_SMART_BEACON_TURN_TIME_MIN, APRS_SMART_BEACON_TURN_TIME_MAX);
+#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU)
+	/* R69 B2: GPS-приймача нема, а блок могли записати з CPS зі станом «GPS» або режимом «Розумний», і меню налаштувань при цьому не відкривали. Стоковий бікон із
+	 * джерелом «GPS» без приймача після першої ж передачі мовчки перестає слати (після кешування позиції gpsPVTIsValid() завжди хибне), «Розумний» потребує швидкості/курсу.
+	 * Тому на КОЖНОМУ завантаженні блока (старт і перечитування) -- ті самі підміни, що на відкритті сесії налаштувань: джерело «канал / вручну», «Розумний» -> «Авто».
+	 * Сам блок у флеші не міняється (пишеться лише з меню чи CPS); «Затухання» не чіпаємо (рішення за власником). Повернути: прибрати FORK_NO_GPS_MENU (applicationMain.h). */
+	if (((uint8_t)st->state & (uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_GPS) != 0U)
+	{
+		st->state = (aprsBeaconingStates_t)(((uint8_t)st->state & (uint8_t)~(APRS_BEACONING_STATE_LOCATION_FROM_GPS)) | (uint8_t)APRS_BEACONING_STATE_LOCATION_FROM_CHANNEL);
+	}
+	if (st->mode == APRS_BEACONING_MODE_SMART_BEACONING)
+	{
+		st->mode = APRS_BEACONING_MODE_AUTO;
+	}
+#endif
 }
 
 /* Блок -> працюючі налаштування (на старті, ПЕРЕД aprsBeaconingInit()). restoreDefaults == true (скидання налаштувань при вмиканні) -- блок НЕ застосовується,

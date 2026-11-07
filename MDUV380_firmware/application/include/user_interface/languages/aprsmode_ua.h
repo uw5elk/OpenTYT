@@ -227,7 +227,7 @@
 #define APRSM_S_HINT_G        "GREEN:відкрити RED:вихід"
 #define APRSM_S_HINT_R        "<>:змін GREEN:ред RED:вих"
 #define APRSM_L_BMODE         "Режим"
-#define APRSM_L_POWER         "Потужн."
+#define APRSM_L_POWER         "Пот.QSY"
 #define APRSM_L_BINT          "Інтервал"
 #define APRSM_L_COMPR         "Стиснення"
 #define APRSM_L_SLOW          "Повільний"

@@ -72,32 +72,42 @@ class AprsPanel(Panel):
         self.cols.bind("<Configure>", self._relayout)
         self._wide = None
         bc = ttk.LabelFrame(self.col_a, text="Бікон")
+        self.beacon_frame = bc
         bc.pack(fill="x", pady=4)
         self.vars["mode"] = tk.StringVar(value=abc_.MODE_NAMES[0])
-        self._row(bc, "Режим", lambda f: ttk.Combobox(f, textvariable=self.vars["mode"], values=abc_.MODE_NAMES, state="readonly", width=14))
+        self.mode_combo = self._row(bc, "Режим", lambda f: ttk.Combobox(f, textvariable=self.vars["mode"], values=abc_.MODE_NAMES_UI, state="readonly", width=14))
         self.vars["interval"] = tk.StringVar()
         ivals = ["%d с" % x if x < 60 else "%d хв" % (x // 60) for x in abc_.INITIAL_SECS]
         self._intervals = ivals
         self.vars["interval"].set(ivals[abc_.DEFAULT_BEACON["interval"]])
         self._row(bc, "Інтервал (стоковий)", lambda f: ttk.Combobox(f, textvariable=self.vars["interval"], values=ivals, state="readonly", width=14))
         self.vars["power"] = tk.StringVar(value="0")
-        self._row(bc, "Потужність (0 -- як канал, 1..15)", lambda f: ttk.Spinbox(f, from_=0, to=15, textvariable=self.vars["power"], width=6))
+        self._row(bc, "Потужність при QSY (0 -- як канал)", lambda f: ttk.Spinbox(f, from_=0, to=15, textvariable=self.vars["power"], width=6))
+        ttk.Label(bc, text="Рівень 1..15. Діє тільки коли в слоті APRS задана частота передачі (QSY): тоді кадр іде з цією потужністю. Без QSY передача йде з потужністю каналу.",
+                  wraplength=360, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(0, 4))
         self.vars["source"] = tk.StringVar(value="Позиція каналу")
-        self._row(bc, "Джерело позиції", lambda f: ttk.Combobox(f, textvariable=self.vars["source"], values=["Позиція каналу", "GPS"], state="readonly", width=17))
+        if not abc_.FORK_NO_GPS:    # R69 B1: без GPS-приймача рядок прихований; змінна лишається -- блок пишеться з її значенням
+            self._row(bc, "Джерело позиції", lambda f: ttk.Combobox(f, textvariable=self.vars["source"], values=["Позиція каналу", "GPS"], state="readonly", width=17))
         self.vars["decay"] = tk.BooleanVar(value=True)
         self.vars["compressed"] = tk.BooleanVar(value=True)
         ttk.Checkbutton(bc, text="Алгоритм затухання", variable=self.vars["decay"]).pack(anchor="w", padx=8)
         ttk.Checkbutton(bc, text="Стиснений формат позиції", variable=self.vars["compressed"]).pack(anchor="w", padx=8)
-        self.vars["bcnwin"] = tk.StringVar(value=abc_.BCNWIN_NAMES[0])
-        self._row(bc, "Вікно маяків приймача", lambda f: ttk.Combobox(f, textvariable=self.vars["bcnwin"], values=abc_.BCNWIN_NAMES, state="readonly", width=14))
+        ttk.Label(bc, text=("Яку позицію рація передає: якщо в слоті APRS увімкнено «Використовувати позицію» -- координати слота; інакше -- координати, збережені в рації. "
+                            "Немає ні тих, ні тих -- кадр не передається."),
+                  wraplength=360, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(4, 4))
 
         rx = ttk.LabelFrame(self.col_a, text="Приймач")
+        self.rx_frame = rx
         rx.pack(fill="x", pady=4)
         self.vars["sql"] = tk.StringVar(value="0")
         self._row(rx, "Шумодав приймача APRS (0..21)", lambda f: ttk.Spinbox(f, from_=0, to=abc_.SQL_MAX, textvariable=self.vars["sql"], width=6))
+        self.vars["bcnwin"] = tk.StringVar(value=abc_.BCNWIN_NAMES[0])      # R69 B3: «Вікно маяків» належить приймачу (так і в меню рації)
+        self._row(rx, "Вікно маяків приймача", lambda f: ttk.Combobox(f, textvariable=self.vars["bcnwin"], values=abc_.BCNWIN_NAMES, state="readonly", width=14))
 
         sm = ttk.LabelFrame(self.col_b, text="Розумний маяк")
-        sm.pack(fill="x", pady=4)
+        self.smart_frame = sm
+        if not abc_.FORK_NO_GPS:    # R69 B1: розумному маяку потрібні швидкість і курс (GPS); без приймача панель прихована, значення полів зберігаються
+            sm.pack(fill="x", pady=4)
         for key, label in (("slow", "Повільно, хв (1..100)"), ("fast", "Швидко, с (10..180)"), ("low", "Мала швидкість, км/год (2..30)"),
                            ("high", "Велика швидкість, км/год (2..90)"), ("angle", "Кут повороту, ° (5..90)"), ("slope", "Нахил повороту (1..255)"),
                            ("time", "Час повороту, с (5..180)")):
@@ -147,6 +157,7 @@ class AprsPanel(Panel):
             self.vars["sql"].set(str(st["sql"]))
         d = st.get("beacon")
         if d:
+            d = abc_.no_gps_apply(d)     # R69 B2: показуємо те, що рація реально використає (без GPS: «канал», «Розумний» -> «Авто»)
             self.vars["mode"].set(abc_.MODE_NAMES[d["mode"]])
             self.vars["interval"].set(self._intervals[d["interval"]])
             self.vars["power"].set(str(d["power"]))
@@ -174,6 +185,7 @@ class AprsPanel(Panel):
         }
         for k in ("slow", "fast", "low", "high", "angle", "slope", "time"):
             d[k] = num(k)
+        d = abc_.no_gps_apply(d)    # R69 B2: без GPS у рацію пишемо лише «канал» і «Авто» замість «Розумного» (прошивка робить те саме при завантаженні блока)
         abc_.beacon_build(d)    # перевірка меж
         sql = num("sql")
         abc_.mode_block_with_sql(None, sql)

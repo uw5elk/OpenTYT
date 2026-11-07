@@ -137,6 +137,26 @@ def test_callsign_flow():
         check(not radio3.requests if hasattr(radio3, "requests") else True, "поганий позивний -- рацію не чіпали")
 
 
+def test_no_gps_apply():
+    """R69 B1/B2: без GPS -- «канал» і «Авто» замість «Розумного»; решта полів і формат блока не змінюються."""
+    d0 = dict(ab.DEFAULT_BEACON, mode=4, source="gps", decay=False, slow=11, fast=33, low=4, high=66, angle=33, slope=44, time=55, bcnwin=2, power=7)
+    r = ab.no_gps_apply(d0)
+    check(r["mode"] == 3 and r["source"] == "channel", "Розумний+GPS -> Авто+канал")
+    check({k: v for k, v in r.items() if k not in ("mode", "source")} == {k: v for k, v in d0.items() if k not in ("mode", "source")}, "решта полів без змін")
+    check(d0["mode"] == 4 and d0["source"] == "gps", "вхідний dict не змінено")
+    for m in (0, 1, 2, 3):
+        check(ab.no_gps_apply(dict(d0, mode=m))["mode"] == m, "режим %d не змінюється" % m)
+    check(len(ab.beacon_build(r)) == 16 and ab.beacon_parse(ab.beacon_build(r)) == r, "блок 16 Б будується й читається назад")
+    check(ab.MODE_NAMES[4] == "Розумний" and ab.MODE_NAMES_UI == ab.MODE_NAMES[:4], "список режимів у вікні -- 4 значення, ім'я 4 в MODE_NAMES лишилось")
+    check(ab.TYPE_APRS_BEACON_CFG == 14 and ab.BEACON_LEN == 16, "тип і довжина блока не змінені")
+    orig = ab.FORK_NO_GPS
+    ab.FORK_NO_GPS = False
+    try:
+        check(ab.no_gps_apply(d0) == d0, "FORK_NO_GPS=False -- копія без змін (рація з GPS)")
+    finally:
+        ab.FORK_NO_GPS = orig
+
+
 def test_state_io():
     store = {}
     orig_r, orig_w = cd.read_block, cd.write_block
@@ -180,7 +200,23 @@ def test_gui():
         d0 = dict(ab.DEFAULT_BEACON, mode=4, power=3, interval=6, source="gps", decay=False, compressed=True, slow=11, fast=33, low=4, high=66, angle=33, slope=44, time=55, bcnwin=1)
         w._apply_state({"call": "UW5ELK", "sql": 5, "beacon": d0})
         d, sql = w._collect()
-        check(d == d0 and sql == 5, "вікно: стан -> поля -> стан: %r" % d)
+        check(d == ab.no_gps_apply(d0) and sql == 5, "вікно: стан -> поля -> стан (без GPS: канал + «Авто»): %r" % d)
+        check(d["mode"] == 3 and d["source"] == "channel" and all(d[k] == d0[k] for k in ("slow", "fast", "low", "high", "angle", "slope", "time", "decay", "bcnwin", "power", "interval")),
+              "R69 B2: «Розумний»+GPS у вікні -> «Авто»+канал, решта полів (розумний маяк, затухання) збережена")
+        # R69 B1/B3: що видно у вікні
+        w.update()
+        check(w.smart_frame.winfo_manager() == "", "R69 B1: панель «Розумний маяк» не показана")
+        check("Розумний" not in w.mode_combo.cget("values"), "R69 B1: у «Режимі» нема «Розумний» (%r)" % (w.mode_combo.cget("values"),))
+        check(w.vars["mode"].get() == "Авто", "R69 B1: блок із «Розумним» показано як «Авто»")
+        check(not any(c.cget("text") == "Джерело позиції" for f in w.beacon_frame.winfo_children() for c in f.winfo_children() if c.winfo_class() == "TLabel"),
+              "R69 B1: рядка «Джерело позиції» нема")
+        check(any(c.cget("text") == "Вікно маяків приймача" for f in w.rx_frame.winfo_children() for c in f.winfo_children() if c.winfo_class() == "TLabel"),
+              "R69 B3: «Вікно маяків приймача» у групі «Приймач»")
+        check(not any(c.cget("text") == "Вікно маяків приймача" for f in w.beacon_frame.winfo_children() for c in f.winfo_children() if c.winfo_class() == "TLabel"),
+              "R69 B3: у групі «Бікон» його вже нема")
+        w._apply_state({"beacon": dict(d0, mode=1, source="channel")})
+        d, _ = w._collect()
+        check(d["mode"] == 1, "звичайний режим не змінюється")
         check(w.vars["call"].get() == "UW5ELK", "позивний у полі")
         w.vars["fast"].set("9")
         try:
@@ -198,6 +234,7 @@ def main():
     test_sql_block()
     test_callsign()
     test_callsign_flow()
+    test_no_gps_apply()
     test_state_io()
     test_gui()
     if FAILS:
