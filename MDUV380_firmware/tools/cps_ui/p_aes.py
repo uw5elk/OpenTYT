@@ -60,6 +60,17 @@ class AesPanel(Panel):
         ttk.Checkbutton(key_frame, text="показувати введений ключ", variable=self.show_var,
                         command=self._toggle_key_visibility).pack(anchor="w", padx=8)
 
+        # R64C: ім'я слота (поле імені стокового запису таблиці; рація показує його в «AES Keys»)
+        row_nm = ttk.Frame(key_frame)
+        row_nm.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row_nm, text="Ім'я слота (до %d символів):" % skt.NAME_CHARS).pack(side="left")
+        self.name_var = tk.StringVar()
+        ttk.Entry(row_nm, textvariable=self.name_var, width=24).pack(side="left", padx=6)
+        self.name_btn = ttk.Button(row_nm, text="Записати ім'я", command=self._on_write_name)
+        self.name_btn.pack(side="left")
+        ttk.Label(key_frame, text="Ключ і тип слота не змінюються -- пишеться лише поле імені. Порожнє ім'я = стандартне (номер слота). Рація показує лише символи cp1251.",
+                  wraplength=560, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8)
+
         row3 = ttk.Frame(key_frame)
         row3.pack(fill="x", padx=8, pady=(2, 8))
         self.write_btn = ttk.Button(row3, text="Записати ключ", command=self._on_write_key)
@@ -69,7 +80,7 @@ class AesPanel(Panel):
 
         self.refresh_btn = ttk.Button(self, text="Оновити список зайнятих слотів", command=self._on_refresh_slots)
         self.refresh_btn.pack(anchor="w", padx=12, pady=(0, 6))
-        for b in (self.write_btn, self.clear_btn, self.refresh_btn):
+        for b in (self.write_btn, self.clear_btn, self.refresh_btn, self.name_btn):
             self.reg(b)
 
     def _toggle_key_visibility(self):
@@ -120,6 +131,21 @@ class AesPanel(Panel):
             return
         self._run(lambda: self._clear_key_worker(key_id), "Очищую ключ {}...".format(key_id))
 
+    def _on_write_name(self):
+        if self.shell.busy:
+            return
+        key_id = self.keyid_var.get()
+        text = self.name_var.get()
+        try:
+            skt.encode_name(text)
+        except ValueError as e:
+            messagebox.showerror("Невірне ім'я", str(e))
+            return
+        if text.strip(" ") and not skt.radio_representable(text) and not messagebox.askokcancel(
+                "Символи поза cp1251", "У імені є символи, яких нема в шрифті рації: вона покаже їх як «?». Записати все одно?"):
+            return
+        self._run(lambda: self._write_name_worker(key_id, text), "Записую ім'я слота {}...".format(key_id))
+
     def _on_refresh_slots(self):
         if self.shell.busy:
             return
@@ -148,6 +174,23 @@ class AesPanel(Panel):
             ok = (readback == entry)
             print("Ключ {}: записано, звірка {}.".format(key_id, "OK" if ok else "НЕЗБІГ (спробуй ще раз)"))
 
+    def _write_name_worker(self, key_id, text):
+        with self._connect() as ser:
+            addr = skt.entry_addr(key_id)
+            existing = aes_key_store.flash_read(ser, addr, skt.STOCK_KEY_ENTRY_LEN)
+            if len(existing) != skt.STOCK_KEY_ENTRY_LEN:
+                raise RuntimeError("не вдалося прочитати слот {}".format(key_id))
+            if existing[skt.STOCK_KEY_TYPE_OFF] not in (skt.STOCK_KEY_TYPE_AES256, skt.STOCK_KEY_TYPE_AES256B):
+                # слота ще нема в таблиці: спершу порожній стоковий слот (як «Очистити» і як це робить прошивка), потім ім'я
+                existing = skt.build_entry(key_id, skt.BLANK_KEY)
+            entry = skt.rename_entry(key_id, existing, text)
+            if entry == existing:
+                print("Слот {}: таке ім'я вже записане.".format(key_id))
+                return
+            aes_key_store.flash_write_block(ser, addr, entry)
+            readback = aes_key_store.flash_read(ser, addr, skt.STOCK_KEY_ENTRY_LEN)
+            print("Слот {}: ім'я записано, звірка {}.".format(key_id, "OK" if readback == entry else "НЕЗБІГ (спробуй ще раз)"))
+
     def _clear_key_worker(self, key_id):
         with self._connect() as ser:
             addr = skt.entry_addr(key_id)
@@ -159,14 +202,17 @@ class AesPanel(Panel):
     def _refresh_slots_worker(self):
         with self._connect() as ser:
             occupied = []
+            names = {}
             for key_id in range(skt.STOCK_KEY_MIN_ID, skt.STOCK_KEY_MAX_ID + 1):
                 entry = aes_key_store.flash_read(ser, skt.entry_addr(key_id), skt.STOCK_KEY_ENTRY_LEN)
                 if len(entry) != skt.STOCK_KEY_ENTRY_LEN:
                     continue
-                entry_type, _name, wrapped = skt.parse_entry(entry)
+                entry_type, name32, wrapped = skt.parse_entry(entry)
                 if entry_type in (skt.STOCK_KEY_TYPE_AES256, skt.STOCK_KEY_TYPE_AES256B):
                     if skt.is_key_present(skt.unwrap_key(wrapped)):
                         occupied.append(key_id)
+                    if not skt.is_default_name(key_id, name32):
+                        names[key_id] = skt.decode_name(name32)
 
             # Зайняті слоти запам'ятовуємо для редактора каналу (V3.2): лише НОМЕРИ, матеріал ключа не зберігається нікуди.
             self.shell.aes_slots = {"occupied": tuple(occupied)}
@@ -175,3 +221,5 @@ class AesPanel(Panel):
             empty = [i for i in range(skt.STOCK_KEY_MIN_ID, skt.STOCK_KEY_MAX_ID + 1) if i not in occupied]
             print("Зайняті слоти: {}".format(", ".join(map(str, occupied)) if occupied else "немає"))
             print("Порожні слоти: {}".format(", ".join(map(str, empty)) if empty else "немає"))
+            if names:
+                print("Імена слотів: {}".format("; ".join("{}: {}".format(k, v) for k, v in sorted(names.items()))))

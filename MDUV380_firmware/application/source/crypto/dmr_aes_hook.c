@@ -4,6 +4,7 @@
 #include "functions/codeplug.h"
 #include "functions/settings.h"   /* currentChannelData, потрібен для канального гейта RX-детекції нижче */
 #include "hardware/SPI_Flash.h"
+#include "functions/aes_key_name.h"   /* R64C: імена слотів ключів (лише з ENABLE_AES_KEY_NAMES) */
 #include <stddef.h>
 #include <string.h>
 
@@ -658,6 +659,42 @@ static int stockKeyWrite(uint8_t keyId, const uint8_t *key32)
     stockWrapKey(key32, e + STOCK_KEY_KEY_OFF);
     return SPI_Flash_write(stockKeyEntryAddr(keyId), e, STOCK_KEY_ENTRY_LEN) ? 1 : 0;
 }
+
+#if defined(AES_KEY_NAMES_ENABLED)
+/* R64C: ім'я слота ключа -- поле імені (UTF-16LE, 32 Б, зсув 4) того самого стокового запису; стокова CPS показує те саме ім'я. Перетворення cp1251 <-> UTF-16LE --
+ * functions/aes_key_name.c (тестується на хості). Нової статичної пам'яті нема: буфери на стеку (до ~70 Б). */
+int dmrAesKeyNameGet(uint8_t keyId, char *out)
+{
+    uint8_t head[STOCK_KEY_KEY_OFF];   /* тип + поле імені */
+    out[0] = 0;
+    if ((keyId < STOCK_KEY_MIN_ID) || (keyId > STOCK_KEY_MAX_ID)) { return 0; }
+    if (!SPI_Flash_read(stockKeyEntryAddr(keyId), head, sizeof head)) { return 0; }
+    if ((head[STOCK_KEY_TYPE_OFF] != STOCK_KEY_TYPE_AES256) &&
+        (head[STOCK_KEY_TYPE_OFF] != STOCK_KEY_TYPE_AES256B)) { return 0; }
+    if (aesNameIsDefault(keyId, head + STOCK_KEY_NAME_OFF)) { return 0; }
+    return (aesNameFromField(head + STOCK_KEY_NAME_OFF, out) != 0U) ? 1 : 0;
+}
+
+int dmrAesKeyNameSet(uint8_t keyId, const char *cp1251)
+{
+    uint8_t head[STOCK_KEY_KEY_OFF];
+    uint8_t want[AESN_FIELD_LEN];
+    if ((keyId < STOCK_KEY_MIN_ID) || (keyId > STOCK_KEY_MAX_ID) || (cp1251 == NULL)) { return 0; }
+    if (!SPI_Flash_read(stockKeyEntryAddr(keyId), head, sizeof head)) { return 0; }
+    if ((head[STOCK_KEY_TYPE_OFF] != STOCK_KEY_TYPE_AES256) &&
+        (head[STOCK_KEY_TYPE_OFF] != STOCK_KEY_TYPE_AES256B))
+    {
+        /* Слот ще не в таблиці (стерта флеш): створюємо порожній стоковий слот, як це робить «Очистити». */
+        if (!stockKeyWrite(keyId, s_stockBlankKey)) { return 0; }
+        if (!SPI_Flash_read(stockKeyEntryAddr(keyId), head, sizeof head)) { return 0; }
+    }
+    if (aesNameToField(cp1251, want) == 0U) { stockDefaultName(keyId, want); }   /* порожнє ім'я = стандартне «keyId» */
+    if (memcmp(head + STOCK_KEY_NAME_OFF, want, AESN_FIELD_LEN) == 0) { return 1; }   /* вже саме це -- флеш не зношуємо */
+    if (!SPI_Flash_write(stockKeyEntryAddr(keyId) + STOCK_KEY_NAME_OFF, want, AESN_FIELD_LEN)) { return 0; }
+    if (!SPI_Flash_read(stockKeyEntryAddr(keyId) + STOCK_KEY_NAME_OFF, head + STOCK_KEY_NAME_OFF, AESN_FIELD_LEN)) { return 0; }
+    return (memcmp(head + STOCK_KEY_NAME_OFF, want, AESN_FIELD_LEN) == 0) ? 1 : 0;
+}
+#endif /* AES_KEY_NAMES_ENABLED */
 
 /* Load a key straight into RAM (bypasses the flash custom-data store). Marks keys
  * as loaded so the lazy flash-load in dmrAesRxPI won't clear it. For bench use. */

@@ -75,6 +75,7 @@ declare -A SRCS=(
 	[test_aes_pifilter]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix6: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- класифікація PI-burst-ів до стокового фільтра, кільця, режими G2
 	[test_wake_diag]="$APP/source/functions/wake_diag.c"   # R58: СПРАВЖНІЙ wake_diag.c -- журнал сеансів пробудження (кільце, prev, HOP_START, насичення, дамп 0xB7, рядки екрана); укр. варіант -- довжина рядків
 	[test_wake_hop]="$APP/source/functions/wake_hop_sel.c"   # R59: СПРАВЖНІЙ wake_hop_sel.c -- придатність каналу, випробувані (rx,tx,cc), ліміт стрибків, кільце по списку, один оберт
+	[test_aes_key_name]="$APP/source/crypto/aes_key_name.c"   # R64C: СПРАВЖНІЙ aes_key_name.c -- cp1251 <-> UTF-16LE для імен слотів AES-ключів (повна звірка з Python -- tools/test_aes_key_name.py)
 	[test_roam_cfg]="$APP/source/functions/roam_cfg.c"   # R59: СПРАВЖНІЙ roam_cfg.c -- формат custom-data блоку «Роумінгу» (розбір/збірка/межі)
 	[test_dmr_sms_text]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui4: cp1251 <-> UTF-16LE, dst-IP, PDU з кирилицею
 )
@@ -101,6 +102,7 @@ declare -A XFLAGS=(
 	[test_wake_diag]="-DENABLE_WAKE_DIAG"
 	[test_wake_hop]="-DENABLE_ROAM_RETRY -DWAKE_HOP_HOST_TEST -DROAM_CFG_HOST_TEST"
 	[test_roam_cfg]="-DENABLE_ROAM_RETRY -DROAM_CFG_HOST_TEST"
+	[test_aes_key_name]="-DAES_KEY_NAME_HOST_TEST"
 	[test_aprs_afsk]="-DENABLE_APRS_RX_PROBE"
 	[test_aprs_rx_parse]="-DENABLE_APRS_RX"
 	[test_aprs_icons]="-DENABLE_APRS_RX"
@@ -326,7 +328,7 @@ fi
 # R26 V2/V3 + APRS-unify L5.4 (бікон/шумодав/позивний з ПК): контакти-редактор, темна тема, tools/aprs_beacon_cfg.py; CPS-shell: tools/cps_ui (дерево розділів); CPS-doc: кодплаг як документ (test_cps_doc); CPS-fix2 + етап 3: редактори списків прийому, зон і каналів (test_cps_edit); CPS-fix3: сітка символів APRS, злита панель APRS, ключ AES у каналі (test_cps_fix3); R-next: загальні налаштування, VFO, DTMF (test_rnext); R28: теми екрана рації й каскадне видалення APRS-слота (test_r28); R30: файл теми .gtm, область custom-data у бекапі/відновленні/файлі налаштувань (test_r30); R31: ключі AES у бекапі/відновленні, база позивних DMR ID, охоронець меж запису (test_r31); R32: перевірка термінології, розбір джерел бази з tools/testdata, виміри фаз запису й передача образу в страхову копію, склад архіву (test_r32); R33: зразок ContactLists, лічильники бази, таблиця записів, розділ «Контакти», шрифти прошивки, точний передпоказ екрана з перевіркою розкладки й мовних рядків за вихідним кодом (test_r33); R34: байт 0xFF у назвах -- мала «я» (test_r34); R35: супутники TLE, картинка заставки, мелодія вмикання, вилучення блока custom-data, вікно rawarea охоронця (test_r35; формат звіряється з прошивкою gcc). R36: вікно CPS без обрізання тексту на 1024x768 і 1920x1080, межі з пам'яттю, копіювання за кодом клавіші на будь-якій розкладці, контекстні меню, таблиці за вмістом, хвіст 0x00 у назвах (test_r36; зонд tools/layout_probe.py). R37: стан і ущільнення області custom-data, обрив запису на кожному кроці, вікно customdata охоронця, хук нестачі місця (test_r37). Логіка -- у будь-якому python3; віджети Tk -- лише з tkinter + xvfb-run (інакше цю частину
 # тест сам пропускає й каже про це).
 # R59: «Роумінг» у CPS -- прапорець каналу, колонка CSV «Roam», блок налаштувань №15, попередження, безпечний запис, 38 мутантів (test_r59); розділ і колонка в Tk (test_r59_ui).
-for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_r64_editor; do
+for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor; do
 	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
 		PYTK=""
 		for cand in python3 python3.12 python3.11 python3.10 python3.13; do

@@ -148,6 +148,62 @@ def build_entry(key_id, key32, existing_entry100=None):
     return bytes(entry)
 
 
+# ---------------------------------------------------------------------------------------------------------------------------------
+#  R64C: ім'я слота ключа (поле імені запису, UTF-16LE, 32 байти, зсув 4)
+# ---------------------------------------------------------------------------------------------------------------------------------
+# Прошивка (functions/aes_key_name.c) показує/редагує ім'я в cp1251; стокова CPS пише довільні символи Unicode (аж до 16 кодових одиниць). Тут -- повний Unicode, як у стоку:
+# CPS нічого не втрачає. Те, чого нема в cp1251 (китайське ім'я зі стокової CPS), рація показує як «?» (самі байти поля прошивка не змінює, поки ім'я не перейменовують).
+NAME_CHARS = 16               # AESN_CHARS
+
+
+def decode_name(name32):
+    """Поле імені (32 байти UTF-16LE) -> текст. Кінець -- U+0000 або U+FFFF (стерта флеш); до 16 кодових одиниць; зіпсовані сурогати -> «?»."""
+    units = []
+    for i in range(0, min(len(name32), NAME_CHARS * 2) - 1, 2):
+        u = name32[i] | (name32[i + 1] << 8)
+        if u in (0, 0xFFFF):
+            break
+        units.append(u)
+    raw = b"".join(u.to_bytes(2, "little") for u in units)
+    return raw.decode("utf-16-le", errors="replace").replace("\ufffd", "?")
+
+
+def is_default_name(key_id, name32):
+    """Власного імені нема: поле = стандартне «keyId» або порожнє/стерте. Як aesNameIsDefault() у прошивці."""
+    return bytes(name32) == default_name(key_id) or decode_name(name32) == ""
+
+
+def encode_name(text):
+    """Текст -> поле імені (32 байти UTF-16LE, решта нулі). Порожнє ім'я нічого не кодує (виклик ставить стандартне). ValueError -- більше 16 кодових одиниць або керівні символи."""
+    text = text.rstrip(" ")
+    raw = text.encode("utf-16-le", errors="strict")
+    if len(raw) > NAME_CHARS * 2:
+        raise ValueError("ім'я ключа: найбільше %d символів (є %d)" % (NAME_CHARS, len(raw) // 2))
+    if any(ord(ch) < 0x20 for ch in text):
+        raise ValueError("ім'я ключа: керівні символи не допускаються")
+    return raw.ljust(32, b"\x00")
+
+
+def radio_representable(text):
+    """Чи покаже рація ім'я без «?»: усі символи є в cp1251 (шрифт прошивки)."""
+    try:
+        text.encode("cp1251")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def rename_entry(key_id, entry100, text):
+    """Новий запис слота з іншим іменем: змінюється ЛИШЕ поле імені (тип, ключ, pad -- ні на біт). Порожнє ім'я = стандартне «keyId». ValueError -- запис не AES-256."""
+    t, _n, _w = parse_entry(entry100)
+    if t not in (STOCK_KEY_TYPE_AES256, STOCK_KEY_TYPE_AES256B):
+        raise ValueError("слот %d ще не в таблиці ключів (тип 0x%02X)" % (key_id, t))
+    name = encode_name(text) if text.strip(" ") else default_name(key_id)
+    out = bytearray(entry100)
+    out[STOCK_KEY_NAME_OFF:STOCK_KEY_NAME_OFF + 32] = name
+    return bytes(out)
+
+
 def _self_test():
     """Офлайн перевірка узгодженості (без рації): round-trip wrap/unwrap для
     кількох ключів, і що BLANK_KEY через wrap/unwrap повертається сам собою.

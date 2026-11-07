@@ -29,6 +29,16 @@
 
 #if defined(ENABLE_AES)
 
+#include "functions/aes_key_name.h"
+#if defined(AES_KEY_NAMES_ENABLED)
+#include "user_interface/uiNameEditor.h"
+#include "user_interface/languages/aeskeys_ua.h"
+/* R64C: стан редактора імені -- у спільному буфері uiDataGlobal.MessageBox.message (нової RAM/CCM немає): розкладка в uiNameEditor.h; [35] = номер ключа (1..15). */
+#define AESK_ED_BUF     (uiDataGlobal.MessageBox.message)
+#define AESK_ED_KEYID   (AESK_ED_BUF[35])
+#define AESK_ED_ON()    (NAME_ED_ACTIVE(AESK_ED_BUF) == 1)
+#endif
+
 // List layout: 15 key-slot rows (keyId 1..15). Global TX-key рядок прибрано (2026-09-11):
 // шифрування вибирається лише в налаштуваннях каналу, за замовчуванням вимкнено.
 #define AES_NUM_KEYS        15
@@ -60,6 +70,11 @@ static void updateScreen(void);
 static void handleEvent(uiEvent_t *ev, menuStatus_t *exitCode);
 static void editorUpdateScreen(void);
 static void editorHandleEvent(uiEvent_t *ev);
+#if defined(AES_KEY_NAMES_ENABLED)
+static void nameDraw(void);
+static void nameOpen(int keyId);
+static void nameHandleEvent(uiEvent_t *ev);
+#endif
 
 static char hexChar(uint8_t nibble)
 {
@@ -70,6 +85,9 @@ menuStatus_t menuAESKeys(uiEvent_t *ev, bool isFirstRun)
 {
 	if (isFirstRun)
 	{
+#if defined(AES_KEY_NAMES_ENABLED)
+		nameEdClose(AESK_ED_BUF);   // буфер -- чужа пам'ять: редактор імені закрито
+#endif
 		s_aes.editing  = false;
 		s_aes.editPos  = 0;
 		s_aes.editKeyId = 0;
@@ -92,9 +110,19 @@ menuStatus_t menuAESKeys(uiEvent_t *ev, bool isFirstRun)
 		// перемалювати поточний екран; інакше картка висить до першої клавіші.
 		if ((ev->events & FUNCTION_EVENT) && (ev->function == FUNC_REDRAW))
 		{
+#if defined(AES_KEY_NAMES_ENABLED)
+			if (AESK_ED_ON()) { nameDraw(); return exitCode; }
+#endif
 			if (s_aes.editing) { editorUpdateScreen(); } else { updateScreen(); }
 			return exitCode;
 		}
+#if defined(AES_KEY_NAMES_ENABLED)
+		if (AESK_ED_ON())
+		{
+			nameHandleEvent(ev);
+			return exitCode;
+		}
+#endif
 		if (s_aes.editing)
 		{
 			editorHandleEvent(ev);
@@ -137,6 +165,20 @@ static void updateScreen(void)
 		// Colour the value after the ':' like the other option menus.
 		const char *colon = strchr(buf, ':');
 		int optStart = colon ? (int)(colon - buf + 1) : 0;
+#if defined(AES_KEY_NAMES_ENABLED)
+		{
+			// R64C: у ключа є власне ім'я -- «N ім'я:set» (ім'я скорочується до 11 символів, щоб рядок лишався в 18; двокрапка в імені не збиває колір значення).
+			char nm[AESN_CHARS + 1U];
+			int keyId = mNum + 1;
+
+			if (dmrAesKeyNameGet((uint8_t)keyId, nm) != 0)
+			{
+				nm[11] = 0;
+				snprintf(buf, sizeof buf, "%d %s:%s", keyId, nm, value);
+				optStart = (int)strlen(buf) - (int)strlen(value);
+			}
+		}
+#endif
 		menuDisplayEntry(i, mNum, buf, optStart, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
 
@@ -171,6 +213,15 @@ static void handleEvent(uiEvent_t *ev, menuStatus_t *exitCode)
 	}
 
 	int idx = menuDataGlobal.currentItemIndex;
+
+#if defined(AES_KEY_NAMES_ENABLED)
+	// R64C: «#» (коротко) на ключі -- перейменувати (спільний редактор назви).
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH))
+	{
+		nameOpen(idx + 1);
+		return;
+	}
+#endif
 
 	// Усі рядки -- слоти ключів (1..15). Global TX key прибрано.
 	{
@@ -306,5 +357,70 @@ static void editorHandleEvent(uiEvent_t *ev)
 		return;
 	}
 }
+
+#if defined(AES_KEY_NAMES_ENABLED)
+// ---- R64C: перейменування ключа ----
+static void nameTitle(char *title, size_t len)
+{
+	snprintf(title, len, AESK_REN_TITLE_FMT, (int)AESK_ED_KEYID);
+}
+
+static void nameDraw(void)
+{
+	char title[24];
+
+	nameTitle(title, sizeof title);
+	nameEdDraw(AESK_ED_BUF, title);
+}
+
+static void nameOpen(int keyId)
+{
+	char nm[AESN_CHARS + 1U];
+
+	(void)dmrAesKeyNameGet((uint8_t)keyId, nm);   // власного імені нема -- порожній рядок
+	nameEdInit(AESK_ED_BUF, nm);
+	AESK_ED_KEYID = (char)keyId;
+	nameDraw();
+}
+
+static void nameClose(void)
+{
+	nameEdClose(AESK_ED_BUF);
+	updateScreen();
+}
+
+static void nameHandleEvent(uiEvent_t *ev)
+{
+	char title[24];
+
+	if ((ev->events & KEY_EVENT) == 0)
+	{
+		return;
+	}
+
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		nameEdCommit(AESK_ED_BUF);
+		if (dmrAesKeyNameSet((uint8_t)AESK_ED_KEYID, AESK_ED_BUF) != 0)
+		{
+			nameClose();
+			uiNotificationShowShort(1500, AESK_MSG_RENAMED, true);
+		}
+		else
+		{
+			uiNotificationShowShort(1500, AESK_MSG_SAVE_ERR, true);   // лишаємось у редакторі: набране не втрачено
+		}
+	}
+	else if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		nameClose();
+	}
+	else
+	{
+		nameTitle(title, sizeof title);
+		(void)nameEdHandleKey(AESK_ED_BUF, title, ev);
+	}
+}
+#endif // AES_KEY_NAMES_ENABLED
 
 #endif // ENABLE_AES

@@ -33,6 +33,7 @@
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
 #include "interfaces/gps.h"
+#include "functions/aes_key_name.h"   /* R64C: ім'я ключа в «Деталях каналу» (лише з ENABLE_AES_KEY_NAMES) */
 #if defined(ENABLE_ROAM_RETRY)
 #include "functions/wake_hop.h"       /* R60: номер списку роумінгу каналу (roamRecList/roamRecSetList/roamRecSuitable) */
 #include "user_interface/roam_ui.h"
@@ -742,6 +743,17 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 						else
 						{
 							snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "Key %u", codeplugChannelGetAesKeySlot(&tmpChannel));
+#if defined(AES_KEY_NAMES_ENABLED)
+							/* R64C: у ключа є власне ім'я -- «N ім'я» замість «Key N» (скорочується рядком "%s:%s" до 16 символів). Без імені рядок не змінюється. */
+							{
+								char keyNm[AESN_CHARS + 1U];
+
+								if (dmrAesKeyNameGet((uint8_t)codeplugChannelGetAesKeySlot(&tmpChannel), keyNm) != 0)
+								{
+									snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u %s", (unsigned)codeplugChannelGetAesKeySlot(&tmpChannel), keyNm);
+								}
+							}
+#endif
 						}
 						break;
 #endif
