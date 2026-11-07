@@ -126,6 +126,9 @@ menuDataGlobal_t menuDataGlobal =
 #if defined(ENABLE_ROAM_RETRY)
 				[MENU_ROAM] = NULL,// R59: головне меню -> «Роумінг» (власної таблиці нема -- малює menuRoam); явний індекс, як і вище
 #endif
+#if defined(RXGROUP_UI_ENABLED)
+				[MENU_RXGROUPS] = NULL,// R65B: головне меню -> «Списки прийому» (власної таблиці нема -- малює menuRxGroups); явний індекс, як і вище
+#endif
 		}
 };
 
@@ -203,6 +206,9 @@ static menuFunctionData_t menuFunctions[] =
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 		{ menuRoam,                 NULL, NULL, 0 },// R59: головне меню -> «Роумінг»
+#endif
+#if defined(RXGROUP_UI_ENABLED)
+		{ menuRxGroups,             NULL, NULL, 0 },// R65B: головне меню -> «Списки прийому»
 #endif
 };
 
@@ -756,6 +762,10 @@ const menuItemNewData_t mainMenuItems[] =
 	// R59: «Роумінг» -- ОСТАННІЙ пункт (наявні не зсуваються). Назву малює menuDisplayMenuList.c за menuNum (текст не з stringsTable_t -- roam_ua.h),
 	// тому stringOffset тут формальний (0 -- щоб пройти перевірку `>= 0` і не читати за межами таблиці).
 	{ 0, MENU_ROAM },
+#endif
+#if defined(RXGROUP_UI_ENABLED)
+	// R65B: «Списки прийому» -- ОСТАННІЙ пункт після «Роумінгу» (наявні не зсуваються); назву малює menuDisplayMenuList.c за menuNum, stringOffset формальний, як у «Роумінгу».
+	{ 0, MENU_RXGROUPS },
 #endif
 };
 

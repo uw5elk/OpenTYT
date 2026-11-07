@@ -68,6 +68,7 @@ declare -A SRCS=(
 	[test_codeplug_zonerename]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R42: СПРАВЖНІЙ codeplug.c -- перейменування зони (запис лише 16 байтів назви, кінцева «я» через хвіст 0x00, межі довжини, «Всі канали», збій запису); EEPROM -- образ у пам'яті
 	[test_codeplug_zoneedit]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R43: СПРАВЖНІЙ codeplug.c -- додати канал у кінець, вийняти зі зсувом, створити й видалити зону, ординал поточної зони, межі, збої запису, автовизначення розкладки 16/80; EEPROM -- образ у пам'яті
 	[test_codeplug_contact]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R44: СПРАВЖНІЙ codeplug.c -- видалення контакту з каскадом (поле «контакт» у каналах -> 0), лічильник каналів із контактом; EEPROM і NOR-флеш -- образи в пам'яті
+	[test_codeplug_rxgroup]="$APP/source/functions/codeplug.c $APP/source/functions/aprs_rx_parse.c $APP/source/functions/aprs_mode_cfg.c $APP/source/functions/dmr_sms_text.c -lm"   # R65B: СПРАВЖНІЙ codeplug.c -- редактор списків прийому (створити/перейменувати/склад/видалити з каскадом), порядок записів, обрив живлення в кожній точці
 	[test_sql_open_delay]=""   # R42: чиста логіка затримки відкриття шумодава (application/include/functions/sql_open_delay.h) -- лише заголовок
 	[test_aes_resync]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix1: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- ресинхронізація MI, захист від хибного CRC4, обидві конвенції late entry; залізо -- заглушки в тесті
 	[test_aes_txphase]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix2: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- фаза шифрування TX за ефіром при тихих burst-ах (SILENCE_AUDIO), межа 18 кадрів, B3 тиша на RX; черга кодувальника й залізо -- модель у тесті
@@ -97,6 +98,7 @@ declare -A XFLAGS=(
 	[test_codeplug_zonerename]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
 	[test_codeplug_zoneedit]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
 	[test_codeplug_contact]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -DENABLE_CHANNEL_DELETE -DENABLE_CODEPLUG_MENU -funsigned-char -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"   # -funsigned-char: як на ARM (char без знака) -- інакше `name[0] != 0xFF` у кеші контактів хибне на x86
+	[test_codeplug_rxgroup]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_AES -DENABLE_APRS_RX -DENABLE_ZONE_RENAME -DENABLE_ZONE_EDIT -DENABLE_CHANNEL_DELETE -DENABLE_CODEPLUG_MENU -DENABLE_RXGROUP_EDIT -funsigned-char -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-missing-field-initializers"
 	[test_dmr_rctl_stock]="-DENABLE_DMR_DATA"   # R21 З2: тест читає чергу так, як драйвер (functions/dmr_data.h)
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
 	[test_wake_diag]="-DENABLE_WAKE_DIAG"
@@ -182,6 +184,15 @@ for src in "$TESTS_DIR"/test_*.c; do
 		fi
 	done
 done
+
+# R65B: мутанти редактора списків прийому (codeplug.c, RXGROUP_EDIT_ENABLED) -- кожен мутант мусить провалити test_codeplug_rxgroup
+if [ -z "$FILTER" ] || [[ "rxgroup" == *"$FILTER"* ]] || [[ "$FILTER" == *"rxgroup"* ]]; then
+	if out="$(python3 "$TESTS_DIR/mutants_rxgroup.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            mutants_rxgroup (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        mutants_rxgroup (python)"; printf '%s\n' "$out" | tail -20
+	fi
+fi
 
 # R58: діагностика пробудження -- мутаційна перевірка тестів (кожен мутант мусить провалити тест), розбір дампу tools/wake_diag.py і статична перевірка «усе під #if».
 if [ -z "$FILTER" ] || [[ "wake" == *"$FILTER"* ]] || [[ "$FILTER" == *"wake"* ]]; then
@@ -328,7 +339,7 @@ fi
 # R26 V2/V3 + APRS-unify L5.4 (бікон/шумодав/позивний з ПК): контакти-редактор, темна тема, tools/aprs_beacon_cfg.py; CPS-shell: tools/cps_ui (дерево розділів); CPS-doc: кодплаг як документ (test_cps_doc); CPS-fix2 + етап 3: редактори списків прийому, зон і каналів (test_cps_edit); CPS-fix3: сітка символів APRS, злита панель APRS, ключ AES у каналі (test_cps_fix3); R-next: загальні налаштування, VFO, DTMF (test_rnext); R28: теми екрана рації й каскадне видалення APRS-слота (test_r28); R30: файл теми .gtm, область custom-data у бекапі/відновленні/файлі налаштувань (test_r30); R31: ключі AES у бекапі/відновленні, база позивних DMR ID, охоронець меж запису (test_r31); R32: перевірка термінології, розбір джерел бази з tools/testdata, виміри фаз запису й передача образу в страхову копію, склад архіву (test_r32); R33: зразок ContactLists, лічильники бази, таблиця записів, розділ «Контакти», шрифти прошивки, точний передпоказ екрана з перевіркою розкладки й мовних рядків за вихідним кодом (test_r33); R34: байт 0xFF у назвах -- мала «я» (test_r34); R35: супутники TLE, картинка заставки, мелодія вмикання, вилучення блока custom-data, вікно rawarea охоронця (test_r35; формат звіряється з прошивкою gcc). R36: вікно CPS без обрізання тексту на 1024x768 і 1920x1080, межі з пам'яттю, копіювання за кодом клавіші на будь-якій розкладці, контекстні меню, таблиці за вмістом, хвіст 0x00 у назвах (test_r36; зонд tools/layout_probe.py). R37: стан і ущільнення області custom-data, обрив запису на кожному кроці, вікно customdata охоронця, хук нестачі місця (test_r37). Логіка -- у будь-якому python3; віджети Tk -- лише з tkinter + xvfb-run (інакше цю частину
 # тест сам пропускає й каже про це).
 # R59: «Роумінг» у CPS -- прапорець каналу, колонка CSV «Roam», блок налаштувань №15, попередження, безпечний запис, 38 мутантів (test_r59); розділ і колонка в Tk (test_r59_ui).
-for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65; do
+for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65 test_r65b; do
 	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
 		PYTK=""
 		for cand in python3 python3.12 python3.11 python3.10 python3.13; do

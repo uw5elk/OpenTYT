@@ -168,6 +168,15 @@ static void updateScreen(bool isFirstRun)
 					menuName = ROAM_MENU_NAME;
 				}
 #endif
+#if defined(RXGROUP_UI_ENABLED)
+				// R65B: «Списки прийому» -- текст не з мовної таблиці (rxgroup_ua.h); голосової підказки нема, як і в «Роумінгу».
+				bool isRxgItem = (menuDataGlobal.currentMenuList[mNum].menuNum == MENU_RXGROUPS);
+
+				if (isRxgItem)
+				{
+					menuName = RXG_MENU_NAME;
+				}
+#endif
 				menuDisplayEntry(i, mNum, menuName, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
 
 				if (i == 0)
@@ -178,7 +187,16 @@ static void updateScreen(bool isFirstRun)
 					}
 
 #if defined(ENABLE_ROAM_RETRY)
-					if (isRoamItem == false)
+					if ((isRoamItem == false)
+#if defined(RXGROUP_UI_ENABLED)
+							&& (isRxgItem == false)
+#endif
+							)
+					{
+						voicePromptsAppendLanguageString(menuName);
+					}
+#elif defined(RXGROUP_UI_ENABLED)
+					if (isRxgItem == false)
 					{
 						voicePromptsAppendLanguageString(menuName);
 					}

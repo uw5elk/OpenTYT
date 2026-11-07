@@ -601,6 +601,38 @@ int codeplugZoneEditNthChannel(int n);                                          
 #define CODEPLUG_MENU_ENABLED 1
 int codeplugContactCountChannels(int contactIndex);   // у скількох каналах (справжніх, у масці «в роботі») поле «контакт» == contactIndex
 bool codeplugContactDelete(int contactIndex);         // канали з цим контактом -> «Немає» (0), далі стирання слота контакту; false -- збій запису
+
+/* R65B: редактор списків прийому (TG-списків) з рації -- створити, перейменувати, змінити склад, видалити. Лише під ENABLE_RXGROUP_EDIT і лише там, де є CODEPLUG_MENU_ENABLED
+ * (діапазон каналів і доступ до поля каналу -- ті самі, що в каскаді R44). Формат запису НЕ змінено: 76 слотів, довжина (кількість контактів, 0 = слот вільний) у таблиці з
+ * CODEPLUG_ADDR_RX_GROUP_LEN, запис 80 Б = назва 16 Б + 32 x uint16 номер контакту (0 = кінець). Список без жодного контакту НЕ існує (стока й CPS так само: довжина 0 = нема). */
+#if defined(ENABLE_RXGROUP_EDIT)
+#define RXGROUP_EDIT_ENABLED 1
+#define CODEPLUG_RXGROUP_NAME_LEN      16
+#define CODEPLUG_RXGROUP_MEMBERS_MAX   32
+typedef enum
+{
+	CODEPLUG_RXGROUP_OK = 0,
+	CODEPLUG_RXGROUP_BAD_ARG,        // слот/кількість/номер контакту поза межами
+	CODEPLUG_RXGROUP_NAME_EMPTY,     // порожня назва (або самі пробіли)
+	CODEPLUG_RXGROUP_NAME_DUP,       // така назва вже є в іншому списку (CPS вимагає різних назв: посилання йдуть за назвами)
+	CODEPLUG_RXGROUP_NAME_TAIL,      // рівно 16 байтів і останній 0xFF («я»): місця для хвоста 0x00 нема
+	CODEPLUG_RXGROUP_FULL,           // усі 76 слотів зайняті
+	CODEPLUG_RXGROUP_DUP_MEMBER,     // той самий контакт двічі
+	CODEPLUG_RXGROUP_WRITE_ERROR
+} CodeplugRxGroupResult_t;
+
+bool codeplugRxGroupExists(int slot);                                   // слот 1..76 зайнятий (довжина в кеші > 0)
+int  codeplugRxGroupCount(void);                                        // скільки списків існує
+int  codeplugRxGroupNthSlot(int ordinal);                               // слот ординала (з нуля) серед існуючих; 0 -- нема такого
+void codeplugRxGroupGetName(int slot, char *out17);                     // назва (cp1251) у out17; порожній рядок для неіснуючого слота
+int  codeplugRxGroupGetMembers(int slot, uint16_t *out32);              // номери контактів (1..1024); повертає кількість до першого 0
+CodeplugRxGroupResult_t codeplugRxGroupNameCheck(const char *name, int exceptSlot);   // правила назви; exceptSlot -- слот, який перейменовують (0 -- новий)
+CodeplugRxGroupResult_t codeplugRxGroupCreate(const char *name, const uint16_t *members, int n, int *slotOut);   // n 1..32; запис: тіло -> довжина -> кеш
+CodeplugRxGroupResult_t codeplugRxGroupRename(int slot, const char *name);               // пише лише 16 байтів назви
+CodeplugRxGroupResult_t codeplugRxGroupSetMembers(int slot, const uint16_t *members, int n);   // n 1..32; запис: номери контактів -> довжина (якщо змінилась)
+int  codeplugRxGroupCountChannels(int slot);                            // у скількох каналах (у масці «в роботі») стоїть цей список
+CodeplugRxGroupResult_t codeplugRxGroupDelete(int slot);                // канали і обидва VFO -> «Немає»; далі довжина = 0, кеш, тіло -> нулі
+#endif
 #endif
 #endif
 

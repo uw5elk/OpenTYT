@@ -34,6 +34,7 @@
 #include "functions/settings.h"
 #include "functions/voicePrompts.h"
 #include "functions/aprs_rx_cfg.h"   /* R8-fix: APRS_RX -- MENU_APRS_HUB нижче */
+#include "user_interface/rxgroup_ui.h"   /* R65B: RXGROUP_UI_ENABLED -- MENU_RXGROUPS нижче */
 
 
 #if defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
@@ -422,6 +423,9 @@ enum MENU_SCREENS
 #if defined(ENABLE_ROAM_RETRY)
 	MENU_ROAM,                // R59: головне меню -> «Роумінг» (останній пункт). ПІСЛЯ межі швидких клавіш: ID 0..31 не зсуваються; швидкої клавіші на нього нема
 #endif
+#if defined(RXGROUP_UI_ENABLED)
+	MENU_RXGROUPS,            // R65B: головне меню -> «Списки прийому» (останній пункт, після «Роумінгу»). ПІСЛЯ межі швидких клавіш: ID 0..31 не зсуваються; швидкої клавіші на нього нема
+#endif
 	NUM_MENU_ENTRIES
 };
 
@@ -582,6 +586,9 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun);
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 menuStatus_t menuRoam(uiEvent_t *ev, bool isFirstRun);   /* R59: «Роумінг» (menuRoam.c) */
+#endif
+#if defined(RXGROUP_UI_ENABLED)
+menuStatus_t menuRxGroups(uiEvent_t *ev, bool isFirstRun);   /* R65B: «Списки прийому» (menuRxGroups.c) */
 #endif
 #if defined(HAS_COLOURS)
 menuStatus_t menuThemeOptions(uiEvent_t *ev, bool isFirstRun);

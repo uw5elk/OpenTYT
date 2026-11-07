@@ -177,6 +177,10 @@ endif
 ifeq ($(ENABLE_AES_KEY_NAMES),1)
 DEFS += -DENABLE_AES_KEY_NAMES
 endif
+# R65B: редактор списків прийому з рації (створити/перейменувати/склад/видалити). Потребує ENABLE_CODEPLUG_MENU (+ENABLE_CHANNEL_DELETE/ZONE_EDIT) і українську збірку; без прапорця збірка не змінюється.
+ifeq ($(ENABLE_RXGROUP_EDIT),1)
+DEFS += -DENABLE_RXGROUP_EDIT
+endif
 
 # R2/R3 (2026-10-09/10), ТИМЧАСОВО: діагностичний екран «APRS проба» (Опції рації, останній
 # пункт): прийом APRS з I2S від HR-C6000 -- демодулятор AFSK 1200 + AX.25, лічильники кадрів для

@@ -101,9 +101,9 @@ def menu_problems(sys_c, sys_h, disp, zl, chm):
     for name, text in (("menuSystem.c", sys_c), ("menuSystem.h", sys_h), ("menuDisplayMenuList.c", disp), ("menuZoneList.c", zl)):
         if re.search(r"\bMENU_CODEPLUG\b|MENU_CODEPLUG_ZONES|menuDataCodeplug|codeplug_menu", text):
             p.append("у %s лишилась згадка розформованого розділу «Кодплаг» (MENU_CODEPLUG / MENU_CODEPLUG_ZONES / menuDataCodeplug / codeplug_menu)" % name)
-    if not re.search(r"MENU_COLOUR_PICKER,\s*\n#endif\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n\s*MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h) and \
-            not re.search(r"MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h):
-        p.append("нове ID меню не в самому кінці переліку (швидкі клавіші користувача зсунулись би; R59: після «Каналів» дозволено лише MENU_ROAM під ENABLE_ROAM_RETRY)")
+    if not re.search(r"MENU_COLOUR_PICKER,\s*\n#endif\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n\s*MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?(?:#if defined\(RXGROUP_UI_ENABLED\)\n[^\n]*MENU_RXGROUPS,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h) and \
+            not re.search(r"MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?(?:#if defined\(RXGROUP_UI_ENABLED\)\n[^\n]*MENU_RXGROUPS,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h):
+        p.append("нове ID меню не в самому кінці переліку (швидкі клавіші користувача зсунулись би; R59: після «Каналів» дозволено лише MENU_ROAM під ENABLE_ROAM_RETRY; R65B: далі MENU_RXGROUPS під RXGROUP_UI_ENABLED)")
     if "menuCodeplugChannels,     NULL, NULL, 0 },// R46" not in sys_c:
         p.append("«Канали» не зареєстровані в menuFunctions[]")
     if not re.search(r"\[MENU_CODEPLUG_CHANNELS\] = NULL", sys_c):
@@ -199,7 +199,7 @@ CONTACT_MUTANTS = [
      "if (codeplugAllChannelsIndexIsInUse(ch) && (codeplugChannelContactField(ch) == (uint16_t)contactIndex) && (codeplugChannelClearContactField(ch), 0))\n\t\t{\n\t\t\treturn false;"),
     ("каскад чіпає й канали поза маскою (рахує зайві)", "		if (codeplugAllChannelsIndexIsInUse(ch) && (codeplugChannelContactField(ch) == (uint16_t)contactIndex))\n		{\n			n++;",
      "		if ((codeplugChannelContactField(ch) == (uint16_t)contactIndex))\n		{\n			n++;"),
-    ("лічильник завищує на 1", "			n++;\n		}\n	}\n	return n;", "			n++;\n		}\n	}\n	return n + 1;"),
+    ("лічильник завищує на 1", "contactIndex))\n		{\n			n++;\n		}\n	}\n	return n;", "contactIndex))\n		{\n			n++;\n		}\n	}\n	return n + 1;"),
     ("у EEPROM-каналі обнуляється лише 1 байт поля «контакт»", "EEPROM_Write(addr, zero, 2)", "EEPROM_Write(addr, zero, 1)"),
     ("у флеш-каналі обнуляється лише 1 байт поля «контакт»", "SPI_Flash_write(FLASH_ADDRESS_OFFSET + addr, zero, 2)", "SPI_Flash_write(FLASH_ADDRESS_OFFSET + addr, zero, 1)"),
     ("слот контакту не стирається повністю (тип лишається)", "	c.callType = 0xff;\n	return codeplugContactSaveDataForIndex", "	return codeplugContactSaveDataForIndex"),

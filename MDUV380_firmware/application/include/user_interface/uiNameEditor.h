@@ -16,7 +16,7 @@
 /* Редактор є лише в українській збірці з multitap (той самий критерій, що в sms_multitap.h) І лише коли його хтось використовує (назви зон, імена списків роумінгу, імена
  * ключів AES): інакше файл порожній, а збірки без цих функцій -- байт-у-байт як були. */
 #if defined(LANGUAGE_BUILD_UKRAINIAN) && ((defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX)) && \
-	(defined(ENABLE_ZONE_RENAME) || defined(ENABLE_ROAM_RETRY) || defined(ENABLE_AES_KEY_NAMES))
+	(defined(ENABLE_ZONE_RENAME) || defined(ENABLE_ROAM_RETRY) || defined(ENABLE_AES_KEY_NAMES) || defined(ENABLE_RXGROUP_EDIT))
 #define UI_NAME_EDITOR 1
 
 #include "user_interface/uiGlobals.h"

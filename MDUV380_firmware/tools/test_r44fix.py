@@ -339,8 +339,8 @@ def test_z4_default_unchanged():
     root = make_root(old.stdout.decode("utf-8"))
     try:
         for name, defs in cfgs:
-            if name in ("R44", "ROAM", "AESNAMES", "ROAMAESNAMES"):
-                continue                       # конфігурації з ENABLE_CODEPLUG_MENU -- саме їх R46 і змінює (ROAM = R44 + ENABLE_ROAM_RETRY; R64: AESNAMES/ROAMAESNAMES -- похідні від R44)
+            if name in ("R44", "ROAM", "AESNAMES", "ROAMAESNAMES", "RXG", "FULLUSER"):
+                continue                       # конфігурації з ENABLE_CODEPLUG_MENU -- саме їх R46 і змінює (ROAM = R44 + ENABLE_ROAM_RETRY; R64: AESNAMES/ROAMAESNAMES -- похідні від R44; R65: RXG/FULLUSER додають пункт «Списки прийому»)
             # R59: ENABLE_ROAM_RETRY законно додає останній пункт меню; без цього прапорця токени мусять збігатися з базою, тож порівнюємо без нього
             a, b = tokens(FW, [d for d in defs if d != "-DENABLE_ROAM_RETRY"], incs), tokens(root, [d for d in defs if d != "-DENABLE_ROAM_RETRY"], incs)
             check(a is not None and a == b, "Z4: конфігурація %s -- токени menuSystem.c не змінились відносно R44" % name)

@@ -1911,6 +1911,361 @@ bool codeplugContactDelete(int contactIndex)
 	c.callType = 0xff;
 	return codeplugContactSaveDataForIndex(contactIndex, &c) != 0;
 }
+#if defined(RXGROUP_EDIT_ENABLED)
+/* ---- R65B: редактор списків прийому ----------------------------------------------------------------------------------------------
+ * Нової статичної пам'яті НЕМАЄ (кеш довжин codeplugRXGroupCache існував). Записи списків лежать так, що жоден НЕ перетинає межу 4 КБ сектора: запис №30 (з нуля) починається
+ * рівно з межі сектора, а CODEPLUG_RXGROUP_DATA_STRUCT_SIZE * 30 = 2400 = 0x960, тобто 0x8D6A0 + 0x960 = 0x8E000. Таблиця довжин (0x8D620..0x8D66B) лежить у тому самому секторі,
+ * що й записи 0..29. Тож кожен виклик SPI_Flash_write тут -- ОДИН прохід «прочитати сектор -> стерти -> записати» (а для запису, що закінчується рівно на межі, SPI_Flash_write
+ * робить ще й даремний другий прохід тим самим вмістом). Жоден запис не захищений від зникнення живлення: сектор стирається і пишеться заново. */
+
+static int codeplugRxGroupBodyAddr(int slot)
+{
+	return FLASH_ADDRESS_OFFSET + CODEPLUG_ADDR_RX_GROUP + ((slot - 1) * CODEPLUG_RXGROUP_DATA_STRUCT_SIZE);
+}
+
+static bool codeplugRxGroupSlotOk(int slot)
+{
+	return (slot >= 1) && (slot <= CODEPLUG_RX_GROUPLIST_MAX);
+}
+
+bool codeplugRxGroupExists(int slot)
+{
+	return codeplugRxGroupSlotOk(slot) && (codeplugRXGroupCache[slot - 1] > 0);
+}
+
+int codeplugRxGroupCount(void)
+{
+	int n = 0;
+
+	for (int i = 0; i < CODEPLUG_RX_GROUPLIST_MAX; i++)
+	{
+		if (codeplugRXGroupCache[i] > 0)
+		{
+			n++;
+		}
+	}
+	return n;
+}
+
+int codeplugRxGroupNthSlot(int ordinal)
+{
+	for (int i = 0; i < CODEPLUG_RX_GROUPLIST_MAX; i++)
+	{
+		if (codeplugRXGroupCache[i] > 0)
+		{
+			if (ordinal == 0)
+			{
+				return i + 1;
+			}
+			ordinal--;
+		}
+	}
+	return 0;
+}
+
+void codeplugRxGroupGetName(int slot, char *out17)
+{
+	char raw[CODEPLUG_RXGROUP_NAME_LEN];
+
+	out17[0] = 0;
+	if (!codeplugRxGroupExists(slot))
+	{
+		return;
+	}
+	SPI_Flash_read((uint32_t)codeplugRxGroupBodyAddr(slot), (uint8_t *)raw, CODEPLUG_RXGROUP_NAME_LEN);
+	codeplugUtilConvertBufToDisplayString(raw, out17, CODEPLUG_RXGROUP_NAME_LEN);   /* назву з CPS в UTF-8 показуємо й редагуємо в cp1251, як назви зон */
+}
+
+int codeplugRxGroupGetMembers(int slot, uint16_t *out32)
+{
+	int n = 0;
+
+	memset(out32, 0, CODEPLUG_RXGROUP_MEMBERS_MAX * sizeof(uint16_t));
+	if (!codeplugRxGroupExists(slot))
+	{
+		return 0;
+	}
+	SPI_Flash_read((uint32_t)(codeplugRxGroupBodyAddr(slot) + CODEPLUG_RXGROUP_NAME_LEN), (uint8_t *)out32, CODEPLUG_RXGROUP_MEMBERS_MAX * (int)sizeof(uint16_t));
+	while ((n < CODEPLUG_RXGROUP_MEMBERS_MAX) && (out32[n] != 0))
+	{
+		n++;
+	}
+	return n;
+}
+
+/* Назва -> 16 байтів запису. Правила ті самі, що в зон (R42) і CPS: порожня -- відмова; рівно 16 байтів з кінцевим 0xFF («я») -- відмова (хвоста 0x00 нема де поставити). */
+static CodeplugRxGroupResult_t codeplugRxGroupNameToBuf(const char *name, char *buf16)
+{
+	int n = 0;
+	bool blank = true;
+
+	while ((n <= CODEPLUG_RXGROUP_NAME_LEN) && (name[n] != 0))
+	{
+		if (name[n] != ' ')
+		{
+			blank = false;
+		}
+		n++;
+	}
+	if ((n == 0) || blank)
+	{
+		return CODEPLUG_RXGROUP_NAME_EMPTY;
+	}
+	if (n > CODEPLUG_RXGROUP_NAME_LEN)
+	{
+		return CODEPLUG_RXGROUP_BAD_ARG;
+	}
+	if ((n == CODEPLUG_RXGROUP_NAME_LEN) && (((uint8_t)name[CODEPLUG_RXGROUP_NAME_LEN - 1]) == 0xFF))
+	{
+		return CODEPLUG_RXGROUP_NAME_TAIL;
+	}
+	codeplugUtilConvertStringToBuf((char *)name, buf16, CODEPLUG_RXGROUP_NAME_LEN);
+	return CODEPLUG_RXGROUP_OK;
+}
+
+CodeplugRxGroupResult_t codeplugRxGroupNameCheck(const char *name, int exceptSlot)
+{
+	char buf[CODEPLUG_RXGROUP_NAME_LEN];
+	char other[CODEPLUG_RXGROUP_NAME_LEN + 1];
+	CodeplugRxGroupResult_t r = codeplugRxGroupNameToBuf(name, buf);
+
+	if (r != CODEPLUG_RXGROUP_OK)
+	{
+		return r;
+	}
+	for (int slot = 1; slot <= CODEPLUG_RX_GROUPLIST_MAX; slot++)
+	{
+		if ((slot != exceptSlot) && codeplugRxGroupExists(slot))
+		{
+			codeplugRxGroupGetName(slot, other);
+			if (strcmp(other, name) == 0)
+			{
+				return CODEPLUG_RXGROUP_NAME_DUP;
+			}
+		}
+	}
+	return CODEPLUG_RXGROUP_OK;
+}
+
+/* склад: 1..32 різних номерів контактів 1..1024 */
+static CodeplugRxGroupResult_t codeplugRxGroupMembersCheck(const uint16_t *members, int n)
+{
+	if ((n < 1) || (n > CODEPLUG_RXGROUP_MEMBERS_MAX))
+	{
+		return CODEPLUG_RXGROUP_BAD_ARG;
+	}
+	for (int i = 0; i < n; i++)
+	{
+		if ((members[i] < CODEPLUG_CONTACTS_MIN) || (members[i] > CODEPLUG_CONTACTS_MAX))
+		{
+			return CODEPLUG_RXGROUP_BAD_ARG;
+		}
+		for (int j = 0; j < i; j++)
+		{
+			if (members[j] == members[i])
+			{
+				return CODEPLUG_RXGROUP_DUP_MEMBER;
+			}
+		}
+	}
+	return CODEPLUG_RXGROUP_OK;
+}
+
+/* Записати байт довжини слота і ПЕРЕЧИТАТИ кеш із флеша: кеш завжди = правда, навіть якщо запис не вдався (сектор міг бути стертий). */
+static bool codeplugRxGroupWriteLen(int slot, uint8_t len)
+{
+	bool ok = SPI_Flash_write(FLASH_ADDRESS_OFFSET + CODEPLUG_ADDR_RX_GROUP_LEN + (slot - 1), &len, 1);
+
+	codeplugRxGroupInitCache();
+	return ok && (codeplugRXGroupCache[slot - 1] == len);
+}
+
+CodeplugRxGroupResult_t codeplugRxGroupCreate(const char *name, const uint16_t *members, int n, int *slotOut)
+{
+	uint8_t rec[CODEPLUG_RXGROUP_DATA_STRUCT_SIZE];
+	CodeplugRxGroupResult_t r = codeplugRxGroupMembersCheck(members, n);
+	int slot = 0;
+
+	if (r != CODEPLUG_RXGROUP_OK)
+	{
+		return r;
+	}
+	r = codeplugRxGroupNameCheck(name, 0);
+	if (r != CODEPLUG_RXGROUP_OK)
+	{
+		return r;
+	}
+	for (int i = 1; i <= CODEPLUG_RX_GROUPLIST_MAX; i++)
+	{
+		if (codeplugRXGroupCache[i - 1] == 0)
+		{
+			slot = i;
+			break;
+		}
+	}
+	if (slot == 0)
+	{
+		return CODEPLUG_RXGROUP_FULL;
+	}
+
+	memset(rec, 0, sizeof(rec));
+	(void)codeplugRxGroupNameToBuf(name, (char *)rec);
+	memcpy(&rec[CODEPLUG_RXGROUP_NAME_LEN], members, (size_t)n * sizeof(uint16_t));
+
+	/* ПОРЯДОК: спершу тіло (слот ще «вільний» -- довжина 0), потім довжина: обрив між ними лишає вільний слот з сміттям у тілі, а не список без тіла. */
+	if (!SPI_Flash_write(codeplugRxGroupBodyAddr(slot), rec, (int)sizeof(rec)))
+	{
+		return CODEPLUG_RXGROUP_WRITE_ERROR;
+	}
+	if (!codeplugRxGroupWriteLen(slot, (uint8_t)n))
+	{
+		return CODEPLUG_RXGROUP_WRITE_ERROR;
+	}
+	if (slotOut != NULL)
+	{
+		*slotOut = slot;
+	}
+	return CODEPLUG_RXGROUP_OK;
+}
+
+CodeplugRxGroupResult_t codeplugRxGroupRename(int slot, const char *name)
+{
+	char buf[CODEPLUG_RXGROUP_NAME_LEN];
+	CodeplugRxGroupResult_t r;
+
+	if (!codeplugRxGroupExists(slot))
+	{
+		return CODEPLUG_RXGROUP_BAD_ARG;
+	}
+	r = codeplugRxGroupNameCheck(name, slot);
+	if (r != CODEPLUG_RXGROUP_OK)
+	{
+		return r;
+	}
+	(void)codeplugRxGroupNameToBuf(name, buf);
+	return SPI_Flash_write(codeplugRxGroupBodyAddr(slot), (uint8_t *)buf, CODEPLUG_RXGROUP_NAME_LEN) ? CODEPLUG_RXGROUP_OK : CODEPLUG_RXGROUP_WRITE_ERROR;
+}
+
+CodeplugRxGroupResult_t codeplugRxGroupSetMembers(int slot, const uint16_t *members, int n)
+{
+	uint16_t buf[CODEPLUG_RXGROUP_MEMBERS_MAX];
+	CodeplugRxGroupResult_t r;
+
+	if (!codeplugRxGroupExists(slot))
+	{
+		return CODEPLUG_RXGROUP_BAD_ARG;
+	}
+	r = codeplugRxGroupMembersCheck(members, n);
+	if (r != CODEPLUG_RXGROUP_OK)
+	{
+		return r;
+	}
+	memset(buf, 0, sizeof(buf));
+	memcpy(buf, members, (size_t)n * sizeof(uint16_t));
+
+	/* ПОРЯДОК: номери контактів, потім довжина (лише якщо змінилась). Обрив між ними: довжина лише вмикає/вимикає слот (>0), склад читається до першого нуля -- нічого не ламається. */
+	if (!SPI_Flash_write(codeplugRxGroupBodyAddr(slot) + CODEPLUG_RXGROUP_NAME_LEN, (uint8_t *)buf, (int)sizeof(buf)))
+	{
+		return CODEPLUG_RXGROUP_WRITE_ERROR;
+	}
+	if ((codeplugRXGroupCache[slot - 1] != (uint8_t)n) && !codeplugRxGroupWriteLen(slot, (uint8_t)n))
+	{
+		return CODEPLUG_RXGROUP_WRITE_ERROR;
+	}
+	return CODEPLUG_RXGROUP_OK;
+}
+
+/* Поле «список прийому» каналу (1 байт; 0 -- «Немає»). */
+static uint8_t codeplugChannelRxGroupField(int channelIndex)
+{
+	CodeplugChannel_t ch;
+
+	codeplugChannelGetDataWithOffsetAndLengthForIndex(channelIndex, &ch, (uint8_t)offsetof(CodeplugChannel_t, rxGroupList), (int)sizeof(ch.rxGroupList));
+	return ch.rxGroupList;
+}
+
+/* Пише 0 лише в цей один байт запису каналу (1 -> 0 лише знімає біти; решта запису не чіпається). */
+static bool codeplugChannelClearRxGroupField(int channelIndex)
+{
+	bool inFlash;
+	uint8_t zero = 0;
+	int addr = codeplugChanRecordAddr(channelIndex, CODEPLUG_ADDR_CHANNEL_EEPROM, CODEPLUG_ADDR_CHANNEL_FLASH, &inFlash);
+
+	if (addr < 0)
+	{
+		return false;
+	}
+	addr += (int)offsetof(CodeplugChannel_t, rxGroupList);
+	return inFlash ? SPI_Flash_write(FLASH_ADDRESS_OFFSET + addr, &zero, 1) : EEPROM_Write(addr, &zero, 1);
+}
+
+int codeplugRxGroupCountChannels(int slot)
+{
+	int n = 0;
+
+	if (!codeplugRxGroupSlotOk(slot))
+	{
+		return 0;
+	}
+	for (int ch = CODEPLUG_CHDEL_CHANNELS_MIN; ch <= CODEPLUG_CHDEL_CHANNELS_MAX; ch++)
+	{
+		if (codeplugAllChannelsIndexIsInUse(ch) && (codeplugChannelRxGroupField(ch) == (uint8_t)slot))
+		{
+			n++;
+		}
+	}
+	return n;
+}
+
+/*
+ * Видалення списку. ПОРЯДОК -- за стійкістю до обриву живлення (як R44 для контакту):
+ *   1. канали, що посилаються на список, -> «Немає» (список ще живий: обрив лишає частину каналів без списку, нічого зламаного);
+ *   2. обидва VFO у кодплазі (EEPROM) -> «Немає» (RAM-копії й кеші править екран);
+ *   3. довжина = 0 (від цього моменту списку нема), кеш перечитано;
+ *   4. тіло -> нулі (прибирання; слот уже вільний, тож обрив тут безпечний).
+ * Кожен канал із флеш-банку -- окремий прохід «прочитати сектор -> стерти -> записати» (канали 1..128 -- EEPROM, дешево).
+ */
+CodeplugRxGroupResult_t codeplugRxGroupDelete(int slot)
+{
+	uint8_t zeros[CODEPLUG_RXGROUP_DATA_STRUCT_SIZE];
+
+	if (!codeplugRxGroupExists(slot))
+	{
+		return CODEPLUG_RXGROUP_BAD_ARG;
+	}
+
+	for (int ch = CODEPLUG_CHDEL_CHANNELS_MIN; ch <= CODEPLUG_CHDEL_CHANNELS_MAX; ch++)
+	{
+		if (codeplugAllChannelsIndexIsInUse(ch) && (codeplugChannelRxGroupField(ch) == (uint8_t)slot) && !codeplugChannelClearRxGroupField(ch))
+		{
+			return CODEPLUG_RXGROUP_WRITE_ERROR;
+		}
+	}
+
+	for (int v = 0; v < 2; v++)
+	{
+		uint8_t g = 0;
+		int addr = CODEPLUG_ADDR_VFO_A_CHANNEL + (CODEPLUG_CHANNEL_DATA_STRUCT_SIZE * v) + (int)offsetof(CodeplugChannel_t, rxGroupList);
+
+		if (EEPROM_Read(addr, &g, 1) && (g == (uint8_t)slot))
+		{
+			g = 0;
+			if (!EEPROM_Write(addr, &g, 1))
+			{
+				return CODEPLUG_RXGROUP_WRITE_ERROR;
+			}
+		}
+	}
+
+	if (!codeplugRxGroupWriteLen(slot, 0))
+	{
+		return CODEPLUG_RXGROUP_WRITE_ERROR;
+	}
+
+	memset(zeros, 0, sizeof(zeros));
+	return SPI_Flash_write(codeplugRxGroupBodyAddr(slot), zeros, (int)sizeof(zeros)) ? CODEPLUG_RXGROUP_OK : CODEPLUG_RXGROUP_WRITE_ERROR;
+}
+#endif /* RXGROUP_EDIT_ENABLED */
 #endif /* CODEPLUG_MENU_ENABLED */
 
 uint32_t codeplugGetUserDMRID(void)
