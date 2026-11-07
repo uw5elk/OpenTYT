@@ -65,7 +65,29 @@ bool roamCfgParse(const roamOnFlashCfg_t *raw, bool *enabled, uint8_t *maxHops);
 /* Зібрати блок для запису. */
 void roamCfgBuild(roamOnFlashCfg_t *raw, bool enabled, uint8_t maxHops);
 
+/*
+ * R64: ІМЕНА списків роумінгу. Окремий custom-data блок CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES (= 16), 160 Б = 10 імен x 16 Б (ім'я списку N --
+ * зсув (N-1)*16). Ім'я -- байти cp1251 (як назви каналів/зон), ДО 16 символів, решта слота -- 0x00. Порожнє ім'я (перший байт 0x00, або лише пробіли) =
+ * «імені нема»: скрізь показується «Список N». Байт < 0x20 у слоті вважається кінцем імені. Блок пишеться лише при першому перейменуванні
+ * (до того його нема -- імена порожні). Формат читає й пише також CPS (tools/roam_cfg.py: NAMES_*) -- змінюючи тут, змінюй там.
+ */
+#define ROAM_NAME_LEN          16U
+#define ROAM_NAMES_BLOCK_LEN   (ROAM_LISTS_COUNT * ROAM_NAME_LEN)
+
+/* Слот імені списку list (1..10) із блоку block (ROAM_NAMES_BLOCK_LEN байт) -> out (ROAM_NAME_LEN + 1 байт, завершений нулем). Повертає довжину;
+ * список поза 1..10 або порожнє ім'я -> 0 і out = "". */
+unsigned roamNameDecode(const uint8_t *block, uint8_t list, char *out);
+/* Записати name (cp1251, до 16 символів; обрізається на першому байті < 0x20; кінцеві пробіли відкидаються) у слот list блоку block, решту слота -- 0x00.
+ * Повертає довжину збереженого імені (0 -- ім'я порожнє, слот обнулено); список поза 1..10 -> 0 і блок не змінено. */
+unsigned roamNameEncode(uint8_t *block, uint8_t list, const char *name);
+
 #if !defined(ROAM_CFG_HOST_TEST)
+/* Ім'я списку з кодплагу (читається блок, береться один слот). true -- блок є (ім'я може бути порожнім, тоді out = ""); false -- блоку нема або він
+ * чужої довжини: out = "". out -- ROAM_NAME_LEN + 1 байт. Не тримає ніякої статичної пам'яті: буфер блоку (160 Б) -- на стеку. */
+bool roamNameGet(uint8_t list, char *out);
+/* Записати ім'я списку: читає блок (нема -- нульовий), міняє один слот, пише назад і ПЕРЕВІРЯЄ перечитуванням. Не пише, якщо там уже саме це.
+ * true -- збережено (або вже було таке). Те, що блок існує з іншою довжиною (чужий запис), -- false (змінювати довжину блоку не можна). */
+bool roamNameSet(uint8_t list, const char *name);
 void    roamCfgLoad(void);                         /* на старті (applicationMain.c); блоку немає -- вимкнено, 2 */
 bool    roamCfgIsEnabled(void);
 uint8_t roamCfgMaxHops(void);

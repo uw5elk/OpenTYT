@@ -53,4 +53,21 @@
 #define ROAM_IND_SPARE        "Р>"                    /* рація на каналі, знайденому автопереходом */
 #define ROAM_ZONE_SPARE_FMT   "Р> канал %d"           /* рядок зони замість «зона Ch:N» (канал поза зоною) */
 
+/* R64: імена списків (ROAM_NAMES_ENABLED -- лише українська збірка з редактором назв). */
+#define ROAM_DET_LABEL_SHORT  "Роум."                  /* «Деталі каналу»: підпис, коли в списку є ім'я (повний підпис + «N ім'я» не вміщаються в 16 символів) */
+#define ROAM_ACT_MEMBERS      "Склад"
+#define ROAM_ACT_RENAME       "Перейменувати"
+#define ROAM_ACT_CLEAR        "Очистити список"
+#define ROAM_REN_TITLE_FMT    "Ім'я списку %u"
+#define ROAM_MSG_RENAMED      "Ім'я списку\nзбережено"
+#define ROAM_CLR_TITLE        "Очистити список?"
+#define ROAM_CLR_FMT          "Каналів: %u"            /* скільки каналів зараз у списку */
+#define ROAM_CLR_BUSY_TITLE   "Очищення списку"
+#define ROAM_CLR_BUSY_FMT     "%u з %u"
+#define ROAM_CLR_BUSY_HINT    "Не вимикайте рацію"
+#define ROAM_MSG_CLEARED_FMT  "Прибрано: %u"
+#define ROAM_MSG_CLEARED_MORE_FMT "Прибрано: %u\nЛишилось: %u\nповторіть"
+#define ROAM_MSG_LIST_EMPTY   "Список\nпорожній"
+#define ROAM_CLEAR_BATCH      32U                      /* скільки каналів прибирає ОДНЕ підтвердження (кожен канал -- окремий запис кодплага у флеш) */
+
 #endif /* USER_INTERFACE_LANGUAGES_ROAM_UA_H_ */

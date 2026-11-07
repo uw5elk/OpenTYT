@@ -63,9 +63,125 @@ void roamCfgBuild(roamOnFlashCfg_t *raw, bool enabled, uint8_t maxHops)
 	raw->maxHops = roamCfgClampHops(maxHops);
 }
 
+/* R64: слот імені -> довжина (до першого байта < 0x20 або 16), далі кінцеві пробіли відкидаються. */
+static unsigned nameSlotLen(const uint8_t *slot)
+{
+	unsigned n = 0U;
+
+	while ((n < ROAM_NAME_LEN) && (slot[n] >= 0x20U))
+	{
+		n++;
+	}
+	while ((n > 0U) && (slot[n - 1U] == 0x20U))
+	{
+		n--;
+	}
+
+	return n;
+}
+
+unsigned roamNameDecode(const uint8_t *block, uint8_t list, char *out)
+{
+	unsigned n;
+
+	out[0] = 0;
+
+	if ((block == NULL) || (list < 1U) || (list > ROAM_LISTS_COUNT))
+	{
+		return 0U;
+	}
+
+	n = nameSlotLen(&block[(unsigned)(list - 1U) * ROAM_NAME_LEN]);
+	memcpy(out, &block[(unsigned)(list - 1U) * ROAM_NAME_LEN], n);
+	out[n] = 0;
+
+	return n;
+}
+
+unsigned roamNameEncode(uint8_t *block, uint8_t list, const char *name)
+{
+	uint8_t slot[ROAM_NAME_LEN];
+	unsigned n = 0U;
+
+	if ((block == NULL) || (name == NULL) || (list < 1U) || (list > ROAM_LISTS_COUNT))
+	{
+		return 0U;
+	}
+
+	memset(slot, 0, sizeof(slot));
+	while ((n < ROAM_NAME_LEN) && ((uint8_t)name[n] >= 0x20U))
+	{
+		slot[n] = (uint8_t)name[n];
+		n++;
+	}
+	n = nameSlotLen(slot);
+	memset(&slot[n], 0, ROAM_NAME_LEN - n);
+	memcpy(&block[(unsigned)(list - 1U) * ROAM_NAME_LEN], slot, ROAM_NAME_LEN);
+
+	return n;
+}
+
 #if !defined(ROAM_CFG_HOST_TEST)
 
 #include "functions/codeplug.h"
+
+bool roamNameGet(uint8_t list, char *out)
+{
+	uint8_t block[ROAM_NAMES_BLOCK_LEN];
+
+	out[0] = 0;
+
+	if ((list < 1U) || (list > ROAM_LISTS_COUNT))
+	{
+		return false;
+	}
+
+	memset(block, 0, sizeof(block));
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES, block, (int)sizeof(block)) == false)
+	{
+		return false;
+	}
+
+	(void)roamNameDecode(block, list, out);
+	return true;
+}
+
+bool roamNameSet(uint8_t list, const char *name)
+{
+	uint8_t block[ROAM_NAMES_BLOCK_LEN];
+	uint8_t want[ROAM_NAMES_BLOCK_LEN];
+
+	if ((list < 1U) || (list > ROAM_LISTS_COUNT) || (name == NULL))
+	{
+		return false;
+	}
+
+	memset(block, 0, sizeof(block));
+	(void)codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES, block, (int)sizeof(block));   /* блоку нема -- нулі */
+
+	memcpy(want, block, sizeof(want));
+	(void)roamNameEncode(want, list, name);
+
+	if (memcmp(want, block, sizeof(want)) == 0)
+	{
+		/* Нічого не міняється. Блоку на флеші може й не бути (порожнє ім'я порожнього) -- тоді писати нічого. */
+		return true;
+	}
+
+	if (codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES, want, (int)sizeof(want)) == false)
+	{
+		return false;
+	}
+
+	/* Перевірка перечитуванням (слот у флеші справді змінився). */
+	memset(block, 0, sizeof(block));
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES, block, (int)sizeof(block)) == false)
+	{
+		return false;
+	}
+
+	return (memcmp(block, want, sizeof(block)) == 0);
+}
 
 /* Звичайна статична пам'ять (не CCM): читається раз на PTT, пишеться рідко. Нуль = «вимкнено»,
  * maxHops 0 віддається getter-ом як типове значення -- явної ініціалізації не потребує. */

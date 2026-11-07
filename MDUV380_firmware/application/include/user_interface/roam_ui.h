@@ -6,6 +6,11 @@
 #define USER_INTERFACE_ROAM_UI_H_
 
 #if defined(ENABLE_ROAM_RETRY)
+#include "user_interface/uiNameEditor.h"
+/* R64: імена списків роумінгу (перейменування, «Очистити список», ім'я в «Деталях каналу») -- там, де є спільний редактор назви (UI_NAME_EDITOR: українська збірка з multitap). */
+#if defined(UI_NAME_EDITOR)
+#define ROAM_NAMES_ENABLED 1
+#endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "user_interface/languages/roam_ua.h"
 #else

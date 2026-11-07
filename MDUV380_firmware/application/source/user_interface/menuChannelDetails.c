@@ -36,6 +36,7 @@
 #if defined(ENABLE_ROAM_RETRY)
 #include "functions/wake_hop.h"       /* R60: номер списку роумінгу каналу (roamRecList/roamRecSetList/roamRecSuitable) */
 #include "user_interface/roam_ui.h"
+#include "functions/roam_cfg.h"
 #endif
 #if defined(ENABLE_AES)
 #include "functions/channelVox.h"   /* ui8: одна умова «VOX доступний» для показу й обробників */
@@ -754,6 +755,19 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 						else
 						{
 							roamListText(roamRecList(&tmpChannel), rightSideVar, SCREEN_LINE_BUFFER_SIZE);
+#if defined(ROAM_NAMES_ENABLED)
+							/* R64: у списка є ім'я -- «Роум.:N ім'я» (з повним підписом «Роум.список:» ім'я не вміщається в 16 символів рядка). Без імені рядок не змінюється. */
+							if (roamRecList(&tmpChannel) != 0U)
+							{
+								char roamNm[ROAM_NAME_LEN + 1U];
+
+								if (roamNameGet(roamRecList(&tmpChannel), roamNm) && (roamNm[0] != 0))
+								{
+									leftSide = ROAM_DET_LABEL_SHORT;
+									snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u %s", (unsigned)roamRecList(&tmpChannel), roamNm);
+								}
+							}
+#endif
 						}
 						break;
 #endif

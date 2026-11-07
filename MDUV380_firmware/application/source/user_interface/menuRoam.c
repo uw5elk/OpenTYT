@@ -33,7 +33,17 @@
 #include "functions/wake_diag.h"
 #endif
 
-enum { ROAM_VIEW_MAIN = 0, ROAM_VIEW_PICK, ROAM_VIEW_MEMBERS, ROAM_VIEW_ADD, ROAM_VIEW_CFM_REMOVE, ROAM_VIEW_CFM_MOVE, ROAM_VIEW_WAKE };
+enum { ROAM_VIEW_MAIN = 0, ROAM_VIEW_PICK, ROAM_VIEW_MEMBERS, ROAM_VIEW_ADD, ROAM_VIEW_CFM_REMOVE, ROAM_VIEW_CFM_MOVE, ROAM_VIEW_WAKE
+#if defined(ROAM_NAMES_ENABLED)
+	, ROAM_VIEW_ACTIONS, ROAM_VIEW_RENAME, ROAM_VIEW_CFM_CLEAR   /* R64: «#» на списку -- дії; редактор імені; підтвердження «Очистити список?» */
+#endif
+};
+
+#if defined(ROAM_NAMES_ENABLED)
+enum { ROAM_ACT_ROW_MEMBERS = 0, ROAM_ACT_ROW_RENAME, ROAM_ACT_ROW_CLEAR, ROAM_ACT_ROWS };
+/* Стан редактора імені -- у спільному буфері (uiNameEditor.h): нової RAM немає. */
+#define ROAM_ED_BUF   (uiDataGlobal.MessageBox.message)
+#endif
 
 enum { ROAM_ROW_AUTO = 0, ROAM_ROW_HOPS, ROAM_ROW_LISTS
 #if defined(ENABLE_WAKE_DIAG)
@@ -73,12 +83,20 @@ static void wakeUpdate(void);
 static void wakeEvent(uiEvent_t *ev);
 #endif
 
+#if defined(ROAM_NAMES_ENABLED)
+static void renameDraw(void);
+static void renameEvent(uiEvent_t *ev);
+#endif
+
 static void redrawCurrent(void)
 {
 	switch (s_roam.view)
 	{
 #if defined(ENABLE_WAKE_DIAG)
 		case ROAM_VIEW_WAKE:       wakeUpdate(); break;
+#endif
+#if defined(ROAM_NAMES_ENABLED)
+		case ROAM_VIEW_RENAME:     renameDraw(); break;
 #endif
 		default:                   listUpdate(); break;
 	}
@@ -114,6 +132,11 @@ menuStatus_t menuRoam(uiEvent_t *ev, bool isFirstRun)
 			{
 				wakeUpdate();
 			}
+			break;
+#endif
+#if defined(ROAM_NAMES_ENABLED)
+		case ROAM_VIEW_RENAME:
+			if (ev->hasEvent) { renameEvent(ev); }
 			break;
 #endif
 		default:
@@ -154,6 +177,9 @@ static bool inChannelMode(void)
 /* Зараз екран підтвердження («Прибрати?» / «Перенести?»), а не список. */
 static bool isConfirm(void)
 {
+#if defined(ROAM_NAMES_ENABLED)
+	if (s_roam.view == ROAM_VIEW_CFM_CLEAR) { return true; }
+#endif
 	return ((s_roam.view == ROAM_VIEW_CFM_REMOVE) || (s_roam.view == ROAM_VIEW_CFM_MOVE));
 }
 
@@ -358,6 +384,22 @@ static const char *channelRow(char *buf, size_t len, int num)
 	return buf;
 }
 
+/* Рядок списку list (1..10) для екрана «Списки»: «Список N», а з іменем (R64) -- «N ім'я», до 18 символів. */
+static void pickRowText(char *buf, size_t len, unsigned list)
+{
+#if defined(ROAM_NAMES_ENABLED)
+	char nm[ROAM_NAME_LEN + 1U];
+
+	if (roamNameGet((uint8_t)list, nm) && (nm[0] != 0))
+	{
+		snprintf(buf, len, "%u %s", list, nm);
+		if (strlen(buf) > 18U) { buf[18] = 0; }
+		return;
+	}
+#endif
+	snprintf(buf, len, ROAM_PICK_ROW_FMT, list);
+}
+
 static void listUpdate(void)
 {
 	char buf[28];
@@ -390,6 +432,13 @@ static void listUpdate(void)
 		snprintf(buf, sizeof buf, ROAM_ADD_TITLE_FMT, (unsigned)s_roam.list);
 		txt = buf;
 	}
+#if defined(ROAM_NAMES_ENABLED)
+	if (view == ROAM_VIEW_ACTIONS)
+	{
+		pickRowText(buf, sizeof buf, s_roam.list);
+		txt = buf;
+	}
+#endif
 	menuDisplayTitle(txt);
 
 	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
@@ -407,9 +456,15 @@ static void listUpdate(void)
 		{
 			txt = mainRow(mNum, buf, sizeof buf);
 		}
+#if defined(ROAM_NAMES_ENABLED)
+		else if (view == ROAM_VIEW_ACTIONS)
+		{
+			txt = ((mNum == ROAM_ACT_ROW_MEMBERS) ? ROAM_ACT_MEMBERS : ((mNum == ROAM_ACT_ROW_RENAME) ? ROAM_ACT_RENAME : ROAM_ACT_CLEAR));
+		}
+#endif
 		else
 		{
-			snprintf(buf, sizeof buf, ROAM_PICK_ROW_FMT, (unsigned)(mNum + 1));
+			pickRowText(buf, sizeof buf, (unsigned)(mNum + 1));
 			txt = buf;
 		}
 
@@ -504,12 +559,187 @@ static void assignAndReturn(int ch, uint8_t list, const char *okMsg)
 	uiNotificationShowShort(1500, msg, true);
 }
 
+#if defined(ROAM_NAMES_ENABLED)
+/* ============================ R64: ДІЇ НАД СПИСКОМ («#» на екрані «Списки»), ІМ'Я, ОЧИЩЕННЯ ============================ */
+/* «#» на списку відкриває три дії: «Склад» (як зелена на списку), «Перейменувати» (спільний редактор uiNameEditor, ім'я -- у custom-data блоці 16),
+ * «Очистити список» (прибрати всі канали зі списку; ім'я лишається). Зелена на списку, як і раніше, відкриває склад. */
+static void actionsOpen(void)
+{
+	s_roam.pickIdx = (uint8_t)menuDataGlobal.currentItemIndex;
+	s_roam.list = (uint8_t)(menuDataGlobal.currentItemIndex + 1);
+	setView(ROAM_VIEW_ACTIONS, (int)ROAM_ACT_ROWS, 0);
+	listUpdate();
+}
+
+static void renameTitle(char *buf, size_t len)
+{
+	snprintf(buf, len, ROAM_REN_TITLE_FMT, (unsigned)s_roam.list);
+}
+
+static void renameDraw(void)
+{
+	char title[24];
+
+	renameTitle(title, sizeof title);
+	nameEdDraw(ROAM_ED_BUF, title);
+}
+
+static void renameOpen(void)
+{
+	char nm[ROAM_NAME_LEN + 1U];
+
+	(void)roamNameGet(s_roam.list, nm);   /* блоку нема -- порожнє ім'я */
+	nameEdInit(ROAM_ED_BUF, nm);
+	s_roam.view = ROAM_VIEW_RENAME;
+	renameDraw();
+}
+
+static void renameClose(bool saved)
+{
+	nameEdClose(ROAM_ED_BUF);
+	if (saved)
+	{
+		setView(ROAM_VIEW_PICK, (int)ROAM_LISTS_COUNT, s_roam.pickIdx);   /* ім'я видно вже в рядку списку */
+	}
+	else
+	{
+		setView(ROAM_VIEW_ACTIONS, (int)ROAM_ACT_ROWS, ROAM_ACT_ROW_RENAME);
+	}
+	listUpdate();
+}
+
+static void renameEvent(uiEvent_t *ev)
+{
+	char title[24];
+
+	if (ev->events & FUNCTION_EVENT)
+	{
+		if (ev->function == FUNC_REDRAW) { renameDraw(); }
+		return;
+	}
+
+	if ((ev->events & KEY_EVENT) == 0) { return; }
+
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		nameEdCommit(ROAM_ED_BUF);
+		if (roamNameSet(s_roam.list, ROAM_ED_BUF))
+		{
+			renameClose(true);
+			uiNotificationShowShort(1500, ROAM_MSG_RENAMED, true);
+		}
+		else
+		{
+			uiNotificationShowShort(1500, ROAM_MSG_SAVE_ERR, true);   /* лишаємось у редакторі: набране не втрачено */
+		}
+	}
+	else if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		renameClose(false);
+	}
+	else
+	{
+		renameTitle(title, sizeof title);
+		(void)nameEdHandleKey(ROAM_ED_BUF, title, ev);
+	}
+}
+
+/* Підтвердження «Очистити список?»: показує, скільки каналів буде прибрано (скан кодплага -- як для екрана «Склад»). */
+static void clearOpen(void)
+{
+	unsigned n = roamListCount(s_roam.list);
+
+	if (n == 0U)
+	{
+		uiNotificationShowShort(1500, ROAM_MSG_LIST_EMPTY, true);
+		return;
+	}
+
+	s_roam.count = (uint16_t)n;
+	s_roam.view = ROAM_VIEW_CFM_CLEAR;
+	confirmUpdate();
+}
+
+/* Прибрати канали зі списку: НЕ БІЛЬШЕ ROAM_CLEAR_BATCH за одне підтвердження (кожен канал -- окремий запис кодплага: перечитання 4 КБ-сектора, стирання,
+ * запис; запис не захищено від зникнення живлення). Решту лишаємо й кажемо про це -- оператор повторює. Хід видно на екрані (лічильник). */
+static void clearRun(void)
+{
+	unsigned done = 0U;
+	unsigned left = 0U;
+	unsigned total = (unsigned)s_roam.count;
+	roamAssign_t r = ROAM_ASSIGN_OK;
+	char msg[NOTIFICATION_MESSAGE_LEN_MAX];
+	char line[20];
+
+	if (total > ROAM_CLEAR_BATCH) { total = ROAM_CLEAR_BATCH; }
+
+	for (int num = CODEPLUG_CHANNELS_MIN; num <= CODEPLUG_CHANNELS_MAX; num++)
+	{
+		if (roamChannelList(num) != s_roam.list) { continue; }
+
+		if (done >= ROAM_CLEAR_BATCH) { left++; continue; }
+
+		displayClearBuf();
+		menuDisplayTitle(ROAM_CLR_BUSY_TITLE);
+		snprintf(line, sizeof line, ROAM_CLR_BUSY_FMT, done + 1U, total);
+		displayPrintCentered(36, line, FONT_SIZE_3);
+		displayPrintCentered(60, ROAM_CLR_BUSY_HINT, FONT_SIZE_1);
+		displayRender();
+
+		r = roamChannelAssign(num, 0U);
+		if (r != ROAM_ASSIGN_OK) { break; }
+		done++;
+	}
+
+	setView(ROAM_VIEW_ACTIONS, (int)ROAM_ACT_ROWS, ROAM_ACT_ROW_CLEAR);
+	listUpdate();
+
+	if (r == ROAM_ASSIGN_READONLY)
+	{
+		snprintf(msg, sizeof msg, "%s", ROAM_MSG_READONLY);
+	}
+	else if (r != ROAM_ASSIGN_OK)
+	{
+		snprintf(msg, sizeof msg, "%s\n" ROAM_MSG_CLEARED_FMT, ROAM_MSG_SAVE_ERR, done);
+	}
+	else if (left != 0U)
+	{
+		snprintf(msg, sizeof msg, ROAM_MSG_CLEARED_MORE_FMT, done, left);
+	}
+	else
+	{
+		snprintf(msg, sizeof msg, ROAM_MSG_CLEARED_FMT, done);
+	}
+	uiNotificationShowShort(2000, msg, true);
+}
+#endif /* ROAM_NAMES_ENABLED */
+
 static void listGreen(void)
 {
 	int ch = (int)s_roam.curChan;
 
 	switch (s_roam.view)
 	{
+#if defined(ROAM_NAMES_ENABLED)
+		case ROAM_VIEW_ACTIONS:
+			if (menuDataGlobal.currentItemIndex == ROAM_ACT_ROW_MEMBERS)
+			{
+				membersShow(roamListStep(s_roam.list, 0, 1));
+			}
+			else if (menuDataGlobal.currentItemIndex == ROAM_ACT_ROW_RENAME)
+			{
+				renameOpen();
+			}
+			else
+			{
+				clearOpen();
+			}
+			break;
+
+		case ROAM_VIEW_CFM_CLEAR:
+			clearRun();
+			break;
+#endif
 		case ROAM_VIEW_PICK:
 			s_roam.pickIdx = (uint8_t)menuDataGlobal.currentItemIndex;
 			s_roam.list = (uint8_t)(menuDataGlobal.currentItemIndex + 1);
@@ -582,6 +812,16 @@ static void listRed(void)
 			setView(ROAM_VIEW_PICK, (int)ROAM_LISTS_COUNT, s_roam.pickIdx);
 			listUpdate();
 			break;
+#if defined(ROAM_NAMES_ENABLED)
+		case ROAM_VIEW_ACTIONS:
+			setView(ROAM_VIEW_PICK, (int)ROAM_LISTS_COUNT, s_roam.pickIdx);
+			listUpdate();
+			break;
+		case ROAM_VIEW_CFM_CLEAR:   /* відмова: назад до дій, на «Очистити список» */
+			setView(ROAM_VIEW_ACTIONS, (int)ROAM_ACT_ROWS, ROAM_ACT_ROW_CLEAR);
+			listUpdate();
+			break;
+#endif
 		case ROAM_VIEW_CFM_REMOVE:
 		case ROAM_VIEW_CFM_MOVE:   /* відмова: назад, на екран, звідки питали */
 			s_roam.view = (s_roam.view == ROAM_VIEW_CFM_REMOVE) ? ROAM_VIEW_MEMBERS : ROAM_VIEW_ADD;
@@ -602,6 +842,9 @@ static void listEvent(uiEvent_t *ev, menuStatus_t *ec)
 	bool left = KEYCHECK_PRESS(ev->keys, KEY_LEFT);
 	bool green = KEYCHECK_SHORTUP(ev->keys, KEY_GREEN);
 	bool jump = ((s_roam.view == ROAM_VIEW_ADD) && (right || left));
+#if defined(ROAM_NAMES_ENABLED)
+	bool hash = KEYCHECK_SHORTUP(ev->keys, KEY_HASH);
+#endif
 	bool conf = isConfirm();   /* на екрані підтвердження стрілки не діють */
 
 	if ((ev->events & KEY_EVENT) == 0) { return; }
@@ -623,6 +866,12 @@ static void listEvent(uiEvent_t *ev, menuStatus_t *ec)
 	{
 		mainKey(left, right, green);
 	}
+#if defined(ROAM_NAMES_ENABLED)
+	else if (hash && (s_roam.view == ROAM_VIEW_PICK))
+	{
+		actionsOpen();
+	}
+#endif
 	else if (green)
 	{
 		listGreen();
@@ -638,6 +887,21 @@ static void confirmUpdate(void)
 	bool ok;
 	int ch = (int)s_roam.curChan;
 	bool remove = (s_roam.view == ROAM_VIEW_CFM_REMOVE);
+
+#if defined(ROAM_NAMES_ENABLED)
+	if (s_roam.view == ROAM_VIEW_CFM_CLEAR)
+	{
+		displayClearBuf();
+		menuDisplayTitle(ROAM_CLR_TITLE);
+		pickRowText(buf, sizeof buf, s_roam.list);
+		displayPrintCentered(24, buf, FONT_SIZE_3);
+		snprintf(buf, sizeof buf, ROAM_CLR_FMT, (unsigned)s_roam.count);
+		displayPrintCentered(44, buf, FONT_SIZE_3);
+		displayDrawChoice(CHOICE_YESNO, false);
+		displayRender();
+		return;
+	}
+#endif
 
 	displayClearBuf();
 	menuDisplayTitle(remove ? ROAM_CFM_REMOVE_TITLE : ROAM_CFM_MOVE_TITLE);

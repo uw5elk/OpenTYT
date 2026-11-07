@@ -82,6 +82,12 @@ MUTANTS = [
     ("cfg: Build не обмежує стрибки", CFG, "raw->maxHops = roamCfgClampHops(maxHops);", "raw->maxHops = maxHops;"),
     ("cfg: Build пише enabled навпаки", CFG, "raw->enabled = (enabled ? 1U : 0U);", "raw->enabled = (enabled ? 0U : 1U);"),
     ("cfg: Build пише іншу версію", CFG, "raw->version = (uint8_t)ROAM_CFG_VERSION;", "raw->version = 2U;"),
+    ("names: слот не обнулюється до кінця", CFG, "memset(&slot[n], 0, ROAM_NAME_LEN - n);", ""),
+    ("names: хвостові пробіли не відкидаються", CFG, "while ((n > 0U) && (slot[n - 1U] == 0x20U))\n\t{\n\t\tn--;\n\t}", ""),
+    ("names: керівний байт не кінець імені", CFG, "(slot[n] >= 0x20U)", "(slot[n] != 0U)"),
+    ("names: слот зсунуто на 1", CFG, "memcpy(&block[(unsigned)(list - 1U) * ROAM_NAME_LEN], slot, ROAM_NAME_LEN);", "memcpy(&block[(unsigned)list * ROAM_NAME_LEN], slot, ROAM_NAME_LEN);"),
+    ("names: Decode читає слот зі зсувом 1", CFG, "n = nameSlotLen(&block[(unsigned)(list - 1U) * ROAM_NAME_LEN]);", "n = nameSlotLen(&block[(unsigned)list * ROAM_NAME_LEN]);"),
+    ("names: Encode приймає список 11", CFG, "if ((block == NULL) || (name == NULL) || (list < 1U) || (list > ROAM_LISTS_COUNT))", "if ((block == NULL) || (name == NULL) || (list < 1U) || (list > ROAM_LISTS_COUNT + 1U))"),
 ]
 
 

@@ -388,6 +388,7 @@ typedef enum
 	CODEPLUG_CUSTOM_DATA_TYPE_ROAM_CFG = 15, /* R59: налаштування «Роумінгу» (автоперехід за списком): увімкнено + макс. стрибків.
 	                                        * 8 Б, пишеться прямо з рації й з CPS. Формат -- roam_cfg.h. Номер = 15 ЯВНО
 	                                        * (13/14 визначені лише з ENABLE_APRS_RX -- нумерація не має залежати від дефайнів). */
+	CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES = 16, /* R64: імена 10 списків роумінгу, 10 x 16 Б (cp1251, хвіст 0x00), 160 Б. Формат -- roam_cfg.h. */
 #endif
 } CodeplugCustomDataType_t;
 

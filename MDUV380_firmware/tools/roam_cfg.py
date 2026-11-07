@@ -209,6 +209,69 @@ def clear_lists(img):
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------
+#  R64: імена списків (custom-data блок типу 16)
+# ---------------------------------------------------------------------------------------------------------------------------------
+# Формат (дзеркалить roam_cfg.h: ROAM_NAME_LEN / ROAM_NAMES_BLOCK_LEN, roamNameDecode/roamNameEncode): 160 байтів = 10 імен по 16; ім'я списку N -- слот (N-1)*16;
+# байти cp1251, ДО 16 символів, решта слота 0x00. Порожнє ім'я (перший байт 0x00 або самі пробіли) = «імені нема» (рація показує «Список N»). Байт < 0x20 у слоті --
+# кінець імені. Блока нема (нова/нечіпана рація) = усі імена порожні. Блок пишеться в РАЦІЮ, не в документ кодплага (як блок налаштувань).
+TYPE_ROAM_NAMES = 16          # CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES (codeplug.h): явне число
+NAME_LEN = 16                 # ROAM_NAME_LEN
+NAMES_BLOCK_LEN = LISTS_COUNT * NAME_LEN
+NAME_ENCODING = "cp1251"
+
+
+def check_name(name):
+    """Для вводу користувача: -> байти cp1251 (без кінцевих пробілів, до 16). RoamCfgError -- довше 16, символ поза cp1251 або керівний символ (< 0x20)."""
+    if not isinstance(name, str):
+        raise RoamCfgError("ім'я списку: потрібен текст, а не %r" % (name,))
+    name = name.rstrip(" ")
+    try:
+        raw = name.encode(NAME_ENCODING)
+    except UnicodeEncodeError as e:
+        raise RoamCfgError("ім'я списку «%s»: символ «%s» немає в cp1251 (шрифт рації його не має)" % (name, name[e.start:e.end]))
+    if len(raw) > NAME_LEN:
+        raise RoamCfgError("ім'я списку «%s»: %d символів, найбільше %d" % (name, len(raw), NAME_LEN))
+    if any(b < 0x20 for b in raw):
+        raise RoamCfgError("ім'я списку «%s»: керівні символи не допускаються" % name)
+    return raw
+
+
+def build_names(names):
+    """names -- 10 рядків (список 1 першим) -> 160 байтів блока. RoamCfgError -- не 10 імен або погане ім'я."""
+    if len(names) != LISTS_COUNT:
+        raise RoamCfgError("потрібно рівно %d імен, а не %d" % (LISTS_COUNT, len(names)))
+    out = bytearray()
+    for nm in names:
+        raw = check_name(nm)
+        out += raw + b"\x00" * (NAME_LEN - len(raw))
+    return bytes(out)
+
+
+def parse_names(payload):
+    """Як roamNameDecode() для кожного слота: -> список з 10 рядків; None -- блока нема. Коротший блок добивається нулями (прошивка читає в обнулений буфер).
+    Байт, якого нема в cp1251 (0x98), показується як «?»."""
+    if payload is None:
+        return None
+    blk = bytes(payload[:NAMES_BLOCK_LEN]).ljust(NAMES_BLOCK_LEN, b"\x00")
+    out = []
+    for i in range(LISTS_COUNT):
+        slot = blk[i * NAME_LEN:(i + 1) * NAME_LEN]
+        n = 0
+        while n < NAME_LEN and slot[n] >= 0x20:
+            n += 1
+        while n > 0 and slot[n - 1] == 0x20:
+            n -= 1
+        out.append(slot[:n].decode(NAME_ENCODING, errors="replace"))
+    return out
+
+
+def list_title(names, n):
+    """Як показує рація: «N ім'я» або «Список N»."""
+    nm = names[n - 1] if names else ""
+    return "%d %s" % (n, nm) if nm else "Список %d" % n
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
 #  Рація (custom-data)
 # ---------------------------------------------------------------------------------------------------------------------------------
 
@@ -249,6 +312,48 @@ def write_state(ser, enabled, max_hops, safety_dir=None, now=None, log=print):
     if back != payload:
         raise RuntimeError("налаштування «Роумінгу» записані, але звірка читанням НЕ збіглася -- повторіть запис" + (("; стара копія: %s" % safety) if safety else ""))
     text = "Налаштування «Роумінгу» записані (%s): автоперехід %s, макс. стрибків %d. Звірка читанням: OK." % (msg, "увімкнено" if enabled else "вимкнено", max_hops)
+    if safety:
+        text += "\nСтрахова копія попереднього блока:\n" + safety
+    return text, safety
+
+
+def read_names(ser):
+    """-> (імена|None, raw|None). None -- блока імен у рації нема (усі імена порожні)."""
+    import custom_data as cd
+    raw = cd.read_block(ser, TYPE_ROAM_NAMES, NAMES_BLOCK_LEN)
+    return parse_names(raw), raw
+
+
+def write_names(ser, names, safety_dir=None, now=None, log=print):
+    """Безпечний запис блока імен: перевірка -> страхова копія наявного блока -> запис -> звірка читанням. -> (текст, шлях копії|None).
+    RoamCfgError -- погані імена; RuntimeError -- відмова/збій/незбіг. Блок іншої довжини (чужий) не перезаписується (довжину блока міняти не можна)."""
+    import custom_data as cd
+    payload = build_names(names)
+    old = cd.read_block(ser, TYPE_ROAM_NAMES, NAMES_BLOCK_LEN)
+    safety = None
+    if old is not None:
+        d = safety_dir or os.getcwd()
+        if not os.access(d, os.W_OK):
+            raise RuntimeError("нема права писати в теку %s, де має лежати страхова копія блока імен. Нічого не записано." % d)
+        ts = (now or datetime.datetime.now()).strftime("%Y%m%d_%H%M%S")
+        safety = os.path.join(d, "roam-names_pre-write_%s.bin" % ts)
+        n = 1
+        while os.path.exists(safety):
+            n += 1
+            safety = os.path.join(d, "roam-names_pre-write_%s_%d.bin" % (ts, n))
+        with open(safety, "xb") as f:
+            f.write(old)
+        with open(safety, "rb") as f:
+            if f.read() != old:
+                raise RuntimeError("страхову копію блока імен не вдалося перевірити -- нічого не записано")
+        log("Страхова копія блока імен списків: %s" % safety)
+    ok, msg = cd.write_block(ser, TYPE_ROAM_NAMES, payload)
+    if not ok:
+        raise RuntimeError("імена списків не записані: " + msg)
+    back = cd.read_block(ser, TYPE_ROAM_NAMES, NAMES_BLOCK_LEN)
+    if back != payload:
+        raise RuntimeError("імена списків записані, але звірка читанням НЕ збіглася -- повторіть запис" + (("; стара копія: %s" % safety) if safety else ""))
+    text = "Імена списків «Роумінгу» записані (%s). Звірка читанням: OK." % msg
     if safety:
         text += "\nСтрахова копія попереднього блока:\n" + safety
     return text, safety

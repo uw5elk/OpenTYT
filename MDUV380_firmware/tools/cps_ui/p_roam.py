@@ -96,6 +96,29 @@ class RoamPanel(Panel):
                                      justify="left")
         self.radio_label.pack(anchor="w", padx=8, pady=(0, 6))
 
+        # --- імена списків (R64): custom-data блок 16, в РАЦІЮ ---
+        nbox = ttk.LabelFrame(self, text="Імена списків -- пишуться в РАЦІЮ негайно (НЕ частина документа)")
+        nbox.pack(fill="x", padx=12, pady=4)
+        self.v_names = [tk.StringVar(value="") for _ in range(rc.LISTS_COUNT)]
+        grid = ttk.Frame(nbox)
+        grid.pack(fill="x", padx=8, pady=(4, 2))
+        for k in range(rc.LISTS_COUNT):
+            r, c = k % 5, k // 5
+            ttk.Label(grid, text="Список %d" % (k + 1), width=9).grid(row=r, column=2 * c, sticky="w", pady=1)
+            ttk.Entry(grid, textvariable=self.v_names[k], width=22).grid(row=r, column=2 * c + 1, sticky="w", padx=(0, 14), pady=1)
+        nbtn = ttk.Frame(nbox)
+        nbtn.pack(fill="x", padx=8, pady=6)
+        self.nread_btn = ttk.Button(nbtn, text="Прочитати імена з рації", command=self._on_read_names)
+        self.nwrite_btn = ttk.Button(nbtn, text="Записати імена в рацію", command=self._on_write_names)
+        equal_buttons(self.nread_btn, self.nwrite_btn)
+        self.nread_btn.pack(side="left")
+        self.nwrite_btn.pack(side="left", padx=8)
+        self.reg(self.nread_btn)
+        self.reg(self.nwrite_btn)
+        self.names_label = ttk.Label(nbox, text="До %d символів кирилицею/латиницею; порожнє ім'я = рація показує «Список N». Імена видно в меню «Роумінг» → «Списки» "
+                                     "і в «Деталях каналу»." % rc.NAME_LEN, foreground=gt.P["info"], wraplength=600, justify="left")
+        self.names_label.pack(anchor="w", padx=8, pady=(0, 6))
+
         # --- списки у кодплазі ---
         lst = ttk.LabelFrame(self, text="Списки в кодплазі -- частина документа (у рацію: «Записати кодплаг у рацію»)")
         lst.pack(fill="both", expand=True, padx=12, pady=4)
@@ -334,5 +357,62 @@ class RoamPanel(Panel):
             print(text)
             st, raw = rc.read_state(ser)
             self.shell.post(lambda: self._apply_radio(st, raw))
+        finally:
+            ser.close()
+
+    # ------------------------------------------------------------------ імена списків (R64)
+
+    def _collect_names(self):
+        """Поля -> список з 10 імен. RoamCfgError -- погане ім'я (з номером списку)."""
+        names = []
+        for k, v in enumerate(self.v_names):
+            nm = str(v.get()).rstrip(" ")
+            try:
+                rc.check_name(nm)
+            except rc.RoamCfgError as e:
+                raise rc.RoamCfgError("список %d: %s" % (k + 1, e))
+            names.append(nm)
+        return names
+
+    def _apply_names(self, names, raw):
+        """Головний потік: підставити імена, прочитані з рації (None -- блока нема, усі порожні)."""
+        for k, v in enumerate(self.v_names):
+            v.set(names[k] if names else "")
+        if names is None:
+            self.names_label.config(text="Блока імен у рації немає -- усі імена порожні (рація показує «Список N»).", foreground=gt.P["warn"])
+        else:
+            self.names_label.config(text="Прочитано з рації: " + ("; ".join(rc.list_title(names, k + 1) for k in range(rc.LISTS_COUNT) if names[k]) or "імен нема") + ".",
+                                    foreground=gt.P["ok"])
+
+    def _on_read_names(self):
+        if not self.shell.busy:
+            self._run(self._read_names_worker, "Читаю імена списків «Роумінгу»...")
+
+    def _on_write_names(self):
+        if self.shell.busy:
+            return
+        try:
+            names = self._collect_names()
+        except rc.RoamCfgError as e:
+            messagebox.showerror("Помилка", str(e))
+            return
+        self._run(lambda: self._write_names_worker(names), "Записую імена списків «Роумінгу»...")
+
+    def _read_names_worker(self):
+        ser = cps.open_radio()
+        try:
+            names, raw = rc.read_names(ser)
+            self.shell.post(lambda: self._apply_names(names, raw))
+            print("Імена списків: " + (", ".join(rc.list_title(names, k + 1) for k in range(rc.LISTS_COUNT)) if names else "блока нема"))
+        finally:
+            ser.close()
+
+    def _write_names_worker(self, names):
+        ser = cps.open_radio()
+        try:
+            text, _safety = rc.write_names(ser, names, safety_dir=output_dir(), log=print)
+            print(text)
+            back, raw = rc.read_names(ser)
+            self.shell.post(lambda: self._apply_names(back, raw))
         finally:
             ser.close()

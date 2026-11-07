@@ -30,8 +30,7 @@
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
 #if defined(ZONE_RENAME_ENABLED)
-#include "functions/sms_multitap.h"
-#include "user_interface/languages/aprsmode_ua.h"   /* APRSM_L_MTHINT -- підказка "#:режим", та сама, що в редакторі контакту */
+#include "user_interface/uiNameEditor.h"   /* R64: спільний редактор назви (multitap) -- раніше жив тут */
 #endif
 #if defined(ZONE_EDIT_ENABLED)
 #include "functions/codeplug_zoneedit.h"   /* R43: codeplugZoneListFind -- позначка «канал уже в зоні» у списку вибору */
@@ -55,10 +54,12 @@ static void zrHandleEvent(uiEvent_t *ev);
 /* Стан редактора назви зони (R42) живе в uiDataGlobal.MessageBox.message -- розкладка в коментарі біля zrDraw() нижче. */
 #define ZR_BUF     (uiDataGlobal.MessageBox.message)
 #define ZR_CAP     16
-#define ZR_KEY     ZR_BUF[17]
-#define ZR_IDX     ZR_BUF[18]
-#define ZR_MODE    ZR_BUF[19]
 #define ZR_ACTIVE  ZR_BUF[20]
+#if defined(ZONE_EDIT_ENABLED)
+#define ZR_TITLE()  ((ZR_BUF[34] != 0) ? currentLanguage->zone_new : currentLanguage->zone_name)   /* ZR_BUF[34] = ZE_CREATE */
+#else
+#define ZR_TITLE()  (currentLanguage->zone_name)
+#endif
 #define ZR_ZN      ZR_BUF[35]   /* номер у списку зон, над якою працюємо (редактор назви й дії R43) */
 #endif
 #if defined(ZONE_EDIT_ENABLED)
@@ -266,60 +267,10 @@ static void updateScreen(bool isFirstRun)
  *   [24..27] ticksGetMillis() останнього натискання (uint32_t, через memcpy -- без вирівнювання).
  * Набір ЗАВЖДИ додає в кінець; ЛІВОРУЧ стирає; ЗЕЛЕНА зберігає; ЧЕРВОНА скасовує. Віртуальну «Всі канали» перейменувати не можна (її назва -- з мовної таблиці). */
 
-static uint32_t zrGetMs(void)
-{
-	uint32_t v;
-
-	memcpy(&v, &ZR_BUF[24], sizeof(v));
-	return v;
-}
-
-static void zrSetMs(uint32_t v)
-{
-	memcpy(&ZR_BUF[24], &v, sizeof(v));
-}
-
-static uint8_t zrMode(void)
-{
-	return (((uint8_t)ZR_MODE) < SMS_MT_MODES) ? (uint8_t)ZR_MODE : (uint8_t)SMS_MT_DEFAULT;
-}
-
+/* R64: сам редактор (набір, малювання) -- у спільному uiNameEditor.c; тут лише заголовок екрана. */
 static void zrDraw(void)
 {
-	char line[ZR_CAP + 2];
-	char cnt[12];
-	int n = (int)strlen(ZR_BUF);
-	const char *lbl = smsMtModeLabel(zrMode());
-	int16_t chipW = (int16_t)((strlen(lbl) * 6U) + 4U);
-
-	if (n > ZR_CAP)
-	{
-		n = ZR_CAP;
-	}
-	memcpy(line, ZR_BUF, (size_t)n);
-	if (n < ZR_CAP)
-	{
-		line[n++] = '_';   // курсор: наступний символ піде сюди
-	}
-	line[n] = 0;
-
-	displayClearBuf();
-#if defined(ZONE_EDIT_ENABLED)
-	menuDisplayTitle((ZE_CREATE != 0) ? currentLanguage->zone_new : currentLanguage->zone_name);
-#else
-	menuDisplayTitle(currentLanguage->zone_name);
-#endif
-	displayThemeApply(THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
-	displayPrintCore(0, 48, line, FONT_SIZE_3, TEXT_ALIGN_CENTER, false);
-	displayThemeApply(THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_BG);
-
-	// Індикатор режиму набору, підказка "#:режим" і лічильник -- внизу, як в редакторі назви контакту
-	displayFillRect(0, 108, chipW, 10, false);
-	displayPrintCore(2, 109, lbl, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
-	displayPrintAt((uint16_t)(chipW + 4), 109, APRSM_L_MTHINT, FONT_SIZE_1);
-	snprintf(cnt, sizeof(cnt), "%d/%d", (int)strlen(ZR_BUF), ZR_CAP);
-	displayPrintCore(0, 109, cnt, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
-	displayRender();
+	nameEdDraw(ZR_BUF, ZR_TITLE());
 }
 
 static void zrStart(int zn)
@@ -338,29 +289,15 @@ static void zrStart(int zn)
 		return;
 	}
 
-	memset(ZR_BUF, 0, 28);
-	ZR_ZN = (char)zn;
-	codeplugUtilConvertBufToDisplayString(zoneBuf.name, ZR_BUF, 16);   // у cp1251 (назву з CPS в UTF-8 перекодовано), 17 байтів із нулем
-	ZR_KEY = 0;
-	ZR_IDX = 0;
-	ZR_MODE = (char)((ZR_BUF[0] == 0) ? SMS_MT_UA_UP : SMS_MT_UA_LO);   // порожня назва починається з великої
-	zrSetMs(0);
-	ZR_ACTIVE = 1;
-	zrDraw();
-}
-
-// Підтвердити символ, що гортається (якщо є)
-static void zrCommit(void)
-{
-	if (ZR_KEY != 0)
 	{
-		smsMt_t mt = { ZR_KEY, (uint8_t)ZR_IDX };
-		int16_t p = (int16_t)(strlen(ZR_BUF) - 1U);   // символ перегляду -- в останній позиції рядка
+		char nm[ZR_CAP + 1];
 
-		smsMtCommit(&mt, &p);
-		ZR_KEY = 0;
-		ZR_IDX = 0;
+		memset(nm, 0, sizeof(nm));
+		codeplugUtilConvertBufToDisplayString(zoneBuf.name, nm, 16);   // у cp1251 (назву з CPS в UTF-8 перекодовано), 17 байтів із нулем
+		nameEdInit(ZR_BUF, nm);   // R64: очищає [0..27], ставить режим і ZR_ACTIVE = 1
 	}
+	ZR_ZN = (char)zn;
+	zrDraw();
 }
 
 #if defined(ZONE_EDIT_ENABLED)
@@ -411,7 +348,7 @@ static void zrSave(void)
 {
 	int zn = (uint8_t)ZR_ZN;
 
-	zrCommit();
+	nameEdCommit(ZR_BUF);
 
 #if defined(ZONE_EDIT_ENABLED)
 	if (ZE_CREATE != 0)
@@ -460,49 +397,6 @@ static void zrSave(void)
 	}
 }
 
-// Текстова клавіша (цифри/"*" -- на натисканні, "#" -- на відпусканні: режим набору)
-static void zrKey(uiEvent_t *ev)
-{
-	char k = (char)ev->keys.key;
-	uint8_t mode = zrMode();
-	smsMt_t mt = { ZR_KEY, (uint8_t)ZR_IDX };
-	int16_t p = (int16_t)strlen(ZR_BUF);
-
-	if (mt.key != 0)
-	{
-		p--;   // підтверджений текст закінчується перед символом, що гортається
-	}
-
-	if (k == KEY_HASH)
-	{
-		if (KEYCHECK_SHORTUP(ev->keys, KEY_HASH) == false)
-		{
-			return;
-		}
-		smsMtCommit(&mt, &p);
-		ZR_MODE = (char)smsMtModeNext(mode);
-	}
-	else
-	{
-		if ((ev->keys.event & KEY_MOD_LONG) || ((ev->keys.event & KEY_MOD_PRESS) == 0) || (smsMtKeyMap(mode, k) == NULL))
-		{
-			return;
-		}
-
-		uint32_t now = ticksGetMillis();
-		bool same = (mt.key == k) && ((now - zrGetMs()) < SMS_MT_TIMEOUT_MS);
-
-		if (smsMtKey(&mt, mode, k, same, ZR_BUF, &p, ZR_CAP) == 1)
-		{
-			zrSetMs(now);
-		}
-	}
-
-	ZR_KEY = mt.key;
-	ZR_IDX = (char)mt.idx;
-	zrDraw();
-}
-
 static void zrHandleEvent(uiEvent_t *ev)
 {
 	if (ev->events & FUNCTION_EVENT)
@@ -532,23 +426,9 @@ static void zrHandleEvent(uiEvent_t *ev)
 		updateScreen(false);
 #endif
 	}
-	else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	else
 	{
-		smsMt_t mt = { ZR_KEY, (uint8_t)ZR_IDX };
-		int16_t p = (int16_t)strlen(ZR_BUF);
-
-		if (mt.key != 0)
-		{
-			p--;   // підтверджений текст закінчується перед символом, що гортається
-		}
-		smsMtBackspace(&mt, ZR_BUF, &p);
-		ZR_KEY = mt.key;
-		ZR_IDX = (char)mt.idx;
-		zrDraw();
-	}
-	else if (((ev->keys.key >= '0') && (ev->keys.key <= '9')) || (ev->keys.key == '*') || (ev->keys.key == KEY_HASH))
-	{
-		zrKey(ev);
+		(void)nameEdHandleKey(ZR_BUF, ZR_TITLE(), ev);
 	}
 }
 #endif // ZONE_RENAME_ENABLED
@@ -782,10 +662,8 @@ static void zeStartCreate(void)
 {
 	ZE_LISTCUR = (char)menuDataGlobal.currentItemIndex;
 	ZR_ZN = 0;
-	memset(ZR_BUF, 0, 28);
+	nameEdInit(ZR_BUF, NULL);   // R64: порожня назва, режим «АБВ», редактор відкрито
 	ZE_CREATE = 1;
-	ZR_MODE = (char)SMS_MT_UA_UP;   // назва починається з великої
-	ZR_ACTIVE = 1;
 	zrDraw();
 }
 

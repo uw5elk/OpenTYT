@@ -605,7 +605,109 @@ def suite_region(R):
     R.check("ROAM_CFG" in text, "Q8: у файлі налаштувань названо блок")
 
 
-SUITES = (suite_constants, suite_list_byte, suite_payload, csv_roundtrip, suite_edit, suite_r53, suite_warnings, suite_roundtrip, suite_write, suite_region)
+def suite_names(R):
+    """R64: імена списків роумінгу -- custom-data блок 16 (160 Б = 10 x 16, cp1251, хвіст 0x00)."""
+    h = read_text("include", "functions", "codeplug.h")
+    cfg = read_text("include", "functions", "roam_cfg.h")
+    R.check(re.search(r"CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES\s*=\s*16\b", h) is not None and rc.TYPE_ROAM_NAMES == 16, "N1: тип блока 16 у codeplug.h і в roam_cfg.py")
+    R.check(re.search(r"#define\s+ROAM_NAME_LEN\s+16U", cfg) is not None and rc.NAME_LEN == 16, "N1: довжина імені 16 у roam_cfg.h і в roam_cfg.py")
+    R.check(re.search(r"#define\s+ROAM_NAMES_BLOCK_LEN\s+\(ROAM_LISTS_COUNT \* ROAM_NAME_LEN\)", cfg) is not None and rc.NAMES_BLOCK_LEN == 160, "N1: блок 10 x 16 = 160 Б")
+    # довжина: 16 символів проходить, 17 -- ні
+    ok16 = "Абвгґдеєжзиіїйкл"
+    R.check(len(ok16) == 16 and rc.check_name(ok16) == ok16.encode("cp1251"), "N2: ім'я з 16 символів проходить")
+    for bad in (ok16 + "м", "а" * 17):
+        try:
+            rc.check_name(bad)
+            R.check(False, "N2: ім'я з 17 символів відхиляється")
+        except rc.RoamCfgError:
+            R.check(True, "")
+    # українські літери, яких нема в cp866/koi: повна оборотність
+    uk = "ЄІЇҐєіїґ"
+    blk = rc.build_names([uk] + [""] * 9)
+    R.check(blk[:8] == bytes([0xAA, 0xB2, 0xAF, 0xA5, 0xBA, 0xB3, 0xBF, 0xB4]) and blk[8:16] == b"\x00" * 8, "N3: ЄІЇҐєіїґ = AA B2 AF A5 BA B3 BF B4, хвіст 0x00: %r" % blk[:16])
+    R.check(rc.parse_names(blk)[0] == uk, "N3: ЄІЇҐєіїґ читається назад")
+    # порожнє ім'я, хвіст 0x00, довжина блока
+    R.check(rc.build_names([""] * 10) == b"\x00" * 160, "N4: усі порожні -> 160 нулів")
+    full = rc.build_names(["я" * 16] + [""] * 9)
+    R.check(full[:16] == b"\xFF" * 16 and full[16:] == b"\x00" * 144, "N4: повне ім'я з 16 'я' (0xFF) займає слот без хвоста, наступні слоти порожні")
+    short = rc.build_names(["Київ", "Львів"] + [""] * 8)
+    R.check(len(short) == 160 and short[:8] == "Київ".encode("cp1251") + b"\x00\x00\x00\x00" and short[8:16] == b"\x00" * 8 and
+            short[16:21] == "Львів".encode("cp1251") and short[21:32] == b"\x00" * 11, "N4: ім'я + хвіст 0x00 до кінця слота; слот N починається на (N-1)*16")
+    R.check(rc.parse_names(short)[:3] == ["Київ", "Львів", ""], "N4: читання: Київ, Львів, порожньо")
+    # хвостові пробіли відкидаються, керівні символи й чужі літери -- помилка
+    R.check(rc.check_name("Київ   ") == "Київ".encode("cp1251"), "N5: кінцеві пробіли відкидаються")
+    R.check(rc.parse_names(rc.build_names(["   "] + [""] * 9))[0] == "", "N5: самі пробіли = порожнє ім'я")
+    for bad in ("а\x01б", "a\tb", "日本", "😀"):
+        try:
+            rc.check_name(bad)
+            R.check(False, "N5: %r відхиляється" % (bad,))
+        except rc.RoamCfgError:
+            R.check(True, "")
+    try:
+        rc.build_names(["а"] * 9)
+        R.check(False, "N5: 9 імен замість 10 -- помилка")
+    except rc.RoamCfgError:
+        R.check(True, "")
+    # читання, як у прошивки: стороння запис із сміттям
+    junk = bytearray(b"\x00" * 160)
+    junk[0:5] = b"Ab\x07cd"       # байт < 0x20 -- кінець імені
+    junk[16:32] = b"X" * 16
+    junk[32:35] = b"\x20\x20\x20"  # самі пробіли
+    junk[48:52] = b"\xFF\x20\x20\x00"  # 0xFF на початку -- це літера «я», не порожньо
+    got = rc.parse_names(bytes(junk))
+    R.check(got[0] == "Ab" and got[1] == "X" * 16 and got[2] == "" and got[3] == "я", "N6: прошивкове читання: %r" % (got[:4],))
+    R.check(rc.parse_names(None) is None and rc.parse_names(b"\x00" * 160) == [""] * 10, "N6: блока нема -> None; нулі -> порожні")
+    R.check(rc.parse_names(b"Hi")[0] == "Hi" and rc.parse_names(b"Hi")[1] == "", "N6: короткий блок добивається нулями")
+    R.check(rc.list_title(["Київ"] + [""] * 9, 1) == "1 Київ" and rc.list_title(["Київ"] + [""] * 9, 2) == "Список 2" and rc.list_title(None, 5) == "Список 5", "N6: підпис як у рації")
+    # запис у рацію (підмінені блоки)
+    with tempfile.TemporaryDirectory() as td:
+        names = ["Київ", "", "Львів"] + [""] * 7
+        with FakeBlocks() as fb:
+            text, safety = rc.write_names(None, names, safety_dir=td, log=lambda *_: None)
+            R.check(safety is None and fb.writes == [(16, rc.build_names(names))], "N7: створення блока 16 без страхової копії")
+            R.check("Звірка читанням: OK" in text, "N7: текст підсумку: %s" % text)
+            got, raw = rc.read_names(None)
+            R.check(got == names and raw == rc.build_names(names), "N7: читання після запису")
+            names2 = ["Одеса"] + names[1:]
+            text, safety = rc.write_names(None, names2, safety_dir=td, log=lambda *_: None)
+            R.check(safety is not None and open(safety, "rb").read() == rc.build_names(names), "N7: страхова копія = старий блок")
+        with FakeBlocks({16: rc.build_names(names)}) as fb:
+            n_files = len(os.listdir(td))
+            try:
+                rc.write_names(None, ["а" * 17] + [""] * 9, safety_dir=td, log=lambda *_: None)
+                R.check(False, "N7: погане ім'я відхилено до запису")
+            except rc.RoamCfgError:
+                R.check(True, "")
+            R.check(fb.writes == [] and len(os.listdir(td)) == n_files, "N7: погане ім'я: ні запису, ні копії")
+        with FakeBlocks({16: rc.build_names(names)}, fail_write=True) as fb:
+            try:
+                rc.write_names(None, names, safety_dir=td, log=lambda *_: None)
+                R.check(False, "N7: відмова запису -- помилка")
+            except RuntimeError as e:
+                R.check("не записані" in str(e), "N7: текст відмови: %s" % e)
+            R.check(fb.store[16] == rc.build_names(names), "N7: після відмови блок як був")
+        with FakeBlocks({16: rc.build_names(names)}, corrupt_write=True):
+            try:
+                rc.write_names(None, names, safety_dir=td, log=lambda *_: None)
+                R.check(False, "N7: незбіг звірки -- помилка")
+            except RuntimeError as e:
+                R.check("звірка" in str(e), "N7: незбіг звірки названо: %s" % e)
+    # область custom-data: тип 16 відомий, налаштування
+    import test_r30 as t30
+    payload = rc.build_names(names)
+    R.check(cr.BLOCK_TYPES.get(16, (None,))[0] == "ROAM_NAMES" and cr.BLOCK_TYPES[16][4] == "setting" and "імена" in cr.type_title(16), "N8: тип 16 -- ROAM_NAMES, налаштування")
+    spi = t30.new_spi_with(1, types=[4, 9])
+    pl = t30.payloads_of(t30.region_of(spi))
+    pl[16] = payload
+    spi2 = t30.put_region(bytearray(spi), pl, order=sorted(pl))
+    parsed = cr.parse_region(t30.region_of(spi2))
+    by = parsed.by_type()
+    R.check(16 in by and by[16].payload == payload and not parsed.problems and cr.default_selected(by[16]), "N8: блок 16 розбирається в області й відновлюється типово: %r" % (parsed.problems,))
+    blocks, _doc = cr.settings_from_text(cr.settings_to_text(parsed.blocks))
+    R.check(any(b.type == 16 and b.payload == payload for b in blocks), "N8: блок 16 проходить файл налаштувань і назад (резервна копія/відновлення)")
+
+
+SUITES = (suite_constants, suite_list_byte, suite_payload, csv_roundtrip, suite_edit, suite_r53, suite_warnings, suite_roundtrip, suite_write, suite_region, suite_names)
 
 
 def run_all():
@@ -670,6 +772,29 @@ def mutants():
     out.append(("parse: не перевіряє довжину", patch(rc, "parse_payload", lambda p: {"version": 1, "enabled": bool(p[5]), "max_hops": rc.clamp_hops(p[6])} if p and len(p) >= 7 and bytes(p[:4]) == b"ROAM" and p[4] == 1 else None)))
     out.append(("parse: enabled лише ==1", patch(rc, "parse_payload", lambda p: {"version": 1, "enabled": p[5] == 1, "max_hops": rc.clamp_hops(p[6])} if p and len(p) >= 8 and bytes(p[:4]) == b"ROAM" and p[4] == 1 else None)))
     out.append(("parse: не обмежує стрибки", patch(rc, "parse_payload", lambda p: {"version": 1, "enabled": p[5] != 0, "max_hops": p[6]} if p and len(p) >= 8 and bytes(p[:4]) == b"ROAM" and p[4] == 1 else None)))
+    # --- R64: імена списків ---
+    def build_pad_space(names):
+        if len(names) != 10:
+            raise rc.RoamCfgError("x")
+        out = bytearray()
+        for nm in names:
+            raw = rc.check_name(nm)
+            out += raw + b" " * (16 - len(raw))
+        return bytes(out)
+    out.append(("names: слот добито пробілами, а не 0x00", patch(rc, "build_names", build_pad_space)))
+    out.append(("names: довжина імені 17", patch(rc, "NAME_LEN", 17)))
+    out.append(("names: check_name без перевірки довжини", patch(rc, "check_name", lambda n: n.rstrip(" ").encode("cp1251", errors="replace")[:16])))
+    out.append(("names: check_name пропускає керівні символи", patch(rc, "check_name", lambda n: (lambda r: r if len(r) <= 16 else (_ for _ in ()).throw(rc.RoamCfgError("x")))(n.rstrip(" ").encode("cp1251")))))
+
+    def parse_no_strip(payload):
+        if payload is None:
+            return None
+        blk = bytes(payload[:160]).ljust(160, b"\x00")
+        return [blk[i * 16:(i + 1) * 16].split(b"\x00")[0].decode("cp1251", errors="replace") for i in range(10)]
+    out.append(("names: parse не відкидає кінцеві пробіли й керівні", patch(rc, "parse_names", parse_no_strip)))
+    out.append(("names: parse(None) -> порожні імена", patch(rc, "parse_names", lambda p: [""] * 10 if p is None else parse_no_strip(p))))
+    out.append(("names: тип блока 15", patch(rc, "TYPE_ROAM_NAMES", 15)))
+    out.append(("names: list_title без «Список N»", patch(rc, "list_title", lambda names, n: "%d %s" % (n, names[n - 1] if names else ""))))
     # --- байт списку (Python-бік; C-бік перевіряє test_roam_cfg + звірка Q1) ---
     out.append(("list_from_byte: без перевірки мітки", patch(rc, "list_from_byte", lambda b: (b & 0x0F) if 1 <= (b & 0x0F) <= 10 else 0)))
     out.append(("list_from_byte: мітка лише старший біт", patch(rc, "list_from_byte", lambda b: (b & 0x0F) if (b & 0x80) and 1 <= (b & 0x0F) <= 10 else 0)))
