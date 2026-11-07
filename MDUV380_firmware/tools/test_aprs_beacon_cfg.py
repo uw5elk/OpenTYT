@@ -109,7 +109,7 @@ def test_callsign_flow():
     cp, _data = tc.codeplug_of(spi)
     img = cc.Image.from_codeplug(cp)
     res = ab.apply_callsign(img, "r2abc")
-    check(res.any_change() and bytes(res.image.ee(cl.CP_ADDR_USER_CALLSIGN, 8)) == b"R2ABC\xff\xff\xff", "образ: позивник у 0x00E0")
+    check(res.any_change() and bytes(res.image.ee(cl.CP_ADDR_USER_CALLSIGN, 8)) == b"R2ABC\xff\xff\xff", "образ: позивний у 0x00E0")
     check(bytes(img.ee(cl.CP_ADDR_USER_CALLSIGN, 8)) != b"R2ABC\xff\xff\xff", "вихідний образ не змінено")
     same = ab.apply_callsign(res.image, "R2ABC")
     check(not same.any_change(), "той самий позивний -- змін немає")

@@ -296,7 +296,7 @@ static void testUnify(void)
 	(void)aprsModeSetCall("R2ABC");
 	s_now += 3000; tickMs(0);
 	(void)menuAprsSettingsTick(&(uiEvent_t){ 0 });
-	CHECK(s_nameWrites == 1, "той самий позивник -- без нового запису");
+	CHECK(s_nameWrites == 1, "той самий позивний -- без нового запису");
 
 	/* прапорці слота: 300 бод, «тихо» (група «Маяк»), «використовувати позицію» (група «Позиція») */
 	ib = rowIndexOf(asRowsBeacon, AS_N(asRowsBeacon), AS_S_BAUD);

@@ -833,7 +833,7 @@ static void testHist(void)
 		const aprsJrnEntry_t *e = aprsJrnNth(&s_h, 0);
 
 		aprsJrnSummary(e, call, &dti);
-		CHECK(!strcmp(call, "J10") && (dti == '!'), "список: позивник «%s», DTI «%c»", call, dti);
+		CHECK(!strcmp(call, "J10") && (dti == '!'), "список: позивний «%s», DTI «%c»", call, dti);
 		CHECK(aprsJrnSlotOf(&s_h, 0) == (int)((s_h.jrnHead + APRS_JRN_SLOTS - 1) % APRS_JRN_SLOTS) && aprsJrnNOfSlot(&s_h, aprsJrnSlotOf(&s_h, 3)) == 3 &&
 				(aprsJrnAtSlot(&s_h, aprsJrnSlotOf(&s_h, 5)) == aprsJrnNth(&s_h, 5)), "слот <-> n за новизною");
 	}
@@ -844,7 +844,7 @@ static void testHist(void)
 
 		jrnFrame("SP5WWP", tp, (int)strlen(tp), 2000U);
 		aprsJrnSummary(aprsJrnNth(&s_h, 0), call, &dti);
-		CHECK(dti == '}' && !strcmp(call, "SP5WWP"), "кадр через i-gate -- DTI '}' (позивник шлюзу %s)", call);
+		CHECK(dti == '}' && !strcmp(call, "SP5WWP"), "кадр через i-gate -- DTI '}' (позивний шлюзу %s)", call);
 	}
 	/* довгий кадр: 127 символів + NUL, без виходу за межі; керівні байти -> '.' */
 	{

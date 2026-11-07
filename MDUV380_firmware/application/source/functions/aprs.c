@@ -2213,7 +2213,7 @@ static aprsModeTxResult_t modeTxCommon(const aprsModeEff_t *e, const char *info,
 	}
 	if ((aprsModeCallValid(e->call) == false) && ((from == NULL) || (from[0] == 0)))
 	{
-		return APRS_MODE_TX_NOCALL;   // R13: у завдання черги може бути власний зафіксований відправник — тоді позивник режиму не потрібен
+		return APRS_MODE_TX_NOCALL;   // R13: у завдання черги може бути власний зафіксований відправник — тоді позивний режиму не потрібен
 	}
 	if ((info == NULL) && (e->hasPos == false))
 	{

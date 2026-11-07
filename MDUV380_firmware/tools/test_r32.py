@@ -154,7 +154,7 @@ def test_sources():
     s = db.parse_source("NAME,CALLSIGN,ID\nIvan,UR1AAA,2550001\nBAD,UR2BBB,xx\n")
     check(len(s.rows) == 1 and s.skipped == 1, "Z2: колонка ID за назвою «ID»; рядок із нечисловим ID -- у пропущені")
     s = db.parse_source("Місто,Хто,Номер\nКиїв,UR1AAA,2550001\nЛьвів,UR2BBB,2550002\n")
-    check([r["id"] for r in s.rows] == [2550001, 2550002] and s.rows[0]["callsign"] == "UR1AAA", "T3.1: заголовок нерозпізнаний, але ID і позивник знайдені за змістом")
+    check([r["id"] for r in s.rows] == [2550001, 2550002] and s.rows[0]["callsign"] == "UR1AAA", "T3.1: заголовок нерозпізнаний, але ID і позивний знайдені за змістом")
     js = '{"result": [{"num": "2550001", "who": "UR1AAA"}, {"num": "2550002", "who": "UR2BBB"}]}'
     s = db.parse_source(js)
     check([r["id"] for r in s.rows] == [2550001, 2550002] and s.rows[0]["callsign"] == "UR1AAA", "T3.1: JSON з невідомими іменами полів -- за змістом")

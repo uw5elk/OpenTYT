@@ -287,7 +287,7 @@ def scr_channel_qso(d, st):
     d.theme_apply(_it("FG_CHANNEL_CONTACT_INFO"), _it("BG"))
     display_information(d, st["talkgroup"], "contact", -1)                         # група, не інвертована (збігається з поточним TG/TS/CC)
     d.theme_apply(_it("FG_CHANNEL_CONTACT_INFO"), _it("BG"))
-    # displayContactTextInfos(): splitContact == ON_TWO_LINES; "UR1AAA Ivan" -> позивник у рядку каналу, решта -- нижче
+    # displayContactTextInfos(): splitContact == ON_TWO_LINES; "UR1AAA Ivan" -> позивний у рядку каналу, решта -- нижче
     display_information(d, st["callsign"], "channel", -1)                            # fg == FG_CHANNEL_CONTACT_INFO -> колір лишається
     d.theme_apply(_it("FG_CHANNEL_CONTACT_INFO"), _it("BG"))
     d.print_centered(L["DISPLAY_Y_POS_CHANNEL_SECOND_LINE"], st["caller_rest"], FONT_3)       # displaySplitOrSpanText(y=96): len<=16 -> по центру FONT_SIZE_3

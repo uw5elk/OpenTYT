@@ -174,7 +174,7 @@ def test_basic_info():
     check(doc.edit_basic(callsign="uw5elk", dmr_id=2500123, line1="Привіт", line2="UA"), "основну інформацію змінено")
     b = ced.basic_values(doc.image)
     check(b["callsign"] == "UW5ELK" and b["dmr_id"] == 2500123 and b["line1"] == "Привіт" and b["line2"] == "UA", "нові значення: %r" % b)
-    check(bytes(doc.image.ee(cl.CP_ADDR_USER_CALLSIGN, 8)) == b"UW5ELK\xff\xff", "позивник: 8 байтів з дописаними 0xFF")
+    check(bytes(doc.image.ee(cl.CP_ADDR_USER_CALLSIGN, 8)) == b"UW5ELK\xff\xff", "позивний: 8 байтів з дописаними 0xFF")
     check(bytes(doc.image.ee(cl.CP_ADDR_USER_DMRID, 4)) == bytes.fromhex("02500123"), "DMR ID: BCD, старший спершу")
     check(len(doc.image.ee(ced.ADDR_BOOT_LINE1, 16)) == 16 and doc.image.ee(ced.ADDR_BOOT_LINE2, 16)[2:] == b"\xff" * 14, "рядки вітання: по 16 Б з 0xFF")
     check(doc.edit_basic(callsign="UW5ELK", dmr_id=2500123) is False, "те саме значення -- змін немає")

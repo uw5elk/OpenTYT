@@ -161,7 +161,7 @@ bool aprsMsgOnAckRx(aprsMsgBox_t *b, const char *from, const char *id, bool isRe
  * приймається пакет, PTT не натиснуто, не DMR-TX) -- їх рахує викликач. busy -- частота зайнята. Усередині: завершення
  * очікування ACK («без ACK»), пауза 2 с між передачами, пріоритет ACK, очікування вільної частоти до 10 с. */
 size_t aprsMsgPoll(aprsMsgBox_t *b, uint32_t now, bool busy, bool txOk, char *info, size_t cap);
-/* R13 (П.6): позивник відправника для кадру, щойно виданого aprsMsgPoll() (завдання в ефірі). "" -- без фіксації (стандартний). */
+/* R13 (П.6): позивний відправника для кадру, щойно виданого aprsMsgPoll() (завдання в ефірі). "" -- без фіксації (стандартний). */
 const char *aprsMsgInflightFrom(const aprsMsgBox_t *b);
 /* Результат спроби передачі кадру, виданого aprsMsgPoll(). ok -- передачу почато. fatal -- марно повторювати (TX заборонено...):
  * повідомлення одразу «без ACK». */

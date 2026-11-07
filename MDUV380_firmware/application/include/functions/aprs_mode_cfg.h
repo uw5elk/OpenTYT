@@ -42,7 +42,7 @@
 
 /* Які поля задано з рації (інакше -- типове значення з кодплага). */
 #define APRSM_OV_FREQ         0x0001U
-#define APRSM_OV_LEGACY_CALL  0x0002U    /* BT-unify: лише в старих блоках (позивник тепер один -- ім'я рації, EEPROM 0x00E0); читається для міграції, назад не пишеться */
+#define APRSM_OV_LEGACY_CALL  0x0002U    /* BT-unify: лише в старих блоках (позивний тепер один -- ім'я рації, EEPROM 0x00E0); читається для міграції, назад не пишеться */
 #define APRSM_OV_SSID         0x0004U
 #define APRSM_OV_PATH1        0x0008U
 #define APRSM_OV_PATH2        0x0010U
@@ -242,7 +242,7 @@ typedef struct
 #define APRSM_FOLD_BLOCK  0x08U    /* змінено блок режиму (міграція: маркер) */
 
 void aprsModeStoreBlank(aprsModeStore_t *s);                                     /* заготовка слота; name не чіпає */
-bool aprsModeStoreSetCall(aprsModeStore_t *s, const char *call, bool *valid);   /* позивний -> name; true -- ім'я змінилося; *valid -- позивник пройшов перевірку */
+bool aprsModeStoreSetCall(aprsModeStore_t *s, const char *call, bool *valid);   /* позивний -> name; true -- ім'я змінилося; *valid -- позивний пройшов перевірку */
 void aprsModeStoreSetFlag(aprsModeStore_t *s, uint8_t mask, bool on);           /* APRSM_RAW_FLAG_* */
 void aprsModeMicroToFixed24(int32_t u, uint8_t b[3]);                           /* обернене до aprsModeFixed24ToMicro(); крок 1E-4 градуса */
 /* Скласти «чернетку» (ov-біти) у слот і зняти складені біти. d -- поточні типові (потрібні, коли задано лише широту АБО лише довготу). Повертає APRSM_FOLD_RAW,
@@ -250,7 +250,7 @@ void aprsModeMicroToFixed24(int32_t u, uint8_t b[3]);                           
 unsigned aprsModeFold(aprsModeCfg_t *c, aprsModeStore_t *s, const aprsModeDefaults_t *d);
 /* Найближчий до старого інтервалу (хвилини за aprsModeIntervalMinutes()) індекс у таблиці стокових інтервалів secs[n] (секунди); порівну -- довший. */
 uint8_t aprsModeNearestInitial(uint8_t oldIdx, const uint16_t *secs, unsigned n);
-/* Одноразова міграція старого блоку: позивник -> ім'я; ov -> слот; interval != 0 -> *initialInterval (найближче значення); qsyOff -> знімає прапорець QSY
+/* Одноразова міграція старого блоку: позивний -> ім'я; ov -> слот; interval != 0 -> *initialInterval (найближче значення); qsyOff -> знімає прапорець QSY
  * у слоті; ставить APRSM_OV_MIGRATED. 0 -- уже мігровано. Біти APRSM_FOLD_* -- що саме змінилося. */
 unsigned aprsModeMigrate(aprsModeCfg_t *c, aprsModeStore_t *s, const aprsModeDefaults_t *d,
 		uint8_t *initialInterval, const uint16_t *secs, unsigned n);

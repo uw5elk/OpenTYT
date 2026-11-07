@@ -612,7 +612,7 @@ bool aprsBeaconCfgStore(void)
 	return ensureCustomRegion() && codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_APRS_BEACON_CFG, blk, (int)sizeof(blk));
 }
 
-/* Одноразова міграція старого блоку (оверрайди, інтервал, qsyOff, позивник) у слот / ім'я рації / стоковий initialInterval -- aprsModeMigrate(). */
+/* Одноразова міграція старого блоку (оверрайди, інтервал, qsyOff, позивний) у слот / ім'я рації / стоковий initialInterval -- aprsModeMigrate(). */
 static void unifyMigrate(aprsModeMem_t *m)
 {
 	aprsBeaconingSettings_t st;

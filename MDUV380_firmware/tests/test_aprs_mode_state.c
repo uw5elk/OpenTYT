@@ -142,7 +142,7 @@ static int s_msgTxCalls = 0;
 static bool s_autoEnd = false;   /* кінець передачі повідомлення імітує сам tickMs */
 static aprsModeTxResult_t s_msgTxResult = APRS_MODE_TX_OK;
 static char s_msgTxInfo[100];
-static char s_msgTxFrom[16];   /* R13 (П.6): позивник відправника, з яким пішло останнє повідомлення/ACK у режимі */
+static char s_msgTxFrom[16];   /* R13 (П.6): позивний відправника, з яким пішло останнє повідомлення/ACK у режимі */
 aprsModeTxResult_t aprsModeTxMessage(const aprsModeEff_t *e, const char *info, const char *from)
 {
 	(void)e;
@@ -1004,7 +1004,7 @@ static void testBackground(void)
 	CHECK(s_bgTxCalls == 4 && b->stats.ackSent == 1U, "наступна копія -- ACK пішов");
 }
 
-/* R13 (П.6): один позивник-SSID для повідомлення й ВСІХ його повторів; ACK -- від адресата, на якого прийшло повідомлення */
+/* R13 (П.6): один позивний-SSID для повідомлення й ВСІХ його повторів; ACK -- від адресата, на якого прийшло повідомлення */
 static void testIdentity(void)
 {
 	aprsAx25_t ax;
@@ -1461,7 +1461,7 @@ static void testUnifyMigration(void)
 	CHECK((s_apc.flags & APRSM_RAW_FLAG_USE_POSITION) != 0 && ((s_apc.flags >> 5) & 7U) == 2, "T1: «використовувати позицію» і неточність 2 (flags=%02X)", s_apc.flags);
 	CHECK(s_apc.magicVer == 0x4153, "T1: сигнатура слота");
 	CHECK(memcmp(s_apc.comment + 5, "\0\0\0", 3) == 0, "T1: коментар доповнено нулями");
-	/* T2: позивник -> ім'я рації */
+	/* T2: позивний -> ім'я рації */
 	CHECK(strcmp(s_radioName, "R2ABC") == 0 && s_nameWrites == 1, "T2: старий позивний -> ім'я рації (%s, записів %d)", s_radioName, s_nameWrites);
 	/* T3: інтервал -> найближчий стоковий (15 хв = 900 с: порівну 600/1200 -> довший = індекс 7), QSY вимкнено -> прапорець знято */
 	CHECK(s_stockSettings.initialInterval == 7, "T3: інтервал 15 хв -> стоковий індекс 7 (=%u)", s_stockSettings.initialInterval);
@@ -1508,7 +1508,7 @@ static void testUnifyMigrationEdges(void)
 	CHECK(aprsModeEnter(), "вхід");
 	aprsModeExit();
 	CHECK(s_stockSettings.initialInterval == 4 && s_apcWrites == 0, "T3: старий інтервал 0 -- нічого не змінює (initialInterval=%u, записів слота %d)", s_stockSettings.initialInterval, s_apcWrites);
-	/* недійсний позивник у старому блоці (малі літери) -- ім'я не чіпаємо */
+	/* недійсний позивний у старому блоці (малі літери) -- ім'я не чіпаємо */
 	resetWorld();
 	aprsModeCfgInit(&c);
 	mkLegacyBlock(blk, &c, "uw5elk", 0, 0, true);
