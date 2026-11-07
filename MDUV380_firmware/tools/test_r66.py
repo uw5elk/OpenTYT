@@ -23,6 +23,10 @@ D  R66D: тон передачі супутника за набором 1/2/3 (E
       стокове присвоєння в selectSatellite не чіпано; заголовок підключається лише під прапорцем;
    D2 прапорець у Makefile, обох кроках build.yml, syntax_check.sh; тон взведення (uiTxScreen.c) не змінено;
    D3 мутанти satellite_tone.h (не той набір, нема межі, NULL) валять tests/test_sat_tone.c.
+E  R67A: індикатор біля назви зони -- латинська «R» (узгоджено з «R>» на екрані передачі):
+   E1 ROAM_IND_LIST (укр.) == "R" == англійському; ROAM_ZONE_SPARE_FMT починається з «R>»; жодної кириличної «Р» (0xD0) у цих двох рядках;
+   E2 «R» має непорожній гліф у 6x8 і 8x16 (малі шрифти, де малюється зона), «R1».."R10" -- лише ASCII; мутанти «Р»/«0xD0» ловляться;
+   E3 рядок зони влазить так само (довжина не змінилась: 1 символ).
 Запуск: python3 tools/test_r66.py"""
 import os
 import re
@@ -342,6 +346,28 @@ def section_d():
                 check(rc != 0, "D3: мутант «%s» убито" % name)
 
 
+def section_e():
+    h = open(os.path.join(INC, "user_interface", "languages", "roam_ua.h"), "rb").read().decode("cp1251")
+    e = open(os.path.join(INC, "user_interface", "roam_ui.h"), encoding="utf-8", errors="replace").read()
+    ml = re.search(r'#define\s+ROAM_IND_LIST\s+"([^"]*)"', h)
+    me = re.search(r'#define\s+ROAM_IND_LIST\s+"([^"]*)"', e)
+    mz = re.search(r'#define\s+ROAM_ZONE_SPARE_FMT\s+"([^"]*)"', h)
+    check(ml is not None and me is not None and mz is not None, "E1: рядки знайдено")
+    lst = ml.group(1) if ml else ""
+    zf = mz.group(1) if mz else ""
+    check(lst == "R" and me and me.group(1) == "R", "E1: ROAM_IND_LIST == \"R\" в обох мовах (є %r)" % lst)
+    check(zf.startswith("R>"), "E1: ROAM_ZONE_SPARE_FMT починається з «R>» (є %r)" % zf)
+    check("\u0420" not in lst and "\u0420" not in zf[:2], "E1: кириличної «Р» (U+0420) в індикаторах нема")
+    f6, f8 = small_font("font_6x8"), small_font("font_8x16")
+    check(any(small_glyph(f6, ord("R"))) and any(small_glyph(f8, ord("R"))), "E2: гліф «R» непорожній у 6x8 і 8x16")
+    check(all(ord(c) < 128 for c in lst + "".join(str(n) for n in range(1, 11))), "E2: «R1»..«R10» -- ASCII")
+    pred = lambda v: v == "R"
+    check(pred(lst), "E2: предикат приймає справжній індикатор")
+    for bad in ("\u0420", "\xd0", "P", "R "):
+        check(not pred(bad), "E2: мутант %r ловиться" % bad)
+    check(len(lst) == 1, "E3: індикатор -- 1 символ (ширина як була)")
+
+
 def main():
     ua = F.load(os.path.join(INC, "hardware", "HX8353E_charset_UA.h"))
     lat = F.load(os.path.join(INC, "hardware", "HX8353E_charset.h"))
@@ -376,6 +402,7 @@ def main():
     section_b()
     section_c()
     section_d()
+    section_e()
     print("test_r66: %d перевірок, провалів %d" % (PASSED[0], len(FAILS)))
     return 1 if FAILS else 0
 
