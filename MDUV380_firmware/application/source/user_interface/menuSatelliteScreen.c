@@ -33,6 +33,9 @@
 #include "interfaces/clockManager.h"
 #include "interfaces/pit.h"
 #include "functions/satellite.h"
+#if defined(ENABLE_SAT_TONE_SYNC)
+#include "functions/satellite_tone.h"   // R66D: тон передачі за набором 1/2/3
+#endif
 #include "hardware/radioHardwareInterface.h"
 #if defined(PLATFORM_MDUV380) || defined(PLATFORM_MD380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 #include "interfaces/batteryAndPowerManagement.h"
@@ -889,6 +892,10 @@ static void handleEvent(uiEvent_t *ev)
 
 		if (needsUpdate)
 		{
+#if defined(ENABLE_SAT_TONE_SYNC)
+			// R66D: набір змінено -- тон передачі за новим набором (раніше лишався від набору на момент вибору супутника)
+			currentChannelData->txTone = satelliteTxToneFor(currentActiveSatellite, currentSatelliteFreqIndex);
+#endif
 			hasRecalculated = true; // Need to set this otherwise the SATELLITE_SCREEN_SELECTED_SATELLITE does not immediately redraw
 			nextCalculationTime = 0U; // Need to re-calculate immediately, as QRG has changed.
 			updateScreen(ev, false, true);
@@ -1546,6 +1553,9 @@ static void calculateActiveSatelliteData(bool forceFrequencyUpdate)
 	uint32_t rxF = currentSatelliteResults.freqs[currentSatelliteFreqIndex].rxFreq / 10;
 	uint32_t txF = currentSatelliteResults.freqs[currentSatelliteFreqIndex].txFreq / 10;
 	currentChannelData->txFreq = txF;// Tx freq can be updated immediately
+#if defined(ENABLE_SAT_TONE_SYNC)
+	currentChannelData->txTone = satelliteTxToneFor(currentActiveSatellite, currentSatelliteFreqIndex);   // R66D: тон завжди за поточним набором (тік, вибір супутника, клавіші 1/2/3)
+#endif
 	// Only update the Rx freq is its off by more than 500Hz,
 	// to prevent constant dropout in the Rx caused by the process of changing the frequency of the AT1846S
 	// Note value is stored in the channel data a 10Hz resolution hence the / 10

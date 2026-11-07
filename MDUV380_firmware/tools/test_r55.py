@@ -169,7 +169,10 @@ def test_e5_firmware_readonly():
     check(len(re.findall(r"trxSetRxCSS\(RADIO_DEVICE_PRIMARY, satelliteChannelData\.rxTone\);// Never any Rx CTCSS", scr)) == 1, "E5: кожен вхід: trxSetRxCSS(..., rxTone) з коментарем «Never any Rx CTCSS»")
     check(len(re.findall(r"rxTone\s*=", scr)) == 1, "E5: rxTone в екрані супутників присвоюється лише один раз (NONE): %d" % len(re.findall(r"rxTone\s*=", scr)))
     tx_assign = re.findall(r"currentChannelData->txTone\s*=\s*([^;]+);", scr)
-    check(tx_assign == ["currentActiveSatellite->freqs[currentSatelliteFreqIndex].txCTCSS"], "E5: txTone ставиться лише з txCTCSS вибраного набору: %r" % (tx_assign,))
+    # R66D: поза прапорцем -- лише стокове присвоєння; під ENABLE_SAT_TONE_SYNC ще рівно два, і лише через satelliteTxToneFor(поточний супутник, поточний набір)
+    stock = "currentActiveSatellite->freqs[currentSatelliteFreqIndex].txCTCSS"
+    synced = "satelliteTxToneFor(currentActiveSatellite, currentSatelliteFreqIndex)"
+    check(sorted(tx_assign) == sorted([stock, synced, synced]), "E5: txTone ставиться лише з txCTCSS вибраного набору (стокове + 2 під ENABLE_SAT_TONE_SYNC): %r" % (tx_assign,))
     sat_c = read(APP, "source", "functions", "satellite.c")
     check("freqs[SATELLITE_APRS_FREQ].txCTCSS = currentSatelliteData->freqs[SATELLITE_APRS_FREQ].armCTCSS = 0;" in sat_c
           and "freqs[SATELLITE_OTHER_FREQ].txCTCSS = currentSatelliteData->freqs[SATELLITE_OTHER_FREQ].armCTCSS = 0;" in sat_c, "E5: у наборів APRS / маяк субтон передачі й взведення = 0 (satellite.c)")
@@ -178,7 +181,7 @@ def test_e5_firmware_readonly():
     check("trxSetTxCSS(currentChannelData->txTone);" in tx and "trxSetRxCSS(RADIO_DEVICE_PRIMARY, currentChannelData->rxTone);" in tx, "E5: uiTxScreen.c: на передачі -- txTone, після неї RX-CSS = rxTone (NONE)")
     # спостереження для звіту (не помилка тесту): клавіші 1/2/3 змінюють лише currentSatelliteFreqIndex, txTone не оновлюється
     keys = re.findall(r"^\t+currentSatelliteFreqIndex = SATELLITE_\w+;", scr, re.M)
-    check(len(keys) == 3, "E5: клавіші 1/2/3 лише міняють currentSatelliteFreqIndex (3 присвоєння), txTone при цьому не оновлюється -- спостереження для звіту R55")
+    check(len(keys) == 3, "E5: клавіші 1/2/3 лише міняють currentSatelliteFreqIndex (3 присвоєння), стокове OpenGD77 txTone тут не оновлює (R55); з R66D це робить блок під ENABLE_SAT_TONE_SYNC")
 
 
 def test_e6_table_date():

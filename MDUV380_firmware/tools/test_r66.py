@@ -18,6 +18,11 @@ C  R66C: переміщення (канал у зоні, TG у списку пр
    C2 набір #define в move_ui.h (англ.) збігається з move_ua.h; англ. рядки ASCII;
    C3 codeplugZoneMoveChannel / codeplugRxGroupMoveMember викликаються лише з menuZoneList.c / menuRxGroups.c, в першому -- під ZONE_MOVE_ENABLED;
    C4 move_ui.h підключається у menuZoneList.c під ZONE_MOVE_ENABLED, в menuRxGroups.c -- у блоці RXGROUP_UI_ENABLED;
+D  R66D: тон передачі супутника за набором 1/2/3 (ENABLE_SAT_TONE_SYNC):
+   D1 у menuSatelliteScreen.c рівно ДВА присвоєння txTone через satelliteTxToneFor (клавіші 1/2/3 і calculateActiveSatelliteData), кожне всередині #if defined(ENABLE_SAT_TONE_SYNC);
+      стокове присвоєння в selectSatellite не чіпано; заголовок підключається лише під прапорцем;
+   D2 прапорець у Makefile, обох кроках build.yml, syntax_check.sh; тон взведення (uiTxScreen.c) не змінено;
+   D3 мутанти satellite_tone.h (не той набір, нема межі, NULL) валять tests/test_sat_tone.c.
 Запуск: python3 tools/test_r66.py"""
 import os
 import re
@@ -279,6 +284,64 @@ def section_c():
     check(rg.rfind("RXGROUP_UI_ENABLED", 0, j) > rg.rfind("#endif", 0, j), "C4: menuRxGroups.c підключає move_ui.h у блоці RXGROUP_UI_ENABLED")
 
 
+def section_d():
+    import tempfile
+    ui = os.path.join(ROOT, "application", "source", "user_interface", "menuSatelliteScreen.c")
+    t = open(ui, encoding="utf-8", errors="replace").read()
+    sites = [m.start() for m in re.finditer(r"currentChannelData->txTone\s*=\s*satelliteTxToneFor\(", t)]
+    check(len(sites) == 2, "D1: присвоєнь через satelliteTxToneFor: %d (мусить 2)" % len(sites))
+    for i in sites:
+        pre = t[:i]
+        check(pre.rfind("#if defined(ENABLE_SAT_TONE_SYNC)") > pre.rfind("#endif"), "D1: присвоєння @%d всередині #if ENABLE_SAT_TONE_SYNC" % i)
+    k = t.index("static void selectSatellite(uint32_t selectedSatellite)\n{")
+    sel = t[k:t.index("\n}\n", k)]
+    check("currentChannelData->txTone = currentActiveSatellite->freqs[currentSatelliteFreqIndex].txCTCSS;" in sel, "D1: стокове присвоєння в selectSatellite збережено")
+    # перше присвоєння -- в обробнику клавіш (перед needsUpdate-виходом), друге -- у calculateActiveSatelliteData
+    kh = t.index("if (needsUpdate)")
+    check(sites[0] > kh and sites[0] < t.index("updateScreen(ev, false, true);", kh), "D1: перше присвоєння -- в обробнику клавіш 1/2/3, до updateScreen")
+    kc = t.index("static void calculateActiveSatelliteData(bool forceFrequencyUpdate)\n{")
+    check(sites[1] > kc, "D1: друге присвоєння -- в calculateActiveSatelliteData")
+    inc = t.index('#include "functions/satellite_tone.h"')
+    check(t.rfind("#if defined(ENABLE_SAT_TONE_SYNC)", 0, inc) > t.rfind("#endif", 0, inc), "D1: заголовок підключається лише під прапорцем")
+    mk = open(os.path.join(ROOT, "Makefile"), encoding="utf-8").read()
+    check("ifeq ($(ENABLE_SAT_TONE_SYNC),1)\nDEFS += -DENABLE_SAT_TONE_SYNC" in mk, "D2: Makefile")
+    yml = open(os.path.join(ROOT, "..", ".github", "workflows", "build.yml"), encoding="utf-8").read()
+    check(yml.count("ENABLE_SAT_TONE_SYNC=1") == yml.count("ENABLE_RXGROUP_EDIT=1") and yml.count("ENABLE_SAT_TONE_SYNC=1") >= 2, "D2: build.yml -- у кожному кроці з ENABLE_RXGROUP_EDIT=1 (%d)" % yml.count("ENABLE_SAT_TONE_SYNC=1"))
+    sc = open(os.path.join(HERE, "syntax_check.sh"), encoding="utf-8").read()
+    check("DEFS_SATTONE=" in sc and "SATTONEBARE)" in sc and "-DENABLE_SAT_TONE_SYNC)" in sc, "D2: syntax_check.sh")
+    tx = open(os.path.join(ROOT, "application", "source", "user_interface", "uiTxScreen.c"), encoding="utf-8", errors="replace").read()
+    check("SAT_TONE" not in tx, "D2: uiTxScreen.c (тон взведення) не чіпано")
+    # D3: мутанти
+    hdr = os.path.join(INC, "functions", "satellite_tone.h")
+    h = open(hdr, encoding="utf-8").read()
+    muts = [("не той набір", "return sat->freqs[idx].txCTCSS;", "return sat->freqs[0].txCTCSS;"),
+            ("нема межі набору", "|| ((unsigned)idx > (unsigned)SATELLITE_OTHER_FREQ)", ""),
+            ("нема перевірки NULL", "(sat == NULL) ||", ""),
+            ("тон взведення замість тону передачі", "return sat->freqs[idx].txCTCSS;", "return sat->freqs[idx].armCTCSS;")]
+    sh = open(os.path.join(ROOT, "tests", "run_tests.sh"), encoding="utf-8").read()
+    fw = ROOT
+    incs = re.search(r'FW_INCS="(.*?)"\n', sh, re.S).group(1).replace("\\\n", " ").replace("$FW", fw).split()
+    xf = re.search(r'\[test_sat_tone\]="\$FW_INCS ([^"]*)"', sh).group(1).split()
+    with tempfile.TemporaryDirectory() as td:
+        os.makedirs(os.path.join(td, "functions"))
+        for name, a, b in muts + [("оригінал", "", "")]:
+            src = h if name == "оригінал" else h.replace(a, b)
+            if name != "оригінал":
+                check(h.count(a) == 1 or name == "нема межі набору" or name == "нема перевірки NULL", "D3: фрагмент мутанта «%s» знайдено" % name)
+                check(src != h, "D3: мутант «%s» змінює файл" % name)
+            open(os.path.join(td, "functions", "satellite_tone.h"), "w", encoding="utf-8").write(src)
+            exe = os.path.join(td, "t")
+            r = subprocess.run(["gcc", "-O1", "-w", "-I", td] + incs + xf + ["-o", exe, os.path.join(ROOT, "tests", "test_sat_tone.c")], capture_output=True, text=True, cwd=ROOT)
+            if r.returncode != 0:
+                check(False, "D3: «%s» не збирається: %s" % (name, r.stderr[-200:]))
+                continue
+            rc = subprocess.run([exe], capture_output=True, text=True).returncode
+            if name == "оригінал":
+                check(rc == 0, "D3: оригінал проходить")
+            else:
+                check(rc != 0, "D3: мутант «%s» убито" % name)
+
+
 def main():
     ua = F.load(os.path.join(INC, "hardware", "HX8353E_charset_UA.h"))
     lat = F.load(os.path.join(INC, "hardware", "HX8353E_charset.h"))
@@ -312,6 +375,7 @@ def main():
 
     section_b()
     section_c()
+    section_d()
     print("test_r66: %d перевірок, провалів %d" % (PASSED[0], len(FAILS)))
     return 1 if FAILS else 0
 
