@@ -333,7 +333,9 @@ def _send_c(link, *args, wait=0.3):
         ser.reset_input_buffer()
         ser.write(bytes([ord("C")] + list(args)))
         ser.flush()
-        ser.read(8)
+        io_stats.add("c_cmds")
+        if not ser.read(1):          # R73: відповідь на 'C' -- один байт ('-'); read(8) завжди чекав увесь `wait`. Верхня межа `wait` та сама
+            io_stats.add("port_timeouts")
     except Exception:  # noqa: BLE001
         pass
     finally:

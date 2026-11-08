@@ -325,6 +325,39 @@ def test_verify_modes():
             check(radio.reset_requested is False, "%s: після невдалої звірки перезавантаження не надсилається" % mode)
 
 
+def test_c_command_reply():
+    """Відповідь на 'C' — один байт '-' (usb_com.c ≈ L2336-2342). show_cps і _send_c читають 1 байт і не чекають на неіснуючі 64/8; sleep нема."""
+    import time
+    import cps_restore as cr_
+
+    class Radio(tcr.FakeRadioX):
+        def write(self, data):
+            r = super().write(data)
+            if bytes(data)[:1] == b"C":
+                self.rx.extend(b"-")                 # справжня прошивка відповідає одним байтом
+            return r
+    radio = Radio(tcr.spi_a())
+    radio.timeout = 0.6
+    slept = []
+    real_sleep = time.sleep
+    time.sleep = lambda x: slept.append(x)
+    try:
+        b = io_stats.snapshot()
+        aks.show_cps(radio)
+        d1 = io_stats.delta(b)
+        link = cl.CpsLink(radio)
+        cr_._send_c(link, 0)
+        d2 = io_stats.delta(b)
+    finally:
+        time.sleep = real_sleep
+    check(d1["port_timeouts"] == 0 and d1["c_cmds"] == 1 and radio.timeout == 0.6, "show_cps: відповідь отримано без очікування тайм-ауту, тайм-аут порту відновлено: %r" % d1)
+    check(d2["port_timeouts"] == 0 and d2["c_cmds"] == 2 and not slept and not radio.rx, "_send_c: 1 байт, без sleep, буфер порожній: %r %r" % (d2, slept))
+    src = read(HERE, "aes_key_store.py")
+    i = src.index("def show_cps(")
+    body = src[i:src.index("def _fast_link(")].split('"""')[2]          # код без докстрінга
+    check("time.sleep" not in body and "read(64)" not in body, "show_cps не спить і не читає 64 байти")
+
+
 def test_phase_erases():
     import phase_timing
     ph = phase_timing.Phases(None)
@@ -346,6 +379,7 @@ def main():
     test_reconnect_policy()
     test_chunk_switch()
     test_verify_modes()
+    test_c_command_reply()
     test_phase_erases()
     if FAILS:
         print("test_r73: ПРОВАЛІВ %d" % len(FAILS))

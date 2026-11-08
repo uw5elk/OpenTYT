@@ -104,9 +104,36 @@ def op_backup(env):
     cl.backup_codeplug(env.link, log=lambda *_: None)
 
 
+def op_keys_restore_15(env):
+    """R73: відновлення 15 ключів AES (усі слоти в секторі 0xDA000)."""
+    import tempfile
+    import test_r31 as t31
+    import aes_keys_backup as akb
+    occ = set(range(1, 16))
+    path, _d, _m, _r = t31.mk_zip(t31.put_table(tr.spi_a(), t31.make_table(2, occ)))
+    env.radio = tr.FakeRadioX(t31.put_table(tr.spi_b(tr.spi_a()), t31.make_table(9, set())))
+    b = io_stats.snapshot()                                  # рахується лише сама дія (підготовка архіву теж читає підставну рацію)
+    akb.restore_keys(cl.CpsLink(env.radio), path, t31.confirm_recorder()[0], log=lambda *_: None, post_reset=False)
+    env.warm = io_stats.delta(b)
+
+
+def op_blocks_restore_5(env):
+    """R73: відновлення 5 блоків custom-data одного сектора."""
+    import test_r73 as t73
+    import custom_region as cr
+    a = [(4, b"\x04" * 64), (5, b"\x05" * 64), (7, b"\x07" * 1352), (8, b"\x08" * 493), (9, b"\x09" * 8)]
+    b = [(t, bytes(x ^ 0x55 for x in pl)) for t, pl in a]
+    env.radio = t73.radio_with_region(t73.make_region(a))
+    plan = cr.plan_restore(t73.make_region(b), t73.make_region(a), selected={4, 5, 7, 8, 9})
+    b = io_stats.snapshot()
+    cr.apply_plan(cl.CpsLink(env.radio), plan, log=lambda *_: None)
+    env.warm = io_stats.delta(b)
+
+
 OPS = [("відкрити документ з рації (EEPROM+флеш)", op_open_document), ("AES: «Оновити слоти» (15 записів)", op_aes_refresh),
        ("AES: записати ключ (читання+запис+звірка)", op_aes_write_key), ("RCTL: прочитати", op_rctl_read), ("RCTL: прочитати вдруге (розташування відоме)", op_rctl_read_warm), ("RCTL: записати (стан+запис+звірка)", op_rctl_write),
-       ("бікон/шумодав: прочитати", op_beacon_read), ("бекап (EEPROM+флеш+custom-data+ключі)", op_backup)]
+       ("бікон/шумодав: прочитати", op_beacon_read), ("бекап (EEPROM+флеш+custom-data+ключі)", op_backup),
+       ("R73: відновити 15 ключів AES", op_keys_restore_15), ("R73: відновити 5 блоків custom-data (один сектор)", op_blocks_restore_5)]
 
 
 def table():
@@ -121,6 +148,6 @@ def table():
 
 
 if __name__ == "__main__":
-    print("%-52s %8s %8s %10s %8s" % ("операція", "запитів", "КіБ", "тайм-аутів", "X-пакетів"))
+    print("%-52s %8s %8s %10s %8s %9s" % ("операція", "запитів", "КіБ", "тайм-аутів", "X-пакетів", "стирань"))
     for name, d in table():
-        print("%-52s %8d %8.1f %10d %8d" % (name, d["read_req"], d["read_bytes"] / 1024.0, d["port_timeouts"] + d["short_reads"], d["x_packets"]))
+        print("%-52s %8d %8.1f %10d %8d %9d" % (name, d["read_req"], d["read_bytes"] / 1024.0, d["port_timeouts"] + d["short_reads"], d["x_packets"], d["sector_erases"]))

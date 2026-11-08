@@ -62,7 +62,21 @@ def find_port():
     return None
 
 def show_cps(ser):
-    ser.reset_input_buffer(); ser.write(bytes([ord("C"), 0])); ser.flush(); time.sleep(0.1); ser.read(64)
+    """Показати на рації екран CPS ('C' 0). R73: відповідь на 'C' 0 -- РІВНО ОДИН байт '-' (usb_com.c ≈ L2336-2342: загальна відповідь наприкінці обробника команд 'C'),
+    тож читаємо 1 байт і повертаємось одразу, як він прийшов. Раніше: sleep(0.1) + read(64) -- 64 байти ніколи не приходили, тож КОЖНЕ підключення AES/RCTL/роумінгу/
+    повтору виклику чекало повний тайм-аут порту (0,6 с) + 0,1 с. Верхня межа очікування не менша за стару (1,0 с: рація спершу перемикає меню, потім відповідає)."""
+    old = getattr(ser, "timeout", None)
+    try:
+        if old is not None:
+            ser.timeout = max(old, 1.0)
+        ser.reset_input_buffer(); ser.write(bytes([ord("C"), 0])); ser.flush()
+        got = ser.read(1)
+        io_stats.add("c_cmds")
+        if not got:
+            io_stats.add("port_timeouts")
+    finally:
+        if old is not None:
+            ser.timeout = old
 
 def _fast_link(ser):
     """CpsLink для цього порту (один на порт). R71: єдиний швидкий читач 'R' -- довжину відповіді беремо з її заголовка, тож порт не чекає тайм-ауту на кожному запиті."""

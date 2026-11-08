@@ -12,7 +12,7 @@
 import time
 from contextlib import contextmanager
 
-KEYS = ("read_req", "read_bytes", "x_packets", "port_timeouts", "short_reads", "sector_erases")
+KEYS = ("read_req", "read_bytes", "x_packets", "port_timeouts", "short_reads", "sector_erases", "c_cmds")
 COUNTERS = {k: 0 for k in KEYS}
 
 
