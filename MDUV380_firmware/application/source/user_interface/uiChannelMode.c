@@ -26,6 +26,7 @@
  *
  */
 #include "user_interface/uiGlobals.h"
+#include "functions/roaming_gate.h"   /* R74: ROAMING_EFFECTIVE() */
 #include "functions/codeplug_zone.h"
 #include "functions/trx.h"
 #include "user_interface/menuSystem.h"
@@ -374,7 +375,7 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 
 			if ((uiDataGlobal.Scan.active == false) &&
 					settingsLocationIsValid() &&
-					(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || (nonVolatileSettings.roaming != ROAMING_OFF))
+					(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || (ROAMING_EFFECTIVE() != ROAMING_OFF))
 #if defined(HAS_GPS)
 					&& ((SETTINGS_GPS_MODE_GET(nonVolatileSettings) <= GPS_MODE_OFF) ||
 							((SETTINGS_GPS_MODE_GET(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
@@ -392,14 +393,14 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 					gpsData.Status &= ~GPS_STATUS_POSITION_UPDATED; // Clear GPS position updated flag.
 #endif
 
-					if ((nonVolatileSettings.roaming >= ROAMING_5KM) &&
+					if ((ROAMING_EFFECTIVE() >= ROAMING_5KM) &&
 							(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))
 					{
 						double lat1 = settingsLocationGetLatitude();
 						double lon1 = settingsLocationGetLongitude();
 						double d = distanceBetweenTwoCoords(lat1, lon1, uiDataGlobal.lastDistanceSortLocationLat, uiDataGlobal.lastDistanceSortLocationLon, true);
 
-						if (d >= (double)ROAMING_DISTANCE_KM_ARRAY[nonVolatileSettings.roaming - ROAMING_5KM])
+						if (d >= (double)ROAMING_DISTANCE_KM_ARRAY[ROAMING_EFFECTIVE() - ROAMING_5KM])
 						{
 							codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, 0);
 
@@ -919,7 +920,7 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 					else
 					{
 						if (((uiDataGlobal.Scan.active == false) || (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED))) &&
-								((nonVolatileSettings.roaming != ROAMING_OFF) || (settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
+								((ROAMING_EFFECTIVE() != ROAMING_OFF) || (settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
 						{
 							if (currentChannelData->NOT_IN_CODEPLUG_CALCULATED_DISTANCE_X10 != -1)
 							{
@@ -2170,6 +2171,12 @@ menuStatus_t uiChannelModeQuickMenu(uiEvent_t *ev, bool isFirstRun)
 		uiDataGlobal.QuickMenu.tmpAudioMute = audioAmpIsMuted();
 
 		menuDataGlobal.numItems = NUM_CH_SCREEN_QUICK_MENU_ITEMS;
+#if defined(ROAMING_STOCK_HIDDEN)
+		if (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_ROAMING)   /* R74: на прихованому пункті стояти не можна */
+		{
+			menuDataGlobal.currentItemIndex = CH_SCREEN_QUICK_MENU_AUDIO_MUTE;
+		}
+#endif
 
 		menuDataGlobal.menuOptionsSetQuickkey = 0;
 		menuDataGlobal.menuOptionsTimeout = 0;
@@ -2316,6 +2323,26 @@ static bool validateZoneRemoveChannel(void)
 }
 #endif // CH_QUICKMENU_ZONE_REMOVE_ENABLED
 
+#if defined(ROAMING_STOCK_HIDDEN)
+/* R74: номер пункту швидкого меню, що стоїть на `loopOffset` рядків від поточного, ПРОПУСКАЮЧИ прихований стоковий «Roaming». Нумерація (enum) не змінюється --
+ * швидкі клавіші зберігають саме номер пункту (QUICKKEY_ENTRYID, див. обробник нижче), тож пункти після колишнього «Roaming» викликаються як і раніше. */
+static int quickMenuVisibleItem(int loopOffset)
+{
+	int idx = menuDataGlobal.currentItemIndex;
+	int steps = (loopOffset < 0) ? -loopOffset : loopOffset;
+	int dir = (loopOffset < 0) ? (NUM_CH_SCREEN_QUICK_MENU_ITEMS - 1) : 1;
+
+	while (steps-- > 0)
+	{
+		do
+		{
+			idx = (idx + dir) % NUM_CH_SCREEN_QUICK_MENU_ITEMS;
+		} while (idx == CH_SCREEN_QUICK_MENU_ROAMING);
+	}
+	return idx;
+}
+#endif
+
 static void updateQuickMenuScreen(bool isFirstRun)
 {
 	int mNum = 0;
@@ -2333,6 +2360,12 @@ static void updateQuickMenuScreen(bool isFirstRun)
 		if ((settingOption == false) || (i == 0))
 		{
 			mNum = menuGetMenuOffset(NUM_CH_SCREEN_QUICK_MENU_ITEMS, i);
+#if defined(ROAMING_STOCK_HIDDEN)
+			if (mNum >= 0)
+			{
+				mNum = quickMenuVisibleItem(i);   /* R74: сусідні рядки списку теж пропускають прихований пункт */
+			}
+#endif
 			if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
 			{
 				continue;
@@ -2551,6 +2584,13 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 			updateQuickMenuScreen(false);
 			return;
 		}
+#if defined(ROAMING_STOCK_HIDDEN)
+		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_ROAMING))
+		{
+			// R74: клавіша, колись призначена на прихований стоковий «Roaming», нічого не робить (пункту нема, значення не змінюємо)
+			return;
+		}
+#endif
 #if defined(CH_QUICKMENU_DELETE_ENABLED)
 		else if ((QUICKKEY_TYPE(ev->function) == QUICKKEY_MENU) && (QUICKKEY_ENTRYID(ev->function) == CH_SCREEN_QUICK_MENU_DELETE))
 		{
@@ -2583,6 +2623,12 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 		{
 			isDirty = true;
 			menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, NUM_CH_SCREEN_QUICK_MENU_ITEMS);
+#if defined(ROAMING_STOCK_HIDDEN)
+			if (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_ROAMING)   /* R74: прихований пункт перестрибуємо, нумерація не змінюється */
+			{
+				menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, NUM_CH_SCREEN_QUICK_MENU_ITEMS);
+			}
+#endif
 			menuDataGlobal.newOptionSelected = true;
 			menuQuickChannelExitStatus |= MENU_STATUS_LIST_TYPE;
 		}
@@ -2590,6 +2636,12 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 		{
 			isDirty = true;
 			menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, NUM_CH_SCREEN_QUICK_MENU_ITEMS);
+#if defined(ROAMING_STOCK_HIDDEN)
+			if (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_ROAMING)
+			{
+				menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, NUM_CH_SCREEN_QUICK_MENU_ITEMS);
+			}
+#endif
 			menuDataGlobal.newOptionSelected = true;
 			menuQuickChannelExitStatus |= MENU_STATUS_LIST_TYPE;
 		}
@@ -2850,7 +2902,7 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 						codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, 0);
 						currentChannelData->rxFreq = 0U; // force reload of zone
 					}
-					else if ((nonVolatileSettings.roaming == ROAMING_MANUAL) && (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_ROAMING))
+					else if ((ROAMING_EFFECTIVE() == ROAMING_MANUAL) && (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_ROAMING))
 					{
 						codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, 0);
 						currentChannelData->rxFreq = 0U; // force reload of zone, hence execute distance sort.
@@ -3256,7 +3308,7 @@ static void scanning(void)
 			if (audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF)
 			{
 				bool needsToUpdateDistanceDisplay = (settingsLocationIsValid() &&
-						(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || (nonVolatileSettings.roaming != ROAMING_OFF))
+						(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || (ROAMING_EFFECTIVE() != ROAMING_OFF))
 #if defined(HAS_GPS)
 						&& ((SETTINGS_GPS_MODE_GET(nonVolatileSettings) <= GPS_MODE_OFF) ||
 								((SETTINGS_GPS_MODE_GET(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
@@ -3375,7 +3427,7 @@ void uiChannelModeStopScanning(void)
 	// we don't want to do that right now, as the operator probably
 	// stopped scanning for a good reason (Rx || Rx/Tx).
 	// Hence we start tracking (location & time) from here.
-	if ((nonVolatileSettings.roaming >= ROAMING_5KM) &&
+	if ((ROAMING_EFFECTIVE() >= ROAMING_5KM) &&
 			settingsLocationIsValid() &&
 			(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))
 	{
@@ -3410,7 +3462,7 @@ void uiChannelInitializeCurrentZone(void)
 	codeplugZoneGetDataForNumber(nonVolatileSettings.currentZone, &currentZone);
 	codeplugUtilConvertBufToDisplayString(currentZone.name, currentZoneName, 16);// need to convert to zero terminated string
 
-	if ((nonVolatileSettings.roaming != ROAMING_OFF) &&
+	if ((ROAMING_EFFECTIVE() != ROAMING_OFF) &&
 			settingsLocationIsValid() &&
 			(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))
 	{

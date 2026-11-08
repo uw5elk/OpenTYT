@@ -31,6 +31,7 @@
 #include "hardware/EEPROM.h"
 #endif
 #include "user_interface/uiGlobals.h"
+#include "functions/roaming_gate.h"   /* R74: ROAMING_EFFECTIVE() */
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
@@ -1873,7 +1874,7 @@ void uiUtilityDisplayInformation(const char *str, displayInformation_t line, int
 		case DISPLAY_INFO_ZONE:
 			{
 				bool distanceEnabled = (((uiDataGlobal.Scan.active == false) || (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED))) &&
-						((nonVolatileSettings.roaming != ROAMING_OFF) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false)));
+						((ROAMING_EFFECTIVE() != ROAMING_OFF) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false)));
 				bool displayingZone = (yOverride == -2);
 
 				if (displayingZone)
@@ -3164,7 +3165,7 @@ ANNOUNCE_STATIC void announceDistance(bool voicePromptWasPlaying)
 	char distBuf[SCREEN_LINE_BUFFER_SIZE];
 
 	if ((currentChannelData->NOT_IN_CODEPLUG_CALCULATED_DISTANCE_X10 != -1) &&
-		(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || ((nonVolatileSettings.roaming != ROAMING_OFF) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
+		(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || ((ROAMING_EFFECTIVE() != ROAMING_OFF) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
 	{
 		if (!voicePromptWasPlaying)
 		{

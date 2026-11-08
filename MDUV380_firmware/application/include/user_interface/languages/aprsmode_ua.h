@@ -361,4 +361,9 @@
 #define APRSM_L_SILENT       "Тихо"
 #define APRSM_L_USEPOS       "Поз.слота"
 
+/* R74B: пункт «Поз.слота» (USE_POSITION) у APRS -> Налаштування -> Позиція: зрозумілий підпис «Джерело: Слот / Рація» (лише HAS_GPS+FORK_NO_GPS_MENU) */
+#define APRSM_L_USEPOS_SRC    "Джерело"
+#define APRSM_V_USEPOS_SLOT   "Слот"
+#define APRSM_V_USEPOS_RADIO  "Рація"
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMODE_UA_H_ */

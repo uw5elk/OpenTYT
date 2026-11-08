@@ -28,6 +28,7 @@
  */
 
 #include "user_interface/uiGlobals.h"
+#include "functions/roaming_gate.h"   /* R74: ROAMING_EFFECTIVE() */
 #include "functions/trx.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
@@ -1950,7 +1951,7 @@ static void cssDecrementFromEvent(uiEvent_t *ev, uint16_t *tone, uint8_t *index,
 static bool saveChanges(uiEvent_t *ev)
 {
 	bool ret = false;
-	bool roamingSortZone = (((nonVolatileSettings.roaming != ROAMING_OFF) &&
+	bool roamingSortZone = (((ROAMING_EFFECTIVE() != ROAMING_OFF) &&
 			(rootMenuIsVFO == false) &&
 			(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false)) &&
 					((codeplugChannelGetFlag(&tmpChannel, CHANNEL_FLAG_USE_LOCATION) != codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_USE_LOCATION)) ||

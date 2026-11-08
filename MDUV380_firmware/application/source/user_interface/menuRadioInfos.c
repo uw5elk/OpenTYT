@@ -26,6 +26,7 @@
  *
  */
 #include "user_interface/uiGlobals.h"
+#include "functions/roaming_gate.h"   /* R74: ROAMING_EFFECTIVE() */
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
@@ -948,7 +949,7 @@ static void handleEvent(uiEvent_t *ev)
 								aprsBeaconingSetCurrentLocation(settingsLocationGetLatitude(), settingsLocationGetLongitude());
 
 								// Roaming is enabled, and root menu is Channel mode => trigger distance sorting.
-								if ((nonVolatileSettings.roaming != ROAMING_OFF) &&
+								if ((ROAMING_EFFECTIVE() != ROAMING_OFF) &&
 										(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&
 										(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))
 								{

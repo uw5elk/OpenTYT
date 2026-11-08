@@ -1023,7 +1023,12 @@ static const asEnum_t asEnums[] =
 	{ AS_S_QSY,    2U, APRSM_L_QSY,    { APRSM_V_OFF, APRSM_V_ON } },
 	{ AS_S_BAUD,   2U, APRSM_L_BAUD,   { APRSM_V_BAUD0, APRSM_V_BAUD1 } },
 	{ AS_S_SILENT, 2U, APRSM_L_SILENT, { APRSM_V_OFF, APRSM_V_ON } },
+#if defined(HAS_GPS) && defined(FORK_NO_GPS_MENU) && defined(LANGUAGE_BUILD_UKRAINIAN)
+	/* R74B: прапорець USE_POSITION слота: вимк = позиція рації, увімк = позиція зі слота (широта/довгота цього ж меню); підпис «Джерело» -- власні рядки, спільні «Вимк/Увімк» не чіпаємо */
+	{ AS_S_USEPOS, 2U, APRSM_L_USEPOS_SRC, { APRSM_V_USEPOS_RADIO, APRSM_V_USEPOS_SLOT } },
+#else
 	{ AS_S_USEPOS, 2U, APRSM_L_USEPOS, { APRSM_V_OFF, APRSM_V_ON } },
+#endif
 #endif
 	{ AS_S_BCNWIN, 3U, APRSM_L_BCNWIN, { APRSRX_OPT_BCNWIN_ALL, APRSRX_OPT_BCNWIN_NEW, APRSRX_OPT_BCNWIN_OFF } }
 };
