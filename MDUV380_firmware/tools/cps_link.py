@@ -42,6 +42,8 @@ import time
 import zipfile
 import zlib
 
+import io_stats
+
 # --- області CPS (usb_com.c: enum CPS_ACCESS_AREA) -------------------------------------
 CPS_ACCESS_FLASH = 1
 CPS_ACCESS_EEPROM = 2
@@ -190,6 +192,7 @@ class CpsLink:
         while len(buf) < n:
             part = self.ser.read(n - len(buf))
             if not part:
+                io_stats.add("port_timeouts")    # R71: порт дочекався тайм-ауту (для швидкого читача це лише справжній збій)
                 break           # тайм-аут порту
             buf += part
         return buf
@@ -227,6 +230,8 @@ class CpsLink:
                 body = self._request_once(area, address, length, exact)
                 self.stats["requests"] += 1
                 self.stats["bytes"] += len(body)
+                io_stats.add("read_req")
+                io_stats.add("read_bytes", len(body))
                 return body
             except CpsError as e:
                 last = e

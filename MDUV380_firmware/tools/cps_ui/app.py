@@ -24,6 +24,7 @@ from tkinter import ttk, messagebox, scrolledtext
 import cps_link as cps
 import custom_compact
 import custom_data
+import io_stats
 import gui_clipboard
 import gui_dialogs as gd
 import gui_theme as gt
@@ -663,7 +664,12 @@ class CpsApp(DocActions, tk.Tk):
             sys.stdout = QueueWriter(self.queue)
             ok, reason, result = False, None, None
             try:
-                result = fn()
+                # R71: КОЖНА операція з рацією міряється справжнім годинником ПК і лічильниками обміну; рядок «Вимір ...» іде в журнал (фонові опитування -- без нього)
+                if quiet:
+                    result = fn()
+                else:
+                    with io_stats.measure(status_text.rstrip(".")):
+                        result = fn()
                 ok = True
             except cps.CpsError as e:
                 reason = str(e)

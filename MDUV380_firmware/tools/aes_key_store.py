@@ -40,6 +40,7 @@ Usage:
 The block survives reboots (it's in flash). The radio enumerates as USB CDC 1fc9:0094.
 """
 import argparse, struct, sys, time
+import io_stats
 try:
     import serial
     from serial.tools import list_ports
@@ -72,6 +73,10 @@ def flash_read(ser, addr, length):
                      (n >> 8) & 0xFF, n & 0xFF])
         ser.reset_input_buffer(); ser.write(req); ser.flush(); time.sleep(0.15)
         r = ser.read(n + 8)
+        io_stats.add("read_req")                     # R71 вимір: рація віддає n + 3 байти, а ми просимо n + 8 -- порт чекає тайм-ауту (short_reads)
+        io_stats.add("read_bytes", max(len(r) - 3, 0))
+        if len(r) < n + 8:
+            io_stats.add("short_reads")
         if len(r) < 3 or r[0] != ord("R"):
             raise RuntimeError("flash read failed @%06X: %r" % (addr, r[:8]))
         out += r[3:3 + n]
@@ -87,6 +92,9 @@ def flash_write_block(ser, addr, data):
     req = bytes([ord("X"), 1, (sector >> 16) & 0xFF, (sector >> 8) & 0xFF, sector & 0xFF])
     ser.reset_input_buffer(); ser.write(req); ser.flush(); time.sleep(0.2)
     r = ser.read(8)
+    io_stats.add("x_packets")
+    if len(r) < 8:
+        io_stats.add("short_reads")
     if not r or r[0] == ord("-"):
         raise RuntimeError("prepare sector failed: %r" % r)
     # 2) send data (<=1528 per chunk; our block is 604 -> one chunk)
@@ -98,12 +106,18 @@ def flash_write_block(ser, addr, data):
                      (len(chunk) >> 8) & 0xFF, len(chunk) & 0xFF]) + chunk
         ser.reset_input_buffer(); ser.write(req); ser.flush(); time.sleep(0.2)
         r = ser.read(8)
+        io_stats.add("x_packets")
+        if len(r) < 8:
+            io_stats.add("short_reads")
         if not r or r[0] == ord("-"):
             raise RuntimeError("send data failed @%06X: %r" % (a, r))
         off += len(chunk)
     # 3) commit (erase sector + write back)
     ser.reset_input_buffer(); ser.write(bytes([ord("X"), 3])); ser.flush(); time.sleep(0.5)
     r = ser.read(8)
+    io_stats.add("x_packets")
+    if len(r) < 8:
+        io_stats.add("short_reads")
     if not r or r[0] == ord("-"):
         raise RuntimeError("flash write/commit failed: %r" % r)
 

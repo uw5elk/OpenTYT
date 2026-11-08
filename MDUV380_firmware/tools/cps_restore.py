@@ -40,6 +40,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cps_link as cl  # noqa: E402
 import phase_timing  # noqa: E402
+import io_stats  # noqa: E402
 import codeplug_view as cv  # noqa: E402
 
 # *** Зняти блокування = змінити False на True окремим однорядковим комітом, коли Богдан підтвердить BK8. ***
@@ -276,6 +277,7 @@ def _x_exchange(link, payload, sub, timeout):
         ser.reset_input_buffer()
         ser.write(payload)
         ser.flush()
+        io_stats.add("x_packets")      # R71 вимір
         first = link._read_exact(1)
         if not first:
             raise _XSilent("рація не відповіла (тайм-аут %.0f с)" % timeout)
