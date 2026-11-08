@@ -86,43 +86,37 @@ def flash_read(ser, addr, length):
     except cps_link.CpsError as e:
         raise RuntimeError("flash read failed @%06X: %s" % (addr, e))
 
+# R71: слухачі записів у флеш (custom_data скидає кеш розташування блоків при будь-якому записі в свою область)
+WRITE_LISTENERS = []
+
+
+def notify_flash_write(addr, length):
+    for fn in list(WRITE_LISTENERS):
+        fn(addr, length)
+
+
 def flash_write_block(ser, addr, data):
     """Write `data` at raw SPI-flash `addr` via CPS 'X' prepare/send/commit.
     Only the touched bytes change; the rest of the 4 KB sector is preserved
-    (the firmware reads the sector first, patches it, then erases+writes)."""
+    (the firmware reads the sector first, patches it, then erases+writes).
+    R71 2.1b: відповідь на кожен X -- рівно 2 байти ('X', sub), читаємо саме їх (як cps_restore._x_exchange), без sleep(0.2/0.5) і без
+    очікування повного тайм-ауту порту на 8 байтів, яких рація не надішле. Тайм-аути -- ті самі, що перевірені у відновленні з бекапу
+    (X 1/X 2: 2 с, X 3: 8 с на стирання), тож повільна рація не дістає нових відмов."""
+    import cps_restore as _cr          # відкладено: cps_restore тягне codeplug_view
+    notify_flash_write(addr, len(data))
+    link = _fast_link(ser)
     sector = addr // 4096
-    # 1) prepare sector (firmware reads it into its RAM buffer)
-    req = bytes([ord("X"), 1, (sector >> 16) & 0xFF, (sector >> 8) & 0xFF, sector & 0xFF])
-    ser.reset_input_buffer(); ser.write(req); ser.flush(); time.sleep(0.2)
-    r = ser.read(8)
-    io_stats.add("x_packets")
-    if len(r) < 8:
-        io_stats.add("short_reads")
-    if not r or r[0] == ord("-"):
-        raise RuntimeError("prepare sector failed: %r" % r)
-    # 2) send data (<=1528 per chunk; our block is 604 -> one chunk)
-    off = 0
-    while off < len(data):
-        chunk = data[off:off + 1024]
-        a = addr + off
-        req = bytes([ord("X"), 2, (a >> 24) & 0xFF, (a >> 16) & 0xFF, (a >> 8) & 0xFF, a & 0xFF,
-                     (len(chunk) >> 8) & 0xFF, len(chunk) & 0xFF]) + chunk
-        ser.reset_input_buffer(); ser.write(req); ser.flush(); time.sleep(0.2)
-        r = ser.read(8)
-        io_stats.add("x_packets")
-        if len(r) < 8:
-            io_stats.add("short_reads")
-        if not r or r[0] == ord("-"):
-            raise RuntimeError("send data failed @%06X: %r" % (a, r))
-        off += len(chunk)
-    # 3) commit (erase sector + write back)
-    ser.reset_input_buffer(); ser.write(bytes([ord("X"), 3])); ser.flush(); time.sleep(0.5)
-    r = ser.read(8)
-    io_stats.add("x_packets")
-    if len(r) < 8:
-        io_stats.add("short_reads")
-    if not r or r[0] == ord("-"):
-        raise RuntimeError("flash write/commit failed: %r" % r)
+    try:
+        _cr._x_exchange(link, _cr._x1(sector), 1, _cr.X_TIMEOUT)
+        off = 0
+        while off < len(data):
+            chunk = data[off:off + _cr.X_CHUNK]
+            a = addr + off
+            _cr._x_exchange(link, _cr._x2(a, chunk), 2, _cr.X_TIMEOUT)
+            off += len(chunk)
+        _cr._x_exchange(link, bytes([ord("X"), 3]), 3, _cr.X_COMMIT_TIMEOUT)
+    except (_cr._XRefused, _cr._XSilent) as e:
+        raise RuntimeError("flash write failed @%06X: %s" % (addr, e))
 
 def fresh_payload():
     p = bytearray(AESK_BLOCK_LEN)

@@ -48,6 +48,24 @@ def entry_addr(key_id):
     return STOCK_KEY_TABLE_BASE + STOCK_KEY_ENTRY_LEN * key_id
 
 
+def table_span():
+    """(адреса, довжина) суцільної ділянки з усіма записами keyId 1..15 -- читається одним проходом (R71 2.2)."""
+    first = entry_addr(STOCK_KEY_MIN_ID)
+    last = entry_addr(STOCK_KEY_MAX_ID) + STOCK_KEY_ENTRY_LEN
+    return first, last - first
+
+
+def split_table(blob):
+    """Розкласти ділянку table_span() на {keyId: 100 байт}. Неповний хвіст (коротша відповідь) пропускається, як і раніше пропускався неповний запис."""
+    out = {}
+    for k in range(STOCK_KEY_MIN_ID, STOCK_KEY_MAX_ID + 1):
+        o = (k - STOCK_KEY_MIN_ID) * STOCK_KEY_ENTRY_LEN
+        e = bytes(blob[o:o + STOCK_KEY_ENTRY_LEN])
+        if len(e) == STOCK_KEY_ENTRY_LEN:
+            out[k] = e
+    return out
+
+
 # ---- фіксовані ключі загортання (ідентичні на кожній рації) ----------------------
 _KEY_A = bytes([
     0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01,

@@ -48,9 +48,12 @@ class Env:
 
 
 def run(name, fn, env):
+    cd.invalidate()
     b = io_stats.snapshot()
     fn(env)
     d = io_stats.delta(b)
+    if hasattr(env, "warm"):
+        d = env.warm                                         # для «гарячих» сценаріїв рахується лише друга частина
     return name, d
 
 
@@ -60,8 +63,8 @@ def op_open_document(env):
 
 
 def op_aes_refresh(env):
-    for k in range(skt.STOCK_KEY_MIN_ID, skt.STOCK_KEY_MAX_ID + 1):          # те, що робить p_aes._refresh_slots_worker
-        aks.flash_read(env.radio, skt.entry_addr(k), skt.STOCK_KEY_ENTRY_LEN)
+    a, n = skt.table_span()                                  # те, що робить p_aes._refresh_slots_worker
+    skt.split_table(aks.flash_read(env.radio, a, n))
 
 
 def op_aes_write_key(env):
@@ -75,6 +78,14 @@ def op_aes_write_key(env):
 
 def op_rctl_read(env):
     cd.read_block(env.radio, 9, 8)
+
+
+def op_rctl_read_warm(env):
+    cd.invalidate()
+    cd.read_block(env.radio, 9, 8)                          # перше читання у сесії -- холодне (обхід області)
+    b = io_stats.snapshot()
+    cd.read_block(env.radio, 9, 8)                          # друге -- розташування вже відоме: 1 запит
+    env.warm = io_stats.delta(b)
 
 
 def op_rctl_write(env):
@@ -94,7 +105,7 @@ def op_backup(env):
 
 
 OPS = [("відкрити документ з рації (EEPROM+флеш)", op_open_document), ("AES: «Оновити слоти» (15 записів)", op_aes_refresh),
-       ("AES: записати ключ (читання+запис+звірка)", op_aes_write_key), ("RCTL: прочитати", op_rctl_read), ("RCTL: записати (стан+запис+звірка)", op_rctl_write),
+       ("AES: записати ключ (читання+запис+звірка)", op_aes_write_key), ("RCTL: прочитати", op_rctl_read), ("RCTL: прочитати вдруге (розташування відоме)", op_rctl_read_warm), ("RCTL: записати (стан+запис+звірка)", op_rctl_write),
        ("бікон/шумодав: прочитати", op_beacon_read), ("бекап (EEPROM+флеш+custom-data+ключі)", op_backup)]
 
 

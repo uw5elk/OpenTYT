@@ -203,9 +203,12 @@ class AesPanel(Panel):
         with self._connect() as ser:
             occupied = []
             names = {}
+            # R71 2.2: вся таблиця ключів (15 x 100 Б) -- одна суцільна ділянка, читається за 2 запити замість 15
+            span_addr, span_len = skt.table_span()
+            entries = skt.split_table(aes_key_store.flash_read(ser, span_addr, span_len))
             for key_id in range(skt.STOCK_KEY_MIN_ID, skt.STOCK_KEY_MAX_ID + 1):
-                entry = aes_key_store.flash_read(ser, skt.entry_addr(key_id), skt.STOCK_KEY_ENTRY_LEN)
-                if len(entry) != skt.STOCK_KEY_ENTRY_LEN:
+                entry = entries.get(key_id)
+                if entry is None:
                     continue
                 entry_type, name32, wrapped = skt.parse_entry(entry)
                 if entry_type in (skt.STOCK_KEY_TYPE_AES256, skt.STOCK_KEY_TYPE_AES256B):

@@ -365,6 +365,11 @@ def codeplug_from_radio(link, progress=None):
     progress(percent, text)."""
     rng = cl.flash_backup_range()
     total = cl.EEPROM_BACKUP_LEN + rng["length"]
+    try:                                                   # R71: «відкрити з рації» -- свіжий старт, кеш розташування блоків custom-data скидаємо
+        import custom_data as _cd
+        _cd.invalidate()
+    except ImportError:
+        pass
 
     def step(done_before):
         def cb(done, _t):

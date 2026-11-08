@@ -41,6 +41,93 @@ def _read_region(ser, addr, length):
     return aks.flash_read(ser, FLASH_BASE + addr, length)
 
 
+# ---------------------------------------------------------------------------------------------------------------------------------
+#  R71: кеш РОЗТАШУВАННЯ блоків (не даних!)
+# ---------------------------------------------------------------------------------------------------------------------------------
+# Раніше кожне читання/запис блока заново обходило область: 1 запит на магію + по запиту на кожен заголовок до потрібного (для RCTL -- ~11 запитів).
+# Тепер обхід запам'ятовує, де (адреса, довжина) лежить кожен знайдений блок, і наступне звернення перевіряє ЛИШЕ заголовок за збереженою адресою.
+# Збіг {тип, довжина} -- блок там; розбіжність або відсутність у кеші -- повний обхід, як і раніше (тож зміна області самою рацією, заміна рації на
+# тому ж порту чи відновлення з бекапу не дають хибної адреси: нічого не береться на віру). ДАНІ з кешу не віддаються ніколи -- вони читаються
+# з рації щоразу (інакше гонка «ПК пише / рація теж змінює» віддавала б застаріле). Кеш скидається при КОЖНОМУ записі у флеш області (хук aks), при
+# відновленні, ущільненні й повторному відкритті документа з рації (cd.invalidate()).
+SCAN_WINDOW = 256                      # скільки байтів брати за один запит під час обходу (дрібні блоки йдуть підряд -- один запит покриває кілька заголовків)
+_LOCS = {}                             # ключ порту -> {тип: (зміщення, довжина)}
+
+
+def _key(ser):
+    port = getattr(ser, "port", None)
+    return port if isinstance(port, str) else id(ser)
+
+
+def invalidate(ser=None):
+    """Скинути кеш розташування (для порту ser або повністю)."""
+    if ser is None:
+        _LOCS.clear()
+    else:
+        _LOCS.pop(_key(ser), None)
+
+
+def _on_flash_write(addr, length):
+    # будь-який запис, що зачепив область custom-data, скидає кеш (заголовки могли змінитись); решту флешу (таблиця AES, кодплаг) кеш не стосується
+    if addr < FLASH_BASE + MAX_BLOCK_ADDRESS and addr + length > FLASH_BASE:
+        _LOCS.clear()
+
+
+aks.WRITE_LISTENERS.append(_on_flash_write)
+
+
+def _remember(ser, data_type, addr, dlen):
+    _LOCS.setdefault(_key(ser), {})[data_type] = (addr, dlen)
+
+
+def _cached_header(ser, data_type):
+    """Кеш -> (зміщення, довжина), якщо заголовок за збереженою адресою досі {data_type, довжина}; інакше None (запис кешу видаляється)."""
+    loc = _LOCS.get(_key(ser), {}).get(data_type)
+    if loc is None:
+        return None
+    addr, dlen = loc
+    try:
+        hdr = _read_region(ser, addr, HDR_LEN)
+    except Exception:  # noqa: BLE001
+        invalidate(ser)
+        return None
+    if len(hdr) == HDR_LEN and struct.unpack("<ii", hdr) == (data_type, dlen):
+        return loc
+    invalidate(ser)
+    return None
+
+
+def _scan(ser, data_type, new_len):
+    """Обхід області (побайтова копія двох функцій codeplug.c) вікнами по SCAN_WINDOW байтів; по дорозі запам'ятовує всі знайдені блоки."""
+    win_base = 0
+    win = _read_region(ser, 0, SCAN_WINDOW)
+    if win[:8] != REGION_MAGIC:
+        return (None, None, None)
+    addr = 12
+    seen = {}
+    while addr < MAX_BLOCK_ADDRESS:
+        if not (win_base <= addr and addr + HDR_LEN <= win_base + len(win)):
+            win_base = addr
+            win = _read_region(ser, addr, min(SCAN_WINDOW, MAX_BLOCK_ADDRESS - addr))
+            if len(win) < HDR_LEN:
+                return (None, None, None)
+        dtype, dlen = struct.unpack("<ii", win[addr - win_base:addr - win_base + HDR_LEN])
+        if dtype != TYPE_EMPTY and dlen != 0 and dlen != TYPE_EMPTY:
+            seen.setdefault(dtype, (addr, dlen))
+        if dtype == data_type:
+            for t, loc in seen.items():
+                _remember(ser, t, loc[0], loc[1])
+            return ("existing", addr, dlen)
+        if dlen == 0 or dlen == TYPE_EMPTY:
+            for t, loc in seen.items():
+                _remember(ser, t, loc[0], loc[1])
+            if (addr + HDR_LEN + new_len) < MAX_BLOCK_ADDRESS:
+                return ("empty", addr, None)
+            return (None, None, None)   # порожній слот є, але новий блок туди не влізе
+        addr += HDR_LEN + dlen
+    return (None, None, None)
+
+
 def find_or_alloc_block(ser, data_type, new_len):
     """Побайтова копія двох функцій codeplug.c разом. Повертає (kind, addr, existLen):
       ("existing", addr, existLen) -- блок цього типу вже є (existLen -- його поточна
@@ -48,23 +135,12 @@ def find_or_alloc_block(ser, data_type, new_len):
           дозволяє, довжину блоку міняти не можна);
       ("empty", addr, None)        -- вільний слот знайдено, є місце для new_len байт;
       (None, None, None)           -- регіон не в форматі "OpenGD77", або місця немає.
+    R71: спершу перевірка заголовка за збереженою адресою (1 запит), інакше обхід вікнами.
     """
-    magic = _read_region(ser, 0, 12)
-    if magic[:8] != REGION_MAGIC:
-        return (None, None, None)
-
-    addr = 12
-    while addr < MAX_BLOCK_ADDRESS:
-        hdr = _read_region(ser, addr, HDR_LEN)
-        dtype, dlen = struct.unpack("<ii", hdr)
-        if dtype == data_type:
-            return ("existing", addr, dlen)
-        if dlen == 0 or dlen == TYPE_EMPTY:
-            if (addr + HDR_LEN + new_len) < MAX_BLOCK_ADDRESS:
-                return ("empty", addr, None)
-            return (None, None, None)   # порожній слот є, але новий блок туди не влізе
-        addr += HDR_LEN + dlen
-    return (None, None, None)
+    loc = _cached_header(ser, data_type)
+    if loc is not None:
+        return ("existing", loc[0], loc[1])
+    return _scan(ser, data_type, new_len)
 
 
 def flash_write_span(ser, addr, data):
@@ -139,12 +215,25 @@ def write_block(ser, data_type, payload):
 
     header = struct.pack("<ii", data_type, new_len)
     flash_write_span(ser, FLASH_BASE + addr, header + payload)
+    _remember(ser, data_type, addr, new_len)      # запис скинув кеш -- тут відомо точно, де тепер цей блок
     return True, ("оновлено існуючий блок @+%d" % addr) if kind == "existing" else ("створено новий блок @+%d" % addr)
 
 
 def read_block(ser, data_type, max_len):
-    """Прочитати вміст блоку (без заголовка) або None, якщо блоку немає."""
-    kind, addr, existLen = find_or_alloc_block(ser, data_type, 0)
+    """Прочитати вміст блоку (без заголовка) або None, якщо блоку немає.
+    R71: якщо розташування відоме, заголовок і дані беруться ОДНИМ запитом і заголовок звіряється (тип і довжина); розбіжність -- повний обхід."""
+    loc = _LOCS.get(_key(ser), {}).get(data_type)
+    if loc is not None:
+        addr, dlen = loc
+        n = min(dlen, max_len)
+        try:
+            raw = _read_region(ser, addr, HDR_LEN + n)
+        except Exception:  # noqa: BLE001
+            raw = b""
+        if len(raw) == HDR_LEN + n and struct.unpack("<ii", raw[:HDR_LEN]) == (data_type, dlen):
+            return raw[HDR_LEN:]
+        invalidate(ser)
+    kind, addr, existLen = _scan(ser, data_type, 0)
     if kind != "existing":
         return None
     n = min(existLen, max_len)

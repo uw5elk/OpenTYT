@@ -309,6 +309,8 @@ def write_sector(link, raw_addr, data, log=print):
     if CAL_START <= raw_addr < CAL_END:
         raise ValueError("сектор калібрування 0x%X писати заборонено" % raw_addr)
     sector = raw_addr // SECTOR
+    import aes_key_store as _aks                 # R71: запис у флеш скидає кеш розташування блоків custom-data
+    _aks.notify_flash_write(raw_addr, len(data))
     try:
         _x_exchange(link, _x1(sector), 1, X_TIMEOUT)
     except _XRefused:
