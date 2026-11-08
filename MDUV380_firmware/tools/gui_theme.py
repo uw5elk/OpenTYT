@@ -131,9 +131,7 @@ def apply(root):
     # R76: виразні кнопки панелі документа. Вимкнена кнопка: пласка, без рамки й заливки кольору дії (відрізняється від активної нейтральної)
     def _action(name, bg, hover, press, fg, bold=False, border=None):
         kw = dict(background=P[bg], foreground=P[fg], bordercolor=P[border or bg], lightcolor=P[bg], darkcolor=P[bg], focuscolor=P["accent"],
-                  padding=(14, 3) if bold else (10, 3))
-        if bold:
-            kw["font"] = ("Segoe UI", 10, "bold")
+                  padding=(6, 3) if bold else (4, 3))
         st.configure(name, **kw)
         st.map(name,
                background=[("disabled", P["disabled_bg"]), ("pressed", P[press]), ("active", P[hover])],
@@ -146,7 +144,7 @@ def apply(root):
     _action("WriteDirty.TButton", "dirty_bg", "dirty_hover", "dirty_press", "dirty_fg", bold=True)
     _action("File.TButton", "file_bg", "file_hover", "file_press", "file_fg", border="border")
     st.configure("Ghost.TButton", background=P["bg"], foreground=P["ghost_fg"], bordercolor=P["border"], lightcolor=P["bg"], darkcolor=P["bg"],
-                 padding=(10, 3))
+                 padding=(4, 3))
     st.map("Ghost.TButton",
            background=[("disabled", P["bg"]), ("pressed", P["file_press"]), ("active", P["ghost_hover"])],
            foreground=[("disabled", P["disabled_fg"])],

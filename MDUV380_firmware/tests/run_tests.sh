@@ -144,6 +144,14 @@ NOFIX_TOO=(test_aes_txphase)
 rm -rf "$BUILD" && mkdir -p "$BUILD"
 
 pass=0; fail=0
+# R76B: вивід невдалого тесту для логу CI: усі рядки з ПРОВАЛ/FAIL/Traceback/Error (до 40) і хвіст (до 40 рядків). Раніше було лише tail -10, а
+# його забивав шум (рядки «Супутники записані…»), тож причину падіння в CI було не видно. Формат рядків ok/ПРОВАЛ/ПРОПУЩЕНО не змінено.
+show_fail() {
+	local o="$1" m
+	m="$(printf '%s\n' "$o" | grep -E 'ПРОВАЛ|FAIL|Traceback|Error|Exception' | head -40)"
+	if [ -n "$m" ]; then echo "  --- рядки з помилками:"; printf '%s\n' "$m" | sed 's/^/  /'; fi
+	echo "  --- хвіст виводу:"; printf '%s\n' "$o" | tail -40 | sed 's/^/  /'
+}
 for src in "$TESTS_DIR"/test_*.c; do
 	name="$(basename "$src" .c)"
 	if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]]; then continue; fi
@@ -217,12 +225,12 @@ if [ -z "$FILTER" ] || [[ "wake" == *"$FILTER"* ]] || [[ "$FILTER" == *"wake"* ]
 	if out="$(python3 "$TESTS_DIR/../tools/wake_diag.py" --selftest 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            wake_diag --selftest (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        wake_diag --selftest (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        wake_diag --selftest (python)"; show_fail "$out"
 	fi
 	if out="$(python3 "$TESTS_DIR/../tools/check_wake_ifdef.py" --selftest 2>&1 && python3 "$TESTS_DIR/../tools/check_wake_ifdef.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            check_wake_ifdef (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        check_wake_ifdef (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        check_wake_ifdef (python)"; show_fail "$out"
 	fi
 fi
 
@@ -267,7 +275,7 @@ if [ -z "$FILTER" ] || [[ "font_gen" == *"$FILTER"* ]]; then
 	if out="$(python3 "$TESTS_DIR/../tools/font_gen.py" --check 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            font_gen --check (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        font_gen --check (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        font_gen --check (python)"; show_fail "$out"
 	fi
 fi
 
@@ -276,7 +284,7 @@ if [ -z "$FILTER" ] || [[ "aprs_icons_gen" == *"$FILTER"* ]]; then
 	if out="$(python3 "$TESTS_DIR/../tools/aprs_icons_gen.py" --check 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            aprs_icons_gen --check (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        aprs_icons_gen --check (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        aprs_icons_gen --check (python)"; show_fail "$out"
 	fi
 fi
 
@@ -286,12 +294,12 @@ if [ -z "$FILTER" ] || [[ "test_aprs_capture aprs_offline" == *"$FILTER"* ]]; th
 	if out="$(python3 "$TESTS_DIR/../tools/test_aprs_capture.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_aprs_capture (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        test_aprs_capture (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_aprs_capture (python)"; show_fail "$out"
 	fi
 	if out="$(python3 "$TESTS_DIR/../tools/aprs_offline.py" --selftest 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            aprs_offline --selftest (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        aprs_offline --selftest (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        aprs_offline --selftest (python)"; show_fail "$out"
 	fi
 fi
 
@@ -300,7 +308,7 @@ if [ -z "$FILTER" ] || [[ "test_cps_link" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_link.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_cps_link (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_link (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_link (python)"; show_fail "$out"
 	fi
 fi
 
@@ -309,7 +317,7 @@ if [ -z "$FILTER" ] || [[ "test_rxdiag" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_rxdiag.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_rxdiag (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        test_rxdiag (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_rxdiag (python)"; show_fail "$out"
 	fi
 fi
 
@@ -318,7 +326,7 @@ if [ -z "$FILTER" ] || [[ "test_le_bitsearch" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_le_bitsearch.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_le_bitsearch (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        test_le_bitsearch (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_le_bitsearch (python)"; show_fail "$out"
 	fi
 fi
 
@@ -327,7 +335,7 @@ if [ -z "$FILTER" ] || [[ "test_le_bit21" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_le_bit21.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_le_bit21 (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        test_le_bit21 (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_le_bit21 (python)"; show_fail "$out"
 	fi
 fi
 
@@ -336,7 +344,7 @@ if [ -z "$FILTER" ] || [[ "test_cps_restore" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_restore.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_cps_restore (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_restore (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_restore (python)"; show_fail "$out"
 	fi
 fi
 
@@ -345,7 +353,7 @@ if [ -z "$FILTER" ] || [[ "test_cps_csv" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_cps_csv.py" 2>&1)"; then
 		pass=$((pass + 1)); echo "ok            test_cps_csv (python)"
 	else
-		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_csv (python)"; printf '%s\n' "$out" | tail -10
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_cps_csv (python)"; show_fail "$out"
 	fi
 fi
 
@@ -365,13 +373,13 @@ for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_
 			if [ "$rc" -eq 0 ]; then
 				pass=$((pass + 1)); echo "ok            $T (python + Tk під xvfb)"
 			else
-				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python + Tk під xvfb)"; [ "$rc" -eq 124 ] && echo "  (перевищено ліміт часу ${TMO} с)"; printf '%s\n' "$out" | tail -10
+				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python + Tk під xvfb)"; [ "$rc" -eq 124 ] && echo "  (перевищено ліміт часу ${TMO} с)"; show_fail "$out"
 			fi
 		else
 			if out="$(python3 -B "$TESTS_DIR/../tools/$T.py" 2>&1)"; then
 				pass=$((pass + 1)); echo "ok            $T (python; частину з Tk пропущено -- нема tkinter або xvfb-run)"
 			else
-				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python)"; printf '%s\n' "$out" | tail -10
+				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python)"; show_fail "$out"
 			fi
 		fi
 	fi

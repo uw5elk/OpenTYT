@@ -186,7 +186,7 @@ def t_tk():
         app._refresh_all()
         check(str(b["open_radio"].cget("state")) == "disabled" and str(b["write"].cget("state")) == "disabled", "Tk: без рації «Прочитати» і «Записати» вимкнені")
         check(str(b["open_file"].cget("state")) != "disabled", "Tk: «Відкрити файл...» працює без рації")
-        check("не знайдено" in app.docbar_radio.cget("text") and str(app.docbar_radio.cget("foreground")) == P["err"], "Tk: рядок стану червоний «не знайдено»")
+        check("нема" in app.docbar_radio.cget("text") and str(app.docbar_radio.cget("foreground")) == P["err"], "Tk: рядок стану червоний «не знайдено»")
         # підказка
         reason = app.doc_reasons().get("open_radio")
         check(reason and "Рацію не знайдено" in reason, "Tk: причина для підказки «Рацію не знайдено» (%r)" % reason)
@@ -259,8 +259,52 @@ def t_tk():
         app.destroy()
 
 
+def t_bar_rows():
+    """R76B: панель кнопок при МІНІМАЛЬНОМУ вікні в усіх шести сценаріях шрифтів не займає більше двох рядків (причина падіння test_r56_ui у CI: з ширшими
+    шрифтами DejaVu стан рації + жирні кнопки переносились на третій рядок, і панелі розділів бракувало висоти). Перевірка не залежить від шрифту:
+    рахуємо рядки за координатами кнопок. Тест перевіряє й те, що run_tests.sh друкує причину падіння (show_fail), а не лише tail -10."""
+    sh = open(os.path.join(HERE, "..", "tests", "run_tests.sh"), encoding="utf-8").read()
+    check("show_fail()" in sh and "| tail -10" not in sh, "R76B: run_tests.sh друкує причину падіння (show_fail), без tail -10")
+    import subprocess
+    r = subprocess.run(["bash", "-c", 'eval "$(sed -n \'/^show_fail() {/,/^}/p\' "$1")"; show_fail "$(printf \'a\\nПРОВАЛ: причина X\\nb\\n\')"',
+                        "x", os.path.join(HERE, "..", "tests", "run_tests.sh")], capture_output=True, text=True)
+    check("причина X" in r.stdout and "хвіст виводу" in r.stdout, "R76B: show_fail виводить рядок із ПРОВАЛ (%r)" % r.stdout[:120])
+    try:
+        import tkinter  # noqa: F401
+        have = bool(os.environ.get("DISPLAY"))
+    except ImportError:
+        have = False
+    if not have:
+        return
+    import tkinter as tk
+    import test_r50fix as t50
+    import test_r54_ui as t54
+    import layout_probe as lp
+    root = tk.Tk()
+    scs = t50.sc_list(root)
+    root.destroy()
+    import font_scenarios as fs
+    for sc in scs:
+        app = t54.new_app(sc)
+        try:
+            app.apply_min_size()
+            app.geometry("%dx%d" % tuple(app.min_window_size()))
+            lp.spin(app, 0.4)
+            for state in ("absent", "unknown", "found"):
+                app.conn.state, app.conn.port = state, ("COM12" if state == "found" else None)
+                app._refresh_all()
+                lp.spin(app, 0.2)
+                ys = sorted(set(b.winfo_y() for b in app.docbtn.values()))
+                check(len(ys) <= 2, "R76B [%s, %s]: кнопки панелі документа в %d рядках (має бути не більше 2): %r; ширина панелі %d, рядка %d" % (fs.label(sc), state, len(ys), ys, app.right.winfo_width(), app._docbtn_row.winfo_width()))
+                check(app.docbar_radio.winfo_y() <= ys[0], "R76B [%s, %s]: стан рації в першому рядку" % (fs.label(sc), state))
+                check(app._docbtn_row.winfo_height() <= 2 * max(b.winfo_height() for b in app.docbtn.values()) + 8,
+                      "R76B [%s, %s]: висота рядка кнопок %d" % (fs.label(sc), state, app._docbtn_row.winfo_height()))
+        finally:
+            app.destroy()
+
+
 def main():
-    for t in (t_logic, t_no_open, t_contrast, t_tk):
+    for t in (t_logic, t_no_open, t_contrast, t_tk, t_bar_rows):
         try:
             t()
         except Exception as e:  # noqa: BLE001

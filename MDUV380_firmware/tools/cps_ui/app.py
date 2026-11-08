@@ -389,7 +389,7 @@ class CpsApp(DocActions, tk.Tk):
         self.docbar = bar
         # R51: рядок кнопок -- FlowFrame (елементи ставляться через place, кожен рядок незалежно). Раніше був grid з власним розрахунком переносу, а стовпці
         # grid спільні для всіх рядків: широка кнопка нижнього рядка зсувала стовпець, і верхній рядок виступав за край (41 px при 760 px, 100 %).
-        row = FlowFrame(bar)
+        row = FlowFrame(bar, gap=6)
         row.pack(fill="x", padx=12, pady=(6, 2))
         self._docbtn_row = row
         # R76: на місці підпису «Рація і файл:» -- стан рації, кольором за змістом: зелений -- знайдено, червоний -- нема / помилка, синій -- пошук. Стан документа
@@ -444,11 +444,11 @@ class CpsApp(DocActions, tk.Tk):
     def _refresh_docbar_line(self, dirty):
         c = self.conn
         if c.state == "found":
-            self.docbar_radio.config(text="● Рацію знайдено: %s" % (c.port or "?"), foreground=gt.P["ok"])
+            self.docbar_radio.config(text="● %s" % (c.port or "рація є"), foreground=gt.P["ok"])
         elif c.state == "unknown":
-            self.docbar_radio.config(text="● Шукаю рацію...", foreground=gt.P["info"])
+            self.docbar_radio.config(text="● пошук...", foreground=gt.P["info"])
         else:
-            self.docbar_radio.config(text="● Рацію не знайдено", foreground=gt.P["err"])
+            self.docbar_radio.config(text="● рації нема", foreground=gt.P["err"])
 
     # --- дерево і розділи -------------------------------------------------------------------
 
