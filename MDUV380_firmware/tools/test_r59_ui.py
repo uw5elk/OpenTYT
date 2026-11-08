@@ -221,60 +221,55 @@ def test_v1_v6():
         ch.fields["RoamList"]["var"].set("0 -- без списку")
         ch.commit("RoamList")
         check(te.roam_numbers(doc.image) == [1, 2, 5] and t59.rec_of(doc.image, 3)[37] == 0, "V4: і зняття (байт 37 = 0)")
-        # --- V5: рація (підміна) ---
-        app.show("roam")
-        lp.spin(app, 0.3)
-        store = {"state": {"version": 1, "enabled": True, "max_hops": 4}, "raw": b"ROAM\x01\x01\x04\x00"}
-        writes = []
-        old = (cps_link.open_radio, rc.read_state, rc.write_state, p.shell.run_task)
-        cps_link.open_radio = lambda: type("Ser", (), {"close": lambda self: None})()
-        rc.read_state = lambda ser: (store["state"], store["raw"])
+        # --- V5 (R75): налаштування роумінгу -- частина ДОКУМЕНТА (власних кнопок читання/запису рації нема) ---
+        import doc_region as dr_
+        import struct as st_
 
-        def fake_write(ser, en, hops, safety_dir=None, now=None, log=print):
-            rc.check_hops(hops)
-            writes.append((en, hops))
-            store["state"] = {"version": 1, "enabled": en, "max_hops": hops}
-            store["raw"] = rc.build_payload(en, hops)
-            return "записано (тест)", None
-        rc.write_state = fake_write
+        def region_of(blocks):
+            reg = bytearray(b"\xff" * 0x10000)
+            reg[0:12] = b"OpenGD77" + b"\x00" * 4
+            at = 12
+            for t_, pl_ in blocks:
+                reg[at:at + 8] = st_.pack("<ii", t_, len(pl_))
+                reg[at + 8:at + 8 + len(pl_)] = pl_
+                at += 8 + len(pl_)
+            return bytes(reg)
 
-        def sync(fn, status, on_done=None, **k):
-            fn()
+        def set_region(reg):
+            doc.region = dr_.RegionStore(reg)
+            doc._region_origin = reg
+            doc._region_saved = reg
+            p.on_document_changed()
             lp.spin(app, 0.1)
-            return True
-        p.shell.run_task = sync
-        try:
-            p._on_read()
-            check(p.v_enabled.get() is True and p.v_hops.get() == "4", "V5: після читання форма = блок з рації: %r %r" % (p.v_enabled.get(), p.v_hops.get()))
-            check("Прочитано" in p.radio_label.cget("text"), "V5: підпис стану: %s" % p.radio_label.cget("text"))
-            p.v_hops.set("3")
-            p.v_enabled.set(False)
-            p._on_write()
-            check(writes == [(False, 3)], "V5: запис передав значення форми: %r" % writes)
-            check(store["raw"] == b"ROAM\x01\x00\x03\x00", "V5: блок у «рації» оновлено")
-            for bad in ("0", "6", "abc", ""):
-                p.v_hops.set(bad)
-                n0 = len(dlg.errors)
-                p._on_write()
-                check(len(dlg.errors) == n0 + 1 and writes == [(False, 3)], "V5: макс. стрибків %r -- вікно помилки і жодного запису" % bad)
-            # блока в рації нема, а прапорці є
-            store["state"], store["raw"] = None, None
-            p._on_read()
-            txt = p.warn_label.cget("text")
-            check("блока налаштувань" in txt and "Прибрати всі" not in txt and p.v_enabled.get() is False and p.v_hops.get() == "2",
-                  "V5: блока нема -- форма типова, попередження про прапорці: %r" % txt)
-            check("Блока налаштувань у рації немає" in p.radio_label.cget("text"), "V5: підпис про відсутній блок")
-            # недійсний блок
-            store["state"], store["raw"] = None, b"JUNKJUNK"
-            p._on_read()
-            check("недійсний" in p.radio_label.cget("text"), "V5: недійсний блок названо")
-            # після запису попередження зникає
-            p.v_hops.set("2")
-            p.v_enabled.set(True)
-            p._on_write()
-            check("блока налаштувань" not in p.warn_label.cget("text"), "V5: після запису блока попередження про відсутній блок зникло: %r" % p.warn_label.cget("text"))
-        finally:
-            cps_link.open_radio, rc.read_state, rc.write_state, p.shell.run_task = old
+
+        check(not hasattr(p, "_on_read") and not hasattr(p, "_on_write"), "V5 (R75): кнопок «Прочитати з рації»/«Записати в рацію» в панелі роумінгу нема")
+        set_region(region_of([(15, b"ROAM\x01\x01\x04\x00")]))
+        check(p.v_enabled.get() is True and p.v_hops.get() == "4", "V5: форма = блок із документа: %r %r" % (p.v_enabled.get(), p.v_hops.get()))
+        check("У документі" in p.radio_label.cget("text"), "V5: підпис стану: %s" % p.radio_label.cget("text"))
+        p.v_hops.set("3")
+        p.v_enabled.set(False)
+        p._on_apply_cfg()
+        check(doc.region.read_block(None, 15, 8) == b"ROAM\x01\x00\x03\x00", "V5: блок у документі оновлено: %r" % doc.region.read_block(None, 15, 8))
+        check(doc.region_changed_types() == [15], "V5: до запису піде лише блок роумінгу: %r" % doc.region_changed_types())
+        for bad in ("0", "6", "abc", ""):
+            p.v_hops.set(bad)
+            n0 = len(dlg.errors)
+            p._on_apply_cfg()
+            check(len(dlg.errors) == n0 + 1 and doc.region.read_block(None, 15, 8) == b"ROAM\x01\x00\x03\x00", "V5: макс. стрибків %r -- вікно помилки і документ без змін" % bad)
+        # блока в документі нема, а прапорці є
+        set_region(region_of([]))
+        txt = p.warn_label.cget("text")
+        check("блока налаштувань" in txt and "Прибрати всі" not in txt and p.v_enabled.get() is False and p.v_hops.get() == "2",
+              "V5: блока нема -- форма типова, попередження про прапорці: %r" % txt)
+        check("блока налаштувань немає" in p.radio_label.cget("text"), "V5: підпис про відсутній блок")
+        # недійсний блок
+        set_region(region_of([(15, b"JUNKJUNK")]))
+        check("недійсний" in p.radio_label.cget("text"), "V5: недійсний блок названо")
+        # після застосування попередження зникає
+        p.v_hops.set("2")
+        p.v_enabled.set(True)
+        p._on_apply_cfg()
+        check("блока налаштувань" not in p.warn_label.cget("text"), "V5: після застосування попередження про відсутній блок зникло: %r" % p.warn_label.cget("text"))
         # --- V6: попередження ---
         p.v_enabled.set(True)
         doc.apply(te.channels_set_roam(doc.image, te.roam_numbers(doc.image), 0))

@@ -11,6 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import aprs_symbols as asym              # noqa: E402
+import aprs_beacon_cfg as abc_           # noqa: E402
 import codeplug_edit as ced              # noqa: E402
 import test_cps_csv as tc                # noqa: E402
 
@@ -98,7 +99,7 @@ def test_gui():
         # --- V4.1: одна панель APRS у «Кодплаг», пункту в «Налаштування рації» нема ---
         tree = app.tree
         grp_keys = {g: list(tree.get_children(g)) for g in tree.get_children()}
-        check("aprs" in grp_keys.get("grp_codeplug", []) and "aprs" not in grp_keys.get("grp_settings", []) and "aprs_slots" not in sum(grp_keys.values(), []),
+        check("aprs" in grp_keys.get("grp_data", []) and "aprs" not in grp_keys.get("grp_service", []) and "aprs_slots" not in sum(grp_keys.values(), []),
               "V4.1: APRS лише в «Кодплаг»: %r" % grp_keys)
         # без документа: станція показує підказку, бікон -- кнопки вимкнені
         app.show("aprs")
@@ -106,12 +107,12 @@ def test_gui():
         ap = app.get_panel("aprs")
         st = ap.station
         check(st.hint.winfo_manager() == "pack", "без документа: підказка «Відкрийте кодплаг…» у блоці станції")
-        check(str(ap.write_beacon_btn.cget("state")) == "disabled" and str(ap.read_btn.cget("state")) == "disabled", "без рації: кнопки бікона вимкнені")
+        check(str(ap.apply_btn.cget("state")) == "disabled" and str(ap.reload_btn.cget("state")) == "disabled", "без документа: кнопки бікона вимкнені (R75: бікон -- частина документа)")
         # --- V4.2: два чітко відокремлені блоки ---
-        # R50-fix: заголовок рамки скорочено (довгий не вміщувався на крупному шрифті) -- дію «Записати кодплаг у рацію» названо підписом усередині блоку
+        # R50-fix: заголовок рамки скорочено (довгий не вміщувався на крупному шрифті) -- дію «Записати в рацію» названо підписом усередині блоку
         inner = " ".join(str(w.cget("text")) for w in st.winfo_children() if w.winfo_class() == "TLabel")
-        check("документ" in st.cget("text").lower() and "Записати кодплаг у рацію" in inner, "V4.2: блок станції підписано як частину документа: %s | %s" % (st.cget("text"), inner[:120]))
-        check("РАЦІЮ негайно" in ap.radio_box.cget("text") and "НЕ частина документа" in ap.radio_box.cget("text"), "V4.2: блок бікона підписано: %s" % ap.radio_box.cget("text"))
+        check("документ" in st.cget("text").lower() and "Записати в рацію" in inner, "V4.2: блок станції підписано як частину документа: %s | %s" % (st.cget("text"), inner[:120]))
+        check("входять у документ" in ap.radio_box.cget("text"), "V4.2 (R75): блок бікона підписано як частину документа: %s" % ap.radio_box.cget("text"))
         texts = [w.cget("text") for w in _all(ap.radio_box) if w.winfo_class() == "TLabel"]
         check(any("перезапусти рацію" in t.lower() for t in texts), "V4.4: підказка про перезапуск лишилась")
         # --- документ ---
@@ -228,27 +229,31 @@ def test_gui():
         app.show("aprs")
         _spin(app)
         check(not app.doc.modified, "W3: після «Відкинути» документ не змінено")
+        # R75: бікон і шумодав -- частина документа. Документ із налаштуваннями (область custom-data) створюємо напряму; без них кнопки вимкнені.
+        import custom_region as creg_
+        import cps_ui.document as D_
+        check(app.doc.region is not None or str(ap.apply_btn.cget("state")) == "disabled", "R75: документ без налаштувань (старий файл) -- «Застосувати» вимкнена")
+        reg = bytearray(b"\xff" * creg_.REGION_LEN)
+        reg[:12] = creg_.MAGIC + b"\x00" * 4
+        doc2 = D_.Document(_cp, "file", source_file=src, region=bytes(reg))
+        app.set_document(doc2)
+        _spin(app)
+        check(str(ap.apply_btn.cget("state")) == "normal", "R75: документ із налаштуваннями -- «Застосувати до документа» доступна")
         ap.vars["fast"].set("45")
-        ap.vars["mode"].set(ap.vars["mode"].get())
         ap.vars["power"].set("3")
+        ap.vars["sql"].set("7")
         _spin(app)
-        check(not app.doc.modified, "W3: правка полів бікона документ не змінює")
+        check(not app.doc.modified, "R75: сама правка полів документ не змінює (до «Застосувати»)")
+        ap._on_apply()
+        _spin(app)
+        check(app.doc.modified and any(c[1] == "Налаштування" for c in app.doc.changes), "R75: «Застосувати» → документ змінено: %r" % (app.doc.changes[-2:],))
+        st_ = abc_.read_state(None, store=app.doc.region)
+        check(st_["beacon"] and st_["beacon"]["fast"] == 45 and st_["beacon"]["power"] == 3 and st_["sql"] == 7, "R75: значення бікона/шумодава лежать у документі: %r" % (st_,))
+        check(app.doc.region_changed_types() and set(app.doc.region_changed_types()) <= set(range(9, 17)), "R75: до запису підуть лише блоки налаштувань: %r" % (app.doc.region_changed_types(),))
         calls = []
-        ap._write_worker = lambda d, sql: calls.append((d, sql))
-        app.conn.state, app.conn.port, app.conn.searched = "found", "COM9", True
-        app.conn.info = {"radioType": 6, "gitRevision": "x", "buildDateTime": "x", "flashId": 1, "features": 0}
-        app._refresh_all()
+        app.doc_discard()
         _spin(app)
-        check(str(ap.write_beacon_btn.cget("state")) == "normal", "з рацією: «Записати бікон і шумодав у рацію» доступна")
-        ap._on_write_beacon()
-        for _ in range(100):
-            app.update()
-            time.sleep(0.05)
-            if calls and not app.busy:
-                break
-        check(len(calls) == 1 and calls[0][0]["fast"] == 45 and calls[0][0]["power"] == 3, "W3: бікон пишеться в рацію негайно власною кнопкою: %r" % (calls[:1],))
-        _spin(app, 6)
-        check(not app.doc.modified, "W3: запис бікона не робить документ зміненим")
+        check(not app.doc.modified and not app.doc.changes, "R75: «Відкинути зміни» повертає й налаштування")
         st.tree.selection_set(st.tree.get_children()[0])
         _spin(app)
         st.vars["comment"].set("Changed comment")
@@ -256,7 +261,7 @@ def test_gui():
         st._on_apply()
         _spin(app)
         check(app.doc.modified, "W3: зміна слота ставить «змінено» документа (busy=%r, can=%r, msg=%r, cur=%r)" % (app.busy, st._can_apply, st.msg.cget("text"), st.current))
-        check(len(calls) == 1, "W3: зміна слота рацію не чіпає")
+        check(len(calls) == 0, "W3: зміна слота рацію не чіпає")
     finally:
         app.destroy()
     check(not errors, "GUI: messagebox.showerror не викликався: %r" % (errors[:2],))

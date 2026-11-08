@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Розділ «Кодплаг → APRS» (CPS-fix3 V4): ОДНА панель замість двох, із двома чітко відокремленими шляхами запису.
-  * «Станція (слоти)» (p_aprs_slots.StationBlock) -- конфіги станції в ДОКУМЕНТІ кодплага; у рацію потрапляють дією «Записати кодплаг у рацію».
-  * «Бікон і приймач» -- налаштування бікона (custom-data тип 14) і шумодав приймача APRS (байт 4 блоку «Режиму APRS», тип 13): ПИШУТЬСЯ В РАЦІЮ НЕГАЙНО
-    власною кнопкою, поза документом і кодплагом (змінений документ через них не стає «зміненим»). Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU).
-    Бікон рація підхоплює на старті -- після запису перезапусти її, інакше меню рації може записати поверх старі значення з пам'яті.
-Позивний (ім'я рації, EEPROM 0x00E0) тут лише ПОКАЗУЄТЬСЯ довідково: міняється він в одному місці -- «Кодплаг → Основна інформація» (CPS-fix2 S1) і потрапляє
-в рацію разом із кодплагом. Те саме можна міняти з меню рації; сховище одне. Логіку бікона перенесено з gui_flasher.AprsBeaconWindow без змін."""
+"""Розділ «Дані → APRS» (R75): станція (слоти), бікон і приймач -- УСЕ в документі.
+  * «Станція (слоти)» (p_aprs_slots.StationBlock) -- конфіги станції в кодплазі документа;
+  * «Бікон і приймач» -- налаштування стокового бікона (custom-data тип 14) і шумодав приймача APRS (байт 4 блоку «Режиму APRS», тип 13).
+    R75: власних кнопок читання/запису рації тут більше нема -- поля читаються з документа, «Застосувати до документа» вносить правку, у рацію
+    все йде однією дією «Записати в рацію» над розділами. Бікон рація підхоплює на старті -- після запису перезапусти її.
+Позивний (ім'я рації, EEPROM 0x00E0) тут лише ПОКАЗУЄТЬСЯ довідково: міняється в «Основна інформація».
+"""
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 import aprs_beacon_cfg as abc_
-import cps_link as cps
 import gui_theme as gt
 
 from .p_aprs_slots import StationBlock
+from . import document as D
 from .panel import Panel
 
 
@@ -43,9 +43,8 @@ class AprsPanel(Panel):
         # --- позивний: довідково ---
         who = ttk.LabelFrame(self, text="Позивний (лише перегляд)")
         who.pack(fill="x", padx=12, pady=4)
-        self.vars["call"] = tk.StringVar()
+        self.vars["call"] = tk.StringVar()      # (R75: лишено для сумісності; показує позивний документа)
         self.vars["call_doc"] = tk.StringVar()
-        self.call_radio_label = self._row(who, "Позивний у рації", lambda f: ttk.Label(f, textvariable=self.vars["call"], width=12))
         self.call_doc_label = self._row(who, "Позивний у документі", lambda f: ttk.Label(f, textvariable=self.vars["call_doc"], width=12))
         self.call_note = ttk.Label(who, text="", wraplength=520, justify="left", foreground=gt.P["muted"])
         self.call_note.pack(anchor="w", padx=8, pady=(0, 4))
@@ -57,12 +56,12 @@ class AprsPanel(Panel):
         self.station.pack(fill="x", padx=12, pady=6)
 
         # --- бікон і приймач (рація, негайно) ---
-        radio_box = ttk.LabelFrame(self, text="Бікон і приймач -- пишеться в РАЦІЮ негайно (НЕ частина документа)")
+        radio_box = ttk.LabelFrame(self, text="Бікон і приймач (налаштування рації, входять у документ)")
         radio_box.pack(fill="x", padx=12, pady=6)
         self.radio_box = radio_box
-        ttk.Label(radio_box, text=("Ці налаштування лежать у рації, а не в кодплазі: кнопка «Записати бікон і шумодав» змінює рацію одразу, без «Записати кодплаг у рацію» "
-                                   "над розділами, і документ «зміненим» не робить. Потрібна рація у звичайному режимі. Після запису бікона перезапусти рацію."),
-                  wraplength=600, justify="left", foreground=gt.P["warn"]).pack(anchor="w", padx=8, pady=(4, 2))
+        ttk.Label(radio_box, text=("Ці налаштування лежать у рації, а не в кодплазі, але тепер вони частина документа: змінюй тут, потім «Застосувати до документа», "
+                                   "а в рацію все піде разом дією «Записати в рацію» над розділами. Після запису перезапусти рацію -- вона підхоплює бікон на старті."),
+                  wraplength=600, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=8, pady=(4, 2))
 
         # Рамки лежать у двох колонках, коли панель широка (>= 900 px), і одна під одною, коли вузька (_relayout).
         self.cols = ttk.Frame(radio_box)
@@ -118,13 +117,12 @@ class AprsPanel(Panel):
 
         btn = ttk.Frame(radio_box)
         btn.pack(fill="x", padx=8, pady=6)
-        self.read_btn = ttk.Button(btn, text="Прочитати з рації", command=self._on_read)
-        self.read_btn.pack(side="left")
-        self.write_beacon_btn = ttk.Button(btn, text="Записати бікон і шумодав у рацію", command=self._on_write_beacon)
-        self.write_beacon_btn.pack(side="left", padx=8)
-        for b in (self.read_btn, self.write_beacon_btn):
-            self.reg(b)
-        ttk.Label(radio_box, text="Натисни «Прочитати з рації», щоб підтягнути поточні значення.", foreground=gt.P["info"]).pack(anchor="w", padx=8, pady=(0, 6))
+        self.apply_btn = ttk.Button(btn, text="Застосувати до документа", command=self._on_apply)
+        self.apply_btn.pack(side="left")
+        self.reload_btn = ttk.Button(btn, text="Повернути значення з документа", command=self.on_document_changed)
+        self.reload_btn.pack(side="left", padx=8)
+        self.region_note = ttk.Label(radio_box, text="", wraplength=600, justify="left", foreground=gt.P["muted"])
+        self.region_note.pack(anchor="w", padx=8, pady=(0, 6))
         self.on_document_changed()
 
     def on_avail(self, avail):
@@ -150,10 +148,8 @@ class AprsPanel(Panel):
             self.col_b.grid(row=1, column=0, sticky="nsew")
 
     def _apply_state(self, st):
-        if st.get("call") is not None:
+        if st.get("call") is not None:        # (R75: лише для сумісності з тестами; позивний береться з документа)
             self.vars["call"].set(st["call"] or "(не заданий)")
-            self._radio_call = st["call"]
-            self._update_call_note()
         if st.get("sql") is not None:
             self.vars["sql"].set(str(st["sql"]))
         d = st.get("beacon")
@@ -195,72 +191,50 @@ class AprsPanel(Panel):
     def after_refresh(self):
         if hasattr(self, "station"):
             self.station.after_refresh()
-
-    _radio_call = None      # позивний, прочитаний з рації кнопкою «Прочитати з рації» (None -- ще не читали)
+        self._update_buttons()
 
     def on_document_changed(self):
-        """Показати позивний документа поряд із прочитаним з рації і сказати, що саме потрапить у рацію (S1.2)."""
+        """Показати позивний документа й значення бікона/шумодава з документа."""
         if hasattr(self, "station"):
             self.station.on_document_changed()
+        d = self.doc
+        if d is not None and d.region is not None:
+            self._apply_state(abc_.read_state(None, store=d.region))
+            self.region_note.config(text="")
+        else:
+            self.region_note.config(text=("У документа нема налаштувань рації (файл створено старою версією) -- відкрий кодплаг з рації, "
+                                          "щоб їх змінити." if d is not None else "Відкрий кодплаг з рації або з файла."))
         self._update_call_note()
+        self._update_buttons()
+
+    def _update_buttons(self):
+        d = self.doc
+        ok = d is not None and d.region is not None and not self.shell.busy
+        for b in (self.apply_btn, self.reload_btn):
+            b.config(state="normal" if ok else "disabled")
 
     def _update_call_note(self):
         import codeplug_edit as ced
         d = self.doc
         if d is None:
             self.vars["call_doc"].set("(документ не відкрито)")
-            self.call_note.config(text="Позивний у рації цією панеллю не змінюється. Його правлять у «Кодплаг → Основна інформація» (потрібен відкритий кодплаг).")
+            self.call_note.config(text="Позивний міняється в «Основна інформація».")
             return
         doc_call = ced.basic_values(d.image)["callsign"]
         self.vars["call_doc"].set(doc_call or "(не заданий)")
-        if self._radio_call is None:
-            self.call_note.config(text="Натисни «Прочитати з рації», щоб порівняти позивний документа з позивним у рації.")
-        elif (self._radio_call or "") == (doc_call or ""):
-            self.call_note.config(text="Позивний у документі збігається з позивним у рації.")
-        else:
-            self.call_note.config(text="Різні позивні. У рацію потрапить позивний ДОКУМЕНТА (%s) -- разом із кодплагом, дією «Записати кодплаг у рацію»; "
-                                       "позивний у рації (%s) буде замінено." % (doc_call or "порожній", self._radio_call or "порожній"),
-                                  foreground=gt.P["warn"])
-            return
-        self.call_note.config(foreground=gt.P["muted"])
+        self.vars["call"].set(doc_call or "(не заданий)")
+        self.call_note.config(text="Позивний правиться в розділі «Основна інформація» і йде в рацію разом із кодплагом.", foreground=gt.P["muted"])
 
-    def _run(self, fn, text, reconnect_ms=None):
-        self.shell.run_task(fn, text, plain_errors=True, reconnect_ms=reconnect_ms)
-
-    def _on_read(self):
-        if not self.shell.busy:
-            self._run(self._read_worker, "Читаю...")
-
-    def _on_write_beacon(self):
-        if self.shell.busy:
+    def _on_apply(self):
+        d = self.doc
+        if d is None or d.region is None or self.shell.busy:
             return
         try:
-            d, sql = self._collect()
-        except abc_.AprsCfgError as e:
-            messagebox.showerror("Помилка", str(e))
+            beacon, sql = self._collect()
+            scratch = d.scratch_region()
+            abc_.write_state(None, beacon=beacon, sql=sql, store=scratch)
+            changed = d.apply_region(scratch, {abc_.TYPE_APRS_BEACON_CFG: "APRS: стоковий бікон", abc_.TYPE_APRS_MODE_CFG: "APRS: шумодав приймача"})
+        except (abc_.AprsCfgError, D.DocumentError) as e:
+            messagebox.showerror("APRS: бікон і приймач", str(e), parent=self.shell)
             return
-        self._run(lambda: self._write_worker(d, sql), "Записую...")
-
-    def _connect(self):
-        return cps.open_radio()
-
-    def _read_worker(self):
-        ser = self._connect()
-        try:
-            st = abc_.read_state(ser)
-            link = cps.CpsLink(ser)
-            st["call"] = abc_.callsign_decode(link.read(cps.CPS_ACCESS_EEPROM, abc_.CALLSIGN_ADDR, abc_.CALLSIGN_LEN))
-            self.shell.post(lambda: self._apply_state(st))
-            print("Позивний: {}. Шумодав: {}. Бікон: {}".format(st["call"] or "(не заданий)", "типовий" if st["sql"] is None else st["sql"],
-                                                                abc_.describe(st["beacon"])))
-        finally:
-            ser.close()
-
-    def _write_worker(self, d, sql):
-        ser = self._connect()
-        try:
-            for line in abc_.write_state(ser, beacon=d, sql=sql):
-                print(line)
-            print("Перезапусти рацію, щоб вона підхопила новий бікон.")
-        finally:
-            ser.close()
+        self.shell.set_status("Бікон і шумодав змінено в документі." if changed else "Змін немає.", "ok" if changed else "info")

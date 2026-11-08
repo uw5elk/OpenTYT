@@ -275,9 +275,11 @@ def list_title(names, n):
 #  Рація (custom-data)
 # ---------------------------------------------------------------------------------------------------------------------------------
 
-def read_state(ser):
-    """-> (state|None, raw|None). raw -- байти блока як у рації (None -- блока немає); state None -- блока немає АБО він недійсний."""
+def read_state(ser, store=None):
+    """-> (state|None, raw|None). raw -- байти блока як у рації (None -- блока немає); state None -- блока немає АБО він недійсний.
+    R75: store (doc_region.RegionStore) -- читати з документа замість рації."""
     import custom_data as cd
+    cd = store if store is not None else cd
     raw = cd.read_block(ser, TYPE_ROAM_CFG, PAYLOAD_LEN)
     return parse_payload(raw), raw
 
@@ -317,9 +319,10 @@ def write_state(ser, enabled, max_hops, safety_dir=None, now=None, log=print):
     return text, safety
 
 
-def read_names(ser):
-    """-> (імена|None, raw|None). None -- блока імен у рації нема (усі імена порожні)."""
+def read_names(ser, store=None):
+    """-> (імена|None, raw|None). None -- блока імен у рації нема (усі імена порожні). R75: store -- читати з документа."""
     import custom_data as cd
+    cd = store if store is not None else cd
     raw = cd.read_block(ser, TYPE_ROAM_NAMES, NAMES_BLOCK_LEN)
     return parse_names(raw), raw
 

@@ -213,17 +213,20 @@ def callsign_to_radio(link, text, confirm, progress=None, log=print, out_dir="."
 
 # ------------------------------------------------------------------------------------------------ рація (custom-data)
 
-def read_state(ser):
-    """-> {"beacon": dict|None (блока нема/недійсний), "sql": int|None, "beaconRaw": bytes|None, "modeRaw": bytes|None}"""
+def read_state(ser, store=None):
+    """-> {"beacon": dict|None (блока нема/недійсний), "sql": int|None, "beaconRaw": bytes|None, "modeRaw": bytes|None}
+    R75: store -- об'єкт із read_block/write_block (doc_region.RegionStore): читання з документа замість рації; без нього -- як було."""
     import custom_data as cd
+    cd = store if store is not None else cd
     braw = cd.read_block(ser, TYPE_APRS_BEACON_CFG, BEACON_LEN)
     mraw = cd.read_block(ser, TYPE_APRS_MODE_CFG, MODE_LEN)
     return {"beacon": beacon_parse(braw), "sql": mode_block_sql(mraw), "beaconRaw": braw, "modeRaw": mraw}
 
 
-def write_state(ser, beacon=None, sql=None):
+def write_state(ser, beacon=None, sql=None, store=None):
     """Записати блок бікона і/або шумодав (кожен -- лише якщо передано). Повертає список текстових підсумків; AprsCfgError -- збій запису."""
     import custom_data as cd
+    cd = store if store is not None else cd       # R75: запис у документ (RegionStore) замість рації
     out = []
     if beacon is not None:
         payload = beacon_build(beacon)

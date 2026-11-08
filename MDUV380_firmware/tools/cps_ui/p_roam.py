@@ -2,11 +2,11 @@
 """Розділ «Кодплаг → Роумінг» (R59/R60): автоперехід на наступний канал зі СПИСКУ, коли ретранслятор не відповідає на пробудження під утримуваним PTT.
 R60: списків 10; канал належить ОДНОМУ списку (номер у байті 37 запису каналу, tools/roam_cfg.py). Перехід іде лише по каналах того самого списку.
 
-ДВА шляхи запису, чітко розділені (як в «APRS»):
+R75: налаштування й імена списків тепер ТЕЖ частина документа (як і список на каналах); власних кнопок читання/запису рації нема. Нижче -- історичний опис двох шляхів:
   * «Налаштування в рації» (автоперехід увімк./вимк., макс. стрибків 1..5) -- custom-data блок типу 15 (tools/roam_cfg.py). Пишеться в РАЦІЮ негайно власною кнопкою,
     поза кодплагом; перед записом попередній блок зберігається у файл-страхову копію, після запису -- звірка читанням. Потрібна рація у звичайному режимі.
   * «Списки в кодплазі» -- номер списку на каналах (колонка «Роум.» в «Каналах», поле «Роум. список», колонка «RoamList» у CSV). Це частина ДОКУМЕНТА: у рацію
-    потрапляє дією «Записати кодплаг у рацію». Тут його зручно набирати: обрати список, виділити канали в таблиці й натиснути «Додати виділені до списку».
+    потрапляє дією «Записати в рацію». Тут його зручно набирати: обрати список, виділити канали в таблиці й натиснути «Додати виділені до списку».
     Ті самі списки рація редагує сама (меню «Роумінг» → «Списки»): склад однаковий у CPS і в рації.
 Попередження (не блокують запис): автоперехід увімкнено, а в жодному списку нема 2 каналів; у списку лише один канал; канал зі списку аналоговий / DMO / симплекс / лише
 прийом (прошивка його пропустить); два канали одного списку з однаковими частотами й колір-кодом; старий прапорець R59 без списку; списки є, а блока налаштувань у рації нема.
@@ -15,12 +15,11 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import cps_csv as cc
-import cps_link as cps
 import gui_theme as gt
 import roam_cfg as rc
 import table_edit as te
 
-from .common import output_dir
+from . import document as D
 from .layout import FitTable, equal_buttons
 from .panel import Panel
 
@@ -56,7 +55,7 @@ class RoamPanel(Panel):
 
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
-        self._radio_cfg = None            # None -- з рації ще не читали; False -- блока там немає (або недійсний); dict -- {"enabled", "max_hops"}
+        self._radio_cfg = None            # (R75: тепер береться з документа) None -- з рації ще не читали; False -- блока там немає (або недійсний); dict -- {"enabled", "max_hops"}
         self._item_num = {}
         self.dp = cc.system_decimal_point()
         self._build_ui()
@@ -71,7 +70,7 @@ class RoamPanel(Panel):
                   wraplength=620, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=12, pady=(0, 6))
 
         # --- налаштування в рації ---
-        box = ttk.LabelFrame(self, text="Налаштування в рації -- пишуться в РАЦІЮ негайно (НЕ частина документа)")
+        box = ttk.LabelFrame(self, text="Налаштування роумінгу -- частина документа")
         box.pack(fill="x", padx=12, pady=4)
         self.v_enabled = tk.BooleanVar(value=False)
         self.v_hops = tk.StringVar(value=str(rc.HOPS_DEFAULT))
@@ -85,19 +84,16 @@ class RoamPanel(Panel):
         self.sp_hops.pack(side="left")
         btn = ttk.Frame(box)
         btn.pack(fill="x", padx=8, pady=6)
-        self.read_btn = ttk.Button(btn, text="Прочитати з рації", command=self._on_read)
-        self.write_btn = ttk.Button(btn, text="Записати налаштування в рацію", command=self._on_write)
-        equal_buttons(self.read_btn, self.write_btn)
-        self.read_btn.pack(side="left")
-        self.write_btn.pack(side="left", padx=8)
-        self.reg(self.read_btn)
-        self.reg(self.write_btn)
-        self.radio_label = ttk.Label(box, text="Натисни «Прочитати з рації», щоб підтягнути поточні значення.", foreground=gt.P["info"], wraplength=600,
-                                     justify="left")
+        self.apply_cfg_btn = ttk.Button(btn, text="Застосувати до документа", command=self._on_apply_cfg)
+        self.reload_cfg_btn = ttk.Button(btn, text="Повернути значення з документа", command=self._load_region)
+        equal_buttons(self.apply_cfg_btn, self.reload_cfg_btn)
+        self.apply_cfg_btn.pack(side="left")
+        self.reload_cfg_btn.pack(side="left", padx=8)
+        self.radio_label = ttk.Label(box, text="", foreground=gt.P["muted"], wraplength=600, justify="left")
         self.radio_label.pack(anchor="w", padx=8, pady=(0, 6))
 
         # --- імена списків (R64): custom-data блок 16, в РАЦІЮ ---
-        nbox = ttk.LabelFrame(self, text="Імена списків -- пишуться в РАЦІЮ негайно (НЕ частина документа)")
+        nbox = ttk.LabelFrame(self, text="Імена списків -- частина документа")
         nbox.pack(fill="x", padx=12, pady=4)
         self.v_names = [tk.StringVar(value="") for _ in range(rc.LISTS_COUNT)]
         grid = ttk.Frame(nbox)
@@ -112,19 +108,17 @@ class RoamPanel(Panel):
             ttk.Entry(grid, textvariable=self.v_names[k], width=22).grid(row=r, column=2 * c + 1, sticky="w", padx=(0, 14), pady=1)
         nbtn = ttk.Frame(nbox)
         nbtn.pack(fill="x", padx=8, pady=6)
-        self.nread_btn = ttk.Button(nbtn, text="Прочитати імена з рації", command=self._on_read_names)
-        self.nwrite_btn = ttk.Button(nbtn, text="Записати імена в рацію", command=self._on_write_names)
-        equal_buttons(self.nread_btn, self.nwrite_btn)
-        self.nread_btn.pack(side="left")
-        self.nwrite_btn.pack(side="left", padx=8)
-        self.reg(self.nread_btn)
-        self.reg(self.nwrite_btn)
+        self.napply_btn = ttk.Button(nbtn, text="Застосувати імена до документа", command=self._on_apply_names)
+        self.nreload_btn = ttk.Button(nbtn, text="Повернути імена з документа", command=self._load_region)
+        equal_buttons(self.napply_btn, self.nreload_btn)
+        self.napply_btn.pack(side="left")
+        self.nreload_btn.pack(side="left", padx=8)
         self.names_label = ttk.Label(nbox, text="До %d символів кирилицею/латиницею; порожнє ім'я = рація показує «Список N». Імена видно в меню «Роумінг» → «Списки» "
                                      "і в «Деталях каналу»." % rc.NAME_LEN, foreground=gt.P["info"], wraplength=600, justify="left")
         self.names_label.pack(anchor="w", padx=8, pady=(0, 6))
 
         # --- списки у кодплазі ---
-        lst = ttk.LabelFrame(self, text="Списки в кодплазі -- частина документа (у рацію: «Записати кодплаг у рацію»)")
+        lst = ttk.LabelFrame(self, text="Списки в кодплазі -- частина документа (у рацію: «Записати в рацію»)")
         lst.pack(fill="both", expand=True, padx=12, pady=4)
         top = ttk.Frame(lst)
         top.pack(fill="x", padx=8, pady=(4, 2))
@@ -173,7 +167,7 @@ class RoamPanel(Panel):
     # ------------------------------------------------------------------ документ
 
     def on_document_changed(self):
-        self._fill()
+        self._load_region()
 
     @staticmethod
     def _list_label(k, count, name=""):
@@ -277,7 +271,7 @@ class RoamPanel(Panel):
             self._say("У списку %d немає каналів." % lst, "muted")
             return
         if not messagebox.askokcancel("Очистити список %d?" % lst, "Зі списку %d буде прибрано %d каналів документа (канали лишаються, інші поля не змінюються). "
-                                      "Рація зміниться лише після «Записати кодплаг у рацію». Продовжити?" % (lst, len(nums))):
+                                      "Рація зміниться лише після «Записати в рацію». Продовжити?" % (lst, len(nums))):
             return
         self._apply(lambda img: te.channels_set_roam(img, nums, 0), "очищено список %d" % lst)
 
@@ -319,55 +313,60 @@ class RoamPanel(Panel):
         return bool(self.v_enabled.get()), hops
 
     def _apply_radio(self, state, raw):
-        """Головний потік: підставити в форму прочитане з рації. state None -- блока немає/недійсний."""
+        """Підставити в форму налаштування з документа. state None -- блока немає/недійсний."""
         if state is None:
             self._radio_cfg = False
             self.v_enabled.set(False)
             self.v_hops.set(str(rc.HOPS_DEFAULT))
-            self.radio_label.config(text=("Блока налаштувань у рації немає -- автоперехід вимкнено, макс. стрибків %d." % rc.HOPS_DEFAULT) if raw is None else
-                                    "Блок налаштувань у рації недійсний (прошивка читає його як «вимкнено, %d»)." % rc.HOPS_DEFAULT, foreground=gt.P["warn"])
+            self.radio_label.config(text=("У документі блока налаштувань немає -- автоперехід вимкнено, макс. стрибків %d." % rc.HOPS_DEFAULT) if raw is None else
+                                    "Блок налаштувань недійсний (прошивка читає його як «вимкнено, %d»)." % rc.HOPS_DEFAULT, foreground=gt.P["warn"])
         else:
             self._radio_cfg = {"enabled": state["enabled"], "max_hops": state["max_hops"]}
             self.v_enabled.set(state["enabled"])
             self.v_hops.set(str(state["max_hops"]))
-            self.radio_label.config(text="Прочитано з рації: " + rc.describe(state) + ".", foreground=gt.P["ok"])
+            self.radio_label.config(text="У документі: " + rc.describe(state) + ".", foreground=gt.P["muted"])
         self.refresh_warnings()
 
-    def _run(self, fn, text):
-        self.shell.run_task(fn, text, plain_errors=True)
+    def _region_ok(self):
+        d = self.doc
+        return d is not None and d.region is not None
 
-    def _on_read(self):
-        if not self.shell.busy:
-            self._run(self._read_worker, "Читаю налаштування «Роумінгу»...")
+    def _load_region(self):
+        """Налаштування й імена -- з документа (або порожньо, якщо в джерелі їх нема); потім таблиця списків."""
+        d = self.doc
+        ok = self._region_ok()
+        if ok:
+            st, raw = rc.read_state(None, store=d.region)
+            self._apply_radio(st, raw)
+            names, _raw = rc.read_names(None, store=d.region)
+            self._apply_names(names, _raw)
+        else:
+            self._radio_cfg = None
+            self._radio_names = None
+            self.radio_label.config(text=("У документа нема налаштувань рації (файл створено старою версією) -- відкрий кодплаг з рації, щоб їх змінити."
+                                          if d is not None else "Відкрий кодплаг з рації або з файла."), foreground=gt.P["muted"])
+            self.names_label.config(text="", foreground=gt.P["muted"])
+        for b in (self.apply_cfg_btn, self.reload_cfg_btn, self.napply_btn, self.nreload_btn):
+            b.config(state="normal" if ok and not self.shell.busy else "disabled")
+        self._fill()
 
-    def _on_write(self):
-        if self.shell.busy:
+    def _on_apply_cfg(self):
+        d = self.doc
+        if not self._region_ok() or self.shell.busy:
             return
         try:
             en, hops = self._collect()
-        except rc.RoamCfgError as e:
-            messagebox.showerror("Помилка", str(e))
+            payload = rc.build_payload(en, hops)
+            scratch = d.scratch_region()
+            ok, msg = scratch.write_block(None, rc.TYPE_ROAM_CFG, payload)
+            if not ok:
+                raise D.DocumentError(msg)
+            changed = d.apply_region(scratch, {rc.TYPE_ROAM_CFG: "Роумінг: налаштування"})
+        except (rc.RoamCfgError, D.DocumentError) as e:
+            messagebox.showerror("Роумінг", str(e), parent=self.shell)
             return
-        self._run(lambda: self._write_worker(en, hops), "Записую налаштування «Роумінгу»...")
-
-    def _read_worker(self):
-        ser = cps.open_radio()
-        try:
-            st, raw = rc.read_state(ser)
-            self.shell.post(lambda: self._apply_radio(st, raw))
-            print("Роумінг: " + rc.describe(st))
-        finally:
-            ser.close()
-
-    def _write_worker(self, en, hops):
-        ser = cps.open_radio()
-        try:
-            text, _safety = rc.write_state(ser, en, hops, safety_dir=output_dir(), log=print)
-            print(text)
-            st, raw = rc.read_state(ser)
-            self.shell.post(lambda: self._apply_radio(st, raw))
-        finally:
-            ser.close()
+        self._load_region()
+        self.shell.set_status("Налаштування роумінгу змінено в документі." if changed else "Змін немає.", "ok" if changed else "info")
 
     # ------------------------------------------------------------------ імена списків (R64)
 
@@ -385,59 +384,44 @@ class RoamPanel(Panel):
 
     @staticmethod
     def names_status(names):
-        """Текст статусу після читання імен з рації (R65A): скільки імен задано (з коректною відміною) і які саме."""
+        """Текст статусу імен (R65A): скільки імен задано (з коректною відміною) і які саме."""
         given = [(k + 1, names[k]) for k in range(rc.LISTS_COUNT) if names and names[k]]
         n = len(given)
         if n == 0:
-            return "Прочитано з рації: імен не задано (рація показує «Список N»)."
+            return "У документі: імен не задано (рація показує «Список N»)."
         if n % 10 == 1 and n % 100 != 11:
             word = "задано %d ім'я" % n
         elif n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
             word = "задано %d імені" % n
         else:
             word = "задано %d імен" % n
-        return "Прочитано з рації: %s -- %s." % (word, "; ".join("%d: %s" % g for g in given))
+        return "У документі: %s -- %s." % (word, "; ".join("%d: %s" % g for g in given))
 
     def _apply_names(self, names, raw):
-        """Головний потік: підставити імена, прочитані з рації (None -- блока нема, усі порожні). Усі 10 полів перезаписуються (R65A: старий вміст не лишається)."""
+        """Підставити імена з документа (None -- блока нема, усі порожні). Усі 10 полів перезаписуються."""
         self._radio_names = list(names) if names else None
         for k, v in enumerate(self.v_names):
             v.set(names[k] if names else "")
         if names is None:
-            self.names_label.config(text="Блока імен у рації немає -- усі імена порожні (рація показує «Список N»).", foreground=gt.P["warn"])
+            self.names_label.config(text="У документі блока імен немає -- усі імена порожні (рація показує «Список N»).", foreground=gt.P["muted"])
         else:
-            self.names_label.config(text=self.names_status(names), foreground=gt.P["ok"])
-        self._fill()
+            self.names_label.config(text=self.names_status(names), foreground=gt.P["muted"])
 
-    def _on_read_names(self):
-        if not self.shell.busy:
-            self._run(self._read_names_worker, "Читаю імена списків «Роумінгу»...")
-
-    def _on_write_names(self):
-        if self.shell.busy:
+    def _on_apply_names(self):
+        d = self.doc
+        if not self._region_ok() or self.shell.busy:
             return
         try:
             names = self._collect_names()
-        except rc.RoamCfgError as e:
-            messagebox.showerror("Помилка", str(e))
+            payload = rc.build_names(names)
+            scratch = d.scratch_region()
+            ok, msg = scratch.write_block(None, rc.TYPE_ROAM_NAMES, payload)
+            if not ok:
+                raise D.DocumentError(msg)
+            changed = d.apply_region(scratch, {rc.TYPE_ROAM_NAMES: "Роумінг: імена списків"})
+        except (rc.RoamCfgError, D.DocumentError) as e:
+            messagebox.showerror("Роумінг", str(e), parent=self.shell)
             return
-        self._run(lambda: self._write_names_worker(names), "Записую імена списків «Роумінгу»...")
-
-    def _read_names_worker(self):
-        ser = cps.open_radio()
-        try:
-            names, raw = rc.read_names(ser)
-            self.shell.post(lambda: self._apply_names(names, raw))
-            print("Імена списків: " + (", ".join(rc.list_title(names, k + 1) for k in range(rc.LISTS_COUNT)) if names else "блока нема"))
-        finally:
-            ser.close()
-
-    def _write_names_worker(self, names):
-        ser = cps.open_radio()
-        try:
-            text, _safety = rc.write_names(ser, names, safety_dir=output_dir(), log=print)
-            print(text)
-            back, raw = rc.read_names(ser)
-            self.shell.post(lambda: self._apply_names(back, raw))
-        finally:
-            ser.close()
+        self._radio_names = names
+        self._fill()
+        self.shell.set_status("Імена списків змінено в документі." if changed else "Змін немає.", "ok" if changed else "info")

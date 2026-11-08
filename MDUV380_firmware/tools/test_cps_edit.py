@@ -685,12 +685,11 @@ def test_gui():
         ap = app.get_panel("aprs")
         check(not hasattr(ap, "write_call_btn"), "S1: кнопки «Записати позивний» нема")
         texts = [w.cget("text") for w in _all(ap) if w.winfo_class() == "TLabel"]
-        check(any("Позивний у документі" in t for t in texts) and any("Позивний у рації" in t for t in texts), "S1: показано позивний документа й рації")
+        check(any("Позивний у документі" in t for t in texts) and not any("Позивний у рації" in t for t in texts),
+              "S1 (R75): показано лише позивний документа (панель більше не читає рацію)")
         check(not any(w.winfo_class() == "TEntry" and str(w.cget("textvariable")) == str(ap.vars["call"]) for w in _all(ap)), "S1: поле позивного нередаговане")
-        ap._radio_call = "UR5XYZ"
         ap.on_document_changed()
-        check("Різні позивні" in ap.call_note.cget("text") and "UR5ABC" in ap.call_note.cget("text") and "UR5XYZ" in ap.call_note.cget("text"),
-              "S1: різні позивні -- показано обидва й що запишеться: %s" % ap.call_note.cget("text"))
+        check("Основна інформація" in ap.call_note.cget("text"), "S1 (R75): підказка веде до «Основна інформація»: %s" % ap.call_note.cget("text"))
         app.show("basic")
         bp = app.get_panel("basic")
         bp.vars["callsign"].set("R2ABC")
