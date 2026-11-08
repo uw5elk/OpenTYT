@@ -34,6 +34,14 @@ PALETTE = {
     "info": "#82c4ff",          # статус «іде робота»
     "warn": "#e6b84a",          # попередження («заблоковано», «обережно»)
     "err": "#ff8279",           # помилка
+    # R76: кнопки панелі документа -- по три відтінки (спокій / наведення / натиснуто); текст на них -- білий або майже чорний (див. CONTRAST_PAIRS)
+    "read_bg": "#1a5fd1", "read_hover": "#1f6feb", "read_press": "#124a9e", "read_fg": "#ffffff",         # «Прочитати з рації»: яскравий синій
+    "write_bg": "#b53a08", "write_hover": "#c2410c", "write_press": "#8f2f06", "write_fg": "#ffffff",     # «Записати в рацію»: теплий помаранчевий
+    "dirty_bg": "#f59e0b", "dirty_hover": "#fbb02e", "dirty_press": "#d98a06", "dirty_fg": "#1a1204",     # те саме, коли є незбережені зміни: світлий акцент
+    "file_bg": "#39435a", "file_hover": "#4a5878", "file_press": "#2a3347", "file_fg": "#f4f6fa",         # файлові кнопки: нейтральні, але яскравіші за звичайні
+    "ghost_fg": "#c5cbd8", "ghost_hover": "#2c3240",                                                       # «Відкинути зміни»: стримана, без заливки
+    "nav_select": "#2b64c4",    # вибраний пункт дерева (яскравіший за select_bg)
+    "group_fg": "#7db4ff",      # заголовки груп дерева «Дані» / «Сервіс»
 }
 
 # Пари (текст, тло), контраст яких мусить бути >= 4,5. Тло -- із найгіршим для цього тексту набором.
@@ -48,6 +56,13 @@ CONTRAST_PAIRS = [
     ("warn", "bg"), ("warn", "surface"), ("warn", "field"),
     ("err", "bg"), ("err", "surface"), ("err", "field"),
     ("accent", "bg"), ("accent", "surface"), ("accent", "field"),
+    # R76
+    ("read_fg", "read_bg"), ("read_fg", "read_hover"), ("read_fg", "read_press"),
+    ("write_fg", "write_bg"), ("write_fg", "write_hover"), ("write_fg", "write_press"),
+    ("dirty_fg", "dirty_bg"), ("dirty_fg", "dirty_hover"), ("dirty_fg", "dirty_press"),
+    ("file_fg", "file_bg"), ("file_fg", "file_hover"), ("file_fg", "file_press"),
+    ("ghost_fg", "bg"), ("ghost_fg", "ghost_hover"),
+    ("select_fg", "nav_select"), ("group_fg", "bg"),
 ]
 
 P = PALETTE
@@ -112,6 +127,31 @@ def apply(root):
            foreground=[("disabled", P["disabled_fg"])],
            lightcolor=[("disabled", P["disabled_bg"]), ("active", P["button_hover"])],
            darkcolor=[("disabled", P["disabled_bg"]), ("active", P["button_hover"])])
+
+    # R76: виразні кнопки панелі документа. Вимкнена кнопка: пласка, без рамки й заливки кольору дії (відрізняється від активної нейтральної)
+    def _action(name, bg, hover, press, fg, bold=False, border=None):
+        kw = dict(background=P[bg], foreground=P[fg], bordercolor=P[border or bg], lightcolor=P[bg], darkcolor=P[bg], focuscolor=P["accent"],
+                  padding=(14, 3) if bold else (10, 3))
+        if bold:
+            kw["font"] = ("Segoe UI", 10, "bold")
+        st.configure(name, **kw)
+        st.map(name,
+               background=[("disabled", P["disabled_bg"]), ("pressed", P[press]), ("active", P[hover])],
+               foreground=[("disabled", P["disabled_fg"])],
+               bordercolor=[("disabled", P["disabled_bg"]), ("pressed", P[press]), ("active", P[hover])],
+               lightcolor=[("disabled", P["disabled_bg"]), ("pressed", P[press]), ("active", P[hover])],
+               darkcolor=[("disabled", P["disabled_bg"]), ("pressed", P[press]), ("active", P[hover])])
+    _action("Read.TButton", "read_bg", "read_hover", "read_press", "read_fg", bold=True)
+    _action("Write.TButton", "write_bg", "write_hover", "write_press", "write_fg", bold=True)
+    _action("WriteDirty.TButton", "dirty_bg", "dirty_hover", "dirty_press", "dirty_fg", bold=True)
+    _action("File.TButton", "file_bg", "file_hover", "file_press", "file_fg", border="border")
+    st.configure("Ghost.TButton", background=P["bg"], foreground=P["ghost_fg"], bordercolor=P["border"], lightcolor=P["bg"], darkcolor=P["bg"],
+                 padding=(10, 3))
+    st.map("Ghost.TButton",
+           background=[("disabled", P["bg"]), ("pressed", P["file_press"]), ("active", P["ghost_hover"])],
+           foreground=[("disabled", P["disabled_fg"])],
+           bordercolor=[("disabled", P["bg"]), ("active", P["accent"])],
+           lightcolor=[("disabled", P["bg"]), ("active", P["ghost_hover"])], darkcolor=[("disabled", P["bg"]), ("active", P["ghost_hover"])])
 
     st.configure("Big.TButton", font=("Segoe UI", 12, "bold"), padding=(20, 8))      # R56: головна дія розділу (одна велика кнопка)
 

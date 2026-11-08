@@ -14,7 +14,7 @@ class ConnectionPanel(Panel):
     def __init__(self, parent, shell):
         super().__init__(parent, shell)
         self.header("Підключення і стан",
-                    "Рацію шукаємо один раз при запуску й ще раз за кнопкою «Оновити» (а також після дій, що перезавантажують рацію). "
+                    "Рацію шукаємо автоматично; кнопка «Оновити» шукає негайно. "
                     "Порт відкривається тільки на час операції.")
         box = ttk.LabelFrame(self, text="Рація")
         box.pack(fill="x", padx=12, pady=6)

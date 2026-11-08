@@ -31,7 +31,8 @@ import gui_dialogs as gd
 import gui_theme as gt
 
 from .common import APP_TITLE, QueueWriter, load_usb_backend, read_build_info
-from . import reconnect
+from . import autodetect, reconnect
+from .tooltip import Tooltip
 from .connection import RadioConnection
 from .doc_actions import DocActions
 from .p_aes import AesPanel
@@ -75,6 +76,11 @@ DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}
 
 
+# R76 B1: стилі головних кнопок панелі документа (палітра -- у gui_theme.py)
+DOCBTN_STYLE = {"open_radio": "Read.TButton", "write": "Write.TButton", "open_file": "File.TButton", "save_as": "File.TButton",
+                "discard": "Ghost.TButton"}
+
+
 class CpsApp(DocActions, tk.Tk):
     def __init__(self, settings=None, autoprobe=True):
         super().__init__()
@@ -91,6 +97,8 @@ class CpsApp(DocActions, tk.Tk):
         self.build_info = read_build_info()
         self.conn = RadioConnection()
         self.busy = False
+        self._rc_active = False        # R76: іде повторний пошук рації після перезавантаження (R73) -- автовиявлення не втручається
+        self._ad_pending = False       # R76: підключення запущене автовиявленням -- після пошуку напишемо «Рацію підключено»
         self.aes_slots = None         # {"occupied": (номери,)} після «Оновити список зайнятих слотів»; матеріалу ключів тут нема
         self._task = None
         self.init_document()
@@ -118,6 +126,7 @@ class CpsApp(DocActions, tk.Tk):
         self.bind("<Map>", self._on_first_map)
         if autoprobe:
             self.after(150, lambda: self.refresh_connection(force=False))
+            self._autodetect_start()
 
     # --- вікно: розмір, закриття ----------------------------------------------------------
 
@@ -237,7 +246,7 @@ class CpsApp(DocActions, tk.Tk):
         # Дерево зливається з лівою колонкою (без власної рамки й окремого тла): порожнє місце під пунктами не виглядає «коробкою».
         style.configure("Nav.Treeview", rowheight=24, background=gt.P["bg"], fieldbackground=gt.P["bg"], bordercolor=gt.P["bg"],
                         lightcolor=gt.P["bg"], darkcolor=gt.P["bg"], borderwidth=0)
-        style.map("Nav.Treeview", background=[("selected", gt.P["select_bg"])], foreground=[("selected", gt.P["select_fg"])])
+        style.map("Nav.Treeview", background=[("selected", gt.P["nav_select"])], foreground=[("selected", gt.P["select_fg"])])
         style.layout("Nav.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
 
         # Вертикальна межа: зверху дерево + панель, знизу журнал (перетягується). Горизонтальна: дерево | панель (перетягується).
@@ -255,6 +264,7 @@ class CpsApp(DocActions, tk.Tk):
         self.tree.column("#0", width=200, stretch=True)
         self.tree.pack(fill="both", expand=True, padx=(8, 0), pady=0)
         self.tree.tag_configure("dim", foreground=gt.P["muted"])
+        self.tree.tag_configure("grp", foreground=gt.P["group_fg"], font=("Segoe UI", 10, "bold"))      # R76 B3: заголовки груп «Дані» / «Сервіс»
         for gkey, gtitle, classes in SECTIONS:
             self.tree.insert("", "end", iid=gkey, text=gtitle, open=True)
             for cls in classes:
@@ -382,7 +392,10 @@ class CpsApp(DocActions, tk.Tk):
         row = FlowFrame(bar)
         row.pack(fill="x", padx=12, pady=(6, 2))
         self._docbtn_row = row
-        row.add(ttk.Label(row, text="Рація і файл:", font=("Segoe UI", 10, "bold")))
+        # R76: на місці підпису «Рація і файл:» -- стан рації, кольором за змістом: зелений -- знайдено, червоний -- нема / помилка, синій -- пошук. Стан документа
+        # (незбережені зміни -- жовтогарячий, збережено -- зелений) показує рядок стану внизу вікна (doc_label) і колір кнопки «Записати в рацію».
+        self.docbar_radio = ttk.Label(row, text="", font=("Segoe UI", 10, "bold"))
+        row.add(self.docbar_radio)
         self.docbtn = {}
         # R75: дві головні дії -- «Прочитати з рації» і «Записати в рацію»; поруч файл; «Відкинути зміни» -- менш помітна кнопка (плоский стиль)
         for key, text, cmd in (("open_radio", "Прочитати з рації", lambda: self.doc_open_radio()),
@@ -390,9 +403,11 @@ class CpsApp(DocActions, tk.Tk):
                                ("open_file", "Відкрити файл...", lambda: self.doc_open_file()),
                                ("save_as", "Зберегти у файл...", lambda: self.doc_save_as()),
                                ("discard", "Відкинути зміни", lambda: self.doc_discard())):
-            b = ttk.Button(row, text=text, command=cmd, **({"style": "Toolbutton"} if key == "discard" else {}))
+            b = ttk.Button(row, text=text, command=cmd, style=DOCBTN_STYLE[key])
             self.docbtn[key] = b
             row.add(b)
+            if key in ("open_radio", "write"):
+                Tooltip(b, lambda k=key: self.doc_reasons().get(k) if self.docbtn[k].instate(["disabled"]) else "")
         self.docbar_note = gd.autowrap(ttk.Label(bar, text="", wraplength=700, justify="left", foreground=gt.P["warn"]), bar, margin=28)
         self._docbar_note_shown = False
         ttk.Separator(bar, orient="horizontal").pack(fill="x", pady=(4, 0), side="bottom")
@@ -402,11 +417,15 @@ class CpsApp(DocActions, tk.Tk):
         if not hasattr(self, "docbtn"):
             return
         reasons = self.doc_reasons()
+        dirty = bool(self.doc is not None and self.doc.modified)
         for key, b in self.docbtn.items():
             try:
                 b.config(state="disabled" if reasons.get(key) else "normal")
+                if key == "write":                       # світлий акцент, коли є що записувати
+                    b.config(style="WriteDirty.TButton" if dirty else DOCBTN_STYLE[key])
             except tk.TclError:
                 pass
+        self._refresh_docbar_line(dirty)
         # причина показується один раз: насамперед для «Записати», далі для «Відкрити з рації»; «Відкрийте кодплаг…» -- не причина, а підказка
         shown = ""
         for key in ("write", "open_radio"):
@@ -421,6 +440,15 @@ class CpsApp(DocActions, tk.Tk):
         elif not shown and self._docbar_note_shown:
             self.docbar_note.pack_forget()
             self._docbar_note_shown = False
+
+    def _refresh_docbar_line(self, dirty):
+        c = self.conn
+        if c.state == "found":
+            self.docbar_radio.config(text="● Рацію знайдено: %s" % (c.port or "?"), foreground=gt.P["ok"])
+        elif c.state == "unknown":
+            self.docbar_radio.config(text="● Шукаю рацію...", foreground=gt.P["info"])
+        else:
+            self.docbar_radio.config(text="● Рацію не знайдено", foreground=gt.P["err"])
 
     # --- дерево і розділи -------------------------------------------------------------------
 
@@ -494,7 +522,7 @@ class CpsApp(DocActions, tk.Tk):
         for key, d in self._defs.items():
             cls = d["cls"]
             dim = bool(cls is not None and cls.radio_only and not self.conn.found)
-            self.tree.item(key, tags=("dim",) if dim else ())
+            self.tree.item(key, tags=("grp",) if cls is None else (("dim",) if dim else ()))
 
     # --- журнал, стан, прогрес -----------------------------------------------------------------
 
@@ -592,10 +620,11 @@ class CpsApp(DocActions, tk.Tk):
         if gd.GEOMETRY_STORE is self.settings:          # R50: пам'ять розмірів діалогів належить цьому застосунку
             gd.GEOMETRY_STORE = None
             gd.uninstall_message_boxes()
-        try:
-            self.after_cancel(self._poll_id)
-        except (AttributeError, tk.TclError):
-            pass
+        for attr in ("_poll_id", "_ad_id"):
+            try:
+                self.after_cancel(getattr(self, attr))
+            except (AttributeError, tk.TclError):
+                pass
         super().destroy()
 
     # --- підтвердження з робочого потоку ----------------------------------------------------------
@@ -638,6 +667,7 @@ class CpsApp(DocActions, tk.Tk):
 
     def _reconnect_start(self, limit_ms):
         self._rc = reconnect.ReconnectPolicy(limit_ms, time.monotonic)
+        self._rc_active = True
         self.after(int(self._rc.first_delay_ms()), self._reconnect_tick)
 
     def _reconnect_tick(self):
@@ -653,14 +683,61 @@ class CpsApp(DocActions, tk.Tk):
         if verdict == "retry":
             self.after(int(delay), self._reconnect_tick)
             return
+        self._rc_active = False
         self._probe_done(conn)
 
     def _probe_done(self, conn):
+        announce, self._ad_pending = self._ad_pending, False
         if conn.found:
             self.set_status("Рацію знайдено: {}.".format(conn.port), "ok")
+            if announce:
+                self.log("Рацію підключено на {}.".format(conn.port))
         else:
+            if announce:
+                self.log("Порт рації з'явився, але рацію підключити не вдалося.")
             self.set_status("Рацію не знайдено.", "warn")
         self.set_progress(0)
+
+    # --- R76: автовиявлення рації за списком портів (порт не відкривається; пошук -- той самий, що «Оновити») ---------------------------
+
+    def _autodetect_blocked(self):
+        """Не втручатись: іде операція, повторний пошук після запису (R73) або відкрито модальне вікно."""
+        if self.busy or self._rc_active:
+            return True
+        try:
+            return self.grab_current() is not None
+        except tk.TclError:
+            return False
+
+    def _autodetect_start(self):
+        self._ad = autodetect.PortDetector(autodetect.scan_radio_ports, self._autodetect_blocked, log=self.log)
+        self._ad_id = self.after(autodetect.SCAN_MS, self._autodetect_tick)
+
+    def _autodetect_tick(self):
+        delay = self._ad.next_delay_ms()
+        try:
+            if self._ad.begin():
+                threading.Thread(target=self._autodetect_scan, daemon=True).start()
+        except Exception:  # noqa: BLE001 -- автовиявлення не повинно ламати застосунок
+            self.log("!!! Автопошук рації:\n" + traceback.format_exc())
+        self._ad_id = self.after(delay, self._autodetect_tick)
+
+    def _autodetect_scan(self):
+        res = self._ad.scan_safely()
+        self.queue.put(("call", lambda: self._autodetect_done(res)))
+
+    def _autodetect_done(self, res):
+        action = self._ad.finish(res, self.conn.found, self.conn.port)
+        if action == "appeared":
+            self.log("Виявлено порт рації: {}. Підключаюсь...".format(", ".join(self._ad.stable)))
+            self._ad_pending = True
+            self.refresh_connection(force=False)
+        elif action == "vanished":
+            old = self.conn.port
+            self.conn.mark_absent()
+            self.log("Рацію не знайдено (порт {} зник).".format(old or "?"))
+            self.set_status("Рацію не знайдено.", "warn")
+            self._refresh_all()
 
     # --- виконавець фонових операцій -------------------------------------------------------------------
 
