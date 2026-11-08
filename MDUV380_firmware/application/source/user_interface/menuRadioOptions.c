@@ -37,6 +37,10 @@
  * Збереження те саме: BIT_SMS_MONITOR_ALL (nonVolatileSettings) і custom-data SMS_TX_MODE. */
 #include "functions/dmr_sms.h"
 #include "crypto/dmr_aes.h"           /* DMR_AES_CCM */
+#include "user_interface/menuVolumeProbe.h"   /* R77A: «Гучн. проба» (лише ENABLE_VOLUME_PROBE) */
+#if defined(VOLUME_PROBE)
+#include "user_interface/languages/volprobe_ua.h"
+#endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "user_interface/languages/messages_ua.h"
 #else
@@ -85,6 +89,9 @@ enum
 #if defined(SQL_OPEN_DELAY_ENABLED)
 	RADIO_OPTIONS_MENU_SQL_OPEN_DELAY,   /* R42: найостаннішим -- індекси QuickKey усіх попередніх пунктів ті самі */
 #endif
+#if defined(VOLUME_PROBE)
+	RADIO_OPTIONS_MENU_VOL_PROBE,        /* R77A: діагностика -- найостаннішим */
+#endif
 	NUM_RADIO_OPTIONS_MENU_ITEMS
 };
 
@@ -121,6 +128,17 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 	{
 		menuOptionsExitCode = MENU_STATUS_SUCCESS;
 
+#if defined(VOLUME_PROBE)
+		if (volumeProbeIsOn())
+		{
+			// R77A: екран «Гучн. проба» -- власні тіки й клавіші; вихід (або автоповернення) -- знову список
+			if (menuVolumeProbeTick(ev) == false)
+			{
+				updateScreen(false);
+			}
+			return menuOptionsExitCode;
+		}
+#endif
 		if (ev->hasEvent || (menuDataGlobal.menuOptionsTimeout > 0))
 		{
 			handleEvent(ev);
@@ -160,6 +178,9 @@ static void updateScreen(bool isFirstRun)
 			buf[2] = 0;
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 			bool leftSideIsFork = false;   /* підпис -- не рядок currentLanguage: без голосової підказки */
+#endif
+#if defined(VOLUME_PROBE)
+			bool volProbeNoPrompt = false;   /* R77A: підпис -- макрос українського заголовка, не рядок currentLanguage: без голосової підказки */
 #endif
 #if defined(SQL_OPEN_DELAY_ENABLED)
 			bool sqlDelayNoPrompt = false;   /* R42: підпис -- поле українського блока, поза діапазоном голосових підказок: без підказки */
@@ -302,6 +323,13 @@ static void updateScreen(bool isFirstRun)
 				}
 					break;
 #endif
+#if defined(VOLUME_PROBE)
+				case RADIO_OPTIONS_MENU_VOL_PROBE:
+					leftSide = VOLPROBE_MENU_NAME;
+					volProbeNoPrompt = true;
+					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", VOLPROBE_MENU_ENTER);
+					break;
+#endif
 			}
 
 			snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s:%s", leftSide, (rightSideVar[0] ? rightSideVar : (rightSideConst ? rightSideConst : "")));
@@ -322,6 +350,9 @@ static void updateScreen(bool isFirstRun)
 #endif
 #if defined(SQL_OPEN_DELAY_ENABLED)
 					if (sqlDelayNoPrompt == false)   /* R42 */
+#endif
+#if defined(VOLUME_PROBE)
+					if (volProbeNoPrompt == false)   /* R77A */
 #endif
 					voicePromptsAppendLanguageString(leftSide);
 				}
@@ -595,6 +626,11 @@ static void handleEvent(uiEvent_t *ev)
 #endif
 					break;
 #endif
+#if defined(VOLUME_PROBE)
+				case RADIO_OPTIONS_MENU_VOL_PROBE:
+					menuVolumeProbeEnter();   /* R77A: вправо -- відкрити екран; він сам малює й веде клавіші */
+					return;
+#endif
 #if defined(SQL_OPEN_DELAY_ENABLED)
 				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
 				{
@@ -753,6 +789,10 @@ static void handleEvent(uiEvent_t *ev)
 #endif
 					break;
 #endif
+#if defined(VOLUME_PROBE)
+				case RADIO_OPTIONS_MENU_VOL_PROBE:
+					break;   /* вліво -- нічого */
+#endif
 #if defined(SQL_OPEN_DELAY_ENABLED)
 				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
 					settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(sqlOpenDelayStepsDec(sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1))));
@@ -796,6 +836,9 @@ static void applySettings(void)
 
 static void exitCallback(void *data)
 {
+#if defined(VOLUME_PROBE)
+	volumeProbeClose();   // R77A: вихід з «Опцій рації» будь-яким шляхом повертає стокове
+#endif
 	if (originalNonVolatileSettings.magicNumber != 0xDEADBEEF)
 	{
 		// Restore original settings.

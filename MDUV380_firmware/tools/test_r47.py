@@ -95,7 +95,7 @@ def test_v1_v2_composition(base):
         if base:
             rel = os.path.join("application", "source", "user_interface", "menuSystem.c")
             # R59: ENABLE_ROAM_RETRY законно додає пункт меню; без цього прапорця токени мусять збігатися з базою, тож своє дерево рахуємо без нього
-            a, bb = tokens_of(FW, rel, incs, [d for d in defs if d != "-DENABLE_ROAM_RETRY"]), tokens_of(base, rel, incs, defs)
+            a, bb = tokens_of(FW, rel, incs, [d for d in defs if d not in ("-DENABLE_ROAM_RETRY", "-DENABLE_VOLUME_PROBE")]), tokens_of(base, rel, incs, [d for d in defs if d != "-DENABLE_VOLUME_PROBE"])
             check(a is not None and a == bb, "V2: конфігурація %s -- токени menuSystem.c без ENABLE_CODEPLUG_MENU змінились відносно %s" % (name, R47_BASE))
     check(flagless > 0, "V2: перевірено хоч одну конфігурацію без прапорця")
     print("test_r47: V2 -- конфігурацій без ENABLE_CODEPLUG_MENU: %d" % flagless)

@@ -34,6 +34,9 @@
 #include "functions/voicePrompts.h"
 #include "functions/rxPowerSaving.h"
 #include "interfaces/interrupts.h"
+#if defined(ENABLE_VOLUME_PROBE)
+#include "functions/volume_probe.h" // R77A: volumeProbeDmrShift (лише ENABLE_VOLUME_PROBE + українська + UV380 Plus)
+#endif
 #include "functions/aprs_rx.h"    // R8-fix: aprsRxStopForTx() (лише ENABLE_APRS_RX + українська)
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h" // не рахувати відтворення "Переслухати" у статистику RX AGC нижче
@@ -366,12 +369,28 @@ bool soundRefillData(uint32_t bufNum)
 			}
 
 			dmrRxAGCpeakRx = 0;
+#if defined(VOLUME_PROBE)
+			const bool probeAttenuate = (volumeProbeDmrShift != 0U) && (voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false)
+#if defined(ENABLE_CALL_REPLAY)
+					&& (callReplayIsPlaying() == false)
+#endif
+					;
+#endif
 
 			for (int i = 0; i < (WAV_BUFFER_SIZE / 2); i++)
 			{
 				swapper.bytes8[0] = audioAndHotspotDataBuffer.wavbuffer[wavbuffer_read_idx][2 * i];
 				swapper.bytes8[1] = audioAndHotspotDataBuffer.wavbuffer[wavbuffer_read_idx][(2 * i) + 1];
+#if defined(VOLUME_PROBE)
+				// R77A: додаткове ослаблення DMR (екран «Гучн. проба») -- ПІСЛЯ АРУ: пік для АРУ (dmrRxAGCpeakRx) нижче береться з swapper.byte16 до множення,
+				// тож ослаблення на виході АРУ не бачить. Лише живий DMR-голос (не підказки, не мелодії, не «Переслухати»).
+				{
+					int16_t out = (int16_t)(swapper.byte16 * dmrRxAgcGain);
+					i2s_Tx_Buffer[bufNum][j][2 * i] = (probeAttenuate ? vpDmrApply(out, volumeProbeDmrShift) : out);
+				}
+#else
 				i2s_Tx_Buffer[bufNum][j][2 * i] = (int16_t)(swapper.byte16 * dmrRxAgcGain);				// Only fill the Left Channel. Right Channel is not used by the HRC6000
+#endif
 
 				samp = abs(swapper.byte16);
 

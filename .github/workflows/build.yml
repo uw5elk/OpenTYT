@@ -503,6 +503,76 @@ jobs:
           echo "OK: .map і .elf (diag) -> реліз $TAG; активи релізу зараз:"
           gh release view "$TAG" --json assets -q '.assets[].name'
 
+  # R77A: ДІАГНОСТИЧНА збірка «Гучн. проба» -- та сама користувацька, ПЛЮС екран «Гучн. проба» (останній пункт «Опцій рації»: додаткове ослаблення
+  # звуку нижче мінімуму потенціометра, DMR -- множник перед I2S, FM -- AT1846S 0x44; нічого не зберігається). ЛИШЕ для досліду TESTING.md, блок DW;
+  # у користувацьку прошивку (build-ukrainian) не потрапляє. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
+  build-ukrainian-volprobe:
+    needs: build-ukrainian
+    runs-on: ubuntu-latest
+    name: build (діагностична, «Гучн. проба» R77A)
+    permissions:
+      contents: write
+    steps:
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v4
+      - name: Install ARM GNU toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "14.2.Rel1"
+      - name: Build
+        working-directory: MDUV380_firmware
+        # R77A: користувацька конфігурація (як build-ukrainian, але БЕЗ ENABLE_ROAM_RETRY -- tools/check_wake_ifdef.py дозволяє роумінг лише в своїх джобах; на пробу він не впливає) + ENABLE_VOLUME_PROBE: у ній є APRS-приймач, потрібний для перевірки DW5 і захисту FM-ослаблення.
+        # Якщо ld скаже, що до кодека (0x0807537C) не вистачає місця -- це видно в кроці «Запас до адреси кодека» нижче; збірку не ламаємо підгонкою.
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_AES_KEY_NAMES=1 ENABLE_RXGROUP_EDIT=1 ENABLE_SAT_TONE_SYNC=1 ENABLE_RODATA_AFTER_CODEC=1 ENABLE_VOLUME_PROBE=1
+      # R62A: запас (або перевищення) до фіксованої адреси кодека 0x0807537C у байтах -- видно і коли лінкування не вдалось
+      # (там нема ні .bin, ні повної .map). Додаткове лінкування з тимчасовою копією лінкер-скрипта у build/codec-margin.*,
+      # яке одразу видаляється: .bin/.elf/.map збірки і сам лінкер-скрипт не чіпаються. Див. tools/codec_margin.sh.
+      - name: Запас до адреси кодека (0x0807537C)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: MDUV380_firmware
+        run: tools/codec_margin.sh "${{ github.job }}"
+      - name: Report size
+        working-directory: MDUV380_firmware
+        run: arm-none-eabi-size build/openuv380-10w.elf
+      - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
+        working-directory: MDUV380_firmware
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
+      - name: Вивантажити артефакт openuv380-10w-ukrainian-volprobe
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: openuv380-10w-ukrainian-volprobe
+          retention-days: 2
+          compression-level: 9
+          path: |
+            MDUV380_firmware/build/*.bin
+            MDUV380_firmware/build/*.hex
+      - name: Assert Ukrainian strings are actually linked in
+        working-directory: MDUV380_firmware
+        run: |
+          python3 - <<'PY'
+          data = open("build/openuv380-10w.bin","rb").read()
+          needle = "Мова".encode("cp1251")
+          assert needle in data, "українських рядків у .bin немає -- LANGUAGE_UKRAINIAN=1 не спрацював"
+          print("OK: українські рядки знайдено у прошивці")
+          PY
+      - name: Додати діагностичний .bin до релізу ci-<sha>
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        working-directory: MDUV380_firmware
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          TAG="ci-${SHORT}"
+          ASSET="openuv380-10w-ukrainian-volprobe-${SHORT}.bin"
+          cp build/openuv380-10w.bin "$ASSET"
+          gh release upload "$TAG" "$ASSET" --clobber
+          echo "OK: $ASSET -> реліз $TAG"
+
   # R59: ДІАГНОСТИЧНА збірка «Роумінгу» -- та сама користувацька (UA + AES + DMR_DATA), ПЛЮС меню «Роумінг» з автопереходом
   # на наступний канал зі списку роумінгу, коли ретранслятор не відповів на пробудження під утримуваним PTT
   # (ENABLE_ROAM_RETRY; прототип R58 ENABLE_WAKE_HOP_TEST прибрано) і журнал сеансів пробудження (ENABLE_WAKE_DIAG: пункт

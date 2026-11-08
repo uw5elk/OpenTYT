@@ -38,6 +38,9 @@
 #include "functions/aprs.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
+#if defined(ENABLE_VOLUME_PROBE)
+#include "functions/volume_probe.h"   // R77A: volumeProbeStopForTx() (лише ENABLE_VOLUME_PROBE)
+#endif
 #include "functions/aprs_rx.h"   // R8-fix: aprsRxStopForTx() (лише ENABLE_APRS_RX + українська)
 #include <FreeRTOS.h>
 #include <string.h>
@@ -826,6 +829,9 @@ void trxConfigurePA_DAC_ForFrequencyBand(void)
 
 void trxSetTX(void)
 {
+#if defined(VOLUME_PROBE)
+	volumeProbeStopForTx();   // R77A: повернути стокове ослаблення ДО передачі (0x44 не повинен потрапити в TX-тракт)
+#endif
 #if defined(APRS_RX)
 	aprsRxStopForTx();   // R8-fix: СИНХРОННО -- до зміни стану HR-C6000/AT1846S і до будь-яких прапорців передачі
 #endif
@@ -857,6 +863,9 @@ void trxActivateRx(bool critical)
 void trxActivateTx(bool critical)
 {
 	UNUSED_PARAMETER(critical);
+#if defined(VOLUME_PROBE)
+	volumeProbeStopForTx();   // R77A: те саме для DMR-передачі (повз trxSetTX())
+#endif
 #if defined(APRS_RX)
 	aprsRxStopForTx();   // R8-fix: DMR-передача (trxActivateDMRTx) іде повз trxSetTX() -- той самий захист
 #endif

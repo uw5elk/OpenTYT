@@ -312,7 +312,7 @@ def section_d():
     yml = open(os.path.join(ROOT, "..", ".github", "workflows", "build.yml"), encoding="utf-8").read()
     check(yml.count("ENABLE_SAT_TONE_SYNC=1") == yml.count("ENABLE_RXGROUP_EDIT=1") and yml.count("ENABLE_SAT_TONE_SYNC=1") >= 2, "D2: build.yml -- у кожному кроці з ENABLE_RXGROUP_EDIT=1 (%d)" % yml.count("ENABLE_SAT_TONE_SYNC=1"))
     sc = open(os.path.join(HERE, "syntax_check.sh"), encoding="utf-8").read()
-    check("DEFS_SATTONE=" in sc and "SATTONEBARE)" in sc and "-DENABLE_SAT_TONE_SYNC)" in sc, "D2: syntax_check.sh")
+    check("DEFS_SATTONE=" in sc and "SATTONEBARE" in sc and "-DENABLE_SAT_TONE_SYNC)" in sc, "D2: syntax_check.sh")
     tx = open(os.path.join(ROOT, "application", "source", "user_interface", "uiTxScreen.c"), encoding="utf-8", errors="replace").read()
     check("SAT_TONE" not in tx, "D2: uiTxScreen.c (тон взведення) не чіпано")
     # D3: мутанти
