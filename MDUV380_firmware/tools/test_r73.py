@@ -229,6 +229,38 @@ def test_write_db_erases():
         time.sleep = old
 
 
+def test_reconnect_policy():
+    """2.3: опитування замість сліпих 6 с. Підроблений годинник: рація зникає й з'являється; не приймаємо стару за нову; верхня межа та сама."""
+    from cps_ui import reconnect as rc
+
+    def run(timeline, limit=6000):
+        """timeline(ms) -> found? Повертає (момент завершення мс, кількість спроб)."""
+        now = [0.0]
+        pol = rc.ReconnectPolicy(limit, lambda: now[0])
+        now[0] += pol.first_delay_ms() / 1000.0
+        while True:
+            verdict, delay = pol.feed(timeline(now[0] * 1000.0))
+            if verdict == "done":
+                return now[0] * 1000.0, pol.tries
+            now[0] += delay / 1000.0
+    # рація зникла на 0..3000, готова з 3000 мс: приймаємо після двох поспіль успіхів, а не після 6000
+    t_done, tries = run(lambda ms: ms >= 3000)
+    check(t_done < 6000 and 3000 <= t_done <= 4500, "рація готова на 3000 мс -> завершення на %d мс (було б 6000)" % t_done)
+    # стара ще відповідає перші 2500 мс (не перезавантажилась): не приймаємо до зникнення/SETTLE
+    t2, _ = run(lambda ms: ms < 2600 or ms >= 3800)
+    check(t2 >= 3800, "стара рація (відповідає до 2600 мс), нова з 3800: не прийнято раніше за повернення (%d мс)" % t2)
+    # завжди «знайдено» (швидке перезавантаження між спробами): приймаємо не раніше SETTLE_MS
+    t3, _ = run(lambda ms: True)
+    check(t3 >= rc.SETTLE_MS, "ніколи не зникала: приймаємо не раніше %d мс (було %d)" % (rc.SETTLE_MS, t3))
+    # рація не з'явилась: верхня межа не більша за limit + один крок
+    t4, _ = run(lambda ms: False)
+    check(5500 <= t4 <= 6000 + rc.STEP_MS, "рації нема: завершення біля верхньої межі 6000 мс (%d)" % t4)
+    t5, _ = run(lambda ms: False, limit=1000)
+    check(t5 <= 1000 + rc.STEP_MS + 1, "малий ліміт: перша спроба не пізніше ліміту (%d)" % t5)
+    src = read(HERE, "cps_ui", "app.py")
+    check("self._reconnect_start(t[\"reconnect_ms\"])" in src and "self.after(t[\"reconnect_ms\"], self.refresh_connection)" not in src, "app.py використовує опитування, а не сліпе очікування")
+
+
 def test_phase_erases():
     import phase_timing
     ph = phase_timing.Phases(None)
@@ -247,6 +279,7 @@ def main():
     test_header_needed_in_first_group()
     test_compact_erases()
     test_write_db_erases()
+    test_reconnect_policy()
     test_phase_erases()
     if FAILS:
         print("test_r73: ПРОВАЛІВ %d" % len(FAILS))

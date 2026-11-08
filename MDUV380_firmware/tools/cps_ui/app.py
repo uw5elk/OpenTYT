@@ -16,6 +16,7 @@
 import queue
 import sys
 import threading
+import time
 import traceback
 
 import tkinter as tk
@@ -30,6 +31,7 @@ import gui_dialogs as gd
 import gui_theme as gt
 
 from .common import APP_TITLE, QueueWriter, load_usb_backend, read_build_info
+from . import reconnect
 from .connection import RadioConnection
 from .doc_actions import DocActions
 from .p_aes import AesPanel
@@ -628,6 +630,27 @@ class CpsApp(DocActions, tk.Tk):
         self._refresh_all()
         self.run_task(self.conn.probe, "Шукаю рацію...", quiet=True, ok_status=None, on_done=self._probe_done)
 
+    # --- R73: повторний пошук рації після перезавантаження опитуванням (замість сліпих reconnect_ms) ---------------------------------
+
+    def _reconnect_start(self, limit_ms):
+        self._rc = reconnect.ReconnectPolicy(limit_ms, time.monotonic)
+        self.after(int(self._rc.first_delay_ms()), self._reconnect_tick)
+
+    def _reconnect_tick(self):
+        if self.busy:                                   # інша операція йде -- не втручаємось, спробуємо трохи згодом
+            self.after(reconnect.STEP_MS, self._reconnect_tick)
+            return
+        self.conn.invalidate()
+        if not self.run_task(self.conn.probe, "Шукаю рацію...", quiet=True, ok_status=None, on_done=self._reconnect_probed):
+            self.after(reconnect.STEP_MS, self._reconnect_tick)
+
+    def _reconnect_probed(self, conn):
+        verdict, delay = self._rc.feed(bool(conn.found and conn.info))
+        if verdict == "retry":
+            self.after(int(delay), self._reconnect_tick)
+            return
+        self._probe_done(conn)
+
     def _probe_done(self, conn):
         if conn.found:
             self.set_status("Рацію знайдено: {}.".format(conn.port), "ok")
@@ -692,7 +715,7 @@ class CpsApp(DocActions, tk.Tk):
             self.conn.mark_absent()
         self._refresh_all()
         if t["reconnect_ms"]:
-            self.after(t["reconnect_ms"], self.refresh_connection)
+            self._reconnect_start(t["reconnect_ms"])
         if ok:
             if t["ok_status"]:
                 self.progress["value"] = 100
