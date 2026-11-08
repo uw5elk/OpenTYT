@@ -30,6 +30,8 @@ import codeplug_view as cv  # noqa: E402
 import contact_edit as ce  # noqa: E402
 import general_edit as ge  # noqa: E402
 import codeplug_edit as ced  # noqa: E402
+import custom_region as creg  # noqa: E402
+import doc_region as dreg  # noqa: E402
 
 ORIGIN_RADIO = "radio"
 ORIGIN_FILE = "file"
@@ -66,7 +68,7 @@ def extra_tables(img):
 class Document:
     """Один відкритий кодплаг. Конструктор -- з codeplug_view.Codeplug (та сама структура, що дають і бекап, і пряме читання рації)."""
 
-    def __init__(self, codeplug, origin, source_file=None, opened_at=None):
+    def __init__(self, codeplug, origin, source_file=None, opened_at=None, region=None):
         if origin not in (ORIGIN_RADIO, ORIGIN_FILE):
             raise DocumentError("origin: radio або file")
         self.manifest = copy.deepcopy(codeplug.manifest)
@@ -84,6 +86,62 @@ class Document:
         self.revision = 0
         self._view = None
         self._listeners = []
+        # R75: малі блоки налаштувань (custom-data) -- друга частина документа. region=None: джерело їх не містить (старий файл) -- тоді
+        # панелі налаштувань кажуть про це й рація в цій частині не чіпається.
+        self.region = dreg.RegionStore(region) if region is not None else None
+        self._region_origin = region                   # область так, як її віддала рація / файл (база для «що змінилось»)
+        self._region_saved = self._rbytes()
+
+    # ----------------------------------------------------------------- налаштування (custom-data)
+
+    def _rbytes(self):
+        return self.region.data() if self.region is not None else None
+
+    def region_changed_types(self):
+        """Типи блоків налаштувань, які треба записати в рацію. З рації: лише змінені відносно прочитаного. З файла: усі блоки документа, що є
+        у файлі (рація приводиться до файла; однакові з рацією план пропустить). Типи поза dreg.DOC_TYPES сюди не потрапляють ніколи."""
+        if self.region is None:
+            return []
+        if self.origin == ORIGIN_FILE:
+            return [t for t in dreg.DOC_TYPES if t in dreg.block_map(self._rbytes())]
+        return dreg.changed_types(self._region_origin, self._rbytes())
+
+    def region_write_blocks(self):
+        types = self.region_changed_types()
+        return dreg.doc_blocks(self._rbytes(), set(types)) if types else []
+
+    def scratch_region(self):
+        """Копія області для правки панеллю (RegionStore): панель пише в неї, а потім віддає в apply_region. Документ не змінюється."""
+        if self.region is None:
+            raise DocumentError("у цьому джерелі налаштувань рації нема (старий файл) -- їх можна лише прочитати з рації")
+        return dreg.RegionStore(self._rbytes())
+
+    def apply_region(self, scratch, texts=None):
+        """Прийняти правку налаштувань ЦІЛКОМ: scratch -- RegionStore, змінений панеллю. Приймаються лише відмінності у блоках документа
+        (dreg.DOC_TYPES); решта області лишається як була. True -- щось змінилось. Документ як був, якщо scratch зачепив щось поза DOC_TYPES."""
+        if self.region is None:
+            raise DocumentError("у цьому джерелі налаштувань рації нема (старий файл) -- їх можна лише прочитати з рації")
+        old, new = self._rbytes(), scratch.data()
+        if old == new:
+            return False
+        om, nm = dreg.block_map(old), dreg.block_map(new)
+        types = [t for t in dreg.DOC_TYPES if om.get(t) != nm.get(t)]
+        for t in types:
+            if t not in nm:
+                raise DocumentError("блок налаштувань типу %d зник -- правку відхилено" % t)
+        # Порядок появи нових блоків залежить від порядку запису, тож байти порівнюємо СТРУКТУРНО: усе, що не є блоком документа
+        # (теми, SMS, AES-селектор, заставка…), лишилось на тих самих місцях з тими самими байтами; заголовок області той самий.
+        if not dreg.outside_unchanged(old, new):
+            raise DocumentError("правка налаштувань зачепила область поза блоками документа -- відхилено")
+        probe = dreg.RegionStore(new)
+        self.region = probe
+        texts = texts or {}
+        for t in types:
+            self.changes.append(("changed", "Налаштування", texts.get(t) or dreg.DOC_TITLES[t]))
+        self.revision += 1
+        self._refresh_flags()
+        self._notify()
+        return True
 
     # ----------------------------------------------------------------- підписи
 
@@ -102,8 +160,8 @@ class Document:
     def status_text(self):
         n = len(self.changes)
         if self.modified:
-            return "Кодплаг: %s · ЗМІНЕНО (змін: %d)" % (self.label(), n)
-        return "Кодплаг: %s · без змін" % self.label()
+            return "Дані: %s · ЗМІНЕНО (змін: %d)" % (self.label(), n)
+        return "Дані: %s · без змін" % self.label()
 
     def radio_model_type(self):
         return (self.manifest.get("radio") or {}).get("radioType")
@@ -140,11 +198,12 @@ class Document:
 
     def _refresh_flags(self):
         cur = _snap(self.image)
-        self.modified = cur != self._saved[0]
-        if cur == self._origin_snap:           # усе повернуто до стану при читанні: журнал порожній
+        rcur = self._rbytes()
+        self.modified = cur != self._saved[0] or rcur != self._region_saved
+        if cur == self._origin_snap and rcur == self._region_origin:           # усе повернуто до стану при читанні: журнал порожній
             self.changes = []
             self.warnings = []
-        if cur == self._saved[0]:
+        if cur == self._saved[0] and rcur == self._region_saved:
             self.changes = self.changes[:self._saved[1]]
             self.warnings = list(self._saved[2])
         self._saved = (self._saved[0], min(self._saved[1], len(self.changes)), self._saved[2])
@@ -196,6 +255,8 @@ class Document:
             return False
         snap, n, warns = self._saved
         self.image = _image(snap, self.base)
+        if self.region is not None:
+            self.region = dreg.RegionStore(self._region_saved)
         self.changes = self.changes[:n]
         self.warnings = list(warns)
         self.revision += 1
@@ -229,7 +290,12 @@ class Document:
         m["note"] = ("Кодплаг-документ: образ, відкритий із %s і змінений у вікні (змін: %d). У рацію цим збереженням нічого не записувалось."
                      % ("рації" if self.origin == ORIGIN_RADIO else "файла", len(self.changes)))
         m["document"] = {"origin": self.origin, "source": self.label(), "changes": len(self.changes)}
-        return cl.make_zip(ee, fl, m)
+        extra = None
+        if self.region is not None:                    # R75: налаштування рації -- тим самим форматом, що в повному бекапі (customdata.bin + частина маніфесту)
+            reg, _redacted = dreg.redact_secrets(self.region.data())     # ключі AES (лишок старих версій у блоці 6) у файл документа не потрапляють
+            m.setdefault("parts", {})[creg.PART_KEY] = creg.manifest_part(reg)
+            extra = {creg.PART_FILE: reg}
+        return cl.make_zip(ee, fl, m, extra)
 
     def save_as(self, path):
         """Записати документ у .zip. Після цього «незбережених змін» нема (база «збережено» = поточний стан)."""
@@ -240,6 +306,7 @@ class Document:
         os.replace(tmp, path)
         self.saved_path = path
         self._saved = (_snap(self.image), len(self.changes), list(self.warnings))
+        self._region_saved = self._rbytes()
         self.modified = False
         self.revision += 1
         self._notify()
@@ -266,6 +333,10 @@ class Document:
 
     def pending_write(self):
         """Чи є що записувати. Документ з файла -- завжди (запис = привести рацію до стану файла); з рації -- лише коли образ відрізняється."""
+        return self.image_pending() or bool(self.region_changed_types())
+
+    def image_pending(self):
+        """Чи є що записувати в КОДПЛАГ (без налаштувань)."""
         return self.origin == ORIGIN_FILE or _snap(self.image) != self._origin_snap
 
     def write_image(self, fresh=None):
@@ -284,18 +355,21 @@ class Document:
             res.warnings.append("Після читання рація змінила %d байт(ів), які ви теж змінили в документі; взято вашу правку." % conflicts)
         return res, conflicts
 
-    def mark_written(self, image):
+    def mark_written(self, image, region_written=True):
         """Після успішного запису: документ = те, що тепер у рації. Джерело -- рація, незбережених змін нема."""
         self.image = cc.Image(image.eeprom, image.flash, image.base)
         self.origin = ORIGIN_RADIO
         self.opened_at = datetime.datetime.now()
         self.source_file = None
         self.saved_path = None
-        self.changes = []
+        self.changes = [] if region_written else [c for c in self.changes if c[1] == "Налаштування"]
         self.warnings = []
         self._origin_snap = _snap(self.image)
         self._saved = (_snap(self.image), 0, [])
-        self.modified = False
+        if self.region is not None and region_written:                    # R75: після запису блоки документа = блоки рації; решта області лишається як була при читанні
+            self._region_origin = self._rbytes()
+            self._region_saved = self._rbytes()
+        self.modified = self._rbytes() != self._region_saved
         self.revision += 1
         self._notify()
 
@@ -323,11 +397,12 @@ def merge(origin, current, fresh):
 
 def from_radio(link, progress=None, opened_at=None):
     """Прочитати рацію в документ (довга операція: EEPROM 128 КБ + флеш 80 КБ; викликати з робочого потоку)."""
-    cp, _m = cv.codeplug_from_radio(link, progress)
-    return Document(cp, ORIGIN_RADIO, opened_at=opened_at)
+    cp, _m = cv.codeplug_from_radio(link, (lambda p, t: progress(int(p * 0.85), t)) if progress else None)
+    region = creg.read_radio_region(link, (lambda d, _t: progress(85 + int(15.0 * d / creg.REGION_LEN), "Читаю налаштування з рації...")) if progress else None)
+    return Document(cp, ORIGIN_RADIO, opened_at=opened_at, region=region)
 
 
 def from_backup(path):
     """Відкрити бекап (.zip) у документ. SHA-256 частин перевіряє cps_link.read_backup_zip."""
     cp, _m = cv.codeplug_from_backup(path)
-    return Document(cp, ORIGIN_FILE, source_file=path)
+    return Document(cp, ORIGIN_FILE, source_file=path, region=creg.read_backup_region(path))     # старий файл без налаштувань -> region=None

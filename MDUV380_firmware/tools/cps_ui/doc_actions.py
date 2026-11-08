@@ -8,19 +8,16 @@
 import os
 from tkinter import filedialog, messagebox
 
-import codeplug_view as cpview
-import cps_csv as cc
 import cps_link as cps
 import cps_restore as cps_rest
 import gui_dialogs as gd
-import phase_timing
 
+from . import doc_write as dw
 from . import document as D
 from .common import APP_TITLE, output_dir
 from .p_backup import close_quietly, show_restore_result
 from .panel import BUSY_REASON, HINT_NO_DOC
 
-WRITE_TITLE = "ЗАПИС КОДПЛАГА З ДОКУМЕНТА -- рація буде ПЕРЕЗАПИСАНА."
 ZIP_TYPES = [("Бекап кодплага (.zip)", "*.zip"), ("Усі файли", "*.*")]
 
 
@@ -53,7 +50,7 @@ class DocActions:
         """Заголовок вікна (зірочка), рядок стану, кнопки панелі документа."""
         d = self.doc
         self.title("%s — %s" % (d.title_text(), APP_TITLE) if d is not None else APP_TITLE)
-        self.doc_label.config(text=d.status_text() if d is not None else "Кодплаг не відкрито",
+        self.doc_label.config(text=d.status_text() if d is not None else "Нічого не прочитано",
                               foreground=self._doc_color())
         self.refresh_docbar()
 
@@ -94,10 +91,10 @@ class DocActions:
         d = self.doc
         if d is None or not d.modified:
             return True
-        text = ("У поточному кодплазі є незбережені зміни (%d).\n\nЩо робити перед тим, як %s?\n\n"
-                "«Зберегти як…» запише їх у .zip (рація не чіпається), «Не зберігати» відкине їх." % (len(d.changes), action))
+        text = ("У поточних даних (кодплаг і налаштування) є незбережені зміни (%d).\n\nЩо робити перед тим, як %s?\n\n"
+                "«Зберегти у файл…» запише їх у .zip (рація не чіпається), «Не зберігати» відкине їх." % (len(d.changes), action))
         choice = gd.choice_dialog(self, "Незбережені зміни", text,
-                                  [("Скасувати", "cancel"), ("Не зберігати", "drop"), ("Зберегти як…", "save")], 0)
+                                  [("Скасувати", "cancel"), ("Не зберігати", "drop"), ("Зберегти у файл…", "save")], 0)
         if choice == "drop":
             return True
         if choice == "save":
@@ -111,10 +108,10 @@ class DocActions:
         if self.busy:
             return False
         if path is None:
-            path = filedialog.askopenfilename(parent=self, title="Бекап кодплага", initialdir=output_dir(), filetypes=ZIP_TYPES)
+            path = filedialog.askopenfilename(parent=self, title="Файл з кодплагом і налаштуваннями рації", initialdir=output_dir(), filetypes=ZIP_TYPES)
             if not path:
                 return False
-        if not self.confirm_leave_document("відкрити інший кодплаг"):
+        if not self.confirm_leave_document("відкрити інший файл"):
             return False
         try:
             doc = D.from_backup(path)
@@ -129,9 +126,9 @@ class DocActions:
         """Прочитати рацію в документ (у фоні)."""
         if self.busy:
             return False
-        if not self.confirm_leave_document("прочитати кодплаг із рації"):
+        if not self.confirm_leave_document("прочитати з рації"):
             return False
-        return self.run_task(self._open_radio_worker, "Читаю кодплаг з рації...", on_done=self._doc_opened_from_radio, fail_suffix="")
+        return self.run_task(self._open_radio_worker, "Читаю з рації (кодплаг і налаштування)...", on_done=self._doc_opened_from_radio, fail_suffix="")
 
     def _open_radio_worker(self):
         ser = cps.open_radio()
@@ -142,7 +139,7 @@ class DocActions:
 
     def _doc_opened_from_radio(self, doc):
         self.set_document(doc)
-        self.set_status("Кодплаг прочитано з рації.", "ok")
+        self.set_status("Прочитано з рації: кодплаг і налаштування.", "ok")
 
     # ----------------------------------------------------------------- зберегти
 
@@ -151,7 +148,7 @@ class DocActions:
         d = self.doc
         if d is None or self.busy:
             return False
-        path = filedialog.asksaveasfilename(parent=self, title="Зберегти кодплаг як…", defaultextension=".zip", initialdir=output_dir(),
+        path = filedialog.asksaveasfilename(parent=self, title="Зберегти у файл…", defaultextension=".zip", initialdir=output_dir(),
                                             initialfile=cps.timestamp_name("codeplug_document", ".zip"), filetypes=ZIP_TYPES)
         if not path:
             return False
@@ -170,7 +167,7 @@ class DocActions:
         d = self.doc
         if d is None or self.busy or not d.modified:
             return False
-        if not gd.confirm_dialog(self, "Відкинути зміни?", "Відкинути всі незбережені зміни (%d) і повернути кодплаг до стану "
+        if not gd.confirm_dialog(self, "Відкинути зміни?", "Відкинути всі незбережені зміни (%d) і повернути дані до стану "
                                  "останнього відкриття / збереження / запису?" % len(d.changes), yes="Відкинути", no="Скасувати"):
             return False
         d.discard()
@@ -184,47 +181,33 @@ class DocActions:
         if d is None or self.busy or self.doc_reasons()["write"]:
             return False
         rev = d.revision
-        return self.run_task(lambda: self._write_worker(d), "Записую кодплаг у рацію...", on_done=lambda out: self._doc_written(d, rev, out),
+        return self.run_task(lambda: self._write_worker(d), "Записую у рацію...", on_done=lambda out: self._doc_written(d, rev, out),
                              fail_suffix="\n\nЯкщо про відмову сказано «Нічого не записано» -- рація не змінена.", reconnect_ms=6000)
 
     def _write_worker(self, d):
+        """R75: ОДНА дія для всього документа (кодплаг + налаштування); вся логіка -- у cps_ui/doc_write.py (без Tk, перевіряється хост-тестами)."""
         ser = cps.open_radio()
         try:
-            link = cps.CpsLink(ser)
-            info = link.radio_info()
-            reason = d.write_block_reason(info)
-            if reason:
-                raise cps.CpsError("{} Нічого не записано.".format(reason))
-            fresh, share, prefetched = None, 0, None
-            ph = phase_timing.Phases(link)
-            if d.origin == D.ORIGIN_RADIO:
-                print("Читаю свіжий стан рації: на нього накладуться лише ваші зміни, а не весь застарілий образ.")
-                with ph.phase("свіже читання рації"):
-                    cp, _m = cpview.codeplug_from_radio(link, lambda p, t: self.cps_progress(int(p * 0.25), t))
-                fresh = cc.Image.from_codeplug(cp)
-                prefetched = (cp.eeprom, cp.flash)      # R32 T2.2: страхова копія візьме звідси EEPROM і флеш, а не читатиме їх вдруге
-                share = 25
-            res, conflicts = d.write_image(fresh)
-            if conflicts:
-                print("Конфліктів зі змінами рації: {}.".format(conflicts))
-            out = cc.write_image_via_restore(
-                link, res, self.confirm_from_worker, lambda p, t: self.cps_progress(share + int(p * (100 - share) / 100.0), t), log=print,
-                title=WRITE_TITLE, out_dir=output_dir(), zip_prefix="codeplug_document-write",
-                note="Образ, зібраний із документа кодплага. Це те, що буде записано.", prefetched=prefetched, phases=ph)
-            out["written_image"] = res.image
-            return out
+            return dw.write_document(cps.CpsLink(ser), d, self.confirm_from_worker, self.cps_progress, output_dir(), log=print)
         finally:
             close_quietly(ser)
 
     def _doc_written(self, d, rev, out):
-        if out.get("nothingToDo") and not out.get("safetyCopy"):
+        rres = out.get("regionResult")
+        codeplug_ran = bool(out.get("importZip"))            # restore_codeplug відпрацював (є страхова копія кодплага)
+        if not codeplug_ran and not rres and not out.get("cancelled"):
             messagebox.showinfo("Нічого записувати", "Документ не відрізняється від того, що вже є в рації.", parent=self)
-        else:
+        if codeplug_ran:
             show_restore_result(out)
+        if rres:
+            messagebox.showinfo("Налаштування рації", rres["text"] + ("\n\nСтрахова копія: " + rres["safetyCopy"] if rres.get("safetyCopy") else ""), parent=self)
+        elif out.get("cancelled") and not codeplug_ran:
+            self.set_status("Скасовано; нічого не записано.", "info")
         if out.get("cancelled"):
             return
         if self.doc is d and d.revision == rev:
-            d.mark_written(out["written_image"])
-            self.set_status("Записано в рацію.", "ok")
+            d.mark_written(out["written_image"], region_written=bool(out.get("regionWritten", True)))
+            self.set_status("Записано в рацію." if out.get("regionWritten", True) else "Кодплаг записано, але налаштування -- ні: дивись повідомлення.",
+                            "ok" if out.get("regionWritten", True) else "warn")
         else:
             self.log("Документ змінився під час запису -- його стан не оновлено; прочитайте кодплаг з рації ще раз.")

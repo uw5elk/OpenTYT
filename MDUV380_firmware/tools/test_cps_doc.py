@@ -409,7 +409,7 @@ def test_gui():
     try:
         app.update()
         # --- порожній документ: КОЖНА панель показує підказку або вимкнена, без винятків ---
-        check(app.title() == "TYT MD-UV390UKR" and "не відкрито" in app.doc_label.cget("text"), "порожній документ: заголовок без назви, у стані «не відкрито»")
+        check(app.title() == "TYT MD-UV390UKR" and "Нічого не прочитано" in app.doc_label.cget("text"), "порожній документ: заголовок без назви, у стані «не відкрито»")
         for key in app.section_keys():
             app.show(key)
             app.update()
@@ -544,7 +544,7 @@ def test_gui():
             gd.confirm_dialog = lambda parent, title, text, yes="Так", no="Ні": (shown.append(text), True)[1]
             check(app.doc_write(), "запис стартував")
             check(_wait_idle(app), "запис завершився")
-            check(shown and "Київ" in shown[0] and "ЗАПИС КОДПЛАГА З ДОКУМЕНТА" in shown[0], "діалог підтвердження: заголовок і список змін")
+            check(shown and "Київ" in shown[0] and "ЗАПИС З ДОКУМЕНТА" in shown[0], "діалог підтвердження: заголовок і список змін")
             check(not app.doc.modified and app.doc.origin == "radio" and not app.title().startswith("*"), "після запису документ без змін, джерело -- рація")
             cp2, _m = cv.codeplug_from_radio(cl.CpsLink(radio, retries=0))
             check(any(c[1] == "Київ" for c in cp2.contacts()), "у (підставній) рації з'явився контакт")
