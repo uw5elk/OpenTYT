@@ -261,6 +261,34 @@ def test_reconnect_policy():
     check("self._reconnect_start(t[\"reconnect_ms\"])" in src and "self.after(t[\"reconnect_ms\"], self.refresh_connection)" not in src, "app.py використовує опитування, а не сліпе очікування")
 
 
+def test_chunk_switch():
+    """2.4: за замовчуванням 1024; перемикач 1533 дає менше запитів на тих самих даних і ті самі байти."""
+    check(cl.CHUNK_DEFAULT == 1024 and cl._chunk_from_env({}) == 1024, "типово 1024")
+    check(cl._chunk_from_env({"OPENTYT_CPS_CHUNK": "1533"}) == 1533 and cl._chunk_from_env({"OPENTYT_CPS_CHUNK": "99999"}) == 1024
+          and cl._chunk_from_env({"OPENTYT_CPS_CHUNK": "abc"}) == 1024 and cl._chunk_from_env({"OPENTYT_CPS_CHUNK": "10"}) == 1024, "змінна середовища: допустимо 256..1533, інакше типове")
+    check(cl.CHUNK == 1024, "у цьому запуску перемикач вимкнений (CHUNK=%d)" % cl.CHUNK)
+    spi = tcr.spi_a()
+    res = {}
+    for n in (1024, 1533):
+        old = cl.set_chunk(n)
+        try:
+            radio = tcr.FakeRadioX(bytearray(spi))
+            link = cl.CpsLink(radio)
+            b = io_stats.snapshot()
+            data = link.read(cl.CPS_ACCESS_FLASH, 0x20000, 0x10000)
+            res[n] = (io_stats.delta(b)["read_req"], data)
+        finally:
+            cl.set_chunk(old)
+    check(res[1024][1] == res[1533][1] == bytes(spi[0x20000:0x30000]), "ті самі байти при будь-якому розмірі запиту")
+    check(res[1024][0] == 64 and res[1533][0] == 43, "64 КіБ: %d запитів по 1024 -> %d по 1533 (лічильники)" % (res[1024][0], res[1533][0]))
+    try:
+        cl.set_chunk(1534)
+        check(False, "set_chunk(1534) має відхилятись")
+    except ValueError:
+        pass
+    check(cl.CHUNK == 1024, "після перевірок CHUNK повернено до 1024")
+
+
 def test_phase_erases():
     import phase_timing
     ph = phase_timing.Phases(None)
@@ -280,6 +308,7 @@ def main():
     test_compact_erases()
     test_write_db_erases()
     test_reconnect_policy()
+    test_chunk_switch()
     test_phase_erases()
     if FAILS:
         print("test_r73: ПРОВАЛІВ %d" % len(FAILS))

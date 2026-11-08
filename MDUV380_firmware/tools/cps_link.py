@@ -56,7 +56,34 @@ CPS_ACCESS_FLASH_SECURITY_REGISTERS = 10
 
 RADIO_VID, RADIO_PID = 0x1FC9, 0x0094
 RADIO_TYPE_MDUV380 = 6            # usb_com.c: PLATFORM_MDUV380 -> radioType = 6
-CHUNK = 1024                      # той самий розмір запиту, що й у aes_key_store.flash_read (ліміт прошивки -- 1533)
+# R73 2.4: розмір запиту читання. ЗА ЗАМОВЧУВАННЯМ 1024 (як і було). Ліміт прошивки -- COM_REQUESTBUFFER_SIZE-3 = 1533 (usb_com.h:40,43, usb_com.c cpsHandleReadCommand ≈ L553):
+# запити по 1533 Б дали б на ~33 % менше запитів, АЛЕ це не перевірено на залізі/Windows, тому перемикач вимкнений, доки Богдан не виміряє секунди.
+# Увімкнути для одного запуску: змінна середовища OPENTYT_CPS_CHUNK=1533 (Windows: set OPENTYT_CPS_CHUNK=1533), або set_chunk(1533) з коду. Допустимо 256..1533.
+CHUNK_DEFAULT = 1024
+CHUNK_MIN, CHUNK_MAX = 256, 1533
+
+
+def _chunk_from_env(env=None):
+    import os
+    raw = (os.environ if env is None else env).get("OPENTYT_CPS_CHUNK", "")
+    try:
+        n = int(raw)
+    except ValueError:
+        return CHUNK_DEFAULT
+    return n if CHUNK_MIN <= n <= CHUNK_MAX else CHUNK_DEFAULT
+
+
+CHUNK = _chunk_from_env()
+
+
+def set_chunk(n):
+    """Змінити розмір запиту читання (CHUNK_MIN..CHUNK_MAX). Повертає попереднє значення."""
+    global CHUNK
+    n = int(n)
+    if not (CHUNK_MIN <= n <= CHUNK_MAX):
+        raise ValueError("розмір запиту має бути %d..%d, отримано %d" % (CHUNK_MIN, CHUNK_MAX, n))
+    old, CHUNK = CHUNK, n
+    return old
 
 # --- екран (HX8353E.h: DISPLAY_SIZE_X / DISPLAY_SIZE_Y) -------------------------------
 DISPLAY_W = 160
