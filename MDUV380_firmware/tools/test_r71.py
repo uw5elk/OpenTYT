@@ -63,9 +63,23 @@ def test_counters():
         env.close()
 
 
+def test_fast_reader():
+    """2.1: aks.flash_read -- тонка обгортка швидкого читача (довжина з заголовка відповіді), без очікувань тайм-ауту."""
+    t = table()
+    for name in ("AES: «Оновити слоти» (15 записів)", "RCTL: прочитати", "бікон/шумодав: прочитати"):
+        d = t[name]
+        check(d["port_timeouts"] + d["short_reads"] == 0, "%s: очікувань тайм-ауту у читанні 0, а є %r" % (name, d))
+    check(t["AES: «Оновити слоти» (15 записів)"]["read_req"] == 15, "до 2.2 «Оновити слоти» = 15 запитів (дані: %r)" % t["AES: «Оновити слоти» (15 записів)"])
+    src = read(HERE, "aes_key_store.py")
+    i = src.index("def flash_read(")
+    body = src[i:i + 900]
+    check("time.sleep" not in body and "ser.read(" not in body, "flash_read не спить і не читає сирий порт")
+
+
 def main():
     test_measure()
     test_counters()
+    test_fast_reader()
     if FAILS:
         print("test_r71: ПРОВАЛІВ %d" % len(FAILS))
         sys.exit(1)

@@ -64,24 +64,27 @@ def find_port():
 def show_cps(ser):
     ser.reset_input_buffer(); ser.write(bytes([ord("C"), 0])); ser.flush(); time.sleep(0.1); ser.read(64)
 
+def _fast_link(ser):
+    """CpsLink для цього порту (один на порт). R71: єдиний швидкий читач 'R' -- довжину відповіді беремо з її заголовка, тож порт не чекає тайм-ауту на кожному запиті."""
+    link = getattr(ser, "_r71_link", None)
+    if link is None or link.ser is not ser:
+        import cps_link
+        link = cps_link.CpsLink(ser, retries=1)
+        try:
+            ser._r71_link = link
+        except Exception:  # noqa: BLE001 -- об'єкти без __dict__: тоді новий CpsLink на кожен виклик (лише лічильники per-link губляться)
+            pass
+    return link
+
+
 def flash_read(ser, addr, length):
-    """CPS 'R' CPS_ACCESS_FLASH read -> bytes (raw SPI-flash address)."""
-    out = b""
-    while length > 0:
-        n = min(length, 1024)
-        req = bytes([ord("R"), 1, (addr >> 24) & 0xFF, (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, addr & 0xFF,
-                     (n >> 8) & 0xFF, n & 0xFF])
-        ser.reset_input_buffer(); ser.write(req); ser.flush(); time.sleep(0.15)
-        r = ser.read(n + 8)
-        io_stats.add("read_req")                     # R71 вимір: рація віддає n + 3 байти, а ми просимо n + 8 -- порт чекає тайм-ауту (short_reads)
-        io_stats.add("read_bytes", max(len(r) - 3, 0))
-        if len(r) < n + 8:
-            io_stats.add("short_reads")
-        if len(r) < 3 or r[0] != ord("R"):
-            raise RuntimeError("flash read failed @%06X: %r" % (addr, r[:8]))
-        out += r[3:3 + n]
-        addr += n; length -= n
-    return out
+    """CPS 'R' CPS_ACCESS_FLASH read -> bytes (raw SPI-flash address). R71: тонка обгортка над cps_link.CpsLink.read (довжина із заголовка відповіді, шматки по 1024 Б;
+    стара версія просила read(n + 8), а рація віддає n + 3 -- кожен запит чекав тайм-ауту порту (0.6-1.0 с) плюс sleep 0.15)."""
+    import cps_link
+    try:
+        return _fast_link(ser).read(cps_link.CPS_ACCESS_FLASH, addr, length)
+    except cps_link.CpsError as e:
+        raise RuntimeError("flash read failed @%06X: %s" % (addr, e))
 
 def flash_write_block(ser, addr, data):
     """Write `data` at raw SPI-flash `addr` via CPS 'X' prepare/send/commit.
