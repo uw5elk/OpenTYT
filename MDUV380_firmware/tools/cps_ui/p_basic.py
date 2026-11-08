@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Розділ «Кодплаг → Основна інформація»: ім'я рації / позивний APRS (EEPROM 0x00E0), мій DMR ID (0x00E8), Talker Alias у двох частинах (0x7540, 0x7550) і тип екрана при вмиканні (0x7518) ДОКУМЕНТА.
 R51: підписи приведено до того, що ці поля роблять у прошивці (за кодом: codeplugGetRadioName -> aprs.c; codeplugGetUserDMRID -> settings.c; рядки 0x7540/0x7550 -> HRC6000SetTalkerAlias; 0x7518 -> uiSplashScreen.c).
-Правки лягають у документ (зірочка в заголовку вікна); у рацію -- лише дією «Записати кодплаг у рацію». Формати полів не змінено (codeplug_edit.py)."""
+Правки лягають у документ (зірочка в заголовку вікна); у рацію -- лише дією «Записати в рацію». Формати полів не змінено (codeplug_edit.py)."""
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -33,7 +33,7 @@ class BasicInfoPanel(Panel):
         self.intro_var = tk.StringVar()
         self.infos = {}
         self.header("Основна інформація", "Ім'я рації (воно ж позивний APRS), мій DMR ID, Talker Alias і тип екрана при вмиканні з кодплага. Зміни потрапляють "
-                                          "у документ; рація змінюється лише за дією «Записати кодплаг у рацію» над розділами.")
+                                          "у документ; рація змінюється лише за дією «Записати в рацію» над розділами.")
         self.hint = ttk.Label(self, text=HINT_NO_DOC, foreground=gt.P["muted"])
         # R51: назва групи за змістом полів (ім'я/ID/Talker Alias/екран вмикання), а не загальна назва з рядка «було» (див. звіт R51)
         self.box = ttk.LabelFrame(self, text="Ім'я, ID, Talker Alias і екран вмикання")
