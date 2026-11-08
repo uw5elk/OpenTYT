@@ -882,11 +882,15 @@ def write_db(link, image, confirm, progress=None, log=print, safety_dir=None, no
     payload = bytes(image[:img.extent])
     if len(payload) != img.extent:
         raise DbError("образ коротший за заявлений заголовком")
-    old = read_radio_header(link)
+    import phase_timing
+    ph = phase_timing.Phases(link)                          # R73: час, запити, КіБ і ЧИСЛО СТИРАНЬ секторів по фазах -- у журнал
+    with ph.phase("читання заголовка бази"):
+        old = read_radio_header(link)
     old_extent = min(old.extent, AREA1_LEN) if old.rec_len else 0
     span = max(SECTOR, _round_up(max(old_extent, len(payload))))
     prog(2, "Читаю поточну область бази (страхова копія)...")
-    old_bytes = link.read(cl.CPS_ACCESS_FLASH, AREA1_START, span, lambda d, t: prog(2 + 18.0 * d / max(1, t), "Читаю поточну область бази..."))
+    with ph.phase("читання поточної області (страхова копія)"):
+        old_bytes = link.read(cl.CPS_ACCESS_FLASH, AREA1_START, span, lambda d, t: prog(2 + 18.0 * d / max(1, t), "Читаю поточну область бази..."))
     d = safety_dir or os.getcwd()
     if not os.access(d, os.W_OK):
         raise DbError("нема права писати в теку %s, де має лежати страхова копія бази. Нічого не записано." % d)
@@ -935,13 +939,16 @@ def write_db(link, image, confirm, progress=None, log=print, safety_dir=None, no
     header_cleared = bytes(old_bytes[:HEADER_LEN]) == b"\x00" * HEADER_LEN        # заголовок вже нульовий -- обнуляти нічого
     try:
         # сектор 0 (якщо він змінюється) іде першим, з обнуленим заголовком: обірваний запис = «бази нема», а не «база зі сміттям»
-        for k, s in sorted(todo):
-            fg.write_span(link.ser, AREA1_START + k * SECTOR, s, "dmrdb", on_sector)
-            done[0] += 1
-            if k == 0:
-                header_cleared = True
+        with ph.phase("запис змінених секторів") as rec_w:
+            for k, s in sorted(todo):
+                fg.write_span(link.ser, AREA1_START + k * SECTOR, s, "dmrdb", on_sector)
+                done[0] += 1
+                if k == 0:
+                    header_cleared = True
+            rec_w["note"] = "секторів змінено %d з %d у зайнятій частині" % (len(todo), new_span // SECTOR)
         on_sector(0, 1)
-        fg.write_span(link.ser, AREA1_START, payload[:HEADER_LEN], "dmrdb")
+        with ph.phase("запис заголовка останнім"):
+            fg.write_span(link.ser, AREA1_START, payload[:HEADER_LEN], "dmrdb")
         done[0] += 1
     except Cancelled:
         text = ("Запис ПЕРЕРВАНО користувачем після %d з %d секторів. Заголовок бази обнулено, тож рація бази не бачить (позивні покажуть номери); "
@@ -959,7 +966,9 @@ def write_db(link, image, confirm, progress=None, log=print, safety_dir=None, no
 
     prog(92, "Звіряю заголовок і випадкові записи...")
     rng = rng or random.SystemRandom()
-    ok, why = verify(link, payload, img, rng)
+    with ph.phase("звірка (заголовок і випадкові записи)"):
+        ok, why = verify(link, payload, img, rng)
+    log(ph.summary())
     text = "База записана: %d записів (%d Б), секторів записано %d. " % (img.count, img.extent, done[0])
     text += "Звірка читанням: %s." % ("пройшла (заголовок і %s)" % why if ok else "НЕ ПРОЙШЛА -- " + why)
     text += "\nСтрахова копія попередньої області:\n%s" % safety

@@ -200,6 +200,35 @@ def test_compact_erases():
     check(len(radio.commits) == len(set(radio.commits[1:-1])) + 2, "ущільнення: кожен сектор даних стерто один раз: %r" % radio.commits)
 
 
+def test_write_db_erases():
+    """G: write_db і раніше писав лише змінені сектори (todo) у зайнятій частині; рахуємо стирання: змінені сектори + 1 (заголовок останнім)."""
+    import random
+    import tempfile
+    import dmr_db as db
+    import test_r31 as t31
+    old = t31.no_sleep()
+    try:
+        recs = t31.make_records(3000, 1)
+        old_img = db.build_image(recs)
+        b_ = bytearray(old_img)
+        b_[-3] ^= 0x01                                                  # змінився один байт у самому хвості образу
+        new_img = bytes(b_)
+        spi = t31.spi_with_db(old_img)
+        radio = tcr.FakeRadioX(bytearray(spi))
+        before = bytes(spi)
+        n, res = erases(lambda: db.write_db(cl.CpsLink(radio), new_img, t31.confirm_recorder(True)[0], log=lambda *_: None, safety_dir=tempfile.mkdtemp(prefix="r73d_"), rng=random.Random(1), post_reset=False))
+        after = bytes(radio.spi)
+        a0 = db.AREA1_START
+        changed = sorted({(i - a0) // 4096 for i in range(a0, a0 + len(new_img)) if before[i] != after[i]})
+        check(res["written"] and res["verified"], "write_db: записано й звірено")
+        expected = len([x for x in changed if x != 0]) + 2          # сектор 0 завжди двічі: з обнуленим заголовком і справжній наприкінці (порядок безпеки)
+        check(n == expected, "write_db: %d стирань; змінених секторів %d (%r), очікувано %d -- зайвих секторів не пишемо" % (n, len(changed), changed[:4], expected))
+        check(n < (len(new_img) + 4095) // 4096, "write_db: стирань менше, ніж секторів зайнятої частини (%d < %d)" % (n, (len(new_img) + 4095) // 4096))
+    finally:
+        import time
+        time.sleep = old
+
+
 def test_phase_erases():
     import phase_timing
     ph = phase_timing.Phases(None)
@@ -217,6 +246,7 @@ def main():
     test_custom_region_stale_plan_and_verify()
     test_header_needed_in_first_group()
     test_compact_erases()
+    test_write_db_erases()
     test_phase_erases()
     if FAILS:
         print("test_r73: ПРОВАЛІВ %d" % len(FAILS))
