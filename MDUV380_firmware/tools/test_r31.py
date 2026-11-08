@@ -251,7 +251,8 @@ def test_restore_keys_roundtrip():
         outside = bytes(radio.spi[:0xDA000]) + bytes(radio.spi[0xDB000:])
         check(outside == before[:0xDA000] + before[0xDB000:], "K3.4/Z6: поза сектором 0xDA000 флеш не змінено ні на байт (калібрування, кодплаг, база, підказки)")
         check(bytes(radio.spi[0xDA5DC:0xDB000]) == before[0xDA5DC:0xDB000], "K3.4: хвіст сектора 0xDA000 після слота 15 не змінено")
-        check(radio.commits == [0xDA] * 3 and not radio.cal_touched, "K3.2: три слоти -- три записи сектора 0xDA, калібрування недоторкане: %r" % radio.commits)
+        # R73: СВІДОМО ЗАМІНЕНО очікування «три слоти -- три записи сектора» (було [0xDA] * 3): слоти одного сектора тепер пишуться ОДНИМ записом (одне стирання)
+        check(radio.commits == [0xDA] and not radio.cal_touched, "K3.2/R73: три слоти -- ОДНЕ стирання сектора 0xDA, калібрування недоторкане: %r" % radio.commits)
         check(res["result"]["written"] == [2, 5, 9] and res["tableMatchesExpected"] is True and not res["result"]["failed"], "K3.2: записано й звірено слоти 2, 5, 9")
         txt = asked[0]
         check("Слоти до запису: 2, 5, 9." in txt and "зараз зайняті (ключі буде ЗАМІНЕНО): 9." in txt, "K3.1: підтвердження: слоти й які зайняті: %s" % txt.split("\n")[3:5])
@@ -344,6 +345,8 @@ def test_old_zip_without_keys():
 
 
 def test_failure_on_third_slot():
+    """R73: СВІДОМО ПЕРЕПИСАНО. Слоти одного сектора тепер пишуться одним записом (X 1, X 2 на слот, X 3), тож «збій на третьому слоті» означає збій
+    усього запису групи: рація замовкає до X 3 -- сектор НЕ стирався, жоден слот не змінено; звіт каже це й перелічує слоти групи. Окремо -- розбіжність звірки одного слоту."""
     old_sleep = no_sleep()
     try:
         occ = {1, 4, 7, 12}
@@ -351,20 +354,33 @@ def test_failure_on_third_slot():
         path, _d, _m, _r = mk_zip(put_table(tcr.spi_a(), table_a))
         table_b = make_table(9, {3})                      # у рації інші слоти; слоти 1, 4, 7, 12 порожні
         spi_b = put_table(tcr.spi_b(tcr.spi_a()), table_b)
-        # кожен слот = X 1, X 2, X 3: після 6 X-команд рація «замовкає» -- третій слот (7) не запишеться
-        radio = tcr.FakeRadioX(bytearray(spi_b), die_after_x=6)
+        # X 1 + 4 x X 2 + X 3: після 3 X-команд (X 1 і два X 2) рація «замовкає» -- X 3 не буде, сектор не стирався
+        radio = tcr.FakeRadioX(bytearray(spi_b), die_after_x=3)
         res = akb.restore_keys(cl.CpsLink(radio), path, confirm_recorder()[0], log=quiet, post_reset=False)
         r = res["result"]
-        check(r["written"] == [1, 4] and r["failed"]["slot"] == 7 and r["untouched"] == [12], "Z4/K3.2: записані слоти 1, 4; збій на 7; слот 12 не торкались: %r" % r)
+        check(r["written"] == [] and r["failed"]["slot"] == 1 and r["untouched"] == [] and "1, 4, 7, 12" in r["failed"]["message"],
+              "Z4/R73: збій запису групи: жоден слот не записано, слоти групи названо: %r" % r)
         t = table_of(radio.spi)
-        check(akb.entry_of(t, 1) == akb.entry_of(table_a, 1) and akb.entry_of(t, 4) == akb.entry_of(table_a, 4), "Z4: перші два слоти записані")
-        check(akb.entry_of(t, 7) == akb.entry_of(table_b, 7) and akb.entry_of(t, 12) == akb.entry_of(table_b, 12), "Z4: слоти 7 і 12 як були")
-        check(akb.entry_of(t, 3) == akb.entry_of(table_b, 3), "Z4: слот 3 (чужий) не чіпано")
+        check(t == table_b, "Z4/R73: рація «замовкла» до X 3 -- таблиця ключів не змінилась ні на байт")
         txt = res["text"]
-        check("Записано й звірено слоти: 1, 4." in txt and "ПОМИЛКА на слоті 7" in txt and "ЗАПИСАНІ й залишаються записаними" in txt and "Не торкався" in txt and "12" in txt,
-              "Z4: звіт словами: %s" % txt.replace("\n", " | "))
+        check("ПОМИЛКА на слоті 1" in txt and "1, 4, 7, 12" in txt and "Записано й звірено слоти" not in txt, "Z4/R73: звіт словами: %s" % txt.replace("\n", " | "))
         check(res["safetyCopy"] and open(res["safetyCopy"], "rb").read() == table_b, "Z4/K3.3: страхова копія є і дорівнює стану ДО")
         check(not radio.reset_requested, "Z4: post_reset=False -- без перезавантаження")
+        # --- розбіжність звірки: слот 7 читається не так, як записано; слоти 1, 4, 12 збіглися ---
+        radio2 = tcr.FakeRadioX(bytearray(spi_b))
+        link2 = cl.CpsLink(radio2)
+        orig_read = link2.read
+
+        def bad_read(access, addr, n, *a, **k):
+            data = bytearray(orig_read(access, addr, n, *a, **k))
+            lo = akb.slot_addr(7) - addr
+            if 0 <= lo and lo + 100 <= len(data) and addr == akb.slot_addr(1):          # лише звірка після запису (читання слотів 1..12)
+                data[lo + 40] ^= 0xFF
+            return bytes(data)
+        link2.read = bad_read
+        res2 = akb.restore_keys(link2, path, confirm_recorder()[0], log=quiet, post_reset=False)
+        r2 = res2["result"]
+        check(r2["written"] == [1, 4, 12] and r2["failed"] and r2["failed"]["slot"] == 7, "Z4/R73: розбіжність звірки слота 7; 1, 4, 12 звірені: %r" % r2)
     finally:
         time.sleep = old_sleep
 

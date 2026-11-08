@@ -278,6 +278,8 @@ def _x_exchange(link, payload, sub, timeout):
         ser.write(payload)
         ser.flush()
         io_stats.add("x_packets")      # R71 вимір
+        if payload[:2] == b"X\x03":
+            io_stats.add("sector_erases")   # R73: X 3 = стирання сектора + запис 16 сторінок (найдорожчий крок запису)
         first = link._read_exact(1)
         if not first:
             raise _XSilent("рація не відповіла (тайм-аут %.0f с)" % timeout)

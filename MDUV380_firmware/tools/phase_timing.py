@@ -15,6 +15,8 @@
 import time
 from contextlib import contextmanager
 
+import io_stats
+
 
 class Phases:
     def __init__(self, link=None, clock=time.time):
@@ -30,8 +32,9 @@ class Phases:
 
     @contextmanager
     def phase(self, name):
-        rec = {"name": name, "seconds": 0.0, "requests": 0, "bytes": 0, "note": ""}
+        rec = {"name": name, "seconds": 0.0, "requests": 0, "bytes": 0, "note": "", "erases": 0}
         r0, b0 = self._stats()
+        e0 = io_stats.COUNTERS.get("sector_erases", 0)           # R73: скільки секторів стерто за фазу
         t0 = self.clock()
         try:
             yield rec
@@ -40,6 +43,7 @@ class Phases:
             rec["seconds"] = round(self.clock() - t0, 2)
             rec["requests"] = r1 - r0
             rec["bytes"] = b1 - b0
+            rec["erases"] = io_stats.COUNTERS.get("sector_erases", 0) - e0
             self.items.append(rec)
 
     def total_seconds(self):
@@ -50,6 +54,8 @@ class Phases:
         parts = ["%.1f с" % i["seconds"]]
         if i["requests"]:
             parts.append("%d запитів, %.1f КіБ" % (i["requests"], i["bytes"] / 1024.0))
+        if i.get("erases"):
+            parts.append("стирань секторів: %d" % i["erases"])
         if i["note"]:
             parts.append(i["note"])
         return "%s: %s" % (i["name"], ", ".join(parts))

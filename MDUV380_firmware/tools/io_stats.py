@@ -12,7 +12,7 @@
 import time
 from contextlib import contextmanager
 
-KEYS = ("read_req", "read_bytes", "x_packets", "port_timeouts", "short_reads")
+KEYS = ("read_req", "read_bytes", "x_packets", "port_timeouts", "short_reads", "sector_erases")
 COUNTERS = {k: 0 for k in KEYS}
 
 
@@ -30,8 +30,8 @@ def delta(before, after=None):
 
 
 def describe(d, seconds):
-    return ("%.1f с; читання: %d запитів, %.1f КіБ, очікувань тайм-ауту порту: %d; запис: %d пакетів 'X'"
-            % (seconds, d["read_req"], d["read_bytes"] / 1024.0, d["port_timeouts"] + d["short_reads"], d["x_packets"]))
+    return ("%.1f с; читання: %d запитів, %.1f КіБ, очікувань тайм-ауту порту: %d; запис: %d пакетів 'X', стирань секторів: %d"
+            % (seconds, d["read_req"], d["read_bytes"] / 1024.0, d["port_timeouts"] + d["short_reads"], d["x_packets"], d.get("sector_erases", 0)))
 
 
 @contextmanager

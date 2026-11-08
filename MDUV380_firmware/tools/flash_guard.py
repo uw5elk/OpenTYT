@@ -87,3 +87,32 @@ def write_span(ser, addr, data, window, on_sector=None):
             on_sector(k, len(chunks))
         aks.flash_write_block(ser, a, chunk)
     return len(chunks)
+
+
+def split_by_sector(items):
+    """R73: [(адреса, дані), ...] -> {сектор: [(адреса, дані), ...]} (порядок секторів -- за першою появою). Частина, що перетинає межу сектора, ділиться."""
+    out = {}
+    for addr, data in items:
+        data = bytes(data)
+        pos = 0
+        while pos < len(data):
+            a = addr + pos
+            n = min(len(data) - pos, (a // SECTOR + 1) * SECTOR - a)
+            out.setdefault(a // SECTOR, []).append((a, data[pos:pos + n]))
+            pos += n
+    return out
+
+
+def write_group(ser, items, window, on_sector=None):
+    """R73: записати кілька ділянок так, щоб КОЖЕН сектор стирався лише раз. Усі ділянки перевіряються вікном ДО першого звернення до флеша.
+    Повертає список секторів у порядку запису. on_sector(k, total) -- перед кожним сектором (може кинути виняток -- запис зупиняється на межі сектора)."""
+    items = [(a, bytes(d)) for a, d in items]
+    for a, d in items:
+        check_span(a, len(d), window)
+    groups = split_by_sector(items)
+    order = list(groups)
+    for k, sec in enumerate(order):
+        if on_sector is not None:
+            on_sector(k, len(order))
+        aks.flash_write_sector(ser, sec, groups[sec])
+    return order

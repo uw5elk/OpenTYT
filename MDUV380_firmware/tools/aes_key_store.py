@@ -95,28 +95,38 @@ def notify_flash_write(addr, length):
         fn(addr, length)
 
 
+def flash_write_sector(ser, sector, parts):
+    """R73: ОДНЕ стирання сектора для кількох частин. parts -- [(адреса, дані), ...], усі в секторі `sector` (4096 Б). X 1 -> X 2 на кожну частину -> X 3:
+    прошивка читає сектор у RAM, підміняє байти по кожному X 2 і стирає+пише сектор ОДИН раз на X 3 (usb_com.c ≈ L728-880: X 2 пише в буфер за довільною адресою
+    в межах підготовленого сектора). Було: кожна частина -- окремий X 1/2/3, тобто окреме стирання того самого сектора."""
+    import cps_restore as _cr          # відкладено: cps_restore тягне codeplug_view
+    link = _fast_link(ser)
+    parts = [(a, bytes(d)) for a, d in parts if len(d)]
+    for a, d in parts:
+        if a // 4096 != sector or (a + len(d) - 1) // 4096 != sector:
+            raise ValueError("частина 0x%X..0x%X не лежить у секторі %d" % (a, a + len(d), sector))
+        notify_flash_write(a, len(d))
+    try:
+        _cr._x_exchange(link, _cr._x1(sector), 1, _cr.X_TIMEOUT)
+        for a, d in parts:
+            off = 0
+            while off < len(d):
+                chunk = d[off:off + _cr.X_CHUNK]
+                _cr._x_exchange(link, _cr._x2(a + off, chunk), 2, _cr.X_TIMEOUT)
+                off += len(chunk)
+        _cr._x_exchange(link, bytes([ord("X"), 3]), 3, _cr.X_COMMIT_TIMEOUT)
+    except (_cr._XRefused, _cr._XSilent) as e:
+        raise RuntimeError("flash write failed @%06X: %s" % (parts[0][0] if parts else sector * 4096, e))
+
+
 def flash_write_block(ser, addr, data):
     """Write `data` at raw SPI-flash `addr` via CPS 'X' prepare/send/commit.
     Only the touched bytes change; the rest of the 4 KB sector is preserved
     (the firmware reads the sector first, patches it, then erases+writes).
     R71 2.1b: відповідь на кожен X -- рівно 2 байти ('X', sub), читаємо саме їх (як cps_restore._x_exchange), без sleep(0.2/0.5) і без
     очікування повного тайм-ауту порту на 8 байтів, яких рація не надішле. Тайм-аути -- ті самі, що перевірені у відновленні з бекапу
-    (X 1/X 2: 2 с, X 3: 8 с на стирання), тож повільна рація не дістає нових відмов."""
-    import cps_restore as _cr          # відкладено: cps_restore тягне codeplug_view
-    notify_flash_write(addr, len(data))
-    link = _fast_link(ser)
-    sector = addr // 4096
-    try:
-        _cr._x_exchange(link, _cr._x1(sector), 1, _cr.X_TIMEOUT)
-        off = 0
-        while off < len(data):
-            chunk = data[off:off + _cr.X_CHUNK]
-            a = addr + off
-            _cr._x_exchange(link, _cr._x2(a, chunk), 2, _cr.X_TIMEOUT)
-            off += len(chunk)
-        _cr._x_exchange(link, bytes([ord("X"), 3]), 3, _cr.X_COMMIT_TIMEOUT)
-    except (_cr._XRefused, _cr._XSilent) as e:
-        raise RuntimeError("flash write failed @%06X: %s" % (addr, e))
+    (X 1/X 2: 2 с, X 3: 8 с на стирання), тож повільна рація не дістає нових відмов. Одна частина = один сектор (як і раніше)."""
+    flash_write_sector(ser, addr // 4096, [(addr, bytes(data))])
 
 def fresh_payload():
     p = bytearray(AESK_BLOCK_LEN)

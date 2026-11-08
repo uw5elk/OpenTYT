@@ -177,25 +177,50 @@ def expected_table(cur, plan):
 
 
 def apply_plan(link, plan, log=print, progress=None):
-    """Слот за слотом: запис -> звірка читанням. Перший збій зупиняє решту. Повертає {written, failed, untouched}; за збій запису винятків не кидає."""
+    """R73: слоти ОДНОГО сектора пишуться одним записом (X 1, X 2 на кожен слот, X 3 -- одне стирання), а не слот за слотом (усі слоти 1..15 лежать у секторі 0xDA000,
+    тож було до 15 стирань замість 1). Далі звірка читанням: усі слоти групи за один прохід. Групи (сектори) йдуть по черзі; перший збій групи зупиняє решту.
+    Збій ЗАПИСУ групи: жоден слот групи не вважається записаним, у повідомленні перелічено слоти групи (стан невідомий -- перевір). Розбіжність звірки: слоти, що збіглися,
+    -- записані; перший, що не збігся, -- помилка. Повертає {written, failed, untouched}; за збій запису винятків не кидає."""
+    import phase_timing
     res = {"written": [], "failed": None, "untouched": []}
     todo = plan.writes()
-    for k, it in enumerate(todo):
+    groups = {}
+    for it in todo:
+        groups.setdefault(slot_addr(it.slot) // fg.SECTOR, []).append(it)
+    ph = phase_timing.Phases(link)
+    order = list(groups.values())
+    for k, grp in enumerate(order):
+        slots = [i.slot for i in grp]
         if progress:
-            progress(int(100.0 * k / max(1, len(todo))), "Пишу слот %d (%d з %d)" % (it.slot, k + 1, len(todo)))
+            progress(int(100.0 * k / max(1, len(order))), "Пишу слоти %s (%d з %d)" % (slots_text(slots), k + 1, len(order)))
+        later = [i.slot for g in order[k + 1:] for i in g]
         try:
-            fg.write_span(link.ser, slot_addr(it.slot), it.entry, "keys")
-            back = link.read(cl.CPS_ACCESS_FLASH, slot_addr(it.slot), ENTRY_LEN)
-            if back != it.entry:
-                raise RuntimeError("після запису слот читається інакше, ніж записано (звірка не пройшла)")
+            with ph.phase("запис слотів %s" % slots_text(slots)):
+                fg.write_group(link.ser, [(slot_addr(i.slot), i.entry) for i in grp], "keys")
         except Exception as e:  # noqa: BLE001
-            res["failed"] = {"slot": it.slot, "message": str(e)}
-            res["untouched"] = [i.slot for i in todo[k + 1:]]
+            res["failed"] = {"slot": slots[0], "message": "%s (запис слотів %s робиться одним записом сектора; їх стан невідомий -- перевір)" % (e, slots_text(slots))}
+            res["untouched"] = later
             return res
-        log("Слот %d записано й звірено." % it.slot)
-        res["written"].append(it.slot)
+        lo = slot_addr(grp[0].slot)
+        hi = slot_addr(grp[-1].slot) + ENTRY_LEN
+        with ph.phase("звірка слотів %s" % slots_text(slots)):
+            back = link.read(cl.CPS_ACCESS_FLASH, lo, hi - lo)
+        bad = []
+        for i in grp:
+            o = slot_addr(i.slot) - lo
+            if bytes(back[o:o + ENTRY_LEN]) == i.entry:
+                log("Слот %d записано й звірено." % i.slot)
+                res["written"].append(i.slot)
+            else:
+                bad.append(i.slot)
+        if bad:
+            res["failed"] = {"slot": bad[0], "message": "після запису слот читається інакше, ніж записано (звірка не пройшла; слоти з розбіжністю: %s)" % slots_text(bad)}
+            res["untouched"] = later
+            return res
     if progress:
         progress(100, "Готово")
+    if ph.items:
+        log(ph.summary())
     return res
 
 
