@@ -61,12 +61,15 @@ from .layout import FlowFrame, PaneMemory, ui_scale
 from .panel import BUSY_REASON, HINT_NO_DOC, ScrollFrame
 from .settings import Settings
 
-# Дерево розділів: (ключ групи, назва, опис, [класи панелей]). Новий розділ = новий клас Panel + рядок тут.
+# Дерево розділів (R75): дві групи. «Дані» -- усе, що входить у ДОКУМЕНТ (кодплаг і малі налаштування рації): панелі лише правлять документ,
+# у рацію він іде кнопками «Прочитати з рації» / «Записати в рацію» над розділами. «Сервіс» -- рідкі й важкі операції зі своїми кнопками, що
+# пишуть у рацію ОКРЕМО (прошивка, бекап, база позивних, теми/заставка/мелодія/супутники -- великі області флешу; AES-ключі -- секретні дані;
+# «Усі налаштування» -- файл усіх блоків області). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
-    ("grp_radio", "Рація", [ConnectionPanel, FlashPanel, ScreenshotPanel]),
-    ("grp_codeplug", "Кодплаг", [BackupPanel, BasicInfoPanel, GeneralPanel, ChannelsPanel, RoamPanel, VfoPanel, ZonesPanel, ContactsPanel, TgListsPanel,
-                                  DtmfPanel, AprsPanel, CsvPanel]),
-    ("grp_settings", "Налаштування рації", [AesPanel, RctlPanel, ThemesPanel, SplashPanel, MelodyPanel, SatellitesPanel, AllSettingsPanel, DmrDbPanel]),
+    ("grp_data", "Дані", [BasicInfoPanel, GeneralPanel, ChannelsPanel, RoamPanel, VfoPanel, ZonesPanel, ContactsPanel, TgListsPanel,
+                          DtmfPanel, AprsPanel, RctlPanel, CsvPanel]),
+    ("grp_service", "Сервіс", [ConnectionPanel, FlashPanel, ScreenshotPanel, BackupPanel, DmrDbPanel, SatellitesPanel, ThemesPanel, SplashPanel,
+                               MelodyPanel, AesPanel, AllSettingsPanel]),
 ]
 DEFAULT_SECTION = "conn"
 STATUS_COLORS = {"ok": "ok", "info": "info", "err": "err", "warn": "warn", "muted": "muted"}
@@ -295,7 +298,7 @@ class CpsApp(DocActions, tk.Tk):
         self.status_label.pack(side="left")
         self.log_toggle = ttk.Button(inner, text="", command=self.toggle_log)
         self.log_toggle.pack(side="right")
-        self.doc_label = ttk.Label(inner, text="Кодплаг не відкрито", foreground=gt.P["muted"])
+        self.doc_label = ttk.Label(inner, text="Нічого не прочитано", foreground=gt.P["muted"])
         self.doc_label.pack(side="right", padx=12)
         self.progress = ttk.Progressbar(inner, mode="determinate", maximum=100, length=220)    # не пакується, доки нема операції
         self._progress_shown = False
@@ -379,14 +382,15 @@ class CpsApp(DocActions, tk.Tk):
         row = FlowFrame(bar)
         row.pack(fill="x", padx=12, pady=(6, 2))
         self._docbtn_row = row
-        row.add(ttk.Label(row, text="Кодплаг:", font=("Segoe UI", 10, "bold")))
+        row.add(ttk.Label(row, text="Рація і файл:", font=("Segoe UI", 10, "bold")))
         self.docbtn = {}
-        for key, text, cmd in (("open_radio", "Відкрити з рації", lambda: self.doc_open_radio()),
-                               ("open_file", "Відкрити з бекапу...", lambda: self.doc_open_file()),
-                               ("save_as", "Зберегти як...", lambda: self.doc_save_as()),
-                               ("write", "Записати кодплаг у рацію", lambda: self.doc_write()),
+        # R75: дві головні дії -- «Прочитати з рації» і «Записати в рацію»; поруч файл; «Відкинути зміни» -- менш помітна кнопка (плоский стиль)
+        for key, text, cmd in (("open_radio", "Прочитати з рації", lambda: self.doc_open_radio()),
+                               ("write", "Записати в рацію", lambda: self.doc_write()),
+                               ("open_file", "Відкрити файл...", lambda: self.doc_open_file()),
+                               ("save_as", "Зберегти у файл...", lambda: self.doc_save_as()),
                                ("discard", "Відкинути зміни", lambda: self.doc_discard())):
-            b = ttk.Button(row, text=text, command=cmd)
+            b = ttk.Button(row, text=text, command=cmd, **({"style": "Toolbutton"} if key == "discard" else {}))
             self.docbtn[key] = b
             row.add(b)
         self.docbar_note = gd.autowrap(ttk.Label(bar, text="", wraplength=700, justify="left", foreground=gt.P["warn"]), bar, margin=28)

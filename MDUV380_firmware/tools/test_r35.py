@@ -1328,7 +1328,7 @@ def test_gui():
         for k in ("satellites", "splash", "melody"):
             check(k in keys, "Z1: панель «%s» є в SECTIONS" % k)
         grp = {g: [c.key for c in cls] for g, _t, cls in SECTIONS}
-        check(all(k in grp["grp_settings"] for k in ("satellites", "splash", "melody")), "Z1/A2: усі три панелі -- у групі «Налаштування рації»")
+        check(all(k in grp["grp_service"] for k in ("satellites", "splash", "melody")), "Z1/A2: усі три панелі -- у групі «Сервіс»")
         check(len(set(titles.values())) == len(titles), "Z1: назви розділів унікальні: %r" % [t for t in titles.values() if list(titles.values()).count(t) > 1])
         for label, spi in (("без документа", None), ("порожній", tc.base.make_spi()), ("повний", tc.make_fixture_spi())):
             if spi is not None:

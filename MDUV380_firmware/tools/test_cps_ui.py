@@ -22,36 +22,35 @@ FAILS = []
 
 # Очікуване дерево: (ключ, видимий текст, батько)
 EXPECTED = [
-    ("grp_radio", "Рація", ""),
-    ("conn", "Підключення і стан", "grp_radio"),
-    ("flash", "Прошивка", "grp_radio"),
-    ("shot", "Знімок екрана", "grp_radio"),
-    ("grp_codeplug", "Кодплаг", ""),
-    ("backup", "Бекап і відновлення", "grp_codeplug"),
-    ("basic", "Основна інформація", "grp_codeplug"),
-    ("general", "Загальні налаштування", "grp_codeplug"),
-    ("channels", "Канали", "grp_codeplug"),
-    ("roam", "Роумінг", "grp_codeplug"),
-    ("vfo", "VFO A / VFO B", "grp_codeplug"),
-    ("zones", "Зони", "grp_codeplug"),
-    ("contacts", "Контакти", "grp_codeplug"),
-    ("tglists", "Списки прийому", "grp_codeplug"),
-    ("dtmf", "DTMF-контакти", "grp_codeplug"),
-    ("aprs", "APRS", "grp_codeplug"),
-    ("csv", "CSV", "grp_codeplug"),
-    ("grp_settings", "Налаштування рації", ""),
-    ("aes", "AES-ключі", "grp_settings"),
-    ("rctl", "Віддалене керування (RCTL)", "grp_settings"),
-    ("themes", "Тема", "grp_settings"),
-    ("splash", "Заставка", "grp_settings"),
-    ("melody", "Мелодія вмикання", "grp_settings"),
-    ("satellites", "Супутники", "grp_settings"),
-    ("allsettings", "Усі налаштування (custom-data)", "grp_settings"),
-    ("dmrdb", "База позивних", "grp_settings"),
+    ("grp_data", "Дані", ""),
+    ("basic", "Основна інформація", "grp_data"),
+    ("general", "Загальні налаштування", "grp_data"),
+    ("channels", "Канали", "grp_data"),
+    ("roam", "Роумінг", "grp_data"),
+    ("vfo", "VFO A / VFO B", "grp_data"),
+    ("zones", "Зони", "grp_data"),
+    ("contacts", "Контакти", "grp_data"),
+    ("tglists", "Списки прийому", "grp_data"),
+    ("dtmf", "DTMF-контакти", "grp_data"),
+    ("aprs", "APRS", "grp_data"),
+    ("rctl", "Віддалене керування (RCTL)", "grp_data"),
+    ("csv", "CSV", "grp_data"),
+    ("grp_service", "Сервіс", ""),
+    ("conn", "Підключення і стан", "grp_service"),
+    ("flash", "Прошивка", "grp_service"),
+    ("shot", "Знімок екрана", "grp_service"),
+    ("backup", "Бекап і відновлення", "grp_service"),
+    ("dmrdb", "База позивних", "grp_service"),
+    ("satellites", "Супутники", "grp_service"),
+    ("themes", "Тема", "grp_service"),
+    ("splash", "Заставка", "grp_service"),
+    ("melody", "Мелодія вмикання", "grp_service"),
+    ("aes", "AES-ключі", "grp_service"),
+    ("allsettings", "Усі налаштування (custom-data)", "grp_service"),
 ]
 
 
-FIRST_OF = {"grp_radio": "conn", "grp_codeplug": "backup", "grp_settings": "aes"}
+FIRST_OF = {"grp_data": "basic", "grp_service": "conn"}
 
 
 def check(cond, msg):
@@ -135,7 +134,7 @@ def test_gui():
             others = [k for k in app._hosts if k != want and app._hosts[k].winfo_ismapped()]
             check(not others, "відкрита лише одна панель, а видно ще %s" % others)
         # дії, що потребують рації, вимкнені з поясненням
-        for key in ("shot", "backup", "aes", "rctl"):
+        for key in ("shot", "backup", "aes"):      # R75: rctl -- тепер панель документа, власних кнопок рації нема
             panel = app.get_panel(key)
             app.show(key)
             app.update()
@@ -255,7 +254,7 @@ def test_gui():
             for _ in range(4):
                 app.update()
             rw, rh = app.right.winfo_width(), app.right.winfo_height() - app.docbar.winfo_height()
-            # R50: довший підпис «Записати кодплаг у рацію» на 760 px додає ще один рядок кнопок над розділами (+34 px; виміряна службова висота на 760x520 -- 275 px).
+            # R50: довший підпис «Записати в рацію» на 760 px додає ще один рядок кнопок над розділами (+34 px; виміряна службова висота на 760x520 -- 275 px).
             # H-270 повернути можна лише скороченням підпису, який просив користувач, тож межа 310 (запас 35 px). Службова висота росте разом зі шрифтом, тому
             # при масштабах 100/125/150 % і двох шрифтах ту саму межу, помножену на масштаб, перевіряє test_r50fix.py (S2).
             check(rw >= W - 420 and rh >= H - 310,
