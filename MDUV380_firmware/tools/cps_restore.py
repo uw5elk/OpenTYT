@@ -350,8 +350,44 @@ def safety_backup_path(zip_path, now=None):
     return cl.unique_path(d, cl.timestamp_name("codeplug_pre-restore", ".zip", now))
 
 
+# R73 2.5: режим звірки після запису. ЗА ЗАМОВЧУВАННЯМ "full" -- як було: перечитати ВЕСЬ EEPROM і весь флеш-кодплаг та порівняти SHA-256 (гарантії не змінено).
+# "written" -- ПЕРЕМИКАЧ ВИМКНЕНИЙ: перечитати лише ЗАПИСАНІ сектори (кожен 4 КіБ) і порівняти байти кожного з тим, що писали. Швидше, але НЕ бачить: запис не за тією адресою
+# (сектор, якого не було в плані, змінився б непоміченим), порчу сусіднього сектора, зміни, що рація зробила сама поза записаними секторами. Увімкнення -- рішення Богдана:
+# змінна середовища OPENTYT_VERIFY_WRITTEN_ONLY=1 або параметр verify_mode="written".
+VERIFY_FULL, VERIFY_WRITTEN = "full", "written"
+
+
+def default_verify_mode(env=None):
+    import os as _os
+    return VERIFY_WRITTEN if (_os.environ if env is None else env).get("OPENTYT_VERIFY_WRITTEN_ONLY", "") == "1" else VERIFY_FULL
+
+
+def _verify_written_sectors(link, plan, ph, ver_prog):
+    """Лише записані сектори: прочитати кожен і порівняти з тим, що писали (EEPROM -- без нестабільних ділянок). Повертає список назв секторів з розбіжністю."""
+    bad = []
+    n = len(plan.sectors)
+    with ph.phase("перечитування записаних секторів") as rec:
+        rec["note"] = "%d секторів (режим «лише записані»)" % n
+        for k, (label, raw_addr, sec) in enumerate(plan.sectors):
+            ver_prog(100.0 * k / max(1, n), "сектор %d з %d" % (k + 1, n))
+            area = cl.CPS_ACCESS_EEPROM if label == "EEPROM" else cl.CPS_ACCESS_FLASH
+            got = link.read(area, raw_addr, SECTOR)
+            want = sec
+            if label == "EEPROM":
+                got = bytearray(got)
+                want = bytearray(want)
+                for start, end, _why in UNSTABLE_EEPROM:
+                    lo, hi = max(start, raw_addr) - raw_addr, min(end, raw_addr + SECTOR) - raw_addr
+                    if lo < hi:
+                        got[lo:hi] = b"\0" * (hi - lo)
+                        want[lo:hi] = b"\0" * (hi - lo)
+            if bytes(got) != bytes(want):
+                bad.append("%s 0x%X" % (label, raw_addr))
+    return bad
+
+
 def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=time.time, now=None, post_reset=True,
-                     title=None, extra_lines=None, prefetched=None, phases=None):
+                     title=None, extra_lines=None, prefetched=None, phases=None, verify_mode=None):
     """Відновити кодплаг рації з бекапу `zip_path`.
 
     confirm(text, plan) -> bool викликається ПІСЛЯ всіх перевірок і страхового бекапу, ПЕРЕД першим записом.
@@ -454,34 +490,53 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
     def ver_prog(pct, text):
         prog(70 + pct * 0.29, "Перевіряю: " + text)
 
-    try:
-        with ph.phase("перечитування для звірки"):
-            rb_ee = link.read(cl.CPS_ACCESS_EEPROM, 0, cl.EEPROM_BACKUP_LEN,
-                              lambda d_, t_: ver_prog(50.0 * d_ / t_, "EEPROM %d%%" % (100 * d_ // t_)))
-            rb_fl = link.read(cl.CPS_ACCESS_FLASH, plan.raw_flash_start, len(plan.want_fl),
-                              lambda d_, t_: ver_prog(50.0 + 50.0 * d_ / t_, "флеш %d%%" % (100 * d_ // t_)))
-    except cl.CpsError as e:
-        raise RestoreInterrupted(
-            "ЗАПИС ЗАВЕРШЕНО, але перечитати рацію для перевірки не вдалося: %s.\n"
-            "Стан кодплага не підтверджено. Страхова копія стану ДО відновлення: %s\n"
-            "Що робити: перепідключи рацію й повтори відновлення з тим самим файлом %s." % (e, safety, os.path.basename(zip_path)))
-    sha_ee_got = cl.sha256(_mask_unstable(rb_ee))
-    sha_ee_want = cl.sha256(_mask_unstable(plan.want_ee))
-    sha_fl_got = cl.sha256(rb_fl)
-    sha_fl_want = cl.sha256(plan.want_fl)
-    if sha_ee_got != sha_ee_want or sha_fl_got != sha_fl_want:
-        bad = []
-        if sha_ee_got != sha_ee_want:
-            bad.append("EEPROM")
-        if sha_fl_got != sha_fl_want:
-            bad.append("флеш-кодплаг")
-        raise RestoreVerifyFailed(
-            "ПЕРЕВІРКА НЕ ПРОЙШЛА: після запису %s не збігається з бекапом (SHA-256 різні).\n"
-            "Не звірялось (рація міняє саме): %s.\n"
-            "Відновлення НЕ можна вважати успішним. Страхова копія стану ДО відновлення: %s\n"
-            "Що робити: повтори відновлення з тим самим файлом %s. Якщо знову розбіжність -- не користуйся рацією для важливого, "
-            "пришли лог." % (" і ".join(bad), UNVERIFIED_TEXT, safety, os.path.basename(zip_path)))
-    log("Перевірка пройшла: SHA-256 EEPROM %s, флеш %s. Не звірялось (рація міняє саме): %s." % (sha_ee_got[:16], sha_fl_got[:16], UNVERIFIED_TEXT))
+    mode = verify_mode or default_verify_mode()
+    sha_ee_got = sha_fl_got = None
+    if mode == VERIFY_WRITTEN:
+        try:
+            bad = _verify_written_sectors(link, plan, ph, ver_prog)
+        except cl.CpsError as e:
+            raise RestoreInterrupted(
+                "ЗАПИС ЗАВЕРШЕНО, але перечитати записані сектори для перевірки не вдалося: %s.\n"
+                "Стан кодплага не підтверджено. Страхова копія стану ДО відновлення: %s\n"
+                "Що робити: перепідключи рацію й повтори відновлення з тим самим файлом %s." % (e, safety, os.path.basename(zip_path)))
+        if bad:
+            raise RestoreVerifyFailed(
+                "ПЕРЕВІРКА НЕ ПРОЙШЛА (режим «лише записані сектори»): після запису не збігаються сектори: %s.\n"
+                "Відновлення НЕ можна вважати успішним. Страхова копія стану ДО відновлення: %s\n"
+                "Що робити: повтори відновлення з тим самим файлом %s. Якщо знову розбіжність -- не користуйся рацією для важливого, "
+                "пришли лог." % (", ".join(bad[:8]) + ("…" if len(bad) > 8 else ""), safety, os.path.basename(zip_path)))
+        log("Перевірка (лише записані сектори: %d) пройшла. НЕ перевірялось: незаписані сектори, EEPROM/флеш поза записаними, а також %s." % (len(plan.sectors), UNVERIFIED_TEXT))
+    else:
+        try:
+            with ph.phase("перечитування для звірки"):
+                rb_ee = link.read(cl.CPS_ACCESS_EEPROM, 0, cl.EEPROM_BACKUP_LEN,
+                                  lambda d_, t_: ver_prog(50.0 * d_ / t_, "EEPROM %d%%" % (100 * d_ // t_)))
+                rb_fl = link.read(cl.CPS_ACCESS_FLASH, plan.raw_flash_start, len(plan.want_fl),
+                                  lambda d_, t_: ver_prog(50.0 + 50.0 * d_ / t_, "флеш %d%%" % (100 * d_ // t_)))
+        except cl.CpsError as e:
+            raise RestoreInterrupted(
+                "ЗАПИС ЗАВЕРШЕНО, але перечитати рацію для перевірки не вдалося: %s.\n"
+                "Стан кодплага не підтверджено. Страхова копія стану ДО відновлення: %s\n"
+                "Що робити: перепідключи рацію й повтори відновлення з тим самим файлом %s." % (e, safety, os.path.basename(zip_path)))
+        sha_ee_got = cl.sha256(_mask_unstable(rb_ee))
+        sha_ee_want = cl.sha256(_mask_unstable(plan.want_ee))
+        sha_fl_got = cl.sha256(rb_fl)
+        sha_fl_want = cl.sha256(plan.want_fl)
+        if sha_ee_got != sha_ee_want or sha_fl_got != sha_fl_want:
+            bad = []
+            if sha_ee_got != sha_ee_want:
+                bad.append("EEPROM")
+            if sha_fl_got != sha_fl_want:
+                bad.append("флеш-кодплаг")
+            raise RestoreVerifyFailed(
+                "ПЕРЕВІРКА НЕ ПРОЙШЛА: після запису %s не збігається з бекапом (SHA-256 різні).\n"
+                "Не звірялось (рація міняє саме): %s.\n"
+                "Відновлення НЕ можна вважати успішним. Страхова копія стану ДО відновлення: %s\n"
+                "Що робити: повтори відновлення з тим самим файлом %s. Якщо знову розбіжність -- не користуйся рацією для важливого, "
+                "пришли лог." % (" і ".join(bad), UNVERIFIED_TEXT, safety, os.path.basename(zip_path)))
+        log("Перевірка пройшла: SHA-256 EEPROM %s, флеш %s. Не звірялось (рація міняє саме): %s." % (sha_ee_got[:16], sha_fl_got[:16], UNVERIFIED_TEXT))
+
 
     prog(99, "Перезавантажую рацію...")
     if post_reset:
@@ -489,7 +544,8 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
     prog(100, "Готово")
     log(ph.summary())
     return {"cancelled": False, "nothingToDo": False, "sectorsWritten": n, "sectorsTotal": plan.total_sectors, "safetyCopy": safety,
-            "sha256Eeprom": sha_ee_got, "sha256Flash": sha_fl_got, "unverified": UNVERIFIED_TEXT, "flashMatchesManifest": sha_fl_got == manifest["parts"]["flash"]["sha256"],
+            "sha256Eeprom": sha_ee_got, "sha256Flash": sha_fl_got, "unverified": UNVERIFIED_TEXT, "verifyMode": mode,
+            "flashMatchesManifest": (sha_fl_got == manifest["parts"]["flash"]["sha256"]) if sha_fl_got else None,
             "writeSeconds": round(clock() - t_write, 1), "seconds": round(clock() - t0, 1), "phases": ph.as_list()}
 
 

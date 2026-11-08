@@ -289,6 +289,42 @@ def test_chunk_switch():
     check(cl.CHUNK == 1024, "після перевірок CHUNK повернено до 1024")
 
 
+def test_verify_modes():
+    """2.5: звірка після запису документа. Типово "full" (гарантії не змінено); "written" -- лише записані сектори, за прапорцем (вимкнений)."""
+    import tempfile
+    import cps_restore as cr_
+    check(cr_.default_verify_mode({}) == "full" and cr_.default_verify_mode({"OPENTYT_VERIFY_WRITTEN_ONLY": "0"}) == "full"
+          and cr_.default_verify_mode({"OPENTYT_VERIFY_WRITTEN_ONLY": "1"}) == "written", "типовий режим звірки -- повна; 'written' лише за OPENTYT_VERIFY_WRITTEN_ONLY=1")
+    stats = {}
+    for mode in ("full", "written"):
+        with tempfile.TemporaryDirectory() as d:
+            a = tcr.spi_a()
+            good, _mf = tcr.make_backup_file(d, a)
+            radio = tcr.FakeRadioX(tcr.spi_b(a))
+            b = io_stats.snapshot()
+            res, _p = tcr.run_restore(radio, good, verify_mode=mode)
+            dl = io_stats.delta(b)
+            stats[mode] = (dl["read_req"], dl["read_bytes"], dl["sector_erases"], res)
+            check(res["sectorsWritten"] > 0 and bytes(radio.spi[0x20000:0x20010]) == bytes(a[0x20000:0x20010]), "%s: відновлення виконано" % mode)
+    nw = stats["written"][3]["sectorsWritten"]
+    check(stats["written"][2] == stats["full"][2] == nw, "стирань однаково (%d): звірка не міняє запис" % nw)
+    saved = stats["full"][1] - stats["written"][1]
+    check(saved > 0 and stats["written"][3]["verifyMode"] == "written" and stats["full"][3]["verifyMode"] == "full",
+          "'written' читає менше: full %d КіБ/%d запитів, written %d КіБ/%d запитів" % (stats["full"][1] // 1024, stats["full"][0], stats["written"][1] // 1024, stats["written"][0]))
+    # обидва режими ловлять порчу при записі
+    for mode in ("full", "written"):
+        with tempfile.TemporaryDirectory() as d:
+            a = tcr.spi_a()
+            good, _mf = tcr.make_backup_file(d, a)
+            radio = tcr.FakeRadioX(tcr.spi_b(a), corrupt_commit=True)
+            try:
+                tcr.run_restore(radio, good, verify_mode=mode)
+                check(False, "%s: порча при записі має дати RestoreVerifyFailed" % mode)
+            except cr_.RestoreVerifyFailed as e:
+                check("ПЕРЕВІРКА НЕ ПРОЙШЛА" in str(e), "%s: порчу записаного сектора знайдено" % mode)
+            check(radio.reset_requested is False, "%s: після невдалої звірки перезавантаження не надсилається" % mode)
+
+
 def test_phase_erases():
     import phase_timing
     ph = phase_timing.Phases(None)
@@ -309,6 +345,7 @@ def main():
     test_write_db_erases()
     test_reconnect_policy()
     test_chunk_switch()
+    test_verify_modes()
     test_phase_erases()
     if FAILS:
         print("test_r73: ПРОВАЛІВ %d" % len(FAILS))
