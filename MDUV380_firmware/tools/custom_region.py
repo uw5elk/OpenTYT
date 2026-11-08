@@ -318,7 +318,8 @@ class PlanItem:
 
 
 class Plan:
-    def __init__(self, items, header_needed, problems):
+    def __init__(self, items, header_needed, problems, cur_data=None):
+        self.cur_data = cur_data                # R73: байти області рації, на яких побудовано план (для групування записів по секторах)
         self.items = items
         self.header_needed = header_needed      # поточна область стерта (усі 0xFF): спершу буде записано 12-байтовий заголовок
         self.problems = problems
@@ -374,7 +375,7 @@ def plan_blocks(blocks, cur, selected=None, include_state=False, problems=()):
             items.append(PlanItem(b, ST_REFUSED, info))
             continue
         items.append(PlanItem(b, ST_CREATE if info == "empty" else ST_OVERWRITE))
-    return Plan(items, header_needed, list(problems))
+    return Plan(items, header_needed, list(problems), bytes(cur.data))
 
 
 def expected_region(cur_region, plan):
@@ -392,6 +393,102 @@ def expected_region(cur_region, plan):
 # =========================================================================================
 
 def apply_plan(link, plan, log=print, progress=None):
+    """Виконати план. R73: коли план знає поточну область (plan.cur_data), блоки, що лежать в ОДНОМУ 4-КіБ секторі, пишуться ОДНИМ записом сектора
+    (одне стирання) замість «блок за блоком = стирання на кожен». Порядок безпеки: заголовок області (якщо область стерта) -- у першій групі; групи йдуть по черзі;
+    перший збій групи зупиняє решту. Перед першим записом кожне місце блока звіряється з рацією (заголовок за планованою адресою = той, що в плані): якщо область
+    змінилась після читання -- нічого не записано. Після запису групи -- звірка кожного блока читанням. Повертає {written, unchanged, failed, untouched, headerWritten, refused};
+    жодних винятків за збій запису."""
+    if plan.cur_data is None or len(plan.cur_data) != REGION_LEN:
+        return _apply_plan_per_block(link, plan, log, progress)
+    import custom_data as cd
+    import flash_guard as fg
+    import phase_timing
+    ser = link.ser
+    res = {"written": [], "unchanged": [i.block for i in plan.items if i.status == ST_SAME], "failed": None, "untouched": [], "headerWritten": False,
+           "refused": [i for i in plan.items if i.status == ST_REFUSED]}
+    todo = plan.writes()
+    if not todo:
+        return res
+    work = bytearray(plan.cur_data)
+    patches = []            # [(абсолютна адреса, байти, блок або None, підпис)]
+    if plan.header_needed:
+        work[:REGION_HDR] = MAGIC + b"\x00" * 4
+        patches.append((cd.FLASH_BASE, MAGIC + b"\x00" * 4, None, "заголовок області"))
+    for it in todo:
+        b = it.block
+        kind, addr, _e = _find_slot(work, b.type, len(b.payload))
+        ok, info = simulate_write(work, b.type, b.payload)
+        if not ok or kind is None:
+            res["failed"] = {"block": b, "message": str(info)}
+            res["untouched"] = [i.block for i in todo]
+            return res
+        patches.append((cd.FLASH_BASE + addr, struct.pack("<ii", b.type, len(b.payload)) + b.payload, b, "оновлено існуючий блок @+%d" % addr if kind == "existing" else "створено новий блок @+%d" % addr))
+    # область не змінилась після читання? (місце кожного блока: заголовок у рації = заголовок у плані)
+    for a, _d, b, _m in patches:
+        if b is None:
+            continue
+        live = cd._read_region(ser, a - cd.FLASH_BASE, cd.HDR_LEN)
+        if bytes(live) != bytes(plan.cur_data[a - cd.FLASH_BASE:a - cd.FLASH_BASE + cd.HDR_LEN]):
+            res["failed"] = {"block": b, "message": "область custom-data в рації змінилась після того, як її було прочитано для плану -- нічого не записано; повтори дію"}
+            res["untouched"] = [i.block for i in todo]
+            return res
+    groups = {}
+    for p_ in patches:
+        groups.setdefault((p_[0] - 0) // fg.SECTOR, []).append(p_)
+    order = list(groups.values())
+    ph = phase_timing.Phases(link)
+    nblocks = len(todo)
+    done_blocks = 0
+    for k, grp in enumerate(order):
+        blocks = [p_[2] for p_ in grp if p_[2] is not None]
+        if progress:
+            progress(int(100.0 * k / max(1, len(order))), "Пишу блоки %d з %d: %s" % (done_blocks + 1, nblocks, ", ".join(x.title for x in blocks) or "заголовок області"))
+        later = [x for g in order[k + 1:] for x in (p_[2] for p_ in g) if x is not None]
+        try:
+            with ph.phase("запис сектора (%d ділянок)" % len(grp)):
+                fg.write_group(ser, [(p_[0], p_[1]) for p_ in grp], "customdata")
+        except Exception as e:  # noqa: BLE001
+            # частина секторів групи могла встигнути записатись (блок, що перетинає межу сектора): що саме є в рації -- показує читання
+            bad = None
+            for a, d, b, msg in grp:
+                if b is None:
+                    continue
+                try:
+                    ok_ = bytes(cd._read_region(ser, a - cd.FLASH_BASE, len(d))) == bytes(d)
+                except Exception:  # noqa: BLE001
+                    ok_ = False
+                if ok_ and bad is None:
+                    log("Блок «%s» (%d Б): уже записаний (збій стався пізніше), звірено." % (b.title, b.length))
+                    res["written"].append(b)
+                elif bad is None:
+                    bad = b
+            res["failed"] = {"block": bad or (blocks[0] if blocks else None), "message": "%s (сектор пишеться одним записом; стан блоків, що не збіглися з планом, невідомий: %s)" % (
+                e, ", ".join(x.title for x in blocks if x not in res["written"]) or "лише заголовок")}
+            res["untouched"] = later
+            return res
+        if any(p_[2] is None for p_ in grp):
+            res["headerWritten"] = True
+            log("Область custom-data у рації стерта -- записано заголовок OpenGD77 (12 байтів).")
+        for a, d, b, msg in grp:
+            if b is None:
+                continue
+            with ph.phase("звірка «%s»" % b.title):
+                back = cd._read_region(ser, a - cd.FLASH_BASE, len(d))
+            if bytes(back) != bytes(d):
+                res["failed"] = {"block": b, "message": "після запису блок читається інакше, ніж записано (звірка не пройшла)"}
+                res["untouched"] = later
+                return res
+            log("Блок «%s» (%d Б): %s, звірено." % (b.title, b.length, msg))
+            res["written"].append(b)
+            done_blocks += 1
+    if progress:
+        progress(100, "Готово")
+    if ph.items:
+        log(ph.summary())
+    return res
+
+
+def _apply_plan_per_block(link, plan, log=print, progress=None):
     """Виконати план: (за потреби) заголовок області, далі кожен блок окремо через custom_data.write_block + звірка читанням.
     Збій зупиняє решту. Повертає словник {written, unchanged, failed, untouched, headerWritten}; жодних винятків за збій запису."""
     import custom_data as cd

@@ -392,42 +392,30 @@ def test_restore_roundtrip():
 # ----------------------------------------------------------------------------------------------------------------------
 
 def test_partial_failure():
+    """R73: СВІДОМО ПЕРЕПИСАНО. Блоки одного сектора тепер пишуться одним записом сектора (X 1, X 2 на блок, X 3), тож «збій на 3-му блоці» не існує: у цьому
+    наборі всі 5 блоків лежать у секторі 0 -> збій запису = жоден блок не записано, рація не змінена, у звіті названо блоки запису. Збій КІЛЬКОХ секторів
+    (перший записано, другий -- ні) перевіряє test_r73.py."""
     old_sleep = no_sleep()
-    real_wb = aks.flash_write_block
-    real_write_block = cd.write_block
+    real_ws = aks.flash_write_sector
     try:
         spi_a = new_spi_with(1)
         spi_b = new_spi_with(2)
         path, _d, _m = mk_zip(spi_a)
-        pa, pb0 = payloads_of(region_of(spi_a)), payloads_of(region_of(spi_b))
+        pb0 = payloads_of(region_of(spi_b))
         rb = tcr.FakeRadioX(bytearray(spi_b))
-        state = {"n": 0, "cur": 0}
 
-        def counting_write_block(ser, t, payload):
-            state["n"] += 1
-            state["cur"] = state["n"]
-            return real_write_block(ser, t, payload)
-
-        def failing_flash_write(ser, addr, data):
-            if state["cur"] == 3:
-                raise RuntimeError("прошивка відмовила (імітація збою на 3-му блоці)")
-            return real_wb(ser, addr, data)
-        cd.write_block = counting_write_block
-        aks.flash_write_block = failing_flash_write
+        def failing_sector_write(ser, sector, parts):
+            raise RuntimeError("прошивка відмовила (імітація збою запису сектора)")
+        aks.flash_write_sector = failing_sector_write
         res = cr.restore_region(cl.CpsLink(rb), path, lambda t, p=None: True, selected={4, 5, 7, 8, 9}, log=quiet)
         got = payloads_of(region_of(rb.spi))
         r = res["result"]
-        check(r["failed"] is not None and r["failed"]["block"].type == 7 and len(r["written"]) == 2, "Z5: збій на 3-му блоці (типу 7), записано 2: %r" % [b.type for b in r["written"]])
-        check(got[4] == pa[4] and got[5] == pa[5], "Z5: перші два блоки (4, 5) записані й лишились записаними")
-        check(got[7] == pb0[7] and got[8] == pb0[8] and got[9] == pb0[9], "Z5: третій і наступні блоки (7, 8, 9) лишились як були")
-        check(all(got[t] == pb0[t] for t in (6, 10, 11, 12, 13, 14)), "Z5: необрані блоки не чіпано")
+        check(r["failed"] is not None and r["failed"]["block"].type == 4 and r["written"] == [], "Z5/R73: збій запису сектора: жодного блока не записано: %r" % [b.type for b in r["written"]])
+        check(all(got[t] == pb0[t] for t in pb0), "Z5/R73: область рації не змінилась ні на байт")
         txt = res["text"]
-        check("ПОМИЛКА" in txt and "Записано й звірено" in txt and "Не торкався" in txt and "залишаються записаними" in txt,
-              "Z5: звіт словами: що записано, де помилка, що не чіпали: %s" % txt.replace("\n", " | "))
-        check([b.type for b in r["untouched"]] == [8, 9], "Z5: список «не торкався» == [8, 9]")
+        check("ПОМИЛКА" in txt and "сектор пишеться одним записом" in txt, "Z5/R73: звіт словами: %s" % txt.replace("\n", " | "))
     finally:
-        cd.write_block = real_write_block
-        aks.flash_write_block = real_wb
+        aks.flash_write_sector = real_ws
         time.sleep = old_sleep
 
 
@@ -461,17 +449,17 @@ def test_no_write_outside_region():
         spi_a, spi_b = new_spi_with(1), new_spi_with(2, types=[4, 9], order=[9, 4])
         path, _d, _m = mk_zip(spi_a)
         calls = []
-        orig = aks.flash_write_block
+        orig = aks.flash_write_sector
 
-        def rec(ser, addr, data):
-            calls.append((addr, len(data)))
-            return orig(ser, addr, data)
-        aks.flash_write_block = rec
+        def rec(ser, sector, parts):
+            calls.extend((a, len(d)) for a, d in parts)         # R73: запис іде через flash_write_sector (частини одного сектора)
+            return orig(ser, sector, parts)
+        aks.flash_write_sector = rec
         try:
             rb = tcr.FakeRadioX(bytearray(spi_b))
             cr.restore_region(cl.CpsLink(rb), path, lambda t, p=None: True, include_state=True, log=quiet)
         finally:
-            aks.flash_write_block = orig
+            aks.flash_write_sector = orig
         check(calls and all(cr.REGION_RAW_START <= a and a + n <= cr.REGION_RAW_END for a, n in calls), "Z6: усі %d записів відновлення в межах області" % len(calls))
         check(not any(a < cr.CAL_END and a + n > cr.CAL_START for a, n in calls), "Z6: жоден запис не перетинає сектор калібрування 0x10000..0x10FFF")
     finally:
