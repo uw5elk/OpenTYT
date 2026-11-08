@@ -182,6 +182,24 @@ def test_header_needed_in_first_group():
     check(bytes(radio.spi[0x20000:0x2000C]) == cr.MAGIC + b"\x00" * 4 and blocks_of(radio) == {4: b"\x04" * 64, 5: b"\x05" * 64}, "стерта область: заголовок і блоки на місці")
 
 
+def test_compact_erases():
+    """Ущільнення: ділянки даних, що змінюються, пишуться по секторах -- кожен сектор даних стирається раз. Контроль: число стирань = число різних секторів,
+    у яких щось змінилось, + 2 для сектора заголовка (обнулення й запис заголовка останнім -- порядок безпеки, не чіпано)."""
+    import test_r37 as t37
+    import custom_compact as cc
+    spi = t37.make_spi(t37.build_region(t37.sample_entries())[0])
+    before = bytes(spi[t37.BASE:t37.BASE + t37.LEN])
+    radio = tcr.FakeRadioX(spi)
+    import tempfile
+    n, res = erases(lambda: cc.compact_region(cl.CpsLink(radio), lambda *_a: True, tempfile.mkdtemp(prefix="r73_"), log=lambda *_: None, post_reset=False))
+    after = bytes(radio.spi[t37.BASE:t37.BASE + t37.LEN])
+    changed = sorted({i // 4096 for i in range(len(before)) if before[i] != after[i]})
+    check(res and after != before, "ущільнення виконано")
+    data_sectors = [x for x in changed if x != 0]
+    check(n == len(data_sectors) + 2, "ущільнення: %d стирань = %d секторів даних + 2 (заголовок) (змінені сектори %r)" % (n, len(data_sectors), changed))
+    check(len(radio.commits) == len(set(radio.commits[1:-1])) + 2, "ущільнення: кожен сектор даних стерто один раз: %r" % radio.commits)
+
+
 def test_phase_erases():
     import phase_timing
     ph = phase_timing.Phases(None)
@@ -198,6 +216,7 @@ def main():
     test_custom_region_multi_sector_failure()
     test_custom_region_stale_plan_and_verify()
     test_header_needed_in_first_group()
+    test_compact_erases()
     test_phase_erases()
     if FAILS:
         print("test_r73: ПРОВАЛІВ %d" % len(FAILS))

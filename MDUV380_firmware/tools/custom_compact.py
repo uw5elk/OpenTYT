@@ -337,10 +337,10 @@ def write_image(link, cur, target, progress=None, log=print):
                 raise CompactError("заголовок після обнулення читається як %r, а не нулі" % bytes(head[:8]))
         else:
             zeroed = True            # заголовка й так нема
-        for k, (a, b) in enumerate(slices):
-            stage = "дані, зсув %d..%d" % (a, b)
-            prog(1 + k, "Пишу дані %d з %d..." % (k + 1, len(slices)))
-            fg.write_span(ser, REGION_RAW_START + a, target[a:b], WINDOW)
+        # R73: усі ділянки даних -- одним проходом по секторах: сектор, у якому змінилось кілька відокремлених ділянок, стирається ОДИН раз (було -- на кожну ділянку)
+        stage = "дані (%d ділянок)" % len(slices)
+        fg.write_group(ser, [(REGION_RAW_START + a, target[a:b]) for a, b in slices], WINDOW,
+                       on_sector=lambda k, n: prog(1 + min(k, max(0, len(slices) - 1)), "Пишу сектор даних %d з %d..." % (k + 1, n)))
         stage = "запис заголовка"
         prog(total - 1, "Пишу заголовок області...")
         log("Крок 3: пишу заголовок «OpenGD77» останнім.")
