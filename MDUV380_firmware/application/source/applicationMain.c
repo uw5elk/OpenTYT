@@ -58,6 +58,9 @@
 #include "functions/dmr_rctl_cfg.h"   // dmrRctlIsInhibited (повний stun: сон рації)
 #include "functions/callReplay.h"     // "Переслухати" -- кільцевий буфер RX-голосу (ENABLE_CALL_REPLAY)
 #include "functions/aprs_rx_probe.h"  // R2: «APRS проба» (лише ENABLE_APRS_RX_PROBE + українська)
+#if defined(ENABLE_VOLUME_LOW)
+#include "functions/volume_low.h"      // R78: «Мін.гучність» (лише ENABLE_VOLUME_LOW + українська + UV380 Plus)
+#endif
 #include "functions/aprs_rx.h"        // R8: справжній фоновий приймач APRS (ENABLE_APRS_RX + українська)
 #include "functions/aprs_mode.h"      // R10: «Режим APRS» (PTT = маяк, тік режиму)
 #include "functions/aprs_fault.h"     // R10-fix4: обробник збою, сторож, звіт після перезавантаження (лише APRS_RX)
@@ -335,6 +338,9 @@ static void settingsUpdateAudioAlert(void)
 static void updateVolumeGain(int menuScreen)
 {
 	HRC6000SetDmrRxGain(lastVolume);
+#if defined(VOLUME_LOW)
+	volumeLowPotSettled(lastVolume);   // R78: ручка встоялась (той самий момент, що й стокове підсилення) -- перерахувати додаткове ослаблення біля мінімуму
+#endif
 
 #if defined(HAS_SOFT_VOLUME)
 	if (settingsIsOptionBitSet(BIT_VISUAL_VOLUME) &&
@@ -503,6 +509,9 @@ void applicationMainTask(void)
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 	roamCfgLoad();            // R59: «Роумінг» -- увімкнено/макс. стрибків із custom-data блоку (немає блоку -- вимкнено, 2)
+#endif
+#if defined(VOLUME_LOW)
+	volumeLowLoad();          // R78: «Мін.гучність» -- режим із custom-data блоку 17 (немає блоку -- вимкнено)
 #endif
 
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -1816,6 +1825,10 @@ void applicationMainTask(void)
 			volumeIsStillChanging = false;
 			updateVolumeGain(currentMenu);
 		}
+
+#if defined(VOLUME_LOW)
+		volumeLowTick();            // R78: зміна режиму/передачі/APRS/проби -> перерахунок; 0x44 лишається на місці після перезапису налаштувань FM
+#endif
 
 		SCANPROF_END(SCANPROF_LOOP_BODY, tLoopBody);
 

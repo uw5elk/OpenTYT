@@ -164,7 +164,7 @@ def test_w5_default_unchanged():
                     continue       # R74: стоковий «Roaming» приховано безумовно на платформі форку (HAS_GPS+FORK_NO_GPS_MENU) -- токени законно інші; еквівалентність доводить tools/test_r74.py (C-стенд quickMenuVisibleItem)
                 rel = os.path.join("application", "source", "user_interface", fn)
                 # R59: ENABLE_ROAM_RETRY законно додає пункт меню; без цього прапорця токени мусять збігатися з базою, тож своє дерево рахуємо без нього
-                a, b = tokens_of(FW, rel, incs, [d for d in defs if d not in ("-DENABLE_ROAM_RETRY", "-DENABLE_VOLUME_PROBE")]), tokens_of(root, rel, incs, [d for d in defs if d != "-DENABLE_VOLUME_PROBE"])
+                a, b = tokens_of(FW, rel, incs, [d for d in defs if d not in ("-DENABLE_ROAM_RETRY", "-DENABLE_VOLUME_PROBE", "-DENABLE_VOLUME_LOW")]), tokens_of(root, rel, incs, [d for d in defs if d not in ("-DENABLE_VOLUME_PROBE", "-DENABLE_VOLUME_LOW")])
                 if a is None and b is None:
                     continue       # файл не збирається в цій конфігурації однаково в обох (напр. нема потрібних прапорців)
                 n += 1

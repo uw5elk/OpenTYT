@@ -41,6 +41,9 @@
 #if defined(ENABLE_VOLUME_PROBE)
 #include "functions/volume_probe.h"   // R77A: volumeProbeStopForTx() (лише ENABLE_VOLUME_PROBE)
 #endif
+#if defined(ENABLE_VOLUME_LOW)
+#include "functions/volume_low.h"     // R78: volumeLowStopForTx() (лише ENABLE_VOLUME_LOW)
+#endif
 #include "functions/aprs_rx.h"   // R8-fix: aprsRxStopForTx() (лише ENABLE_APRS_RX + українська)
 #include <FreeRTOS.h>
 #include <string.h>
@@ -832,6 +835,9 @@ void trxSetTX(void)
 #if defined(VOLUME_PROBE)
 	volumeProbeStopForTx();   // R77A: повернути стокове ослаблення ДО передачі (0x44 не повинен потрапити в TX-тракт)
 #endif
+#if defined(VOLUME_LOW)
+	volumeLowStopForTx();     // R78: те саме для постійного «Мін.гучність» (0x44 стокове ДО передачі)
+#endif
 #if defined(APRS_RX)
 	aprsRxStopForTx();   // R8-fix: СИНХРОННО -- до зміни стану HR-C6000/AT1846S і до будь-яких прапорців передачі
 #endif
@@ -865,6 +871,9 @@ void trxActivateTx(bool critical)
 	UNUSED_PARAMETER(critical);
 #if defined(VOLUME_PROBE)
 	volumeProbeStopForTx();   // R77A: те саме для DMR-передачі (повз trxSetTX())
+#endif
+#if defined(VOLUME_LOW)
+	volumeLowStopForTx();     // R78: те саме для DMR-передачі (повз trxSetTX())
 #endif
 #if defined(APRS_RX)
 	aprsRxStopForTx();   // R8-fix: DMR-передача (trxActivateDMRTx) іде повз trxSetTX() -- той самий захист

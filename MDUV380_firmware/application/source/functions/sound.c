@@ -34,6 +34,9 @@
 #include "functions/voicePrompts.h"
 #include "functions/rxPowerSaving.h"
 #include "interfaces/interrupts.h"
+#if defined(ENABLE_VOLUME_LOW)
+#include "functions/volume_low.h"   // R78: volumeLowDmrGainQ15 (лише ENABLE_VOLUME_LOW + українська + UV380 Plus)
+#endif
 #if defined(ENABLE_VOLUME_PROBE)
 #include "functions/volume_probe.h" // R77A: volumeProbeDmrShift (лише ENABLE_VOLUME_PROBE + українська + UV380 Plus)
 #endif
@@ -337,6 +340,10 @@ bool soundFillData(void)
 	return true;
 }
 
+#if defined(VOLUME_LOW)
+static uint16_t s_volumeLowGain = VOLLOW_Q15_UNITY;   // R78: поточний множник рампи (2 Б RAM)
+#endif
+
 bool soundRefillData(uint32_t bufNum)
 {
 	uint32_t samp;
@@ -369,8 +376,9 @@ bool soundRefillData(uint32_t bufNum)
 			}
 
 			dmrRxAGCpeakRx = 0;
-#if defined(VOLUME_PROBE)
-			const bool probeAttenuate = (volumeProbeDmrShift != 0U) && (voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false)
+#if defined(VOLUME_PROBE) || defined(VOLUME_LOW)
+			// Лише живий DMR-голос: не підказки, не мелодії, не «Переслухати».
+			const bool dmrAttenuate = (voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false)
 #if defined(ENABLE_CALL_REPLAY)
 					&& (callReplayIsPlaying() == false)
 #endif
@@ -381,12 +389,26 @@ bool soundRefillData(uint32_t bufNum)
 			{
 				swapper.bytes8[0] = audioAndHotspotDataBuffer.wavbuffer[wavbuffer_read_idx][2 * i];
 				swapper.bytes8[1] = audioAndHotspotDataBuffer.wavbuffer[wavbuffer_read_idx][(2 * i) + 1];
-#if defined(VOLUME_PROBE)
-				// R77A: додаткове ослаблення DMR (екран «Гучн. проба») -- ПІСЛЯ АРУ: пік для АРУ (dmrRxAGCpeakRx) нижче береться з swapper.byte16 до множення,
-				// тож ослаблення на виході АРУ не бачить. Лише живий DMR-голос (не підказки, не мелодії, не «Переслухати»).
+#if defined(VOLUME_PROBE) || defined(VOLUME_LOW)
+				// R77A/R78: додаткове ослаблення DMR -- ПІСЛЯ АРУ: пік для АРУ (dmrRxAGCpeakRx) нижче береться з swapper.byte16 до множення,
+				// тож ослаблення на виході АРУ не бачить.
 				{
 					int16_t out = (int16_t)(swapper.byte16 * dmrRxAgcGain);
-					i2s_Tx_Buffer[bufNum][j][2 * i] = (probeAttenuate ? vpDmrApply(out, volumeProbeDmrShift) : out);
+#if defined(VOLUME_LOW)
+					// R78: «Мін.гучність» -- множник Q15 з рампою (по кроку на відлік) до цілі volumeLowDmrGainQ15: зміна на 1 дБ без клацань.
+					if (dmrAttenuate)
+					{
+						s_volumeLowGain = vlRamp(s_volumeLowGain, volumeLowDmrGainQ15);
+						out = vlApply(out, s_volumeLowGain);
+					}
+#endif
+#if defined(VOLUME_PROBE)
+					if (dmrAttenuate && (volumeProbeDmrShift != 0U))
+					{
+						out = vpDmrApply(out, volumeProbeDmrShift);
+					}
+#endif
+					i2s_Tx_Buffer[bufNum][j][2 * i] = out;
 				}
 #else
 				i2s_Tx_Buffer[bufNum][j][2 * i] = (int16_t)(swapper.byte16 * dmrRxAgcGain);				// Only fill the Left Channel. Right Channel is not used by the HRC6000

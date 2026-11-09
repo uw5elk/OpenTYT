@@ -72,13 +72,13 @@ def main():
 
     # 3: після АРУ
     s = rd(os.path.join(APP, "source/functions/sound.c"))
-    i = s.index("#if defined(VOLUME_PROBE)\n				// R77A")
-    blk = s[i:i + 900]
+    i = s.index("#if defined(VOLUME_PROBE) || defined(VOLUME_LOW)\n				// R77A/R78")   # R78: блок спільний із «Мін.гучність»
+    blk = s[i:i + 1700]
     check("swapper.byte16 * dmrRxAgcGain" in blk and "vpDmrApply(out, volumeProbeDmrShift)" in blk, "sound.c: множник застосовується до результату АРУ")
-    check("samp = abs(swapper.byte16);" in s[i:i + 1600], "sound.c: пік для АРУ береться з вхідного відліку (до множення)")
+    check("samp = abs(swapper.byte16);" in s[i:i + 2600], "sound.c: пік для АРУ береться з вхідного відліку (до множення)")
     check("dmrRxAgcGain *= " in s and "probe" not in s[s.index("dmrRxAgcGain  = DMR_RX_AGC_DEFAULT_PEAK_SAMPLES"):s.index("dmrRxAgcGain  = DMR_RX_AGC_DEFAULT_PEAK_SAMPLES") + 300],
           "sound.c: сам розрахунок АРУ про пробу не знає")
-    check("voicePromptsIsPlaying() == false" in s[s.index("const bool probeAttenuate"):s.index("const bool probeAttenuate") + 300], "sound.c: підказки/мелодії не ослаблюються")
+    check("voicePromptsIsPlaying() == false" in s[s.index("const bool dmrAttenuate"):s.index("const bool dmrAttenuate") + 300], "sound.c: підказки/мелодії не ослаблюються")
 
     # 4, 5: volume_probe.c
     v = rd(os.path.join(APP, "source/functions/volume_probe.c"))
