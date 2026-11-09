@@ -101,6 +101,8 @@ def t_tk():
                     nxt = min(row1, key=lambda b: b.winfo_x())
                     check(nxt.winfo_x() >= r.winfo_x() + r.winfo_width(), "R79 [%s, %s]: кнопка x=%d налізає на підпис стану (x=%d, w=%d)" % (lab, state, nxt.winfo_x(), r.winfo_x(), r.winfo_width()))
                 import tkinter.font as tkfont
+                ys = sorted(set(b.winfo_y() for b in app.docbtn.values()))
+                check(len(ys) <= 2, "R79B [%s, %s]: кнопки панелі документа в %d рядках (має бути не більше 2): %r; ширина рядка %d" % (lab, state, len(ys), ys, app._docbtn_row.winfo_width()))
                 need = tkfont.Font(root=app, font=r.cget("font")).measure(r.cget("text"))
                 check(r.winfo_width() >= need, "R79 [%s, %s]: підпис стану обрізано (ширина %d < текст %d)" % (lab, state, r.winfo_width(), need))
             # 2. жовтогарячий рядок

@@ -258,7 +258,6 @@ class CpsApp(DocActions, tk.Tk):
 
         left = ttk.Frame(self.hpane, width=int(self.settings.get("left_width", 300) or 300))
         self.hpane.add(left, weight=0)
-        left.pack_propagate(False)       # R79: ширину лівої колонки задає межа (за замовчуванням 300), а не вміст: довгі назви дерева її не розпирають, а дають прокрутку
         ttk.Label(left, text=APP_TITLE, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 0))
         ttk.Label(left, text=self.build_info, foreground=gt.P["muted"], wraplength=270, justify="left").pack(anchor="w", padx=12)
         ttk.Label(left, text="Автор: UW5ELK", foreground=gt.P["muted"]).pack(anchor="w", padx=12, pady=(0, 8))
@@ -281,7 +280,7 @@ class CpsApp(DocActions, tk.Tk):
             for cls in classes:
                 self.tree.insert(gkey, "end", iid=cls.key, text=cls.title)
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
-        self._fit_tree_column()
+        self.after(400, self._fit_tree_column)     # R79B: після першої розкладки, щоб minwidth не розпирав ліву колонку (інакше права частина вужчає й кнопки йдуть у 3 рядки)
 
         self.right = ttk.Frame(self.hpane)
         self.hpane.add(self.right, weight=1)
@@ -442,8 +441,7 @@ class CpsApp(DocActions, tk.Tk):
         self._docbtn_row = row
         # R76: на місці підпису «Рація і файл:» -- стан рації, кольором за змістом: зелений -- знайдено, червоний -- нема / помилка, синій -- пошук. Стан документа
         # (незбережені зміни -- жовтогарячий, збережено -- зелений) показує рядок стану внизу вікна (doc_label) і колір кнопки «Записати в рацію».
-        self.docbar_radio = ttk.Label(row, text="", font=("Segoe UI", 10, "bold"), anchor="w")
-        self._fit_radio_width()
+        self.docbar_radio = ttk.Label(row, text="", font=("Segoe UI", 10, "bold"))
         row.add(self.docbar_radio)
         self.docbtn = {}
         # R75: дві головні дії -- «Прочитати з рації» і «Записати в рацію»; поруч файл; «Відкинути зміни» -- менш помітна кнопка (плоский стиль)
@@ -460,17 +458,6 @@ class CpsApp(DocActions, tk.Tk):
         self.docbar_note = gd.autowrap(ttk.Label(bar, text="", wraplength=700, justify="left", foreground=gt.P["warn"]), bar, margin=28)
         self._docbar_note_shown = False
         ttk.Separator(bar, orient="horizontal").pack(fill="x", pady=(4, 0), side="bottom")
-
-    def _fit_radio_width(self):
-        """R79: підпис стану рації має сталу ширину під найдовший із можливих текстів («● рації нема», «● пошук...», «● COM123»), виміряну шрифтом, --
-        кнопки поруч не стрибають і не налазять, коли текст міняється."""
-        try:
-            f = tkfont.Font(root=self, font=self.docbar_radio.cget("font"))
-            zero = max(1, f.measure("0"))
-            px = max(f.measure(t) for t in ("● рації нема", "● пошук...", "● COM12"))
-            self.docbar_radio.configure(width=int(px / zero) + 1)
-        except tk.TclError:
-            pass
 
     def refresh_docbar(self):
         """Стан кнопок документа й підпис-причина поруч (кодплаг заблоковано, рації нема, тип рації не той тощо)."""
@@ -513,17 +500,6 @@ class CpsApp(DocActions, tk.Tk):
         except tk.TclError:
             pass
 
-    def _grow_radio_width(self):
-        """Якщо текст (довга назва порту) ширший за сталу ширину підпису -- розширити, а не обрізати."""
-        try:
-            f = tkfont.Font(root=self, font=self.docbar_radio.cget("font"))
-            zero = max(1, f.measure("0"))
-            chars = int(f.measure(self.docbar_radio.cget("text")) / zero) + 1
-            if chars > int(self.docbar_radio.cget("width")):
-                self.docbar_radio.configure(width=chars)
-        except (tk.TclError, ValueError):
-            pass
-
     def _refresh_docbar_line(self, dirty):
         c = self.conn
         if c.state == "found":
@@ -531,8 +507,7 @@ class CpsApp(DocActions, tk.Tk):
         elif c.state == "unknown":
             self.docbar_radio.config(text="● пошук...", foreground=gt.P["info"])
         else:
-            self.docbar_radio.config(text="● рації нема", foreground=gt.P["err"])
-        self._grow_radio_width()
+            self.docbar_radio.config(text="● нема", foreground=gt.P["err"])
 
     # --- дерево і розділи -------------------------------------------------------------------
 
