@@ -21,6 +21,7 @@ import traceback
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
+from tkinter import font as tkfont
 
 import cps_link as cps
 import custom_compact
@@ -257,12 +258,22 @@ class CpsApp(DocActions, tk.Tk):
 
         left = ttk.Frame(self.hpane, width=int(self.settings.get("left_width", 300) or 300))
         self.hpane.add(left, weight=0)
+        left.pack_propagate(False)       # R79: ширину лівої колонки задає межа (за замовчуванням 300), а не вміст: довгі назви дерева її не розпирають, а дають прокрутку
         ttk.Label(left, text=APP_TITLE, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 0))
         ttk.Label(left, text=self.build_info, foreground=gt.P["muted"], wraplength=270, justify="left").pack(anchor="w", padx=12)
         ttk.Label(left, text="Автор: UW5ELK", foreground=gt.P["muted"]).pack(anchor="w", padx=12, pady=(0, 8))
-        self.tree = ttk.Treeview(left, show="tree", selectmode="browse", style="Nav.Treeview")
+        # R79: дерево зі смугами прокрутки, що з'являються лише коли пунктів більше, ніж місця (раніше нижні пункти просто зрізались)
+        tree_box = ttk.Frame(left)
+        tree_box.pack(fill="both", expand=True, padx=(8, 0), pady=0)
+        tree_box.columnconfigure(0, weight=1)
+        tree_box.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(tree_box, show="tree", selectmode="browse", style="Nav.Treeview")
         self.tree.column("#0", width=200, stretch=True)
-        self.tree.pack(fill="both", expand=True, padx=(8, 0), pady=0)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree_vsb = ttk.Scrollbar(tree_box, orient="vertical", command=self.tree.yview)
+        self.tree_hsb = ttk.Scrollbar(tree_box, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=lambda a, b: self._tree_scroll(self.tree_vsb, a, b, 0, 1, "ns"),
+                            xscrollcommand=lambda a, b: self._tree_scroll(self.tree_hsb, a, b, 1, 0, "ew"))
         self.tree.tag_configure("dim", foreground=gt.P["muted"])
         self.tree.tag_configure("grp", foreground=gt.P["group_fg"], font=("Segoe UI", 10, "bold"))      # R76 B3: заголовки груп «Дані» / «Сервіс»
         for gkey, gtitle, classes in SECTIONS:
@@ -270,6 +281,7 @@ class CpsApp(DocActions, tk.Tk):
             for cls in classes:
                 self.tree.insert(gkey, "end", iid=cls.key, text=cls.title)
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self._fit_tree_column()
 
         self.right = ttk.Frame(self.hpane)
         self.hpane.add(self.right, weight=1)
@@ -286,6 +298,9 @@ class CpsApp(DocActions, tk.Tk):
         ttk.Label(head, text="Журнал").pack(side="left")
         self.clear_btn = ttk.Button(head, text="Очистити", command=self.clear_log)
         self.clear_btn.pack(side="right")
+        self.log_big_btn = ttk.Button(head, text="Збільшити", command=self.toggle_log_big)    # R79: журнал на пів вікна й назад
+        self.log_big_btn.pack(side="right", padx=(0, 6))
+        ttk.Label(head, text="(межу над журналом можна тягнути)", foreground=gt.P["muted"]).pack(side="left", padx=8)
         self.log_text = scrolledtext.ScrolledText(self.log_frame, height=4, state="disabled", font=("Consolas", 9))
         gt.style_text(self.log_text)
         self.log_text.grid(row=1, column=0, sticky="nsew", padx=8, pady=(2, 4))
@@ -296,7 +311,7 @@ class CpsApp(DocActions, tk.Tk):
         # R36 B2: подвійне клацання по межі повертає типове положення; мінімуми не дають стиснути частини до нечитабельності
         self.pane_tree = PaneMemory(self.hpane, "tree", default=lambda: 300, min_first=lambda: 160, min_second=lambda: 360)
         self.pane_log = PaneMemory(self.vpane, "log", default=lambda: max(100, self.vpane.winfo_height() - self._default_log_height()),
-                                   min_first=lambda: 160, min_second=lambda: 40)
+                                   min_first=lambda: 160, min_second=self._min_log_height)
 
         # рядок стану: текст зліва; смужка прогресу з'являється ЛИШЕ на час операції; кнопка журналу справа
         bar = ttk.Frame(self)
@@ -330,14 +345,23 @@ class CpsApp(DocActions, tk.Tk):
         try:
             self.update_idletasks()
             lw = self.settings.get("left_width")
-            if isinstance(lw, int) and lw >= 120:
-                self.hpane.sashpos(0, lw)
+            if isinstance(lw, int) and not isinstance(lw, bool) and lw >= 120:
+                self.hpane.sashpos(0, min(lw, max(160, self.hpane.winfo_width() - 360)))
             self._place_log_sash()
         except tk.TclError:
             pass
 
+    def _min_log_height(self):
+        """R79: найменша висота журналу = заголовок + два рядки тексту (за шрифтом і масштабом), щоб журнал не зникав, коли межу тягнуть донизу."""
+        try:
+            import tkinter.font as tkfont
+            line = tkfont.Font(root=self, font=self.log_text.cget("font")).metrics("linespace")
+            return max(40, self.log_frame.winfo_children()[0].winfo_reqheight() + 2 * line + 16)
+        except (tk.TclError, IndexError):
+            return 40
+
     def _default_log_height(self):
-        return 100        # заголовок + 4 рядки
+        return 100        # заголовок + 4 рядки. R79: збільшувати типове не можна -- test_cps_ui Q1 / test_r56_ui W7 фіксують запас під панель на 760x520; більший журнал -- кнопкою «Збільшити» або межею
 
     def _place_log_sash(self):
         if not self._log_open:
@@ -382,6 +406,30 @@ class CpsApp(DocActions, tk.Tk):
 
     # --- панель документа -------------------------------------------------------------------
 
+    @staticmethod
+    def _tree_scroll(sb, first, last, row, col, sticky):
+        """Смуга прокрутки з'являється, лише коли вміст не вміщується (R79)."""
+        sb.set(first, last)
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            sb.grid_remove()
+        else:
+            sb.grid(row=row, column=col, sticky=sticky)
+
+    def _fit_tree_column(self):
+        """R79: мінімальна ширина стовпця дерева = найдовша назва (з відступом і заголовками груп жирним), виміряна шрифтами, -- довга назва не обрізається,
+        а за браком місця з'являється горизонтальна смуга."""
+        try:
+            f = tkfont.Font(root=self, font=("Segoe UI", 10))
+            fb = tkfont.Font(root=self, font=("Segoe UI", 10, "bold"))
+            px = 0
+            for gkey, gtitle, classes in SECTIONS:
+                px = max(px, fb.measure(gtitle) + 16)
+                for cls in classes:
+                    px = max(px, f.measure(cls.title) + 36)
+            self.tree.column("#0", minwidth=int(px))
+        except tk.TclError:
+            pass
+
     def _build_docbar(self):
         """Над усіма розділами: дії над документом кодплага. Недоступне не зникає, а вимкнено з причиною (docbar_note)."""
         bar = ttk.Frame(self.right)
@@ -394,7 +442,8 @@ class CpsApp(DocActions, tk.Tk):
         self._docbtn_row = row
         # R76: на місці підпису «Рація і файл:» -- стан рації, кольором за змістом: зелений -- знайдено, червоний -- нема / помилка, синій -- пошук. Стан документа
         # (незбережені зміни -- жовтогарячий, збережено -- зелений) показує рядок стану внизу вікна (doc_label) і колір кнопки «Записати в рацію».
-        self.docbar_radio = ttk.Label(row, text="", font=("Segoe UI", 10, "bold"))
+        self.docbar_radio = ttk.Label(row, text="", font=("Segoe UI", 10, "bold"), anchor="w")
+        self._fit_radio_width()
         row.add(self.docbar_radio)
         self.docbtn = {}
         # R75: дві головні дії -- «Прочитати з рації» і «Записати в рацію»; поруч файл; «Відкинути зміни» -- менш помітна кнопка (плоский стиль)
@@ -411,6 +460,17 @@ class CpsApp(DocActions, tk.Tk):
         self.docbar_note = gd.autowrap(ttk.Label(bar, text="", wraplength=700, justify="left", foreground=gt.P["warn"]), bar, margin=28)
         self._docbar_note_shown = False
         ttk.Separator(bar, orient="horizontal").pack(fill="x", pady=(4, 0), side="bottom")
+
+    def _fit_radio_width(self):
+        """R79: підпис стану рації має сталу ширину під найдовший із можливих текстів («● рації нема», «● пошук...», «● COM123»), виміряну шрифтом, --
+        кнопки поруч не стрибають і не налазять, коли текст міняється."""
+        try:
+            f = tkfont.Font(root=self, font=self.docbar_radio.cget("font"))
+            zero = max(1, f.measure("0"))
+            px = max(f.measure(t) for t in ("● рації нема", "● пошук...", "● COM12"))
+            self.docbar_radio.configure(width=int(px / zero) + 1)
+        except tk.TclError:
+            pass
 
     def refresh_docbar(self):
         """Стан кнопок документа й підпис-причина поруч (кодплаг заблоковано, рації нема, тип рації не той тощо)."""
@@ -437,9 +497,32 @@ class CpsApp(DocActions, tk.Tk):
         if shown and not self._docbar_note_shown:
             self.docbar_note.pack(anchor="w", padx=12, pady=(0, 2))
             self._docbar_note_shown = True
+            self._rewrap_docbar_note()
         elif not shown and self._docbar_note_shown:
             self.docbar_note.pack_forget()
             self._docbar_note_shown = False
+
+    def _rewrap_docbar_note(self):
+        """R79: wraplength жовтогарячого рядка = ширина панелі мінус поля (а не 700 за замовчуванням), у т.ч. одразу після появи рядка."""
+        try:
+            w = self.docbar.winfo_width()
+            if w <= 1:
+                w = self.right.winfo_width()
+            if w > 1:
+                self.docbar_note.config(wraplength=max(180, w - 28))
+        except tk.TclError:
+            pass
+
+    def _grow_radio_width(self):
+        """Якщо текст (довга назва порту) ширший за сталу ширину підпису -- розширити, а не обрізати."""
+        try:
+            f = tkfont.Font(root=self, font=self.docbar_radio.cget("font"))
+            zero = max(1, f.measure("0"))
+            chars = int(f.measure(self.docbar_radio.cget("text")) / zero) + 1
+            if chars > int(self.docbar_radio.cget("width")):
+                self.docbar_radio.configure(width=chars)
+        except (tk.TclError, ValueError):
+            pass
 
     def _refresh_docbar_line(self, dirty):
         c = self.conn
@@ -449,6 +532,7 @@ class CpsApp(DocActions, tk.Tk):
             self.docbar_radio.config(text="● пошук...", foreground=gt.P["info"])
         else:
             self.docbar_radio.config(text="● рації нема", foreground=gt.P["err"])
+        self._grow_radio_width()
 
     # --- дерево і розділи -------------------------------------------------------------------
 
@@ -542,6 +626,20 @@ class CpsApp(DocActions, tk.Tk):
 
     def _update_log_toggle(self):
         self.log_toggle.config(text="Сховати журнал" if self._log_open else "Показати журнал")
+
+    def toggle_log_big(self):
+        """R79: «Збільшити» -- журнал займає близько половини висоти; «Зменшити» -- типова висота."""
+        try:
+            self.update_idletasks()
+            h = self.vpane.winfo_height()
+            if h <= 1 or not self._log_open:
+                return
+            _lw, lh = self._measure_sashes()
+            big = bool(lh and lh < h * 0.4)
+            self.pane_log.set(h - int(h * 0.5) if big else h - self._default_log_height())
+            self.log_big_btn.config(text="Зменшити" if big else "Збільшити")
+        except tk.TclError:
+            pass
 
     def toggle_log(self):
         if self._log_open:

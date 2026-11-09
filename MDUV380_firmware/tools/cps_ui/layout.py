@@ -77,6 +77,9 @@ class FlowFrame(ttk.Frame):
 
     def add(self, widget, sticky="w"):
         self.items.append((widget, sticky))
+        # R79: змінився текст елемента (напр. «● рації нема» -> «● COM12») -- розмір елемента інший, а рядок перераховувався лише при зміні розміру самої групи,
+        # тож наступна кнопка лишалась на старому x і налізала на підпис. Тепер зміна розміру будь-якого елемента запускає перерозкладку.
+        widget.bind("<Configure>", lambda _e: self.after_idle(self.relayout), add="+")
         self.relayout(force=True)
         return widget
 
