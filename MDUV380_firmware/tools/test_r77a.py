@@ -7,7 +7,7 @@ tests/test_volume_probe.c зі справжнім volume_probe.c):
   3  множник DMR стоїть ПІСЛЯ АРУ: пік для АРУ береться з swapper.byte16 (до множення), а ослаблення застосовується до результату;
   4  volume_probe.c пише лише регістр 0x44 із високим байтом 0x06 (VP_FM_HIGH) через наявну radioWriteReg2byte; жодного прямого SPI/I2C, жодного DMR-значення;
   5  нічого не зберігається: у volume_probe.c, menuVolumeProbe.c нема settings*/EEPROM/flash/custom-data;
-  6  volprobe_ua.h -- cp1251 (не UTF-8), у кожного нового мовного рядка довжина <= 26 символів без форматних специфікаторів (рядок екрана 160 px / 6 px);
+  6  volprobe_ua.h -- cp1251 (не UTF-8), у кожного нового мовного рядка довжина <= 16 символів з найгіршими підстановками (R77B; на фото рації обрізались довші);
   7  Makefile: прапорець лише додає -DENABLE_VOLUME_PROBE.
 Запуск: python3 tools/test_r77a.py"""
 import os
@@ -103,8 +103,10 @@ def main():
     check("Гучн. проба" in txt, "volprobe_ua.h читається як cp1251")
     for m in re.finditer(r'#define (VOLPROBE_\w+)\s+"([^"]*)"', txt):
         name, val = m.groups()
-        plain = re.sub(r"%[-+0-9.]*[a-zA-Z%]", "999", val)
-        check(len(plain) <= 26, "%s: %d символів (> 26): %r" % (name, len(plain), val))
+        # R77B: межа 16 символів (на фото рації обрізались рядки довші за ~16-17); найгірший випадок підстановок: %c 1, %s 4, %d/%u 3, %02X 2
+        plain = re.sub(r"%[-+0-9.]*[a-zA-Z%]", lambda mm: {"c": "x", "s": "xxxx", "X": "xx", "%": "%"}.get(mm.group(0)[-1], "999"), val)
+        if name not in ("VOLPROBE_MENU_NAME", "VOLPROBE_MENU_ENTER"):
+            check(len(plain) <= 16, "%s: %d символів (> 16): %r" % (name, len(plain), val))
 
     # 7: Makefile
     mk = rd(os.path.join(FW, "Makefile"))

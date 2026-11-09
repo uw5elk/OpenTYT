@@ -3,7 +3,7 @@
  * до стокових значень, застосування DMR-множника до відліку. Підключається і прошивкою (functions/volume_probe.c, sound.c), і хостовим тестом
  * (tests/test_volume_probe.c). ЕКСПЕРИМЕНТ: нічого не зберігається, після перезавантаження і при виході все стокове.
  *
- * DMR: додаткове ослаблення відліків ПЕРЕД I2S -- зсув вправо на 0..3 біти (1x, 1/2, 1/4, 1/8 = 0, -6, -12, -18 дБ). Застосовується ПІСЛЯ АРУ:
+ * DMR: додаткове ослаблення відліків ПЕРЕД I2S -- зсув вправо на 0..6 бітів (1x ... 1/64 = 0, -6 ... -36 дБ; R77B: глибші кроки). Застосовується ПІСЛЯ АРУ:
  * АРУ (sound.c, soundRefillData) міряє пік ВХІДНИХ відліків (dmrRxAGCpeakRx із swapper.byte16 -- до множення), тож ослаблення на виході
  * не змінює її вхід, і вона не «підсилює назад».
  *
@@ -18,8 +18,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define VP_DMR_STEPS      4U            /* 1x, 1/2, 1/4, 1/8 */
-#define VP_FM_STEPS       5U            /* 80 % (стокове), 60, 40, 25, 15 */
+#define VP_DMR_STEPS      7U            /* R77B: 1x, 1/2, 1/4, 1/8, 1/16, 1/32, 1/64 (0..-36 дБ) */
+#define VP_DMR_MAX_SHIFT  6U
+#define VP_FM_STEPS       9U            /* R77B: 80 % (стокове), 60, 40, 25, 15, 10, 6, 3, 1,5 */
 #define VP_FM_REG         0x44U
 #define VP_FM_HIGH        0x06U         /* старший байт як у AT1846FMSettings */
 #define VP_FM_STOCK_LOW   0xCCU         /* 0x06CC -- стокове значення FM */
@@ -31,29 +32,44 @@ static inline uint8_t vpDmrShift(uint8_t step)
 	return (step < VP_DMR_STEPS) ? step : 0U;
 }
 
-/* Ослаблення DMR у дБ (0, -6, -12, -18). */
+/* Ослаблення DMR у дБ (0, -6, ... -36). */
 static inline int vpDmrDb(uint8_t step)
 {
 	return -6 * (int)vpDmrShift(step);
 }
 
-/* Відліку після ослаблення. Арифметичний зсув: 0 лишається 0, знак зберігається. */
+/* Відліку після ослаблення. Арифметичний зсув: 0 лишається 0, знак зберігається. Зсув понад VP_DMR_MAX_SHIFT обрізається до нього. */
 static inline int16_t vpDmrApply(int16_t sample, uint8_t shift)
 {
-	return (int16_t)(sample >> (shift & 3U));
+	return (int16_t)(sample >> ((shift > VP_DMR_MAX_SHIFT) ? VP_DMR_MAX_SHIFT : shift));
 }
 
-/* FM: відсоток від 0x07FF-«100 %» (молодший байт 0xFF) для кроку. */
-static inline uint8_t vpFmPercent(uint8_t step)
+/* FM: «відсоток» від 0x07FF-«100 %» (молодший байт 0xFF) у промілле: 80, 60, 40, 25, 15, 10, 6, 3, 1,5 %. */
+static inline uint16_t vpFmPermille(uint8_t step)
 {
-	static const uint8_t pct[VP_FM_STEPS] = { 80U, 60U, 40U, 25U, 15U };
-	return pct[(step < VP_FM_STEPS) ? step : 0U];
+	static const uint16_t pm[VP_FM_STEPS] = { 800U, 600U, 400U, 250U, 150U, 100U, 60U, 30U, 15U };
+	return pm[(step < VP_FM_STEPS) ? step : 0U];
 }
 
-/* FM: молодший байт 0x44 для кроку = округлено(відсоток × 255 / 100): 80 % -> 0xCC (збігається зі стоковим), 60 % -> 0x99, 40 % -> 0x66, 25 % -> 0x40, 15 % -> 0x26. */
+/* FM: молодший байт 0x44 для кроку = округлено(промілле × 255 / 1000): 0xCC (збігається зі стоковим), 0x99, 0x66, 0x40, 0x26, 0x1A, 0x0F, 0x08, 0x04. */
 static inline uint8_t vpFmLow(uint8_t step)
 {
-	return (uint8_t)(((uint32_t)vpFmPercent(step) * 255U + 50U) / 100U);
+	return (uint8_t)(((uint32_t)vpFmPermille(step) * 255U + 500U) / 1000U);
+}
+
+/* FM: РОЗРАХУНКОВЕ (не виміряне!) ослаблення відносно стокового 0xCC, десяті дБ: 20*log10(low/0xCC) за гіпотезою лінійності регістра.
+ * Таблиця пораховано заздалегідь (без libm у прошивці); хостовий тест звіряє її з log10. */
+static inline int16_t vpFmDbTenths(uint8_t step)
+{
+	static const int16_t t[VP_FM_STEPS] = { 0, -25, -60, -101, -146, -179, -227, -281, -342 };
+	return t[(step < VP_FM_STEPS) ? step : 0U];
+}
+
+/* Те саме, округлене до цілих дБ (для екрана). */
+static inline int vpFmDb(uint8_t step)
+{
+	int16_t v = vpFmDbTenths(step);
+	return (v < 0) ? -(((-v) + 5) / 10) : ((v + 5) / 10);
 }
 
 /* FM-ослаблення заборонене, коли працює APRS-приймач або «Режим APRS»: вони беруть відліки з того самого FM-шляху I2S (HR-C6000), і зміна

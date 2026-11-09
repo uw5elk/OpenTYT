@@ -29,10 +29,17 @@ static void row(int n, const char *text)
 
 static const char *dmrName(uint8_t step)
 {
-	static const char *const names[VP_DMR_STEPS] = { "1x ", "1/2", "1/4", "1/8" };
+	static const char *const names[VP_DMR_STEPS] = { "1x  ", "1/2 ", "1/4 ", "1/8 ", "1/16", "1/32", "1/64" };
 	return names[(step < VP_DMR_STEPS) ? step : 0U];
 }
 
+static const char *fmName(uint8_t step)
+{
+	static const char *const names[VP_FM_STEPS] = { "80% ", "60% ", "40% ", "25% ", "15% ", "10% ", "6%  ", "3%  ", "1,5%" };
+	return names[(step < VP_FM_STEPS) ? step : 0U];
+}
+
+/* R77B: усі рядки <= 16 символів (на фото рації обрізались довші) */
 static void draw(void)
 {
 	char buf[SCREEN_LINE_BUFFER_SIZE];
@@ -43,14 +50,15 @@ static void draw(void)
 
 	s_lastDraw = ticksGetMillis();
 	displayClearBuf();
-	menuDisplayTitle(VOLPROBE_TITLE);
+	menuDisplayTitle((mode == RADIO_MODE_ANALOG) ? VOLPROBE_TITLE_FM : ((mode == RADIO_MODE_DIGITAL) ? VOLPROBE_TITLE_DMR : VOLPROBE_TITLE));
 
 	snprintf(buf, sizeof(buf), VOLPROBE_POT, (int)lastVolume, (int)(lastVolume + 32));
 	row(0, buf);
-	row(1, (mode == RADIO_MODE_ANALOG) ? VOLPROBE_MODE_FM : ((mode == RADIO_MODE_DIGITAL) ? VOLPROBE_MODE_DMR : VOLPROBE_MODE_OTHER));
 	snprintf(buf, sizeof(buf), VOLPROBE_DMR_ROW, (sel == 0U) ? '>' : ' ', dmrName(dm), vpDmrDb(dm));
+	row(1, buf);
+	snprintf(buf, sizeof(buf), VOLPROBE_FM_ROW, (sel == 1U) ? '>' : ' ', fmName(fm), vpFmDb(fm));
 	row(2, buf);
-	snprintf(buf, sizeof(buf), VOLPROBE_FM_ROW, (sel == 1U) ? '>' : ' ', (unsigned)vpFmPercent(fm), (unsigned)VP_FM_HIGH, (unsigned)vpFmLow(fm));
+	snprintf(buf, sizeof(buf), VOLPROBE_HEX_ROW, (unsigned)vpFmLow(fm), (unsigned)volumeProbeSecondsLeft());
 	row(3, buf);
 
 	/* Рядок 4: чому крок не діє зараз (APRS -- причина: приймач читає відліки з того ж FM-шляху). */
@@ -66,12 +74,12 @@ static void draw(void)
 	{
 		row(4, VOLPROBE_FM_IDLE);
 	}
+	row(5, VOLPROBE_FM_NOTE);
 
 	row(6, VOLPROBE_KEYS1);
 	row(7, VOLPROBE_KEYS2);
 	row(8, VOLPROBE_KEYS3);
-	snprintf(buf, sizeof(buf), VOLPROBE_LEFT, (unsigned)volumeProbeSecondsLeft());
-	row(9, buf);
+	row(9, VOLPROBE_KEYS4);
 	displayRender();
 }
 

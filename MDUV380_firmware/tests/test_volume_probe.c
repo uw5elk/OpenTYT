@@ -1,7 +1,7 @@
 /*
  * test_volume_probe.c -- R77A: діагностичний екран «Гучн. проба». Збирається з СПРАВЖНІМ functions/volume_probe.c (заглушки лише для обладнання:
  * radioWriteReg2byte, режим/частота, час, APRS-стани). Перевіряється:
- *  1  таблиці: DMR 1x/1/2/1/4/1/8 = 0/-6/-12/-18 дБ; FM 80/60/40/25/15 % -> 0xCC/0x99/0x66/0x40/0x26 (80 % збігається зі стоковим 0x06CC);
+ *  1  таблиці (R77B): DMR 1x...1/64 = 0...-36 дБ; FM 80/60/40/25/15/10/6/3/1,5 % -> 0xCC/0x99/0x66/0x40/0x26/0x1A/0x0F/0x08/0x04, дБ розрахункові (80 % збігається зі стоковим 0x06CC);
  *  2  вихід з екрана повертає стокове (DMR зсув 0, FM 0x06CC) -- і після кожного з автоповернень: передача, APRS, зміна каналу, зміна режиму, таймаут 2 хв;
  *  3  FM-крок не пишеться, поки працює APRS-приймач або «Режим APRS», і не пишеться в цифровому режимі; DMR-регістр 0x44 не пишеться НІКОЛИ
  *     (усі записи -- лише 0x44 з високим байтом 0x06 і лише в аналоговому режимі);
@@ -11,6 +11,7 @@
  *  7  без прапорця (ця таблиця) -- стокове: кроки 0 -> зсув 0, FM-байт 0xCC.
  */
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include "functions/volume_probe.h"
 #include "functions/trx.h"
@@ -60,21 +61,34 @@ int main(void)
 #else
 	/* 1: таблиці */
 	{
-		static const int db[4] = { 0, -6, -12, -18 };
-		static const uint8_t pct[5] = { 80, 60, 40, 25, 15 }, lo[5] = { 0xCC, 0x99, 0x66, 0x40, 0x26 };
-		for (uint8_t i = 0; i < 4; i++) { CHECK(vpDmrDb(i) == db[i] && vpDmrShift(i) == i, "DMR крок %u: %d дБ", i, db[i]); }
-		for (uint8_t i = 0; i < 5; i++) { CHECK(vpFmPercent(i) == pct[i] && vpFmLow(i) == lo[i], "FM крок %u: %u %% -> 0x%02X", i, pct[i], lo[i]); }
+		static const int db[VP_DMR_STEPS] = { 0, -6, -12, -18, -24, -30, -36 };
+		static const uint16_t pm[VP_FM_STEPS] = { 800, 600, 400, 250, 150, 100, 60, 30, 15 };
+		static const uint8_t lo[VP_FM_STEPS] = { 0xCC, 0x99, 0x66, 0x40, 0x26, 0x1A, 0x0F, 0x08, 0x04 };
+		CHECK(VP_DMR_STEPS == 7 && VP_FM_STEPS == 9, "R77B: 7 кроків DMR і 9 кроків FM");
+		for (uint8_t i = 0; i < VP_DMR_STEPS; i++) { CHECK(vpDmrDb(i) == db[i] && vpDmrShift(i) == i, "DMR крок %u: %d дБ", i, db[i]); }
+		for (uint8_t i = 0; i < VP_FM_STEPS; i++) { CHECK(vpFmPermille(i) == pm[i] && vpFmLow(i) == lo[i], "FM крок %u: %u промілле -> 0x%02X", i, pm[i], lo[i]); }
 		CHECK(vpFmLow(0) == VP_FM_STOCK_LOW && VP_FM_HIGH == 0x06, "FM крок 0 == стокове 0x06CC");
 		int mono = 1;
-		for (uint8_t i = 1; i < 5; i++) { if (vpFmLow(i) >= vpFmLow(i - 1)) mono = 0; }
-		for (uint8_t i = 1; i < 4; i++) { if (vpDmrShift(i) <= vpDmrShift(i - 1)) mono = 0; }
+		for (uint8_t i = 1; i < VP_FM_STEPS; i++) { if (vpFmLow(i) >= vpFmLow(i - 1)) mono = 0; }
+		for (uint8_t i = 1; i < VP_DMR_STEPS; i++) { if (vpDmrShift(i) <= vpDmrShift(i - 1)) mono = 0; }
 		CHECK(mono, "таблиці монотонні: кожен крок тихіший за попередній");
+		CHECK(vpFmLow(VP_FM_STEPS - 1) >= 1, "найглибший FM-байт не нуль (0x04)");
+		/* розрахункове дБ: таблиця десятих збігається з 20*log10(low/0xCC) (не гірше 0,1 дБ), округлене -- не гірше 0,5 */
+		for (uint8_t i = 0; i < VP_FM_STEPS; i++)
+		{
+			double ex = 20.0 * log10((double)vpFmLow(i) / (double)VP_FM_STOCK_LOW);
+			CHECK(fabs(vpFmDbTenths(i) / 10.0 - ex) <= 0.1, "FM крок %u: %.1f дБ розрахункове (таблиця %d/10)", i, ex, (int)vpFmDbTenths(i));
+			CHECK(fabs((double)vpFmDb(i) - ex) <= 0.51, "FM крок %u: округлене %d дБ", i, vpFmDb(i));
+		}
+		CHECK(vpFmDb(0) == 0 && vpFmDb(8) == -34 && vpFmDb(5) == -18, "дБ: стокове 0, останній -34, 10 %% -18");
 		CHECK(vpDmrShift(9) == 0 && vpFmLow(9) == 0xCC, "неправильний крок -> стокове");
 	}
 	/* 6: множник */
 	CHECK(vpDmrApply(1000, 0) == 1000 && vpDmrApply(-1000, 0) == -1000, "зсув 0: відлік без змін");
 	CHECK(vpDmrApply(1000, 1) == 500 && vpDmrApply(1000, 3) == 125 && vpDmrApply(-1000, 2) == -250, "зсуви 1/3, знак зберігається");
 	CHECK(vpDmrApply(0, 3) == 0 && vpDmrApply(32767, 3) == 4095 && vpDmrApply(-32768, 3) == -4096, "нуль і краї діапазону");
+	CHECK(vpDmrApply(32767, 6) == 511 && vpDmrApply(-32768, 6) == -512 && vpDmrApply(6400, 6) == 100, "глибокий зсув 6 (1/64)");
+	CHECK(vpDmrApply(1024, 7) == vpDmrApply(1024, 6) && vpDmrApply(1024, 200) == 16, "зсув понад 6 обрізається до 6");
 
 	/* 7: початковий стан */
 	reset();
@@ -87,12 +101,12 @@ int main(void)
 	volumeProbeAdjust(+1); volumeProbeAdjust(+1);
 	CHECK(volumeProbeDmrStep() == 2 && volumeProbeDmrShift == 2, "DMR крок 2 -> зсув 2");
 	volumeProbeAdjust(+9);
-	CHECK(volumeProbeDmrStep() == 3, "DMR крок обмежено згори");
+	CHECK(volumeProbeDmrStep() == 6 && volumeProbeDmrShift == 6, "DMR крок обмежено згори (1/64)");
 	volumeProbeToggleSelect();
 	volumeProbeAdjust(+1);
 	CHECK(volumeProbeFmStep() == 1 && lastWriteIs(0x99), "FM крок 1 -> 0x0699");
 	volumeProbeAdjust(+9);
-	CHECK(volumeProbeFmStep() == 4 && lastWriteIs(0x26), "FM крок 4 -> 0x0626 (15 %%)");
+	CHECK(volumeProbeFmStep() == 8 && lastWriteIs(0x04), "FM крок 8 -> 0x0604 (1,5 %%)");
 	volumeProbeClose();
 	CHECK(!volumeProbeIsOn() && volumeProbeDmrShift == 0, "вихід: DMR зсув 0");
 	CHECK(lastWriteIs(0xCC), "вихід: FM повернуто 0x06CC");
