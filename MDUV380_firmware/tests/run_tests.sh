@@ -411,6 +411,15 @@ if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
 	fi
 fi
 
+# R80: README.md -- відносні посилання, якорі й зображення (docs/img, до 300 КБ), без слова «виправлено» (tools/check_readme_links.py, самоперевірка всередині).
+if [ -z "$FILTER" ] || [[ "check_readme_links" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/check_readme_links.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            check_readme_links (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        check_readme_links (python)"; show_fail "$out"
+	fi
+fi
+
 echo
 echo "Тестів пройдено: $pass, провалено: $fail"
 [ "$fail" -eq 0 ] || exit 1
