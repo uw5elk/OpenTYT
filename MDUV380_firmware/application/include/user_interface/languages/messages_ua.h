@@ -174,7 +174,7 @@
 #define MSGS_HINT_LAYOUT         "будь-яка клавіша: назад"
 #define MSGS_HINT_PRESET_LAYOUT  "U:шаблон D:літ. L:стерти"
 #define MSGS_HINT_LAYOUT_DEL     "D:літери  L:стерти"
-/* ui7: пункти SMS у «Налаштуваннях» (Опції рації, Дисплей). Рядок пункту -- «підпис:значення»
+/* ui7 / R81: пункти SMS DMR у меню «Повідомлення» (R81: повернулись з «Опцій рації»; «Шрифт SMS» в українській збірці не налаштовується). Рядок пункту -- «підпис:значення»
  * не довше 16 символів (SCREEN_LINE_BUFFER_SIZE); значення Увімк/Вимк -- currentLanguage->on/off. */
 #define MSGS_SET_MONITOR         "SMS монітор"
 #define MSGS_SET_TXCONF          "SMS підтв."

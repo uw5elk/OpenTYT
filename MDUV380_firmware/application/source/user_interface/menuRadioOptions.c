@@ -32,32 +32,13 @@
 #include "interfaces/wdog.h"
 #include "utils.h"
 #include "functions/rxPowerSaving.h"
+/* R81: пункти SMS («SMS монітор», «SMS підтв.») переїхали в меню «Повідомлення» (menuMessages.c), «Затр.шуму» -- у «Звук» (menuSoundOptions.c),
+ * «Мін.гучн.» прибрано (фіксовано K = 16). Усі ці пункти були ОСТАННІМИ в enum, тож індекси QuickKey стокових пунктів не змінились. */
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-/* ui7 (форк): пункти SMS («SMS монітор», «SMS підтв.») переїхали сюди з меню «Повідомлення».
- * Збереження те саме: BIT_SMS_MONITOR_ALL (nonVolatileSettings) і custom-data SMS_TX_MODE. */
-#include "functions/dmr_sms.h"
-#include "crypto/dmr_aes.h"           /* DMR_AES_CCM */
-#include "user_interface/menuVolumeProbe.h"   /* R77A: «Гучн. проба» (лише ENABLE_VOLUME_PROBE) */
-#if defined(ENABLE_VOLUME_LOW)
-#include "functions/volume_low.h"             /* R78: «Мін.гучність» (лише ENABLE_VOLUME_LOW) */
+#include "user_interface/menuVolumeProbe.h"   /* R77A: «Гучн. проба» (лише ENABLE_VOLUME_PROBE; як і раніше -- лише в збірках з AES + DMR_DATA) */
 #endif
 #if defined(VOLUME_PROBE)
 #include "user_interface/languages/volprobe_ua.h"
-#endif
-#if defined(VOLUME_LOW)
-#include "user_interface/languages/vollow_ua.h"
-#endif
-#if defined(LANGUAGE_BUILD_UKRAINIAN)
-#include "user_interface/languages/messages_ua.h"
-#else
-#define MSGS_SET_MONITOR         "SMS monitor"
-#define MSGS_SET_TXCONF          "SMS confirm"
-#define MSGS_SET_TX_R12          "1/2"
-#endif
-/* Режим TX SMS живе в окремому custom-data блоці (пишеться у флеш одразу), а не в
- * nonVolatileSettings, тож «RED -- скасувати» його б не відкотив. Тому тут -- лише чернетка,
- * у флеш вона йде в applySettings() (GREEN / тайм-аут QuickKey). CCM: main RAM не чіпаємо. */
-static uint8_t s_smsTxModePending DMR_AES_CCM;   /* CCM-INIT(menuRadioOptions) -- = dmrSmsTxMode() на isFirstRun */
 #endif
 
 static void updateScreen(bool isFirstRun);
@@ -88,16 +69,6 @@ enum
 #if defined(PLATFORM_MDUV380) && !defined(PLATFORM_VARIANT_UV380_PLUS_10W)
 	RADIO_OPTIONS_MENU_FORCE_10W,
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-	RADIO_OPTIONS_MENU_SMS_MONITOR,   /* ui7: останніми -- індекси QuickKey стокових пунктів ті самі */
-	RADIO_OPTIONS_MENU_SMS_TX_MODE,
-#endif
-#if defined(SQL_OPEN_DELAY_ENABLED)
-	RADIO_OPTIONS_MENU_SQL_OPEN_DELAY,   /* R42: найостаннішим -- індекси QuickKey усіх попередніх пунктів ті самі */
-#endif
-#if defined(VOLUME_LOW)
-	RADIO_OPTIONS_MENU_VOL_LOW,          /* R78: «Мін.гучність» -- після SQL_OPEN_DELAY, перед діагностикою (індекси QuickKey попередніх пунктів ті самі) */
-#endif
 #if defined(VOLUME_PROBE)
 	RADIO_OPTIONS_MENU_VOL_PROBE,        /* R77A: діагностика -- найостаннішим */
 #endif
@@ -112,9 +83,6 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 		menuDataGlobal.menuOptionsTimeout = 0;
 		menuDataGlobal.newOptionSelected = true;
 		menuDataGlobal.numItems = NUM_RADIO_OPTIONS_MENU_ITEMS;
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-		s_smsTxModePending = (uint8_t)dmrSmsTxMode();
-#endif
 
 		if (originalNonVolatileSettings.magicNumber == 0xDEADBEEF)
 		{
@@ -185,17 +153,8 @@ static void updateScreen(bool isFirstRun)
 
 			buf[0] = 0;
 			buf[2] = 0;
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-			bool leftSideIsFork = false;   /* підпис -- не рядок currentLanguage: без голосової підказки */
-#endif
-#if defined(VOLUME_LOW)
-			bool volLowNoPrompt = false;     /* R78: підпис -- макрос українського заголовка: без голосової підказки */
-#endif
 #if defined(VOLUME_PROBE)
 			bool volProbeNoPrompt = false;   /* R77A: підпис -- макрос українського заголовка, не рядок currentLanguage: без голосової підказки */
-#endif
-#if defined(SQL_OPEN_DELAY_ENABLED)
-			bool sqlDelayNoPrompt = false;   /* R42: підпис -- поле українського блока, поза діапазоном голосових підказок: без підказки */
 #endif
 			leftSide = NULL;
 			rightSideConst = NULL;
@@ -293,63 +252,6 @@ static void updateScreen(bool isFirstRun)
 					rightSideUnitsStr = "W";
 					break;
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-				/* ui7: приймати й чужі SMS (адресат -- не ми); див. smsIsForUs() у dmr_sms.c. */
-				case RADIO_OPTIONS_MENU_SMS_MONITOR:
-					leftSide = MSGS_SET_MONITOR;
-					leftSideIsFork = true;
-					rightSideConst = (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? currentLanguage->on : currentLanguage->off);
-					break;
-				/* ui7: режим TX SMS -- «З підтв.» (CONFIRMED rate-3/4) = On, «Без підтв.» = Off;
-				 * rate-1/2 (1) -- лише з ENABLE_SMS_DIAG. */
-				case RADIO_OPTIONS_MENU_SMS_TX_MODE:
-					leftSide = MSGS_SET_TXCONF;
-					leftSideIsFork = true;
-					if (s_smsTxModePending == 1)
-					{
-						snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", MSGS_SET_TX_R12);
-					}
-					else
-					{
-						rightSideConst = (s_smsTxModePending == 0) ? currentLanguage->off : currentLanguage->on;
-					}
-					break;
-#endif
-#if defined(SQL_OPEN_DELAY_ENABLED)
-				/* R42: затримка відкриття шумодава FM, 0..500 мс кроком 50 (0 = вимкнено, як до R42). Логіка -- functions/sql_open_delay.h. */
-				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
-				{
-					uint8_t steps = sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1);
-
-					leftSide = currentLanguage->sql_open_delay;
-					sqlDelayNoPrompt = true;
-					if (steps == 0)
-					{
-						rightSideConst = currentLanguage->off;
-					}
-					else
-					{
-						snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u", (unsigned)(steps * SQL_OPEN_DELAY_STEP_MS));
-						rightSideUnitsStr = currentLanguage->sql_open_delay_ms;
-					}
-				}
-					break;
-#endif
-#if defined(VOLUME_LOW)
-				/* R78: «Мін.гучність» -- Вимк / 8 / 16 / 24 (позицій ручки від мінімуму, на яких іде спад). Значення живе одразу, у флеш -- при збереженні. */
-				case RADIO_OPTIONS_MENU_VOL_LOW:
-					leftSide = VOLLOW_MENU_NAME;
-					volLowNoPrompt = true;
-					if (volumeLowGetMode() == 0U)
-					{
-						rightSideConst = currentLanguage->off;
-					}
-					else
-					{
-						snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u", (unsigned)vlKnee(volumeLowGetMode()));
-					}
-					break;
-#endif
 #if defined(VOLUME_PROBE)
 				case RADIO_OPTIONS_MENU_VOL_PROBE:
 					leftSide = VOLPROBE_MENU_NAME;
@@ -372,17 +274,8 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-					if (leftSideIsFork == false)   /* індекс підказки рахується від currentLanguage */
-#endif
-#if defined(SQL_OPEN_DELAY_ENABLED)
-					if (sqlDelayNoPrompt == false)   /* R42 */
-#endif
 #if defined(VOLUME_PROBE)
 					if (volProbeNoPrompt == false)   /* R77A */
-#endif
-#if defined(VOLUME_LOW)
-					if (volLowNoPrompt == false)   /* R78 */
 #endif
 					voicePromptsAppendLanguageString(leftSide);
 				}
@@ -641,54 +534,10 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-				case RADIO_OPTIONS_MENU_SMS_MONITOR:
-					if (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false)
-					{
-						settingsSetOptionBit(BIT_SMS_MONITOR_ALL, true);
-					}
-					break;
-				case RADIO_OPTIONS_MENU_SMS_TX_MODE:
-#if defined(ENABLE_SMS_DIAG)
-					if (s_smsTxModePending < 2) { s_smsTxModePending++; }   /* 0 -> 1 (1/2) -> 2 */
-#else
-					s_smsTxModePending = 2;                                 /* «З підтв.» */
-#endif
-					break;
-#endif
-#if defined(VOLUME_LOW)
-				case RADIO_OPTIONS_MENU_VOL_LOW:
-					if (volumeLowGetMode() < (VOLLOW_MODES - 1U))
-					{
-						volumeLowSetMode((uint8_t)(volumeLowGetMode() + 1U));   /* R78: Вимк -> 8 -> 16 -> 24 */
-					}
-					break;
-#endif
 #if defined(VOLUME_PROBE)
 				case RADIO_OPTIONS_MENU_VOL_PROBE:
 					menuVolumeProbeEnter();   /* R77A: вправо -- відкрити екран; він сам малює й веде клавіші */
 					return;
-#endif
-#if defined(SQL_OPEN_DELAY_ENABLED)
-				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
-				{
-					uint8_t steps = sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1);
-					uint8_t next = sqlOpenDelayStepsInc(steps);
-
-					if (next != steps)
-					{
-						settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(next));
-						if (steps == 0)
-						{
-							/* Умикання затримки: одним реченням -- ціна (пункт меню не має рядка підказки). */
-							char hint[3 * LANGUAGE_TEXTS_LENGTH + 2];
-
-							snprintf(hint, sizeof(hint), "%s\n%s\n%s", currentLanguage->sql_open_delay_hint1, currentLanguage->sql_open_delay_hint2, currentLanguage->sql_open_delay_hint3);
-							uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2500, hint, false);
-						}
-					}
-				}
-					break;
 #endif
 			}
 		}
@@ -812,37 +661,9 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-				case RADIO_OPTIONS_MENU_SMS_MONITOR:
-					if (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL))
-					{
-						settingsSetOptionBit(BIT_SMS_MONITOR_ALL, false);
-					}
-					break;
-				case RADIO_OPTIONS_MENU_SMS_TX_MODE:
-#if defined(ENABLE_SMS_DIAG)
-					if (s_smsTxModePending > 0) { s_smsTxModePending--; }
-#else
-					s_smsTxModePending = 0;                                 /* «Без підтв.» */
-#endif
-					break;
-#endif
-#if defined(VOLUME_LOW)
-				case RADIO_OPTIONS_MENU_VOL_LOW:
-					if (volumeLowGetMode() > 0U)
-					{
-						volumeLowSetMode((uint8_t)(volumeLowGetMode() - 1U));
-					}
-					break;
-#endif
 #if defined(VOLUME_PROBE)
 				case RADIO_OPTIONS_MENU_VOL_PROBE:
 					break;   /* вліво -- нічого */
-#endif
-#if defined(SQL_OPEN_DELAY_ENABLED)
-				case RADIO_OPTIONS_MENU_SQL_OPEN_DELAY:
-					settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(sqlOpenDelayStepsDec(sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1))));
-					break;
 #endif
 			}
 		}
@@ -869,16 +690,6 @@ static void handleEvent(uiEvent_t *ev)
 
 static void applySettings(void)
 {
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-	/* ui7: режим TX SMS -- у флеш лише тепер (і лише якщо змінився). */
-	if (s_smsTxModePending != (uint8_t)dmrSmsTxMode())
-	{
-		dmrSmsTxModeSet(s_smsTxModePending);
-	}
-#endif
-#if defined(VOLUME_LOW)
-	(void)volumeLowSave();   /* R78: у флеш лише тепер (і лише якщо змінився) */
-#endif
 	settingsSaveIfNeeded(true);
 	resetOriginalSettingsData();
 }
@@ -887,9 +698,6 @@ static void exitCallback(void *data)
 {
 #if defined(VOLUME_PROBE)
 	volumeProbeClose();   // R77A: вихід з «Опцій рації» будь-яким шляхом повертає стокове
-#endif
-#if defined(VOLUME_LOW)
-	volumeLowLoad();      // R78: скасування -- живе значення назад до збереженого у флеші (після збереження -- те саме)
 #endif
 	if (originalNonVolatileSettings.magicNumber != 0xDEADBEEF)
 	{

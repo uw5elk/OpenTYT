@@ -274,7 +274,7 @@ print(f'  разом задовгих: {len(wide)}')
 fails += wide
 
 # ---------------------------------------------------------------------------
-# 5. ui7: пункти SMS у стокових меню «Налаштувань» (menuRadioOptions.c, menuDisplayOptions.c).
+# 5. ui7/R81: пункти SMS DMR у меню «Повідомлення» (menuMessages.c; до R81 -- «Опції рації») і недоступний в UA «Шрифт SMS» (menuDisplayOptions.c).
 #    Підпис там -- не currentLanguage, а MSGS_SET_* (messages_ua.h, cp1251; англійські -- #else у
 #    .c), тож частина 2 їх не бачить. Рядок той самий: snprintf("%s:%s", ...) у 17-байтовий буфер.
 print('\n=== 5. Пункти SMS у «Налаштуваннях» (MSGS_SET_*) ===')
@@ -283,7 +283,7 @@ ua_msgs = {m.group(1): m.group(2) for m in re.finditer(
     r'#define\s+(MSGS_SET_\w+)\s+"((?:[^"\\]|\\.)*)"',
     open(os.path.join(LANG, 'messages_ua.h'), 'rb').read().decode('cp1251'))}
 en_msgs = {}
-for fn in ('menuRadioOptions.c', 'menuDisplayOptions.c'):
+for fn in ('menuMessages.c', 'menuDisplayOptions.c'):   # R81: SMS-пункти -- в «Повідомленнях» (англ. запас -- #else у menuMessages.c)
     src = open(os.path.join(BASE, 'source', 'user_interface', fn), encoding='utf-8').read()
     en_msgs.update({m.group(1): m.group(2) for m in re.finditer(
         r'#define\s+(MSGS_SET_\w+)\s+"((?:[^"\\]|\\.)*)"', src)})

@@ -52,9 +52,9 @@ OpenGD77 **R20260131**. Додає:
 | **APRS** — прийом, список станцій, «Режим APRS», повідомлення, маяк, вікно маяка, піктограми (170), слоти станцій, «Джерело: Слот/Рація» | `ENABLE_APRS_RX` (лише українська збірка); меню «APRS»; CPS «Дані → APRS» | **частково:** прийом APRS і усунення зависання маяка підтверджені (STATUS, R12); повідомлення, вікно маяка, піктограми, слоти, «Джерело: Слот/Рація» — ні | `STATUS.md` (R8–R19, R69–R70), `docs/aprs-icons.md`, `docs/aprs-rx-feasibility.md` |
 | **Роумінг** за списками (10 списків; перехід на наступний канал, коли ретранслятор не відповів на пробудження) | `ENABLE_ROAM_RETRY`; пункт «Роумінг», «Деталі каналу → Роум.список»; CPS «Дані → Роумінг» | ні | `STATUS.md` (R59–R61, R64B, R67A) |
 | **Редагування з рації:** зони (перейменування, додати/вийняти канал, нова/видалити), канали, контакти, списки прийому, імена, переміщення | `ENABLE_ZONE_RENAME`, `ENABLE_ZONE_EDIT`, `ENABLE_CHANNEL_DELETE`, `ENABLE_CODEPLUG_MENU`, `ENABLE_RXGROUP_EDIT`; розділи «Зона», «Канали», «Контакти», «Списки прийому» | ні | `STATUS.md` (R41–R44, R65B, R66C) |
-| Затримка відкриття шумодава FM | `ENABLE_SQL_OPEN_DELAY`; «Опції рації» | ні | `STATUS.md` (R42) |
+| Затримка відкриття шумодава FM | `ENABLE_SQL_OPEN_DELAY`; «Звук → Затр.шуму» (з R81; раніше «Опції рації») | ні | `STATUS.md` (R42) |
 | **Тон передачі супутників** (перерахунок при зміні набору частот 1/2/3) | `ENABLE_SAT_TONE_SYNC` | ні | `STATUS.md` (R66D) |
-| **«Мін.гучність»** (постійний тихий нижній рівень: Вимк / 8 / 16 / 24) | `ENABLE_VOLUME_LOW`; «Опції рації → Мін.гучн.» | ні | `STATUS.md` (R78) |
+| **«Мін.гучність»** (постійний тихий нижній рівень; з R81 завжди ввімкнено, коліно 16 позицій ручки, пункту меню немає) | `ENABLE_VOLUME_LOW` | ні | `STATUS.md` (R78, R81) |
 | **Українізація** (кириличний шрифт, `ukrainian.h`) | `LANGUAGE_UKRAINIAN=1`; кирилиця в назвах кодплага (R23) | частково: гліф «ю» перевірено (партія правок 2026-09-11); решта — ні | `STATUS.md`, `USAGE.md` |
 | **Швидке меню каналу без стокового «Roaming»** (пункти GPS приховано) | `FORK_NO_GPS_MENU` (у коді), без зсуву нумерації | пункти GPS у меню прибрано — **так** (2026-09-11); «Roaming» у швидкому меню — ні (R74) | `STATUS.md` (R74, партія правок 2026-09-11) |
 | **Діагностика й обробник збою** (HardFault/сторож показує адресу; `.map`/`.elf` у релізі `ci-<хеш>`; `tools/fault_lookup.py`) | під `ENABLE_APRS_RX`; діагностичні `ENABLE_*` (див. нижче) | ні | `STATUS.md` (R10-fix4, R10-fix6) |
@@ -64,7 +64,7 @@ OpenGD77 **R20260131**. Додає:
 <!-- TODO: фото docs/img/radio-photo-channel.png — екран каналу на реальній рації -->
 <!-- TODO: фото docs/img/radio-photo-aprs-menu.png — меню «APRS» -->
 <!-- TODO: фото docs/img/radio-photo-aprs-beacon-window.png — вікно маяка -->
-<!-- TODO: фото docs/img/radio-photo-volume-low.png — «Опції рації → Мін.гучн.» -->
+<!-- TODO: фото docs/img/radio-photo-volume-low.png — «Мін.гучність» (пункту меню вже немає: з R81 функція завжди ввімкнена) -->
 <!-- TODO: фото docs/img/radio-photo-roam-list.png — «Деталі каналу → Роум.список» -->
 <!-- TODO: фото docs/img/radio-photo-quick-menu.png — швидке меню каналу (без «Roaming») -->
 <!-- TODO: фото docs/img/radio-photo-sms.png — екран SMS (вхідне / набір) -->
@@ -209,7 +209,7 @@ ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1`.
 | `ENABLE_AES_KEY_NAMES` | імена слотів ключів AES | потребує `ENABLE_AES`, multitap | так |
 | `ENABLE_RXGROUP_EDIT` | редактор списків прийому | потребує `ENABLE_CODEPLUG_MENU`, українська | так |
 | `ENABLE_SAT_TONE_SYNC` | тон передачі супутників | незалежний | так |
-| `ENABLE_VOLUME_LOW` | «Мін.гучність» | лише українська збірка UV380 Plus 10W | так |
+| `ENABLE_VOLUME_LOW` | «Мін.гучність» (з R81 -- без налаштування, K = 16) | лише українська збірка UV380 Plus 10W | так |
 | `ENABLE_RODATA_AFTER_CODEC` | `.rodata` після кодека (інший лінкер-скрипт) | без прапорця `.bin` той самий | так |
 | `ENABLE_APRS_IWDG` | апаратний сторож для «Режиму APRS» | лише лабораторна перевірка; типово вимкнено | ні |
 | `ENABLE_SMS_DIAG`, `ENABLE_WAKE_DIAG`, `ENABLE_MEM_DIAG`, `ENABLE_APRS_RX_PROBE`, `ENABLE_VOLUME_PROBE`, `DMR_AES_DIAG_*` | діагностика (екрани «Діагностика», журнал пробудження, проби) | `ENABLE_SMS_DIAG` і `ENABLE_WAKE_DIAG` потребують `ENABLE_AES` + `ENABLE_DMR_DATA`; не для користувацьких збірок | ні (окремі джоби) |

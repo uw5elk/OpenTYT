@@ -81,6 +81,9 @@ enum
 #if defined(ENABLE_CALL_REPLAY)
 	OPTIONS_CALL_REPLAY_RECORD, // "Запис RX" -- увімк/вимк захоплення для "Переслухати", поруч із dmr_rx_agc (задача 2026-09-19, п.5)
 #endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+	OPTIONS_SQL_OPEN_DELAY,  // R81: «Затр.шуму» переїхало сюди з «Опцій рації» (те саме значення/біти/логіка); найостаннішим -- індекси QuickKey стокових пунктів ті самі
+#endif
 	NUM_SOUND_MENU_ITEMS
 };
 
@@ -156,6 +159,9 @@ static void updateScreen(bool isFirstRun)
 			rightSideVar[0] = 0;
 			rightSideUnitsPrompt = PROMPT_SILENCE;// use PROMPT_SILENCE as flag that the unit has not been set
 			rightSideUnitsStr = NULL;
+#if defined(SQL_OPEN_DELAY_ENABLED)
+			bool sqlDelayNoPrompt = false;   // R42/R81: підпис -- поле українського блока, поза діапазоном голосових підказок: без підказки
+#endif
 
 			switch(mNum)
 			{
@@ -292,6 +298,26 @@ static void updateScreen(bool isFirstRun)
 					rightSideConst = (callReplayIsRecordingEnabled() ? currentLanguage->on : currentLanguage->off);
 					break;
 #endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+				/* R42 (перенесено в R81): затримка відкриття шумодава FM, 0..500 мс кроком 50 (0 = вимкнено). Значення -- nonVolatileSettings.UNUSED_1 (sqlOpenDelayPack), логіка -- functions/sql_open_delay.h. */
+				case OPTIONS_SQL_OPEN_DELAY:
+				{
+					uint8_t steps = sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1);
+
+					leftSide = currentLanguage->sql_open_delay;
+					sqlDelayNoPrompt = true;
+					if (steps == 0)
+					{
+						rightSideConst = currentLanguage->off;
+					}
+					else
+					{
+						snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u", (unsigned)(steps * SQL_OPEN_DELAY_STEP_MS));
+						rightSideUnitsStr = currentLanguage->sql_open_delay_ms;
+					}
+				}
+					break;
+#endif
 			}
 
 			snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s:%s", leftSide, (rightSideVar[0] ? rightSideVar : (rightSideConst ? rightSideConst : "")));
@@ -307,6 +333,9 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
+#if defined(SQL_OPEN_DELAY_ENABLED)
+					if (sqlDelayNoPrompt == false)   // R42/R81
+#endif
 					voicePromptsAppendLanguageString(leftSide);
 				}
 
@@ -560,6 +589,27 @@ static void handleEvent(uiEvent_t *ev)
 					callReplaySetRecordingEnabled(true);
 					break;
 #endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+				case OPTIONS_SQL_OPEN_DELAY:
+				{
+					uint8_t steps = sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1);
+					uint8_t next = sqlOpenDelayStepsInc(steps);
+
+					if (next != steps)
+					{
+						settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(next));
+						if (steps == 0)
+						{
+							/* Умикання затримки: одним реченням -- ціна (пункт меню не має рядка підказки). */
+							char hint[3 * LANGUAGE_TEXTS_LENGTH + 2];
+
+							snprintf(hint, sizeof(hint), "%s\n%s\n%s", currentLanguage->sql_open_delay_hint1, currentLanguage->sql_open_delay_hint2, currentLanguage->sql_open_delay_hint3);
+							uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2500, hint, false);
+						}
+					}
+				}
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -695,6 +745,11 @@ static void handleEvent(uiEvent_t *ev)
 					// callReplaySetRecordingEnabled(false) одразу спорожнює буфер (задача, п.5) --
 					// живий ефект видно одразу, ще до підтвердження ЗЕЛЕНОЮ (як і решта пунктів).
 					callReplaySetRecordingEnabled(false);
+					break;
+#endif
+#if defined(SQL_OPEN_DELAY_ENABLED)
+				case OPTIONS_SQL_OPEN_DELAY:
+					settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(sqlOpenDelayStepsDec(sqlOpenDelaySteps(nonVolatileSettings.UNUSED_1))));
 					break;
 #endif
 			}

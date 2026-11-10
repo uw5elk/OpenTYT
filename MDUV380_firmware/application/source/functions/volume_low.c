@@ -95,16 +95,15 @@ static void applyFm(void)
 
 void volumeLowLoad(void)
 {
-	uint8_t raw = 0U;
-
-	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG, &raw, 1) == false)
-	{
-		raw = 0U;
-	}
-	s_mode = vlModeSanitize(raw);
+	/* R81: режим ЗАВЖДИ фіксований -- коліно K = 16 (VOLLOW_FIXED_MODE). Custom-data блок 17 (CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG)
+	 * у кодплузі лишається (довжину й номер не чіпаємо, щоб не міняти розкладку), але його значення (0/1/2/3/сміття або відсутність блоку)
+	 * більше НЕ діє і тут не читається -- старі значення з R78 не вимикають і не змінюють функцію. Пункт меню «Мін.гучн.» прибрано. */
+	s_mode = vlEffectiveMode(0U);
 	s_gate = 0xFFU;
 }
 
+#if defined(VOLLOW_TEST_HOOKS)
+/* Лише для хост-тестів (tests/test_volume_low.c): перебір інших K для перевірки кривої. У прошивці НЕ визначено, у меню не викликається. */
 uint8_t volumeLowGetMode(void)
 {
 	return s_mode;
@@ -115,20 +114,7 @@ void volumeLowSetMode(uint8_t mode)
 	s_mode = vlModeSanitize(mode);
 	s_gate = 0xFFU;
 }
-
-bool volumeLowSave(void)
-{
-	uint8_t cur = 0U;
-	uint8_t want = s_mode;
-	const bool have = codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG, &cur, 1);
-
-	/* Знос флеша: блоку немає і режим «вимк» -- не створюємо блок; те саме значення -- не пишемо. */
-	if ((have == false) ? (want == 0U) : (vlModeSanitize(cur) == want))
-	{
-		return true;
-	}
-	return codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG, &want, 1);
-}
+#endif
 
 void volumeLowPotSettled(int8_t lastVolume)
 {

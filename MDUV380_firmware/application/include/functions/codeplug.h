@@ -391,7 +391,7 @@ typedef enum
 	CODEPLUG_CUSTOM_DATA_TYPE_ROAM_NAMES = 16, /* R64: імена 10 списків роумінгу, 10 x 16 Б (cp1251, хвіст 0x00), 160 Б. Формат -- roam_cfg.h. */
 #endif
 #if defined(ENABLE_VOLUME_LOW)
-	CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG = 17, /* R78: «Мін.гучність» -- 1 байт: 0 вимк (типово), 1 = коліно 8, 2 = 16, 3 = 24 позицій ручки.
+	CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG = 17, /* R78: «Мін.гучність» -- 1 байт: 0 вимк, 1 = коліно 8, 2 = 16, 3 = 24. З R81 значення НЕ діє (завжди K = 16), блок лишено, довжину не змінювати.
 	                                        * Формат -- volume_low.h. Номер = 17 ЯВНО (нумерація не залежить від дефайнів). */
 #endif
 } CodeplugCustomDataType_t;

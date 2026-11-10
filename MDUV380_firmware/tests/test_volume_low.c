@@ -10,7 +10,7 @@
  *     ніколи 0x07 (DMR); значення не нижче 0x0F;
  *  7  захисти: передача, APRS-приймач, режим APRS, відкрита проба (імітація), хотспот -- стокове 0xCC; повернення з цих станів -- знову за n;
  *     StopForTx повертає 0xCC ДО передачі; зміна режиму на цифровий не пише 0x44;
- *  8  збереження: блок 17 (1 байт); немає блоку = 0; сміття (>3) = 0; Save не пише, якщо те саме; режим 0 без блока -- блок не створюється;
+ *  8  R81: режим фіксований K = 16: блок 17 = 0/1/2/3/сміття або немає блоку -- завжди K 16, жодного запису в блок (пункту меню немає);
  *  9  DMR-ціль: у цифровому режимі за n; в аналоговому, при хотспоті -- одиниця.
  */
 #include <stdio.h>
@@ -268,18 +268,26 @@ int main(void)
 	s_probe = false; volumeLowTick();
 	CHECK(volumeLowDmrGainQ15 == vlDmrGainQ15(36), "проба закрита: DMR-ціль повернулась");
 #endif
-	/* 8: збереження */
+	/* 8 (R81): режим ФІКСОВАНИЙ K = 16 (mode 2) -- блок 17 не читається і не пишеться, що б у ньому не лежало */
 	reset();
-	volumeLowLoad(); CHECK(volumeLowGetMode() == 0, "немає блоку -> вимкнено");
-	s_blkHas = true; s_blk = 7; volumeLowLoad(); CHECK(volumeLowGetMode() == 0, "сміття (7) у блоці -> вимкнено");
-	s_blk = 2; volumeLowLoad(); CHECK(volumeLowGetMode() == 2, "блок = 2 -> K 16");
-	s_blkWrites = 0; CHECK(volumeLowSave() && s_blkWrites == 0, "Save з тим самим значенням -- у флеш не пишемо");
-	volumeLowSetMode(3); CHECK(volumeLowGetMode() == 3 && s_blk == 2, "SetMode -- живе, у флеш ще не потрапило");
-	CHECK(volumeLowSave() && s_blk == 3 && s_blkWrites == 1, "Save записав 3");
-	volumeLowLoad(); CHECK(volumeLowGetMode() == 3, "Load повертає збережене");
-	volumeLowSetMode(1); volumeLowLoad(); CHECK(volumeLowGetMode() == 3, "скасування (Load) повертає живе значення до збереженого");
-	reset(); s_blkHas = false; volumeLowSetMode(0); CHECK(volumeLowSave() && s_blkWrites == 0 && !s_blkHas, "режим «Вимк» без блока -- блок не створюється");
-	volumeLowSetMode(9); CHECK(volumeLowGetMode() == 0, "SetMode(9) -> 0");
+	{
+		static const uint8_t vals[] = { 0, 1, 2, 3, 4, 7, 0x7F, 0xFF };
+		s_blkHas = false; volumeLowLoad(); CHECK(volumeLowGetMode() == VOLLOW_FIXED_MODE && vlKnee(volumeLowGetMode()) == 16, "немає блоку -> K 16");
+		for (unsigned i = 0; i < sizeof vals; i++)
+		{
+			s_blkHas = true; s_blk = vals[i]; volumeLowLoad();
+			CHECK(volumeLowGetMode() == 2 && vlKnee(volumeLowGetMode()) == 16, "блок = %u (0/1/2/3/сміття) -> K 16", (unsigned)vals[i]);
+			CHECK(vlEffectiveMode(vals[i]) == 2, "vlEffectiveMode(%u) == 2", (unsigned)vals[i]);
+		}
+		CHECK(VOLLOW_FIXED_MODE == 2U && vlKnee(VOLLOW_FIXED_MODE) == 16U, "VOLLOW_FIXED_MODE = 2 -> коліно 16");
+		/* поведінка на старій конфігурації «блок = 0 (вимкнено в R78)»: тепер усе одно діє K 16 (крива D 36 / 23 дБ -- пункти 6b/9) */
+		s_blkHas = true; s_blk = 0; volumeLowLoad(); settle(-31);
+		CHECK(last44() == 0x0F, "старий блок 0: FM на мінімумі все одно 0x0F (K 16 діє)");
+		CHECK(s_blkWrites == 0 && s_bad == 0, "жодного запису в блок 17 (немає меню -- немає збереження)");
+		/* мінімум (-31) і коліно: n = 16 -- без додаткового ослаблення; n = 8 -- половина */
+		s_blkHas = false; volumeLowLoad(); s_mode = RADIO_MODE_DIGITAL; settle(-31);
+		CHECK(volumeLowDmrGainQ15 == vlDmrGainQ15(36), "K 16: мінімум ручки -- D_DMR 36 дБ");
+	}
 	CHECK(CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG == 17, "номер блока 17");
 	CHECK(s_bad == 0, "жодного недозволеного запису в блок");
 #endif

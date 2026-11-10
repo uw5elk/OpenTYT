@@ -32,6 +32,15 @@
 #define VOLLOW_RAMP_STEP        128U     /* зміна Q15-множника за один вихідний відлік (повний діапазон -36 дБ ~ 250 відліків) */
 #define VOLLOW_POS_MAX          62U
 
+#define VOLLOW_FIXED_MODE       2U       /* R81: єдиний режим у прошивці -- K = 16 (рішення власника 2026-11-10); меню немає */
+
+/* R81: ефективний режим -- що б не лежало в custom-data блоці 17 (0/1/2/3/сміття/блоку немає), завжди VOLLOW_FIXED_MODE. */
+static inline uint8_t vlEffectiveMode(uint8_t raw)
+{
+	(void)raw;
+	return VOLLOW_FIXED_MODE;
+}
+
 /* Коліно K для режиму 0..3 (0 -- вимкнено; режим поза діапазоном -- вимкнено). */
 static inline uint8_t vlKnee(uint8_t mode)
 {

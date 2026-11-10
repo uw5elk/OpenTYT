@@ -2,15 +2,16 @@
 # -*- coding: utf-8 -*-
 """R78 (хост, без заліза): «Мін.гучність» (ENABLE_VOLUME_LOW) не потрапляє в збірки без прапорця й не чіпає зайвого. Перевіряє ВИХІДНИЙ КОД (крива й захисти --
 tests/test_volume_low.c зі справжнім volume_low.c):
-  1  усі згадки volumeLow*/vl*/VOLLOW_ у sound.c, trx.c, applicationMain.c, menuRadioOptions.c -- лише всередині #if ...VOLUME_LOW...;
+  1  усі згадки volumeLow*/vl*/VOLLOW_ у sound.c, trx.c, applicationMain.c -- лише всередині #if ...VOLUME_LOW...;
   2  build.yml: ENABLE_VOLUME_LOW=1 у КОЖНОМУ make-рядку користувацької української збірки (там, де ENABLE_SAT_TONE_SYNC=1), і лише там;
   3  Makefile: прапорець лише додає -DENABLE_VOLUME_LOW; syntax_check.sh має конфігурації з прапорцем;
   4  блок: номер 17 однаковий у codeplug.h, custom_region.BLOCK_TYPES (налаштування), doc_region.DOC_TYPES; довжина 1 байт; жодних змін nonVolatileSettings;
   5  таблиці в заголовку збігаються з формулами (DMR Q15 за 10^(-x/20); FM low-byte за 0xCC·10^(-x/20), не нижче 0x0F);
   6  sound.c: множник DMR ПІСЛЯ АРУ, пік для АРУ -- з вхідного відліку; підказки/мелодії/«Переслухати» не ослаблюються; рампа;
   7  volume_low.c: єдиний шлях запису в кодек -- radioWriteReg2byte(0x44, 0x06, ...); жодного DMR-значення, SPI/I2C напряму; блок пишеться лише через custom-data;
-  8  vollow_ua.h -- cp1251, пункт меню у ширину 16 символів;
-  9  збірка без ENABLE_VOLUME_LOW: токени препроцесора (gcc -E -P) sound.c, trx.c, applicationMain.c, menuRadioOptions.c, codeplug.c збігаються з комітом R77B у усіх конфігураціях.
+  8  R81: vollow_ua.h і рядків «Мін.гучн.» немає ніде (пункт меню прибрано, режим фіксований K = 16);
+  9  збірка без ENABLE_VOLUME_LOW: токени препроцесора (gcc -E -P) sound.c, trx.c, applicationMain.c, codeplug.c збігаються з комітом R77B у усіх конфігураціях.
+  10 R81: режим фіксований K = 16 (VOLLOW_FIXED_MODE = 2, vlEffectiveMode, Load не читає блок 17) + мутанти.
 Запуск: python3 tools/test_r78.py   (база для 9: коміт з темою «R77B:», або змінна R78_BASE)"""
 import math
 import os
@@ -76,11 +77,17 @@ def tokens_of(root, rel, incs, defs):
 
 def main():
     needle = r"volumeLow|vlKnee|vlExtraDb|vlRamp|vlApply|vlDmrGain|VOLLOW_|s_volumeLowGain|dmrAttenuate"
-    for rel in ("source/functions/sound.c", "source/functions/trx.c", "source/applicationMain.c", "source/user_interface/menuRadioOptions.c"):
+    for rel in ("source/functions/sound.c", "source/functions/trx.c", "source/applicationMain.c"):
         t = rd(os.path.join(APP, rel))
         bad = guarded_lines(t, needle)
         check(not bad, "%s: згадки R78 поза #if VOLUME_LOW: %r" % (rel, bad[:3]))
         check(re.search(needle, t) is not None, "%s: хук R78 на місці" % rel)
+    # R81: пункту меню немає ні в «Опціях рації», ні в жодному іншому меню/мовному файлі
+    for dp, _, fs in os.walk(os.path.join(APP, "source", "user_interface")):
+        for f in fs:
+            if f.endswith(".c"):
+                t = rd(os.path.join(dp, f))
+                check(re.search(needle + r"|VOLUME_LOW|VOL_LOW|volume_low", t) is None, "R81: %s не містить згадок «Мін.гучність» (пункту меню немає)" % f)
     check(guarded_lines("void f(void)\n{\n\tvolumeLowTick();\n}\n", needle) != [], "мутант: виклик без #if ловиться")
 
     # 2: build.yml
@@ -105,7 +112,7 @@ def main():
     check(cr.BLOCK_TYPES.get(17, (None,))[0] == "VOLUME_LOW_CFG" and cr.BLOCK_TYPES[17][4] == "setting", "custom_region: тип 17 -- VOLUME_LOW_CFG, налаштування")
     check(dr.TYPE_VOLUME_LOW_CFG == 17 and 17 in dr.DOC_TYPES and 17 in dr.DOC_TITLES and 17 not in dr.NEVER_TYPES, "doc_region: тип 17 у документі, з назвою")
     vl = rd(os.path.join(APP, "source/functions/volume_low.c"))
-    check(len(re.findall(r"CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG, [^;]*?, 1\)", vl)) == 3, "volume_low.c: блок читається (двічі)/пишеться завжди довжиною 1 байт")
+    check("CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG" not in re.sub(r"/\*.*?\*/", "", vl, flags=re.S) and "codeplugSetOpenGD77CustomData" not in vl, "R81: volume_low.c блок 17 не читає і не пише (значення не діє)")
     code = "\n".join(l for l in vl.split("\n") if not l.strip().startswith(("//", "/*", "*")))
     check(not re.search(r"nonVolatileSettings|settingsSet|settingsSave|SPI_Flash|EEPROM", code), "volume_low.c: розкладку nonVolatileSettings не чіпає")
 
@@ -139,19 +146,40 @@ def main():
     check("volumeLowPotSettled(lastVolume);" in am[am.index("static void updateVolumeGain"):am.index("static void updateVolumeGain") + 400], "applicationMain.c: перерахунок у updateVolumeGain() -- у той самий момент, що й стокове підсилення")
     check(am.count("volumeLowTick();") == 1 and am.count("volumeLowLoad();") == 1, "applicationMain.c: Tick у циклі й Load на старті по одному разу")
 
-    # 8: рядки
-    raw = open(os.path.join(APP, "include/user_interface/languages/vollow_ua.h"), "rb").read()
-    try:
-        raw.decode("utf-8")
-        ok_utf8 = True
-    except UnicodeDecodeError:
-        ok_utf8 = False
-    check(not ok_utf8, "vollow_ua.h не є UTF-8 (cp1251)")
-    txt = raw.decode("cp1251")
-    m = re.search(r'#define VOLLOW_MENU_NAME\s+"([^"]*)"', txt)
-    check(m is not None and "Мін" in m.group(1), "vollow_ua.h читається як cp1251")
-    # рядок пункту "%s:%s": ім'я + ':' + найдовше значення ("Вимк." -- до 5 символів)
-    check(m is not None and len(m.group(1)) + 1 + 5 <= 16, "пункт меню вміщається в 16 символів: %r" % (m.group(1) if m else None))
+    # 8 (R81): рядків «Мін.гучн.» немає ніде; vollow_ua.h прибрано
+    check(not os.path.exists(os.path.join(APP, "include/user_interface/languages/vollow_ua.h")), "R81: vollow_ua.h прибрано")
+    for dp, _, fs in os.walk(APP):
+        for f in fs:
+            if f.endswith((".c", ".h")):
+                data = open(os.path.join(dp, f), "rb").read()
+                for enc in ("utf-8", "cp1251"):
+                    try:
+                        txt = data.decode(enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                check(re.search(r'"[^"\n]*Мін\.гучн\.[^"\n]*"', txt) is None, "R81: рядкового літерала пункту «Мін.гучн.» немає у %s" % f)
+
+    # 10 (R81): режим ФІКСОВАНИЙ K = 16 -- вихідний код і мутанти
+    lgc = rd(os.path.join(APP, "include/functions/volume_low_logic.h"))
+
+    def fixed_k_ok(logic, vlc):
+        m = re.search(r"#define VOLLOW_FIXED_MODE\s+(\d+)U", logic)
+        k = re.search(r"static const uint8_t k\[VOLLOW_MODES\] = \{([^}]*)\}", logic)
+        e = re.search(r"static inline uint8_t vlEffectiveMode\(uint8_t raw\)\s*\{(.*?)\}", logic, re.S)
+        ld = re.search(r"void volumeLowLoad\(void\)\s*\{(.*?)\n\}", vlc, re.S)
+        if not (m and k and e and ld):
+            return False
+        ks = [int(x) for x in re.findall(r"(\d+)U", k.group(1))]
+        return (int(m.group(1)) == 2 and ks[2] == 16 and "return VOLLOW_FIXED_MODE;" in e.group(1) and "raw" not in re.sub(r"\(void\)raw;", "", e.group(1))
+                and "s_mode = vlEffectiveMode(" in ld.group(1) and "codeplugGet" not in ld.group(1))
+    check(fixed_k_ok(lgc, vl), "R81: K = 16 (режим 2) зашито; Load не читає блок")
+    check(not fixed_k_ok(lgc.replace("VOLLOW_FIXED_MODE       2U", "VOLLOW_FIXED_MODE       1U"), vl), "мутант: K 8 ловиться")
+    check(not fixed_k_ok(lgc.replace("{ 0U, 8U, 16U, 24U }", "{ 0U, 8U, 12U, 24U }"), vl), "мутант: крива/коліно не 16 ловиться")
+    check(not fixed_k_ok(lgc.replace("return VOLLOW_FIXED_MODE;", "return raw;"), vl), "мутант: режим береться з блока ловиться")
+    check(not fixed_k_ok(lgc, vl.replace("s_mode = vlEffectiveMode(0U);", "s_mode = vlModeSanitize(raw);")), "мутант: Load читає значення блока ловиться")
+    check(re.search(r"VOLLOW_DEPTH_DMR_DB\s+36U", lgc) and re.search(r"VOLLOW_DEPTH_FM_DB\s+23U", lgc) and re.search(r"VOLLOW_FM_FLOOR_LOW\s+0x0FU", lgc), "R81: D_DMR 36, D_FM 23, підлога 0x0F не змінились")
+    check(not re.search(r"VOLLOW_DEPTH_DMR_DB\s+36U", lgc.replace("36U", "30U")), "мутант: D_DMR != 36 ловиться")
 
     # 9: збірки без прапорця не змінились
     base = find_base()
@@ -173,7 +201,7 @@ def main():
                 n = 0
                 for name, defs in cfgs:
                     nd = [x for x in defs if x != "-DENABLE_VOLUME_LOW"]
-                    for rel in ("source/functions/sound.c", "source/functions/trx.c", "source/applicationMain.c", "source/user_interface/menuRadioOptions.c", "source/functions/codeplug.c"):
+                    for rel in ("source/functions/sound.c", "source/functions/trx.c", "source/applicationMain.c", "source/functions/codeplug.c"):   # R81: menuRadioOptions.c змінено свідомо (пункти прибрано) -- його перевіряє test_r81.py
                         if rel.endswith("sound.c") and "-DENABLE_VOLUME_PROBE" in defs:
                             continue       # діагностична збірка: блок R77A у sound.c законно спільний із R78 (перероблено в один; поведінку проби перевіряє test_volume_probe)
                         p = os.path.join("application", rel)

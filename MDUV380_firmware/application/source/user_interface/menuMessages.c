@@ -54,6 +54,9 @@
 #include "user_interface/languages/messages_ua.h"
 #else
 #define MSGS_TITLE               "Messages"
+#define MSGS_SET_MONITOR         "SMS monitor"
+#define MSGS_SET_TXCONF          "SMS confirm"
+#define MSGS_SET_TX_R12          "1/2"
 #define MSGS_INBOX_FMT           "Inbox (%d)"
 #define MSGS_SENT_FMT            "Sent (%d)"
 #define MSGS_NEW                 "New Message"
@@ -259,15 +262,16 @@ static void pickContactEvent(uiEvent_t *ev);
 static void diagUpdate(void);
 static void diagEvent(uiEvent_t *ev);
 
-/* ui7: Нове / Вхідні / Надіслані / Діагностика. Монітор, режим TX і шрифт -- у «Налаштуваннях»
- * (Опції рації, Дисплей); «Діагностика» лишається тут (лише з ENABLE_SMS_DIAG). */
-#define MSGS_HOME_ITEMS   4
+/* R81: Нове / Вхідні / Надіслані / «SMS монітор» / «SMS підтв.» / Діагностика (лише з ENABLE_SMS_DIAG). Два налаштування SMS DMR повернулись сюди
+ * з «Опцій рації» (ui7); вони стосуються ЛИШЕ SMS DMR (dmr_sms.c) -- APRS-повідомлення їх не читають. */
+#define MSGS_HOME_ITEMS   6
 #define MSGS_DIAG_REFRESH_MS 500   /* екран діагностики оновлюється сам -- лічильники живі */
 #else
-/* ui7: Нове / Вхідні / Надіслані. Монітор і режим TX -- у «Налаштування > Опції рації», шрифт --
- * у «Налаштування > Дисплей» (ті самі біти/блоки). */
-#define MSGS_HOME_ITEMS   3
+/* R81: Нове / Вхідні / Надіслані / «SMS монітор» / «SMS підтв.». Шрифт SMS в українській збірці не налаштовується (завжди великий, R19 Е5). */
+#define MSGS_HOME_ITEMS   5
 #endif
+#define MSGS_HOME_SET_MONITOR 3   /* R81: індекси налаштувань у списку «Повідомлення» (0..2 -- Нове/Вхідні/Надіслані) */
+#define MSGS_HOME_SET_TXMODE  4
 
 static void gotoHomeAt(int item)
 {
@@ -377,12 +381,22 @@ static void homeUpdate(void)
 
 		switch (mNum)
 		{
-			/* ui7: «Нове» -- першим; Монітор / TX / Шрифт переїхали в «Налаштування». */
+			/* ui7: «Нове» -- першим. R81: далі два налаштування SMS DMR ("підпис:значення"). */
 			case 0:  snprintf(buf, sizeof buf, MSGS_NEW);                       break;
 			case 1:  snprintf(buf, sizeof buf, MSGS_INBOX_FMT, dmrSmsCount(0)); break;
 			case 2:  snprintf(buf, sizeof buf, MSGS_SENT_FMT,  dmrSmsCount(1)); break;
+			case MSGS_HOME_SET_MONITOR:
+				snprintf(buf, sizeof buf, "%s:%s", MSGS_SET_MONITOR, settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? currentLanguage->on : currentLanguage->off);
+				break;
+			case MSGS_HOME_SET_TXMODE:
+			{
+				int m = dmrSmsTxMode();
+				if (m == 1) { snprintf(buf, sizeof buf, "%s:%s", MSGS_SET_TXCONF, MSGS_SET_TX_R12); }   /* лише ENABLE_SMS_DIAG */
+				else        { snprintf(buf, sizeof buf, "%s:%s", MSGS_SET_TXCONF, (m == 0) ? currentLanguage->off : currentLanguage->on); }
+			}
+				break;
 #if defined(ENABLE_SMS_DIAG)
-			// Лічильники ланцюга квитанції -- окремий екран (2026-09-30).
+			// Лічильники ланцюга квитанції -- окремий екран (2026-09-30); R81: індекс 5 (після двох налаштувань).
 			default: snprintf(buf, sizeof buf, MSGS_DIAG); break;
 #else
 			default: buf[0] = 0; break;
@@ -454,9 +468,56 @@ static void cyclePreset(void)
 	}
 }
 
+/* R81: змінити налаштування SMS DMR у списку. dir: +1 праворуч / -1 ліворуч / 0 GREEN (перемкнути). Пишеться одразу (тих самих місць, що й до R81:
+ * BIT_SMS_MONITOR_ALL у nonVolatileSettings, режим TX -- custom-data блок SMS_TX_MODE); скасування тут немає. Повертає true, якщо це був рядок-налаштування. */
+static bool homeChangeSetting(int dir)
+{
+	switch (menuDataGlobal.currentItemIndex)
+	{
+		case MSGS_HOME_SET_MONITOR:
+		{
+			bool on = settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL);
+			bool want = (dir == 0) ? !on : (dir > 0);
+			if (want != on)
+			{
+				settingsSetOptionBit(BIT_SMS_MONITOR_ALL, want);
+				settingsSaveIfNeeded(true);
+			}
+			return true;
+		}
+		case MSGS_HOME_SET_TXMODE:
+		{
+			int m = dmrSmsTxMode();
+			int want;
+#if defined(ENABLE_SMS_DIAG)
+			want = (dir == 0) ? ((m + 1) % 3) : (m + dir);   /* 0 -> 1 (1/2) -> 2 */
+			if (want < 0) { want = 0; } else if (want > 2) { want = 2; }
+#else
+			want = (dir == 0) ? ((m == 0) ? 2 : 0) : ((dir > 0) ? 2 : 0);   /* «З підтв.» / «Без підтв.» */
+#endif
+			if (want != m)
+			{
+				dmrSmsTxModeSet((uint8_t)want);
+			}
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+
 static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 {
 	if ((ev->events & KEY_EVENT) == 0) { return; }
+
+	if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT) || KEYCHECK_PRESS(ev->keys, KEY_LEFT))
+	{
+		if (homeChangeSetting(KEYCHECK_PRESS(ev->keys, KEY_RIGHT) ? 1 : -1))
+		{
+			*ec |= MENU_STATUS_LIST_TYPE; homeUpdate();
+		}
+		return;
+	}
 
 	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
@@ -479,8 +540,13 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 			case 0: startCompose(); break;
 			case 1: openFolder(0);  break;
 			case 2: openFolder(1);  break;
+			case MSGS_HOME_SET_MONITOR:
+			case MSGS_HOME_SET_TXMODE:
+				(void)homeChangeSetting(0);   /* GREEN на рядку-налаштуванні -- перемкнути */
+				*ec |= MENU_STATUS_LIST_TYPE; homeUpdate();
+				break;
 #if defined(ENABLE_SMS_DIAG)
-			case 3:
+			case 5:
 				s_msg.view = MSG_DIAG;
 #if defined(ENABLE_SMS_DIAG)
 				s_msg.diagPage = 0;
