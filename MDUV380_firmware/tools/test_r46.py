@@ -160,6 +160,8 @@ def test_w5_default_unchanged():
             for fn in FILES:
                 if fn == "menuZoneList.c" and "-DENABLE_ZONE_RENAME" in defs:
                     continue       # R64: редактор імені винесено в uiNameEditor.c -- токени файла законно інші; еквівалентність доводить tools/test_r64_editor.py (диф-тест 51 тис. кроків)
+                if ("-DLANGUAGE_BUILD_UKRAINIAN" in defs) and fn in ("menuSystem.c", "menuDisplayOptions.c", "menuSoundOptions.c"):
+                    continue       # R91A: меню української збірки законно змінено (переноси пунктів, прибране вікно «Затр.шуму»); їх перевіряє test_r91a
                 if fn == "uiChannelMode.c":
                     continue       # R74: стоковий «Roaming» приховано безумовно на платформі форку (HAS_GPS+FORK_NO_GPS_MENU) -- токени законно інші; еквівалентність доводить tools/test_r74.py (C-стенд quickMenuVisibleItem)
                 rel = os.path.join("application", "source", "user_interface", fn)

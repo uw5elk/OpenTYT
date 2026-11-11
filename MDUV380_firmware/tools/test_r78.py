@@ -202,6 +202,8 @@ def main():
                 for name, defs in cfgs:
                     nd = [x for x in defs if x != "-DENABLE_VOLUME_LOW"]
                     for rel in ("source/functions/sound.c", "source/functions/trx.c", "source/applicationMain.c", "source/functions/codeplug.c"):   # R81: menuRadioOptions.c змінено свідомо (пункти прибрано) -- його перевіряє test_r81.py
+                        if rel.endswith("applicationMain.c") and "-DLANGUAGE_BUILD_UKRAINIAN" in defs:
+                            continue       # R91A: «Гучність» (картка гучності) в українській збірці завжди On -- макрос SETTINGS_VISUAL_VOLUME_EFFECTIVE() законно змінює токени; перевіряє test_r91a
                         if rel.endswith("sound.c") and "-DENABLE_VOLUME_PROBE" in defs:
                             continue       # діагностична збірка: блок R77A у sound.c законно спільний із R78 (перероблено в один; поведінку проби перевіряє test_volume_probe)
                         p = os.path.join("application", rel)

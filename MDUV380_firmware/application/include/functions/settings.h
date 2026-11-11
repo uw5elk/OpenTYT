@@ -459,6 +459,14 @@ bool settingsIsOptionBitSet(bitfieldOptions_t bit);
 #define UI_SMS_FONT_SMALL()      settingsIsOptionBitSet(BIT_SMS_FONT_SMALL)
 #endif
 
+/* R91A (форк): пункт «Дисплей -> Гучність» (BIT_VISUAL_VOLUME) прибрано з меню української збірки -- ефективне значення завжди «On». Збережений біт НЕ переписується
+ * (розкладка налаштувань і custom-data без змін), його просто не читають. В інших збірках -- стокова поведінка. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#define SETTINGS_VISUAL_VOLUME_EFFECTIVE()  (true)
+#else
+#define SETTINGS_VISUAL_VOLUME_EFFECTIVE()  settingsIsOptionBitSet(BIT_VISUAL_VOLUME)
+#endif
+
 void settingsSetDirty(void);
 void settingsSetVFODirty(void);
 void settingsSaveIfNeeded(bool immediately);

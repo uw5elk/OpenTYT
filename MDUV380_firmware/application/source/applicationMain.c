@@ -343,7 +343,7 @@ static void updateVolumeGain(int menuScreen)
 #endif
 
 #if defined(HAS_SOFT_VOLUME)
-	if (settingsIsOptionBitSet(BIT_VISUAL_VOLUME) &&
+	if (SETTINGS_VISUAL_VOLUME_EFFECTIVE() &&
 			(menuScreen != UI_SPLASH_SCREEN) && (menuScreen != UI_MESSAGE_BOX) && (menuScreen != UI_POWER_OFF))
 	{
 		lastDisplayedVolume = lastVolume;

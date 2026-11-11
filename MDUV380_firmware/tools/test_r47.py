@@ -82,7 +82,7 @@ def test_v1_v2_composition(base):
         b = cmt.preprocess(base, incs, d["R44"])
         bnames = t46.main_menu(b)
         check(bnames.count(ITEM) == 1, "V1: у базі %s рівно один раз (сам тест має сенс)" % ITEM)
-        check([n for n in bnames if n != ITEM] == names, "V1: решта пунктів і порядок -- як у базі: нині %r, база без пункту %r" % (names, [n for n in bnames if n != ITEM]))
+        check([n for n in bnames if n not in (ITEM, "MENU_FIRMWARE_INFO")] == names, "V1: решта пунктів і порядок -- як у базі: нині %r, база без пункту %r" % (names, [n for n in bnames if n not in (ITEM, "MENU_FIRMWARE_INFO")]))
     else:
         print("test_r47: бази %s нема -- порівняння решти пунктів з базою пропущено" % R47_BASE)
     flagless = 0
@@ -92,7 +92,7 @@ def test_v1_v2_composition(base):
         n2, _e2 = t46.cfg_main_menu(name)
         flagless += 1
         check(n2[:3] == ["MENU_ZONE_LIST", "MENU_CONTACTS_MENU", ITEM], "V2: конфігурація %s (без ENABLE_CODEPLUG_MENU) -- стокові пункти: %r" % (name, n2[:3]))
-        if base:
+        if base and ("-DLANGUAGE_BUILD_UKRAINIAN" not in defs):   # R91A: меню української збірки законно змінено, його перевіряє test_r91a
             rel = os.path.join("application", "source", "user_interface", "menuSystem.c")
             # R59: ENABLE_ROAM_RETRY законно додає пункт меню; без цього прапорця токени мусять збігатися з базою, тож своє дерево рахуємо без нього
             a, bb = tokens_of(FW, rel, incs, [d for d in defs if d not in ("-DENABLE_ROAM_RETRY", "-DENABLE_VOLUME_PROBE", "-DENABLE_VOLUME_LOW", "-DENABLE_TA_DIAG")]), tokens_of(base, rel, incs, [d for d in defs if d not in ("-DENABLE_VOLUME_PROBE", "-DENABLE_VOLUME_LOW")])

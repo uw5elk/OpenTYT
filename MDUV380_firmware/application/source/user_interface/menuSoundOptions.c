@@ -598,14 +598,8 @@ static void handleEvent(uiEvent_t *ev)
 					if (next != steps)
 					{
 						settingsSet(nonVolatileSettings.UNUSED_1, sqlOpenDelayPack(next));
-						if (steps == 0)
-						{
-							/* Умикання затримки: одним реченням -- ціна (пункт меню не має рядка підказки). */
-							char hint[3 * LANGUAGE_TEXTS_LENGTH + 2];
-
-							snprintf(hint, sizeof(hint), "%s\n%s\n%s", currentLanguage->sql_open_delay_hint1, currentLanguage->sql_open_delay_hint2, currentLanguage->sql_open_delay_hint3);
-							uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2500, hint, false);
-						}
+						/* R91A (форк): спливаюче вікно-пояснення при першому вмиканні (sql_open_delay_hint1..3, R81) прибрано -- звільняє код; ціну затримки (зріз початку передачі)
+						 * описано в TESTING.md/довідці меню. Поля hint1..3 у stringsTable_t ЛИШИЛИСЬ (таблицю мов не чіпаємо). SQL_OPEN_DELAY_ENABLED є лише в українській збірці. */
 					}
 				}
 					break;

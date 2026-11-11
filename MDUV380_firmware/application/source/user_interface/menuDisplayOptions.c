@@ -127,6 +127,9 @@ enum
 #if defined(DISPLAY_HAS_SMS_FONT)
 	DISPLAY_SMS_FONT,   /* ui7: останнім -- індекси QuickKey стокових пунктів ті самі */
 #endif
+#if defined(HAS_COLOURS) && defined(LANGUAGE_BUILD_UKRAINIAN)
+	DISPLAY_THEME_OPTIONS,   /* R91A: «Опції теми» переїхали сюди з «Налаштувань»; останнім -- індекси QuickKey наявних пунктів ті самі */
+#endif
 	NUM_DISPLAY_MENU_ITEMS
 };
 
@@ -159,16 +162,15 @@ static const uint8_t displayVisibleItems[] =
 	DISPLAY_BATTERY_UNIT_IN_HEADER,
 #endif
 	DISPLAY_EXTENDED_INFOS,
-#if defined(HAS_SOFT_VOLUME)
-	DISPLAY_VISUAL_VOLUME,
-#endif
+	/* R91A: «Гучність» (DISPLAY_VISUAL_VOLUME) сховано -- ефективне значення завжди «On» (SETTINGS_VISUAL_VOLUME_EFFECTIVE у settings.h), збережений біт не переписується. */
 #if ! defined(PLATFORM_MD9600)
 	DISPLAY_ALL_LEDS_ENABLED,
 #endif
 	DISPLAY_TIMEZONE_VALUE,
 	DISPLAY_TIME_UTC_OR_LOCAL,
 	DISPLAY_SHOW_DISTANCE,
-	DISPLAY_DMR_LAST_TALKER_ON_SCREEN
+	DISPLAY_DMR_LAST_TALKER_ON_SCREEN,
+	DISPLAY_THEME_OPTIONS
 };
 #define DISPLAY_NUM_VISIBLE   ((int)(sizeof(displayVisibleItems) / sizeof(displayVisibleItems[0])))
 
@@ -409,6 +411,13 @@ static void updateScreen(bool isFirstRun)
 					leftSide = currentLanguage->UTC;
 					rightSideConst = (nonVolatileSettings.timezone & 0x80) ? currentLanguage->no : currentLanguage->yes;
 					break;
+
+#if defined(HAS_COLOURS) && defined(LANGUAGE_BUILD_UKRAINIAN)
+				case DISPLAY_THEME_OPTIONS:
+					leftSide = currentLanguage->theme_options;
+					rightSideConst = ">>";   /* R91A: пункт-вхід (як «TA diag»): відкривається вправо */
+					break;
+#endif
 
 				case DISPLAY_SHOW_DISTANCE:
 					leftSide = currentLanguage->show_distance;
@@ -827,6 +836,12 @@ static void handleEvent(uiEvent_t *ev)
 				case DISPLAY_TIME_UTC_OR_LOCAL:
 					settingsSet(nonVolatileSettings.timezone, (uint8_t) (nonVolatileSettings.timezone & ~0x80));
 					break;
+
+#if defined(HAS_COLOURS) && defined(LANGUAGE_BUILD_UKRAINIAN)
+				case DISPLAY_THEME_OPTIONS:
+					menuSystemPushNewMenu(MENU_THEME);   /* R91A: той самий екран тем, що раніше був у «Налаштуваннях»; назад (червона) повертає сюди */
+					return;
+#endif
 
 				case DISPLAY_SHOW_DISTANCE:
 					if (settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) == false)

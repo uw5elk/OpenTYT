@@ -739,7 +739,11 @@ const menuItemNewData_t mainMenuItems[] =
 	// не з'їжджає.
 	{   4, MENU_RSSI_SCREEN     },
 #endif
+#if !defined(LANGUAGE_BUILD_UKRAINIAN)
+	// R91A (форк): в українській збірці «Про прошивку» переїхало в «Налаштування» (останній пункт, див. optionsMenuItems[]). З головного меню сховано БЕЗ зсуву номерів:
+	// швидкі клавіші меню зберігають ID меню (MENU_FIRMWARE_INFO), а не позицію пункту -- стара прив'язка відкриє той самий екран.
 	{   8, MENU_FIRMWARE_INFO   },
+#endif
 	{   9, MENU_OPTIONS         },
 	{   7, MENU_LAST_HEARD      },
 #if defined(ENABLE_CALL_REPLAY) && !defined(APRS_RX)
@@ -817,7 +821,9 @@ static const menuItemNewData_t optionsMenuItems[] =
 	{  13, MENU_LANGUAGE        },
 #endif
 	{ 206, MENU_CALIBRATION     },
-#if defined(HAS_COLOURS)
+#if defined(HAS_COLOURS) && !defined(LANGUAGE_BUILD_UKRAINIAN)
+	// R91A (форк): в українській збірці «Опції теми» переїхали в «Дисплей» (останній пункт, menuDisplayOptions.c, DISPLAY_THEME_OPTIONS). Сховано БЕЗ зсуву номерів:
+	// швидкі клавіші меню зберігають ID меню (MENU_THEME), а не позицію.
 	{ 218, MENU_THEME           },
 #endif
 #if !defined(PLATFORM_GD77S) && !defined(APRS_R21_MENU)
@@ -837,6 +843,10 @@ static const menuItemNewData_t optionsMenuItems[] =
 	// RCTL access (2026-09-03) - це саме НАЛАШТУВАННЯ (увімк/вимк приймання команд),
 	// тож лишається тут, в Options, на відміну від самої дії "Remote control" вище.
 	{ (int)(offsetof(stringsTable_t, rctl_config) / LANGUAGE_TEXTS_LENGTH), MENU_RCTL_CONFIG },
+#endif
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+	// R91A (форк): «Про прошивку» -- ОСТАННІЙ пункт «Налаштувань» (наявні не зсуваються; 8 -- той самий рядок мовної таблиці, що й у головному меню, з голосовою підказкою).
+	{   8, MENU_FIRMWARE_INFO   },
 #endif
 };
 
