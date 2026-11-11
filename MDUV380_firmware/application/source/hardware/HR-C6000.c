@@ -30,6 +30,7 @@
 #include "hardware/HR-C6000.h"
 #include "crypto/dmr_aes_hook.h"
 #include "crypto/dmr_aes.h"   // DMR_AES_MAX_KEYS (per-channel key-slot range check)
+#include "functions/ta_diag.h"   // R88: лише під ENABLE_TA_DIAG (у звичайних збірках файл порожній)
 #include "functions/dmr_data.h"   // DMR data-frame TX harness (ENABLE_DMR_DATA)
 #include "functions/dmr_sms.h"    // encrypted-SMS RX reassembly (ENABLE_DMR_DATA + ENABLE_AES)
 #include "functions/dmr_rctl_tx.h" // RCTL RX reassembly (ENABLE_DMR_DATA + ENABLE_AES), паралельно з SMS
@@ -721,6 +722,20 @@ static void hrc6000HandleLCData(void)
 {
 	uint8_t LCBuf[LC_DATA_LENGTH];
 	bool lcResult = (SPI0ReadPageRegByteArray(0x02, 0x00, LCBuf, LC_DATA_LENGTH) == kStatus_Success); // read the LC from the C6000
+#if defined(TA_DIAG)
+	// R88: діагностика -- гістограма FLCO усіх LC з правильним CRC (будь-який слот), без жодного впливу на фільтри нижче
+	if (lcResult)
+	{
+		if (hrc6000CrcIsValid())
+		{
+			taDiagRawLC(LCBuf);
+		}
+		else
+		{
+			taDiagNoteBadCrc();
+		}
+	}
+#endif
 #ifdef ENABLE_AES
 	// Only a CRC-valid LC can be a real PI header. Parsing every (often garbage) LC read
 	// let voice/partial LCs with byte[1]==0x10 spuriously re-init the AES state mid-call,
@@ -759,6 +774,9 @@ static void hrc6000HandleLCData(void)
 		{
 			if (((currentRadioDevice->trxDMRModeRx == DMR_MODE_DMO) || hrc6000CheckTimeSlotFilter()) && hrc6000CheckColourCodeFilter()) // only do this for the selected timeslot, or when in Active mode
 			{
+#if defined(TA_DIAG)
+				taDiagCallLC(LCBuf);   // R88: діагностика -- запис виклику / блоків TA / блока GPS (лише читання LCBuf)
+#endif
 				if ((LCBuf[0] == TG_CALL_FLAG) || (LCBuf[0] == PC_CALL_FLAG))
 				{
 					uint32_t prevTgOrPcId = hrc.receivedTgOrPcId;

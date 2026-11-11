@@ -31,6 +31,7 @@
 #include "hardware/EEPROM.h"
 #endif
 #include "user_interface/uiGlobals.h"
+#include "functions/ta_diag.h"   // R88: лише під ENABLE_TA_DIAG
 #include "functions/roaming_gate.h"   /* R74: ROAMING_EFFECTIVE() */
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
@@ -1223,6 +1224,9 @@ bool lastHeardListUpdate(uint8_t *dmrDataBuffer, bool forceOnHotspot)
 												}
 											}
 
+#if defined(TA_DIAG)
+											taDiagFwText(LinkHead->talkerAlias);   // R88: що саме отримав декодер прошивки (лише читання)
+#endif
 											overrideTA = false;
 											uiDataGlobal.displayQSOState = QSO_DISPLAY_CALLER_DATA;
 										}

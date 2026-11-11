@@ -42,6 +42,7 @@ declare -A SRCS=(
 	[test_le_mi]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"
 	[test_dmr_sms_ack]="$APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_text.c"   # квитанція: СПРАВЖНІЙ білдер заголовка
 	[test_dmr_sms_unconf]="$APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # режим 0 == 438ec23 байт-у-байт
+	[test_ta_diag]="$APP/source/functions/ta_diag.c -lm"   # R88: чисті функції діагностики TA / GPS-блока LC (лише ENABLE_TA_DIAG); дані синтетичні
 	[test_dmr_sms_confirmed]=""       # самодостатній: CRC9 + розкладка CONFIRMED-блока
 	[test_call_replay]="$APP/source/functions/callReplay.c"   # лише ЧИСТА кільцева логіка -- callReplayPlayback.c (codec/sound/trx/FreeRTOS) сюди навмисно не тягнеться
 	[test_dmr_sms_fix]="$APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_text.c"   # fix7: корекція трибітів rate-3/4
@@ -110,6 +111,7 @@ declare -A XFLAGS=(
 	[test_dmr_rctl_stock]="-DENABLE_DMR_DATA"   # R21 З2: тест читає чергу так, як драйвер (functions/dmr_data.h)
 	[test_aprs_probe_dsp]="-DENABLE_APRS_RX_PROBE"
 	[test_wake_diag]="-DENABLE_WAKE_DIAG"
+	[test_ta_diag]="-DENABLE_TA_DIAG"
 	[test_wake_hop]="-DENABLE_ROAM_RETRY -DWAKE_HOP_HOST_TEST -DROAM_CFG_HOST_TEST"
 	[test_roam_cfg]="-DENABLE_ROAM_RETRY -DROAM_CFG_HOST_TEST"
 	[test_aes_key_name]="-DAES_KEY_NAME_HOST_TEST"
@@ -371,7 +373,7 @@ if [ -z "${FONTCONFIG_FILE:-}" ] && [ -d /usr/share/fonts/truetype/dejavu ] && [
 	printf '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><dir>/usr/share/fonts/truetype/dejavu</dir><dir>/usr/share/fonts/truetype/liberation</dir><cachedir>%s/cache</cachedir></fontconfig>\n' "$FCDIR" > "$FCDIR/fonts.conf"
 	export FONTCONFIG_FILE="$FCDIR/fonts.conf"
 fi
-for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65 test_r65b test_r66 test_r70 test_r71 test_r73 test_r74 test_r75 test_r76 test_r77a test_r78 test_r81 test_r79; do
+for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65 test_r65b test_r66 test_r70 test_r71 test_r73 test_r74 test_r75 test_r76 test_r77a test_r78 test_r81 test_r79 test_r88; do
 	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
 		PYTK=""
 		for cand in python3 python3.12 python3.11 python3.10 python3.13; do

@@ -107,7 +107,7 @@ def main():
     items = enum_items(radio, r"RADIO_OPTIONS_MENU_TX_FREQ_LIMITS")
     check(items[:1] == ["RADIO_OPTIONS_MENU_TX_FREQ_LIMITS"] and items[-1] == "NUM_RADIO_OPTIONS_MENU_ITEMS", "«Опції рації»: enum розібрано (%d пунктів)" % len(items))
     check(not [x for x in items if re.search(r"SMS|SQL|VOL_LOW", x)], "«Опції рації»: в enum немає SMS/SQL/VOL_LOW")
-    check(items[-2] in ("RADIO_OPTIONS_MENU_VOL_PROBE", "RADIO_OPTIONS_MENU_DMR_CRC", "RADIO_OPTIONS_MENU_FORCE_10W"), "«Опції рації»: стокові пункти не зсунуто (хвіст: %s)" % items[-2])
+    check(items[-2] in ("RADIO_OPTIONS_MENU_TA_DIAG", "RADIO_OPTIONS_MENU_VOL_PROBE", "RADIO_OPTIONS_MENU_DMR_CRC", "RADIO_OPTIONS_MENU_FORCE_10W"), "«Опції рації»: стокові пункти не зсунуто (хвіст: %s)" % items[-2])
 
     # 2
     check(check_sound(sound), "«Звук»: «Затр.шуму» останній, ті самі поле/функції, під #if, без голосової підказки")

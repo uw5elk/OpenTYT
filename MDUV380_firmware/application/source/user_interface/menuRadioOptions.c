@@ -40,6 +40,7 @@
 #if defined(VOLUME_PROBE)
 #include "user_interface/languages/volprobe_ua.h"
 #endif
+#include "user_interface/menuTaDiag.h"   /* R88: «TA diag» (лише ENABLE_TA_DIAG; у звичайних збірках файл порожній) */
 
 static void updateScreen(bool isFirstRun);
 static void handleEvent(uiEvent_t *ev);
@@ -71,6 +72,9 @@ enum
 #endif
 #if defined(VOLUME_PROBE)
 	RADIO_OPTIONS_MENU_VOL_PROBE,        /* R77A: діагностика -- найостаннішим */
+#endif
+#if defined(TA_DIAG)
+	RADIO_OPTIONS_MENU_TA_DIAG,          /* R88: діагностика Talker Alias / GPS-блока LC -- найостаннішим */
 #endif
 	NUM_RADIO_OPTIONS_MENU_ITEMS
 };
@@ -105,6 +109,17 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 	{
 		menuOptionsExitCode = MENU_STATUS_SUCCESS;
 
+#if defined(TA_DIAG)
+		if (menuTaDiagIsOpen())
+		{
+			// R88: екран «TA diag» -- власні тіки й клавіші; вихід -- знову список
+			if (menuTaDiagTick(ev) == false)
+			{
+				updateScreen(false);
+			}
+			return menuOptionsExitCode;
+		}
+#endif
 #if defined(VOLUME_PROBE)
 		if (volumeProbeIsOn())
 		{
@@ -153,7 +168,7 @@ static void updateScreen(bool isFirstRun)
 
 			buf[0] = 0;
 			buf[2] = 0;
-#if defined(VOLUME_PROBE)
+#if defined(VOLUME_PROBE) || defined(TA_DIAG)
 			bool volProbeNoPrompt = false;   /* R77A: підпис -- макрос українського заголовка, не рядок currentLanguage: без голосової підказки */
 #endif
 			leftSide = NULL;
@@ -252,6 +267,13 @@ static void updateScreen(bool isFirstRun)
 					rightSideUnitsStr = "W";
 					break;
 #endif
+#if defined(TA_DIAG)
+				case RADIO_OPTIONS_MENU_TA_DIAG:
+					leftSide = TADIAG_MENU_NAME;
+					volProbeNoPrompt = true;
+					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", TADIAG_MENU_ENTER);
+					break;
+#endif
 #if defined(VOLUME_PROBE)
 				case RADIO_OPTIONS_MENU_VOL_PROBE:
 					leftSide = VOLPROBE_MENU_NAME;
@@ -274,8 +296,8 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
-#if defined(VOLUME_PROBE)
-					if (volProbeNoPrompt == false)   /* R77A */
+#if defined(VOLUME_PROBE) || defined(TA_DIAG)
+					if (volProbeNoPrompt == false)   /* R77A, R88 */
 #endif
 					voicePromptsAppendLanguageString(leftSide);
 				}
@@ -534,6 +556,11 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
+#if defined(TA_DIAG)
+				case RADIO_OPTIONS_MENU_TA_DIAG:
+					menuTaDiagEnter();   /* R88: вправо -- відкрити екран; він сам малює й веде клавіші */
+					return;
+#endif
 #if defined(VOLUME_PROBE)
 				case RADIO_OPTIONS_MENU_VOL_PROBE:
 					menuVolumeProbeEnter();   /* R77A: вправо -- відкрити екран; він сам малює й веде клавіші */
@@ -661,6 +688,10 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					break;
 #endif
+#if defined(TA_DIAG)
+				case RADIO_OPTIONS_MENU_TA_DIAG:
+					break;   /* R88: вліво -- нічого */
+#endif
 #if defined(VOLUME_PROBE)
 				case RADIO_OPTIONS_MENU_VOL_PROBE:
 					break;   /* вліво -- нічого */
@@ -696,6 +727,9 @@ static void applySettings(void)
 
 static void exitCallback(void *data)
 {
+#if defined(TA_DIAG)
+	menuTaDiagClose();   // R88: вихід з «Опцій рації» будь-яким шляхом закриває екран
+#endif
 #if defined(VOLUME_PROBE)
 	volumeProbeClose();   // R77A: вихід з «Опцій рації» будь-яким шляхом повертає стокове
 #endif

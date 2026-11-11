@@ -35,6 +35,7 @@
 #if defined(ENABLE_APRS_RX_PROBE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 #include "functions/aprs_rx_probe.h"   // R2: aprsRxProbeClose() у menuSystemPushNewMenu()
 #endif
+#include "user_interface/menuTaDiag.h"   // R88: menuTaDiagClose() у menuSystemPushNewMenu() (лише ENABLE_TA_DIAG)
 #if defined(ENABLE_VOLUME_PROBE)
 #include "functions/volume_probe.h"   // R77A: volumeProbeClose() у menuSystemPushNewMenu() (лише ENABLE_VOLUME_PROBE)
 #endif
@@ -324,6 +325,9 @@ void menuSystemPushNewMenu(int menuNumber)
 	// її тут: регістри HR-C6000, I2S, ADC2/TIM7 і еко-режим -- як до входу. Якщо проба не
 	// відкрита -- нічого не робить.
 	aprsRxProbeClose();
+#endif
+#if defined(TA_DIAG)
+	menuTaDiagClose();   // R88: «TA diag» -- режим усередині «Опцій рації»; будь-який push поверх (PTT, дзвінок) його закриває
 #endif
 #if defined(VOLUME_PROBE)
 	// R77A: «Гучн. проба» -- режим усередині «Опцій рації»; будь-який push поверх неї (PTT, дзвінок, повідомлення) повертає стокове ослаблення.
