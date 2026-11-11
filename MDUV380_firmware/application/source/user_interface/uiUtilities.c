@@ -31,6 +31,9 @@
 #include "hardware/EEPROM.h"
 #endif
 #include "user_interface/uiGlobals.h"
+#if defined(ENABLE_LC_DISTANCE)
+#include "functions/lc_distance.h"   // R91C: відстань і азимут до кореспондента за GPS-блоком LC 0x08
+#endif
 #include "functions/ta_diag.h"   // R88: лише під ENABLE_TA_DIAG
 #include "functions/roaming_gate.h"   /* R74: ROAMING_EFFECTIVE() */
 #include "user_interface/menuSystem.h"
@@ -1032,6 +1035,11 @@ bool lastHeardListUpdate(uint8_t *dmrDataBuffer, bool forceOnHotspot)
 					// Already in the list
 					if (item != NULL)
 					{
+#if defined(LC_DISTANCE)
+						// R91C: новий виклик відомого абонента -- координати попереднього виклику не показувати (нові прийдуть у блоці LC 0x08 цього виклику)
+						item->locationLat = NAN;
+						item->locationLon = NAN;
+#endif
 						if (item->talkGroupOrPcId != talkGroupOrPcId)
 						{
 							item->talkGroupOrPcId = talkGroupOrPcId; // update the TG in case they changed TG
@@ -1665,6 +1673,15 @@ static void displaySplitOrSpanText(uint8_t y, char *text)
  * We don't care if extra text is larger than 16 chars, ucPrint*() functions cut them.
  *.
  */
+// Буфери підпису координат у шапці виклику: стокові 37 (TA 27 + ' [' + Maidenhead 6 + ']' + NUL) і 8; з ENABLE_LC_DISTANCE -- 48 і 16 (підпис відстані до 12 символів, R91C)
+#if defined(LC_DISTANCE)
+#define QSO_TA_GEO_BUF      48
+#define QSO_GEO_LABEL_SIZE  LC_DIST_LABEL_SIZE
+#else
+#define QSO_TA_GEO_BUF      37
+#define QSO_GEO_LABEL_SIZE  8
+#endif
+
 static void displayContactTextInfos(char *text, size_t maxLen, bool isFromTalkerAlias)
 {
 	// Max for TalkerAlias is 37: TA 27 (in 7bit format) + ' [' + 6 (Maidenhead)  + ']' + NULL
@@ -1983,13 +2000,20 @@ void uiUtilityRenderQSOData(void)
 					{
 						if (LinkHead->locationLat <= 90)
 						{
-							char tmpBufferTA[37]; // TA + ' [' + Maidenhead + ']' + NULL
+							char tmpBufferTA[QSO_TA_GEO_BUF]; // TA + ' [' + Maidenhead (або відстань і азимут, R91C) + ']' + NULL
 
 							memset(tmpBufferTA, 0, sizeof(tmpBufferTA));
-							char maidenheadBuffer[8];
+							char maidenheadBuffer[QSO_GEO_LABEL_SIZE];
 
-							coordsToMaidenhead((uint8_t *)maidenheadBuffer, LinkHead->locationLat, LinkHead->locationLon);
-							snprintf(tmpBufferTA, 37, "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
+#if defined(LC_DISTANCE)
+							// R91C: власна позиція задана і координати кореспондента прийняті в цьому виклику -- замість Maidenhead показуємо відстань і азимут
+							if ((settingsLocationIsValid() &&
+									lcDistText(maidenheadBuffer, sizeof(maidenheadBuffer), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), LinkHead->locationLat, LinkHead->locationLon)) == false)
+#endif
+							{
+								coordsToMaidenhead((uint8_t *)maidenheadBuffer, LinkHead->locationLat, LinkHead->locationLon);
+							}
+							snprintf(tmpBufferTA, sizeof(tmpBufferTA), "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
 							displayContactTextInfos(tmpBufferTA, sizeof(tmpBufferTA), true);
 						}
 						else
@@ -2010,13 +2034,20 @@ void uiUtilityRenderQSOData(void)
 					{
 						if (LinkHead->locationLat <= 90)
 						{
-							char tmpBufferTA[37]; // TA + ' [' + Maidenhead + ']' + NULL
+							char tmpBufferTA[QSO_TA_GEO_BUF]; // TA + ' [' + Maidenhead (або відстань і азимут, R91C) + ']' + NULL
 
 							memset(tmpBufferTA, 0, sizeof(tmpBufferTA));
-							char maidenheadBuffer[8];
+							char maidenheadBuffer[QSO_GEO_LABEL_SIZE];
 
-							coordsToMaidenhead((uint8_t *)maidenheadBuffer, LinkHead->locationLat, LinkHead->locationLon);
-							snprintf(tmpBufferTA, 37, "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
+#if defined(LC_DISTANCE)
+							// R91C: власна позиція задана і координати кореспондента прийняті в цьому виклику -- замість Maidenhead показуємо відстань і азимут
+							if ((settingsLocationIsValid() &&
+									lcDistText(maidenheadBuffer, sizeof(maidenheadBuffer), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), LinkHead->locationLat, LinkHead->locationLon)) == false)
+#endif
+							{
+								coordsToMaidenhead((uint8_t *)maidenheadBuffer, LinkHead->locationLat, LinkHead->locationLon);
+							}
+							snprintf(tmpBufferTA, sizeof(tmpBufferTA), "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
 							displayContactTextInfos(tmpBufferTA, sizeof(tmpBufferTA), true);
 						}
 						else
