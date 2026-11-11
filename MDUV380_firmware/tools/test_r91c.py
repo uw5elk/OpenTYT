@@ -94,7 +94,7 @@ def build_c(sources):
     funcs = "\n".join(grab(ui, n) for n in ("roundPosition", "decodeGPSPosition", "latLonFixed32ToDouble", "distanceBetweenTwoCoords", "courseTo"))
     funcs = funcs.replace("static double roundPosition", "double roundPosition")
     tx = grab(hr, "HRC6000SetTalkerAliasLocation")
-    fmt = grab(ax, "aprsRxFormatGeo")
+    fmt = grab(ax, "aprsRxFormatGeo") + "\n" + grab(ax, "aprsRxFormatDist")
     return mult.group(0), funcs, tx, fmt
 
 
@@ -347,10 +347,10 @@ def main():
     check(re.search(r"#if defined\(LC_DISTANCE\)\s*\n(\s*//[^\n]*\n)*\s*item->locationLat = NAN;\s*\n\s*item->locationLon = NAN;\s*\n\s*#endif", found) is not None,
           "новий виклик відомого абонента: координати очищаються (під LC_DISTANCE)")
     check(re.search(r"#if defined\(LC_DISTANCE\)\s*\n(\s*//[^\n]*\n)*\s*item->locationLat = NAN;\s*\n\s*item->locationLon = NAN;\s*\n\s*#endif", ui[k:]) is None, "очищення не продубльовано в гілці «нового» запису (там воно вже стокове)")
-    check(ui.count("lcDistText(") == 2 and ui.count("settingsLocationIsValid()") >= 2, "обидві гілки відображення викликають lcDistText лише при заданій власній позиції")
-    for m in re.finditer(r"lcDistText\([^;]*;", ui):
-        check("settingsLocationIsValid()" in ui[max(0, m.start() - 160):m.start()], "перед lcDistText перевіряється settingsLocationIsValid()")
-    check("QSO_GEO_LABEL_SIZE" in ui and "QSO_TA_GEO_BUF" in ui, "буфери підпису/TA під макросами (48/16 з прапорцем, 37/8 без)")
+    # R92: гілки відображення звертаються до lcDistLabel() через одну функцію qsoShowNameWithDistance() (лише при заданій власній позиції)
+    check(ui.count("lcDistLabel(") == 1 and ui.count("settingsLocationIsValid()") >= 1, "відображення викликає lcDistLabel лише при заданій власній позиції (R92: через qsoShowNameWithDistance)")
+    for m in re.finditer(r"lcDistLabel\([^;]*;", ui):
+        check("settingsLocationIsValid()" in ui[max(0, m.start() - 260):m.start()], "перед lcDistLabel перевіряється settingsLocationIsValid()")
     mk = rd(os.path.join(FW, "Makefile"))
     check("ifeq ($(ENABLE_LC_DISTANCE),1)" in mk and "-DENABLE_LC_DISTANCE" in mk and mk.count("ENABLE_LC_DISTANCE") <= 6, "Makefile: окремий прапорець ENABLE_LC_DISTANCE")
     wf = rd(os.path.join(os.path.dirname(FW), ".github", "workflows", "build.yml"))

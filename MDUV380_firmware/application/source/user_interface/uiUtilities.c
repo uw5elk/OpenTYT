@@ -1673,14 +1673,6 @@ static void displaySplitOrSpanText(uint8_t y, char *text)
  * We don't care if extra text is larger than 16 chars, ucPrint*() functions cut them.
  *.
  */
-// Буфери підпису координат у шапці виклику: стокові 37 (TA 27 + ' [' + Maidenhead 6 + ']' + NUL) і 8; з ENABLE_LC_DISTANCE -- 48 і 16 (підпис відстані до 12 символів, R91C)
-#if defined(LC_DISTANCE)
-#define QSO_TA_GEO_BUF      48
-#define QSO_GEO_LABEL_SIZE  LC_DIST_LABEL_SIZE
-#else
-#define QSO_TA_GEO_BUF      37
-#define QSO_GEO_LABEL_SIZE  8
-#endif
 
 static void displayContactTextInfos(char *text, size_t maxLen, bool isFromTalkerAlias)
 {
@@ -1765,6 +1757,52 @@ static void displayContactTextInfos(char *text, size_t maxLen, bool isFromTalker
 
 	displayThemeResetToDefault();
 }
+
+#if defined(LC_DISTANCE)
+// R92: підпис "ім'я [відстань]" у шапці виклику + стрілка напрямку до кореспондента. Умови (ті самі для будь-якого джерела імені -- TA, "ID:", кодплаг, БД DMR ID):
+// власна позиція задана (settingsLocationIsValid), координати кореспондента прийнято в ЦЬОМУ виклику (locationLat <= 90: NaN = нема; очищається на початку виклику, R91C)
+// і придатні (lcDistLabel). false -- нічого не намальовано (викликач друкує як у стоку).
+static bool qsoShowNameWithDistance(const char *name)
+{
+	char     label[LC_DIST_LABEL_SIZE];
+	char     text[MAX_DMR_ID_CONTACT_TEXT_LENGTH]; // = розмір contact: displayContactTextInfos() копіює до maxLen байтів у свій буфер такого ж розміру
+	uint16_t bearing = 0;
+	bool     bearingKnown = false;
+
+	if ((LinkHead->locationLat <= 90) && settingsLocationIsValid() &&
+			lcDistLabel(label, sizeof(label), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), LinkHead->locationLat, LinkHead->locationLon, &bearing, &bearingKnown))
+	{
+		// увесь рядок -- до 42 символів (2 рядки по 21 у displaySplitOrSpanText(), далі вона відсікає): довге ім'я обрізається з хвоста, підпис лишається видимим
+		snprintf(text, sizeof(text), "%.*s [%s]", (int)(42U - strlen(label) - 3U), name, label);
+
+		lcDistRow_t row = lcDistLabelRow(strlen(text), (nonVolatileSettings.splitContact == SPLIT_CONTACT_SINGLE_LINE_ONLY), (nonVolatileSettings.splitContact == SPLIT_CONTACT_AUTO));
+
+		displayContactTextInfos(text, sizeof(text), true);
+
+		if (bearingKnown && (row != LC_ROW_NONE))
+		{
+#if defined(HAS_COLOURS)
+			const int16_t rowH = FONT_SIZE_3_HEIGHT * (UI_USES_DOUBLE_HEIGHT() ? 2 : 1);
+#else
+			const int16_t rowH = FONT_SIZE_3_HEIGHT;
+#endif
+			lcDistArrow_t a;
+
+			lcDistArrowGeom(&a, DISPLAY_SIZE_X, ((row == LC_ROW_FIRST) ? uiUtilityChannelFirstLineY() : DISPLAY_Y_POS_CHANNEL_SECOND_LINE), rowH, bearing);
+
+			displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_BG);
+			displayDrawLine(a.bx, a.by, a.g.tx, a.g.ty, true);      // стрижень
+			displayDrawLine(a.g.tx, a.g.ty, a.g.lx, a.g.ly, true);  // крила
+			displayDrawLine(a.g.tx, a.g.ty, a.g.rx, a.g.ry, true);
+			displayThemeResetToDefault();
+		}
+
+		return true;
+	}
+
+	return false;
+}
+#endif
 
 void uiUtilityDisplayInformation(const char *str, displayInformation_t line, int8_t yOverride)
 {
@@ -2000,21 +2038,20 @@ void uiUtilityRenderQSOData(void)
 					{
 						if (LinkHead->locationLat <= 90)
 						{
-							char tmpBufferTA[QSO_TA_GEO_BUF]; // TA + ' [' + Maidenhead (або відстань і азимут, R91C) + ']' + NULL
-
-							memset(tmpBufferTA, 0, sizeof(tmpBufferTA));
-							char maidenheadBuffer[QSO_GEO_LABEL_SIZE];
-
 #if defined(LC_DISTANCE)
-							// R91C: власна позиція задана і координати кореспондента прийняті в цьому виклику -- замість Maidenhead показуємо відстань і азимут
-							if ((settingsLocationIsValid() &&
-									lcDistText(maidenheadBuffer, sizeof(maidenheadBuffer), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), LinkHead->locationLat, LinkHead->locationLon)) == false)
+							// R91C/R92: власна позиція задана і координати прийняті в цьому виклику -- замість Maidenhead відстань і стрілка напрямку
+							if (qsoShowNameWithDistance(LinkHead->talkerAlias) == false)
 #endif
 							{
+								char tmpBufferTA[37]; // TA + ' [' + Maidenhead + ']' + NULL
+
+								memset(tmpBufferTA, 0, sizeof(tmpBufferTA));
+								char maidenheadBuffer[8];
+
 								coordsToMaidenhead((uint8_t *)maidenheadBuffer, LinkHead->locationLat, LinkHead->locationLon);
+								snprintf(tmpBufferTA, sizeof(tmpBufferTA), "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
+								displayContactTextInfos(tmpBufferTA, sizeof(tmpBufferTA), true);
 							}
-							snprintf(tmpBufferTA, sizeof(tmpBufferTA), "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
-							displayContactTextInfos(tmpBufferTA, sizeof(tmpBufferTA), true);
 						}
 						else
 						{
@@ -2023,7 +2060,13 @@ void uiUtilityRenderQSOData(void)
 					}
 					else
 					{
-						displayContactTextInfos(LinkHead->contact, sizeof(LinkHead->contact), !(nonVolatileSettings.splitContact == SPLIT_CONTACT_SINGLE_LINE_ONLY));
+#if defined(LC_DISTANCE)
+						// R92: ім'я з кодплагу/БД DMR ID -- той самий підпис відстані, якщо прийнято координати (стоково тут Maidenhead не друкувався)
+						if (qsoShowNameWithDistance(LinkHead->contact) == false)
+#endif
+						{
+							displayContactTextInfos(LinkHead->contact, sizeof(LinkHead->contact), !(nonVolatileSettings.splitContact == SPLIT_CONTACT_SINGLE_LINE_ONLY));
+						}
 					}
 					break;
 
@@ -2034,21 +2077,20 @@ void uiUtilityRenderQSOData(void)
 					{
 						if (LinkHead->locationLat <= 90)
 						{
-							char tmpBufferTA[QSO_TA_GEO_BUF]; // TA + ' [' + Maidenhead (або відстань і азимут, R91C) + ']' + NULL
-
-							memset(tmpBufferTA, 0, sizeof(tmpBufferTA));
-							char maidenheadBuffer[QSO_GEO_LABEL_SIZE];
-
 #if defined(LC_DISTANCE)
-							// R91C: власна позиція задана і координати кореспондента прийняті в цьому виклику -- замість Maidenhead показуємо відстань і азимут
-							if ((settingsLocationIsValid() &&
-									lcDistText(maidenheadBuffer, sizeof(maidenheadBuffer), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), LinkHead->locationLat, LinkHead->locationLon)) == false)
+							// R91C/R92: власна позиція задана і координати прийняті в цьому виклику -- замість Maidenhead відстань і стрілка напрямку
+							if (qsoShowNameWithDistance(LinkHead->talkerAlias) == false)
 #endif
 							{
+								char tmpBufferTA[37]; // TA + ' [' + Maidenhead + ']' + NULL
+
+								memset(tmpBufferTA, 0, sizeof(tmpBufferTA));
+								char maidenheadBuffer[8];
+
 								coordsToMaidenhead((uint8_t *)maidenheadBuffer, LinkHead->locationLat, LinkHead->locationLon);
+								snprintf(tmpBufferTA, sizeof(tmpBufferTA), "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
+								displayContactTextInfos(tmpBufferTA, sizeof(tmpBufferTA), true);
 							}
-							snprintf(tmpBufferTA, sizeof(tmpBufferTA), "%s [%s]", LinkHead->talkerAlias, maidenheadBuffer);
-							displayContactTextInfos(tmpBufferTA, sizeof(tmpBufferTA), true);
 						}
 						else
 						{
@@ -2057,7 +2099,13 @@ void uiUtilityRenderQSOData(void)
 					}
 					else // No TA, then use the one extracted from Codeplug or DMRIdDB
 					{
-						displayContactTextInfos(LinkHead->contact, sizeof(LinkHead->contact), !(nonVolatileSettings.splitContact == SPLIT_CONTACT_SINGLE_LINE_ONLY));
+#if defined(LC_DISTANCE)
+						// R92: те саме для гілки без TA
+						if (qsoShowNameWithDistance(LinkHead->contact) == false)
+#endif
+						{
+							displayContactTextInfos(LinkHead->contact, sizeof(LinkHead->contact), !(nonVolatileSettings.splitContact == SPLIT_CONTACT_SINGLE_LINE_ONLY));
+						}
 					}
 					break;
 			}

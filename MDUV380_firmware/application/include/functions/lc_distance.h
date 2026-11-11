@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "functions/aprs_rx_cfg.h"
+#include "functions/aprs_rx_parse.h"   /* aprsArrow_t, aprsArrowGeom(), aprsBearingKnown(), APRS_BEARING_MIN_M */
 
 #if defined(ENABLE_LC_DISTANCE) && defined(APRS_RX)
 #define LC_DISTANCE 1
@@ -22,6 +23,7 @@
 double distanceBetweenTwoCoords(double lat1, double lon1, double lat2, double lon2, bool inKm);
 double courseTo(double lat1, double lon1, double lat2, double lon2);
 void aprsRxFormatGeo(char *buf, size_t size, uint32_t distM, uint16_t bearing);
+void aprsRxFormatDist(char *buf, size_t size, uint32_t distM);
 
 /* Розмір буфера підпису (замість Maidenhead): найгірший випадок "20037км NW" (10) + NUL; з запасом. */
 #define LC_DIST_LABEL_SIZE   16
@@ -37,6 +39,33 @@ bool lcDistCompute(double myLat, double myLon, double lat, double lon, uint32_t 
 /* Підпис "123м NE" / "1.2км NE" / "532км NW" у buf (size >= LC_DIST_LABEL_SIZE). false (buf не чіпаємо) -- своєї позиції нема (ownPositionValid == false) або чужа
  * непридатна. Азимут не показується ближче APRS_BEARING_MIN_M -- те саме правило, що в APRS (aprsRxFormatGeo). */
 bool lcDistText(char *buf, size_t size, bool ownPositionValid, double myLat, double myLon, double lat, double lon);
+
+/* ---- R92: напрямок стрілкою ----------------------------------------------------------------------------------------------------------------------------
+ * У шрифті (HX8353E_charset_UA.h: коди 32..254, cp1251) стрілок нема, тож напрям малюється примітивами (displayDrawLine) за геометрією aprsArrowGeom() -- та сама,
+ * що в екрані APRS, з точним азимутом (не 8 секторів). Літери сторони в тексті більше не друкуються: текст -- лише відстань, напрям -- стрілка. */
+
+/* Підпис "123м" / "1.2км" / "532км" (БЕЗ літер сторони) і азимут. *bearingKnown = (відстань >= APRS_BEARING_MIN_M): ближче азимут не визначений -- стрілку не малювати.
+ * Умови false/true ті самі, що в lcDistText(); buf >= LC_DIST_LABEL_SIZE. */
+bool lcDistLabel(char *buf, size_t size, bool ownPositionValid, double myLat, double myLon, double lat, double lon, uint16_t *bearingDeg, bool *bearingKnown);
+
+/* Рядок шапки виклику, де після displayContactTextInfos() опиниться кінець тексту з підписом (textLen = довжина "ім'я [відстань]"): FIRST -- перший рядок, SECOND -- другий,
+ * NONE -- підпису не видно. Дзеркалить правила displayContactTextInfos(): рядок >= 5 символів з isFromTalkerAlias; режим "лише один рядок" (singleLineOnly) або "авто"
+ * (autoSplit) з текстом <= 16 -- усе в першому рядку (довше 16 при singleLineOnly -- обрізається, підпису не видно); інакше позивний/слово -- у першому, решта з підписом -- у другому. */
+typedef enum { LC_ROW_NONE = 0, LC_ROW_FIRST, LC_ROW_SECOND } lcDistRow_t;
+lcDistRow_t lcDistLabelRow(size_t textLen, bool singleLineOnly, bool autoSplit);
+
+/* Комірка стрілки: ЗАВЖДИ в правому полі рядка (текст до 16 символів по 8 px = 128 px, по центру => з кожного боку >= 16 px вільно; комірка 147..157). Центр
+ * (cx, cy) = (screenW - 8, rowY + rowH/2), довжина вістря LC_ARROW_LEN, тож стрілка завдовжки 2*LC_ARROW_LEN = 8 px у квадраті 10x10. Хвіст (bx,by) -- дзеркало вістря
+ * відносно центру: стрижень = відрізок хвіст->вістря, крила (lx,ly),(rx,ry) -- з aprsArrowGeom(). */
+#define LC_ARROW_LEN     4
+#define LC_ARROW_MARGIN  8
+typedef struct
+{
+	aprsArrow_t g;      /* вістря tx,ty і крила lx,ly / rx,ry (aprsArrowGeom) */
+	int16_t     bx, by; /* хвіст стрижня */
+	int16_t     cx, cy; /* центр комірки */
+} lcDistArrow_t;
+void lcDistArrowGeom(lcDistArrow_t *a, int16_t screenW, int16_t rowY, int16_t rowH, uint16_t bearingDeg);
 
 #endif /* ENABLE_LC_DISTANCE && APRS_RX */
 #endif /* LC_DISTANCE_H_ */
