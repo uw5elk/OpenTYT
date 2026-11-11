@@ -3169,7 +3169,7 @@ ANNOUNCE_STATIC void announceDistance(bool voicePromptWasPlaying)
 	char distBuf[SCREEN_LINE_BUFFER_SIZE];
 
 	if ((currentChannelData->NOT_IN_CODEPLUG_CALCULATED_DISTANCE_X10 != -1) &&
-		(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || ((ROAMING_EFFECTIVE() != ROAMING_OFF) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
+		(SETTINGS_CHANNEL_DISTANCE_EFFECTIVE() || ((ROAMING_EFFECTIVE() != ROAMING_OFF) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
 	{
 		if (!voicePromptWasPlaying)
 		{

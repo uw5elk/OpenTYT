@@ -168,7 +168,7 @@ static const uint8_t displayVisibleItems[] =
 #endif
 	DISPLAY_TIMEZONE_VALUE,
 	DISPLAY_TIME_UTC_OR_LOCAL,
-	DISPLAY_SHOW_DISTANCE,
+	/* R91B: «Показ відст.» (DISPLAY_SHOW_DISTANCE) сховано -- ефективне значення завжди «Off» (SETTINGS_CHANNEL_DISTANCE_EFFECTIVE у settings.h), збережений біт не переписується. */
 	DISPLAY_DMR_LAST_TALKER_ON_SCREEN,
 	DISPLAY_THEME_OPTIONS
 };

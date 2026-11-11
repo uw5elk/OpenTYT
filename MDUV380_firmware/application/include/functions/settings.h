@@ -467,6 +467,15 @@ bool settingsIsOptionBitSet(bitfieldOptions_t bit);
 #define SETTINGS_VISUAL_VOLUME_EFFECTIVE()  settingsIsOptionBitSet(BIT_VISUAL_VOLUME)
 #endif
 
+/* R91B (форк): пункт «Дисплей -> Показ відст.» (BIT_DISPLAY_CHANNEL_DISTANCE: відстань від власної позиції до позиції КАНАЛУ в рядку зони) прибрано з меню української збірки --
+ * ефективне значення завжди «Off» (константа false: компілятор викидає мертві гілки). Збережений біт НЕ переписується. Відстань, яку вмикає «Роумінг» (ROAMING_EFFECTIVE), і
+ * відстань APRS (aprsGeo) НЕ чіпаємо. В інших збірках -- стокова поведінка. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#define SETTINGS_CHANNEL_DISTANCE_EFFECTIVE()  (false)
+#else
+#define SETTINGS_CHANNEL_DISTANCE_EFFECTIVE()  settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE)
+#endif
+
 void settingsSetDirty(void);
 void settingsSetVFODirty(void);
 void settingsSaveIfNeeded(bool immediately);

@@ -375,7 +375,7 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 
 			if ((uiDataGlobal.Scan.active == false) &&
 					settingsLocationIsValid() &&
-					(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || (ROAMING_EFFECTIVE() != ROAMING_OFF))
+					(SETTINGS_CHANNEL_DISTANCE_EFFECTIVE() || (ROAMING_EFFECTIVE() != ROAMING_OFF))
 #if defined(HAS_GPS)
 					&& ((SETTINGS_GPS_MODE_GET(nonVolatileSettings) <= GPS_MODE_OFF) ||
 							((SETTINGS_GPS_MODE_GET(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
@@ -920,7 +920,7 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 					else
 					{
 						if (((uiDataGlobal.Scan.active == false) || (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED))) &&
-								((ROAMING_EFFECTIVE() != ROAMING_OFF) || (settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
+								((ROAMING_EFFECTIVE() != ROAMING_OFF) || (SETTINGS_CHANNEL_DISTANCE_EFFECTIVE() && (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))))
 						{
 							if (currentChannelData->NOT_IN_CODEPLUG_CALCULATED_DISTANCE_X10 != -1)
 							{
@@ -3308,7 +3308,7 @@ static void scanning(void)
 			if (audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF)
 			{
 				bool needsToUpdateDistanceDisplay = (settingsLocationIsValid() &&
-						(settingsIsOptionBitSet(BIT_DISPLAY_CHANNEL_DISTANCE) || (ROAMING_EFFECTIVE() != ROAMING_OFF))
+						(SETTINGS_CHANNEL_DISTANCE_EFFECTIVE() || (ROAMING_EFFECTIVE() != ROAMING_OFF))
 #if defined(HAS_GPS)
 						&& ((SETTINGS_GPS_MODE_GET(nonVolatileSettings) <= GPS_MODE_OFF) ||
 								((SETTINGS_GPS_MODE_GET(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
