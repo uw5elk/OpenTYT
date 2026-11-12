@@ -22,7 +22,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FW = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-import check_menu_tables as cmt           # noqa: E402
+import check_menu_tables as cmt
+from r96_tokfilter import strip_r96           # noqa: E402
 import test_r46 as t46                    # noqa: E402
 
 FAILS = []
@@ -65,7 +66,7 @@ def base_tree():
 
 def tokens_of(root, rel, incs, defs):
     r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w"] + incs + defs + [rel], cwd=root, capture_output=True)
-    return r.stdout.split() if r.returncode == 0 else None
+    return strip_r96(r.stdout).split() if r.returncode == 0 else None   # R96: законні вставки (r96_tokfilter.py)
 
 
 def test_v1_v2_composition(base):

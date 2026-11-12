@@ -100,6 +100,11 @@ def main():
             out = run_c(code)
             e = ["0:0", "0:0", "%d:30" % (0x8000 | (30 << 10)), "5:0"] if ukr else ["%d:31" % 0xFFFF, "0:0", "%d:30" % (0x8000 | (30 << 10)), "5:0"]
             check(out == e, "А5 %s: диспетчер {0xFFFF,0,меню30,контакт5} -> %s (є %s)" % (n, e, out))
+    # фільтр токенів (test_r46/r47/r78): вирізає лише R96-вставки
+    from r96_tokfilter import strip_r96
+    check(strip_r96(b"a if ((data == 0x8000) || (0) || (x)) b") == strip_r96(b"a if ((data == 0x8000) || (x)) b"), "фільтр: не-UA `|| (0)` вирізається")
+    check(strip_r96(b"if (((keyFunction) == 0xFFFF)) { keyFunction = 0; } int m;").strip() == b"int m;", "фільтр: диспетчер UA вирізається")
+    check(strip_r96(b"if ((a == 0xFFFF)) { b = 0; }") == b"if ((a == 0xFFFF)) { b = 0; }", "фільтр (мутант): чужий код не вирізається")
     # база
     if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode == 0:
         b = subprocess.run(["git", "-C", FW, "show", "%s:MDUV380_firmware/application/include/user_interface/languages/ukrainian.h" % BASE], capture_output=True)

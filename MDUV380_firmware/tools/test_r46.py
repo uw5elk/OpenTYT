@@ -20,7 +20,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FW = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-import check_menu_tables as cmt           # noqa: E402
+import check_menu_tables as cmt
+from r96_tokfilter import strip_r96           # noqa: E402
 
 FAILS = []
 UI = os.path.join(FW, "application", "source", "user_interface")
@@ -133,7 +134,7 @@ def tokens_of(root, rel, incs, defs):
         return None
     # R82: два нові UA-поля в кінці stringsTable_t (channels_protect, satellite_mode) законно змінюють токени файлів, що підключають uiLanguage.h; вирізаємо їх (їх перевіряє test_r82.py)
     out = r.stdout.replace(b"const char channels_protect[17];", b"").replace(b"const char satellite_mode[17];", b"").replace(b"const char talkaround_menu[17];", b"").replace(b"const char talker_beep[17];", b"").replace(b"const char contact_lines[17];", b"").replace(b"const char contact_order_0[17];", b"").replace(b"const char contact_order_1[17];", b"").replace(b"const char contact_order_2[17];", b"").replace(b"const char contact_order_3[17];", b"")
-    return out.split()
+    return strip_r96(out).split()   # R96: законні вставки (див. r96_tokfilter.py)
 
 
 def test_w5_default_unchanged():
