@@ -17,7 +17,7 @@ APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user
 BASE = os.environ.get("R95_BASE", "2bf7a41")
 FAILS = []; N = [0]; Q = [False]
 WANT = {"key_long": "Довгий нат.", "key_repeat": "Повт. клав.", "dmr_filter_timeout": "Утрим. слота", "private_call_handling": "Прив. викл.", "tx_inhibit": "Заборона TX",
-        "priority_order": "Пріор.", "info": "Позначки", "talker_beep": "Біп абон.", "contact_lines": "Рядки",
+        "priority_order": "Джерело", "info": "Позначки", "talker_beep": "Біп абон.", "contact_lines": "Рядки",
         "contact_order_0": "КП/БД/TA", "contact_order_1": "БД/КП/TA", "contact_order_2": "TA/КП/БД", "contact_order_3": "TA/БД/КП"}
 OLD = {"key_long": "Довге нат.", "key_repeat": "Повтор", "dmr_filter_timeout": "Час фільтра", "private_call_handling": "Дозвіл PC", "tx_inhibit": "Блок. TX", "priority_order": "Порядок", "info": "Інфо"}
 SHARED = {"talker": "Абонент", "contact": "Контакт", "auto_lock": "Автоблок.", "audio_prompt": "Звуки"}
