@@ -129,6 +129,7 @@ static void initSortedChannels(void);
 static bool dualIsRunning(void);
 static void dualSuspend(void);
 static void dualScanning(void);
+static bool dualHandleKey(uiEvent_t *ev);
 static void dualRenderScreen(void);
 static void dualAutoResume(void);
 static void dualQuickMenuApply(bool setB);
@@ -1202,6 +1203,24 @@ static void handleEvent(uiEvent_t *ev)
 	handleEventForGD77S(ev);
 	return;
 #else
+
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (ev->events & KEY_EVENT)
+	{
+		s_dualKeyMs = ticksGetMillis();
+
+		if (dualIsRunning())
+		{
+			if (dualHandleKey(ev))
+			{
+				return;
+			}
+
+			// R97: решта клавіш -- як без режиму: чергування зупиняється (рація на A), клавіша обробляється нижче, режим лишається ввімкненим
+			dualSuspend();
+		}
+	}
+#endif
 
 	if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))
 	{
@@ -3815,6 +3834,125 @@ static void dualScanning(void)
 	}
 }
 
+// ---- валкодер на рядку B: крок по каналах ПОТОЧНОЇ зони ----
+static uint16_t dualZoneChannelAt(int pos, void *ctx)
+{
+	(void)ctx;
+
+	if (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone))
+	{
+		return (codeplugAllChannelsIndexIsInUse(pos + 1) ? (uint16_t)(pos + 1) : 0U);
+	}
+
+	return (((pos >= 0) && (pos < currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone)) ? currentZone.channels[pos] : 0U);
+}
+
+static void dualStepB(int dir)
+{
+	int n = (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? currentZone.NOT_IN_CODEPLUGDATA_highestIndex : currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone);
+	uint16_t chA = dualChannelA();
+	int from = dcFindPos(n, dcChannelB(), dualZoneChannelAt, NULL);
+
+	if (from < 0)
+	{
+		from = dcFindPos(n, chA, dualZoneChannelAt, NULL);   // B не з цієї зони -- крок від A
+	}
+
+	int pos = dcStepPos(n, from, dir, chA, dualZoneChannelAt, NULL);
+
+	if (pos < 0)
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);   // у зоні нема іншого каналу, крім A
+		return;
+	}
+
+	(void)dcSetChannelB(dualZoneChannelAt(pos, NULL), false);   // відкладений запис (3 с без змін)
+
+	if (dcIsOnB())
+	{
+		uiDataGlobal.Scan.state = SCAN_STATE_SCANNING;
+		dualTune(true);
+		dualSetDwell();
+	}
+}
+
+// Клавіші під час чергування: true -- оброблено (решта -- як без режиму, через dualSuspend()).
+static bool dualHandleKey(uiEvent_t *ev)
+{
+	if (BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1))
+	{
+		return false;
+	}
+
+	switch (ev->keys.key)
+	{
+		case KEY_FRONT_UP:     // покажчик на A
+		case KEY_FRONT_DOWN:   // покажчик на B
+			if (KEYCHECK_SHORTUP(ev->keys, ev->keys.key))
+			{
+				dcSetPointerB(ev->keys.key == KEY_FRONT_DOWN);
+				uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+				uiChannelModeUpdateScreen(0);
+			}
+			return true;       // PRESS/LONG теж наші: довге «вгору» (старт сканування зони) у режимі не діє
+
+		case KEY_ROTARY_INCREMENT:
+		case KEY_ROTARY_DECREMENT:
+			if (KEYCHECK_SHORTUP(ev->keys, ev->keys.key))
+			{
+				int dir = ((ev->keys.key == KEY_ROTARY_INCREMENT) ? 1 : -1);
+
+				if (dcPointerB())
+				{
+					dualStepB(dir);
+				}
+				else
+				{
+					// Покажчик на A -- звичайна зміна каналу зони (ті самі handleUpKey/handleDownKey); A не може стати B -- перескакуємо
+					dualSuspend();
+
+					for (int i = 0; i < 2; i++)
+					{
+						if (dir > 0)
+						{
+							handleUpKey(ev);
+						}
+						else
+						{
+							handleDownKey(ev);
+						}
+
+						if (dualChannelA() != dcChannelB())
+						{
+							break;
+						}
+					}
+
+					s_dualKeyMs = 0U;   // чергування -- одразу, без паузи тиші
+					dualAutoResume();
+					return true;
+				}
+
+				uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+				uiChannelModeUpdateScreen(0);
+			}
+			return true;
+
+		case KEY_RED:
+			if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+			{
+				dualDisable();   // вихід з режиму: рація на A, зона й канал ті самі
+				uiChannelModeUpdateScreen(0);
+			}
+			return true;
+
+		default:
+			break;
+	}
+
+	return false;
+}
+
 // Пункти швидкого меню (викликається вже на екрані каналу).
 static void dualQuickMenuApply(bool setB)
 {
@@ -3859,6 +3997,27 @@ static void dualQuickMenuApply(bool setB)
 		dualDisable();
 		uiChannelModeUpdateScreen(0);
 	}
+}
+
+// PTT на екрані каналу під час чергування (applicationMain.c): канал передачі -- за станом (прийом/утримання -- де рація зараз,
+// інакше -- за покажчиком); режим НЕ вимикається, передача стартує цим же натисканням, після неї -- утримання «Затр. скан.».
+bool uiChannelModeDualPrepareTx(void)
+{
+	if ((dualIsRunning() == false) || (menuSystemGetCurrentMenuNumber() != UI_CHANNEL_MODE))
+	{
+		return false;
+	}
+
+	bool toB = dcTxOnB((uiDataGlobal.Scan.state != SCAN_STATE_SCANNING), dcIsOnB(), dcPointerB());
+
+	if (toB != dcIsOnB())
+	{
+		dualTune(toB);
+	}
+
+	dcSetTxHold(true);
+	uiDataGlobal.Scan.active = false;   // екран передачі однаково скидає; scanType лишається -- dualAutoResume() поверне режим
+	return true;
 }
 
 // ---- екран режиму ----

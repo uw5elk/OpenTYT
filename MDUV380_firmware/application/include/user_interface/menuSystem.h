@@ -245,6 +245,9 @@ void uiVFOSweepScanModePause(bool pause, bool forceDigitalOnPause);
 bool uiVFOModeFrequencyScanningIsActiveAndEnabled(uint32_t *lowFreq, uint32_t *highFreq);
 void uiChannelModeStopScanning(void);
 bool uiChannelModeIsScanning(void);
+#if defined(DUAL_CHANNEL_ENABLED)
+bool uiChannelModeDualPrepareTx(void);   /* R97: PTT під час «Подвійного прийому» (uiChannelMode.c) */
+#endif
 void uiChannelInitializeCurrentZone(void);
 
 

@@ -1267,6 +1267,14 @@ void applicationMainTask(void)
 				{
 					bool wasScanning = false;
 
+#if defined(DUAL_CHANNEL_ENABLED)
+					if ((currentMenu == UI_CHANNEL_MODE) && uiChannelModeDualPrepareTx())
+					{
+						// R97: «Подвійний прийом» -- режим не зупиняється: канал передачі вже вибрано (прийом/утримання -- де був виклик,
+						// інакше -- за покажчиком), передача стартує ЦИМ натисканням, після неї -- утримання «Затр. скан.».
+					}
+					else
+#endif
 					if (uiDataGlobal.Scan.active || uiDataGlobal.Scan.toneActive)
 					{
 						if (currentMenu == UI_VFO_MODE)
