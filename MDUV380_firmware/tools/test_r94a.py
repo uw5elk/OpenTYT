@@ -56,6 +56,8 @@ def main():
     if b.returncode == 0:
         old = fields(b.stdout.decode("cp1251")); new = fields(ua)
         d = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k)); check(d == ["talkaround_menu"], "ukrainian.h: змінено лише talkaround_menu: %r" % d)
+    else:
+        print("ПРОПУСК: база недоступна (CI/клон без історії): ukrainian.h «змінено лише talkaround_menu» -- не перевірено (база %s)" % BASE)
     # мутанти
     def mut(n, ua2): Q[0] = True; e = texts_ok(ua2); Q[0] = False; check(bool(e), "мутант «%s»" % n)
     mut("забули підпис", ua.replace('"Без репітера"', '"Talkaround"'))
