@@ -72,7 +72,11 @@ def find_base():
 
 def tokens_of(root, rel, incs, defs):
     r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w"] + incs + defs + [rel], cwd=root, capture_output=True)
-    return r.stdout.split() if r.returncode == 0 else None
+    if r.returncode != 0:
+        return None
+    # R82: два нові UA-поля в кінці stringsTable_t (channels_protect, satellite_mode) законно змінюють токени файлів, що підключають uiLanguage.h; вирізаємо їх (їх перевіряє test_r82.py)
+    out = r.stdout.replace(b"const char channels_protect[17];", b"").replace(b"const char satellite_mode[17];", b"")
+    return out.split()
 
 
 def main():

@@ -298,7 +298,11 @@ static void updateScreen(bool isFirstRun)
 					break;
 #endif
 				case GENERAL_OPTIONS_MENU_SATELLITE_MANUAL_AUTO:
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+					leftSide = currentLanguage->satellite_mode;   // R82: «Супутник» (спільне satellite_short -- «SAT» -- лишається на екрані GPS)
+#else
 					leftSide = currentLanguage->satellite_short;
+#endif
 					rightSideConst = (settingsIsOptionBitSet(BIT_SATELLITE_MANUAL_AUTO) ? currentLanguage->Auto : currentLanguage->manual);
 					break;
 #if defined(FORK_GPS_MENU_ITEM)
@@ -328,7 +332,11 @@ static void updateScreen(bool isFirstRun)
 					break;
 #endif
 					case GENERAL_CHANNELS_ARE_READ_ONLY:
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+						leftSide = currentLanguage->channels_protect;   // R82: «Захист каналів» (спільне locked -- екран блокування, сповіщення -- не чіпаємо)
+#else
 						leftSide = currentLanguage->locked;
+#endif
 						rightSideConst = (settingsIsOptionBitSet(BIT_CHANNELS_ARE_READ_ONLY) ? currentLanguage->on : currentLanguage->off);
 						break;
 			}

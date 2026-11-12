@@ -405,6 +405,9 @@ const stringsTable_t englishLanguage =
 .cp_becomes_none                         = "Becomes: none", // MaxLen: 14
 .cp_set_zone                             = "Set active", // MaxLen: 16
 #endif
+// R82: UA-only menu labels (mirrors ukrainian.h; never shown in non-UA builds)
+.channels_protect                        = "Chan. protect", // MaxLen: 16
+.satellite_mode                          = "Satellite", // MaxLen: 16
 #endif
 };
 /********************************************************************

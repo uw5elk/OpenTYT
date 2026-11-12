@@ -95,7 +95,7 @@ def test_w2_labels():
     check(lang_value("ukrainian.h", "cp_channels") == "Канали", "W2: «Канали» в ukrainian.h")
     check(lang_value("ukrainian.h", "cp_set_zone") == "Встановити", "W2: «Встановити» в ukrainian.h")
     check(lang_value("english.h", "cp_set_zone") is not None, "W2: cp_set_zone є в english.h")
-    blk = f[f.index("cp_channels"):]
+    blk = [x for x in f[f.index("cp_channels"):] if x not in ("channels_protect", "satellite_mode")]   # R82: два UA-поля після cp_set_zone
     check(blk[-1] == "cp_set_zone" and "codeplug_menu" not in f, "W2: cp_set_zone -- останнє поле структури; codeplug_menu прибрано: хвіст %r" % blk[-3:])
     for fld in ("cp_rename", "cp_zone_chans", "cp_delete"):
         check(lang_value("ukrainian.h", fld) is not None, "W2: поле дії %s є" % fld)
@@ -129,7 +129,11 @@ FILES = ["menuSystem.c", "menuZoneList.c", "menuDisplayMenuList.c", "menuCodeplu
 
 def tokens_of(root, rel, incs, defs):
     r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w"] + incs + defs + [rel], cwd=root, capture_output=True)   # байти: мовні файли в cp1251
-    return r.stdout.split() if r.returncode == 0 else None
+    if r.returncode != 0:
+        return None
+    # R82: два нові UA-поля в кінці stringsTable_t (channels_protect, satellite_mode) законно змінюють токени файлів, що підключають uiLanguage.h; вирізаємо їх (їх перевіряє test_r82.py)
+    out = r.stdout.replace(b"const char channels_protect[17];", b"").replace(b"const char satellite_mode[17];", b"")
+    return out.split()
 
 
 def test_w5_default_unchanged():

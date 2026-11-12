@@ -442,6 +442,9 @@ typedef struct
    const char cp_becomes_none[LANGUAGE_TEXTS_LENGTH];
    const char cp_set_zone[LANGUAGE_TEXTS_LENGTH];   // R46: дія над зоною «Встановити» (зробити поточною)
 #endif
+   // R82: підписи меню, окремі від спільних `locked` і `satellite_short`
+   const char channels_protect[LANGUAGE_TEXTS_LENGTH];
+   const char satellite_mode[LANGUAGE_TEXTS_LENGTH];
 #endif
 } stringsTable_t;
 

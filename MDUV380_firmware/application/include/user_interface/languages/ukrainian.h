@@ -166,7 +166,7 @@ const stringsTable_t ukrainianLanguage =
 .start                                   = "Початок", // MaxLen: 16
 .both                                    = "Обидва", // MaxLen: 16
 .vox_threshold                           = "Поріг VOX", // MaxLen: 16
-.vox_tail                                = "VOX tail", // MaxLen: 16
+.vox_tail                                = "Хвіст VOX", // MaxLen: 16
 .audio_prompt                            = "Звуки", // MaxLen: 16
 .silent                                  = "Тихо", // MaxLen: 16
 .rx_beep                                 = "Звук RX", // MaxLen: 16
@@ -199,7 +199,7 @@ const stringsTable_t ukrainianLanguage =
 .celcius                                 = "°C", // MaxLen: 16
 .seconds                                 = "секунд", // MaxLen: 16
 .radio_info                              = "Параметри", // MaxLen: 16
-.temperature_calibration                 = "Temp Cal", // MaxLen: 16
+.temperature_calibration                 = "Калібр. темп.", // MaxLen: 16
 .pin_code                                = "PIN-код", // MaxLen: 16
 .please_confirm                          = "Підтвердіть", // MaxLen: 16
 .vfo_freq_bind_mode                      = "Прив'язка", // MaxLen: 16
@@ -208,7 +208,7 @@ const stringsTable_t ukrainianLanguage =
 .buttons                                 = "Кнопки", // MaxLen: 16
 .leds                                    = "Індикатори", // MaxLen: 16
 .scan_dwell_time                         = "Утримання", // MaxLen: 16
-.battery_calibration                     = "Batt. Cal", // MaxLen: 16
+.battery_calibration                     = "Калібр. акум.", // MaxLen: 16
 .low                                     = "Низький", // MaxLen: 16
 .high                                    = "Високий", // MaxLen: 16
 .dmr_id                                  = "DMR ID", // MaxLen: 16
@@ -332,7 +332,7 @@ const stringsTable_t ukrainianLanguage =
 .aes_keys                                = "Ключі AES", // MaxLen: 16
 .encrypt_tx                              = "Шифр. TX", // MaxLen: 16
 #if defined(ENABLE_DMR_DATA)
-.messages                                = "Повідомлення", // MaxLen: 16
+.messages                                = "SMS DMR", // MaxLen: 16
 .remote_control            = "Адміністрування", // MaxLen: 16
 .rctl_config                              = "Доступ RCTL", // MaxLen: 16
 #endif
@@ -406,6 +406,9 @@ const stringsTable_t ukrainianLanguage =
 .cp_becomes_none                         = "Стане: Немає", // MaxLen: 14 (у тих каналах контакт стане «Немає»)
 .cp_set_zone                             = "Встановити", // MaxLen: 16 (дія над зоною: зробити поточною, R46)
 #endif
+// R82: нові підписи меню, окремі від спільних `locked` (екран блокування, сповіщення) і `satellite_short` (екран GPS)
+.channels_protect                        = "Захист кан.", // MaxLen: 16
+.satellite_mode                          = "Супутник", // MaxLen: 16
 #endif
 };
 /********************************************************************
