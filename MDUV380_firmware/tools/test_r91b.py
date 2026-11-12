@@ -132,7 +132,10 @@ def main():
         if b is None:
             print("test_r91b: коміт %s недоступний -- п.5 пропущено" % BASE)
             break
-        check(b.decode("utf-8", "replace") == open(os.path.join(FW, rel), "rb").read().decode("utf-8", "replace"), "%s ідентичний базі %s (APRS не змінено)" % (os.path.basename(rel), BASE))
+        cur = open(os.path.join(FW, rel), "rb").read().decode("utf-8", "replace")
+        # R97: «Подвійний прийом» призупиняє APRS-прийом окремим блоком під DUAL_CHANNEL_ENABLED (лише з ENABLE_DUAL_CHANNEL) -- без нього файл як у базі
+        cur = re.sub(r"#if defined\(DUAL_CHANNEL_ENABLED\)\n\tif \(dcIsEnabled\(\)\)\n\t\{\n[^\n]*R97[^\n]*\n\t\}\n#endif\n", "", cur)
+        check(b.decode("utf-8", "replace") == cur, "%s ідентичний базі %s (APRS не змінено; блок R97 під прапорцем не враховано)" % (os.path.basename(rel), BASE))
     bu = git_show("application/source/user_interface/uiUtilities.c")
     if bu is not None:
         cur = rd(os.path.join(UI, "uiUtilities.c"))

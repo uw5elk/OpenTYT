@@ -173,7 +173,7 @@ def zone_menu_problems(text):
 
 def channel_menu_problems(text, hdr):
     p = []
-    if not re.search(r"CH_SCREEN_QUICK_MENU_DELETE,[^\n]*\n#endif\n#if defined\(CH_QUICKMENU_ZONE_REMOVE_ENABLED\)\n\tCH_SCREEN_QUICK_MENU_ZONE_REMOVE,[^\n]*\n#endif\n\tNUM_CH_SCREEN_QUICK_MENU_ITEMS", hdr):
+    if not re.search(r"CH_SCREEN_QUICK_MENU_DELETE,[^\n]*\n#endif\n#if defined\(CH_QUICKMENU_ZONE_REMOVE_ENABLED\)\n\tCH_SCREEN_QUICK_MENU_ZONE_REMOVE,[^\n]*\n#endif\n(?:#if defined\(DUAL_CHANNEL_ENABLED\)\n(?:\t[^\n]*\n)+#endif\n)?\tNUM_CH_SCREEN_QUICK_MENU_ITEMS", hdr):   # R97: пункти «Подвійного прийому» -- лише ПІСЛЯ (під своїм прапорцем)
         p.append("«Вийняти із зони» не останній пункт швидкого меню (зсунулись би номери швидких клавіш)")
     if not re.search(r"QUICKKEY_ENTRYID\(ev->function\) == CH_SCREEN_QUICK_MENU_ZONE_REMOVE\)\)\n\t\t\{\n[^\n]*\n\t\t\treturn;", text):
         p.append("виймання виконується швидкою клавішею")
