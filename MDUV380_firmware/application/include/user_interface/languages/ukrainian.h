@@ -125,9 +125,9 @@ const stringsTable_t ukrainianLanguage =
 .beep_volume                             = "Гучність", // MaxLen: 16
 .dmr_mic_gain                            = "Мікр. DMR", // MaxLen: 16
 .fm_mic_gain                             = "Мікр. FM", // MaxLen: 16
-.key_long                                = "Довге нат.", // MaxLen: 16
-.key_repeat                              = "Повтор", // MaxLen: 16
-.dmr_filter_timeout                      = "Час фільтра", // MaxLen: 16
+.key_long                                = "Довгий нат.", // MaxLen: 16
+.key_repeat                              = "Повт. клав.", // MaxLen: 16
+.dmr_filter_timeout                      = "Утрим. слота", // MaxLen: 16
 .brightness                              = "Яскравість", // MaxLen: 16
 .brightness_off                          = "Мін. яскр.", // MaxLen: 16
 .contrast                                = "Контраст", // MaxLen: 16
@@ -156,12 +156,12 @@ const stringsTable_t ukrainianLanguage =
 .Auto                                    = "Авто", // MaxLen: 16
 .manual                                  = "Ручний", // MaxLen: 16
 .ptt_toggle                              = "Фікс. PTT", // MaxLen: 16
-.private_call_handling                   = "Дозвіл PC", // MaxLen: 16
+.private_call_handling                   = "Прив. викл.", // MaxLen: 16
 .stop                                    = "Стоп", // MaxLen: 16
 .one_line                                = "1 рядок", // MaxLen: 16
 .two_lines                               = "2 рядки", // MaxLen: 16
 .new_channel                             = "Новий канал", // MaxLen: 16
-.priority_order                          = "Порядок", // MaxLen: 16
+.priority_order                          = "Пріор.", // MaxLen: 16
 .dmr_beep                                = "Звук DMR", // MaxLen: 16
 .start                                   = "Початок", // MaxLen: 16
 .both                                    = "Обидва", // MaxLen: 16
@@ -192,7 +192,7 @@ const stringsTable_t ukrainianLanguage =
 .from_master                             = "Загальна", // MaxLen: 16
 .set_quickkey                            = "Швидка клав.", // MaxLen: 16
 .dual_watch                              = "Dual Watch", // MaxLen: 16
-.info                                    = "Інфо", // MaxLen: 16
+.info                                    = "Позначки", // MaxLen: 16
 .pwr                                     = "Потуж.", // MaxLen: 16
 .user_power                              = "Своя потуж.", // MaxLen: 16
 .temperature                             = "Температура", // MaxLen: 16
@@ -322,7 +322,7 @@ const stringsTable_t ukrainianLanguage =
 .auto_lock                               = "Автоблок.", // MaxLen: 16
 .trackball                               = "Trackball", // MaxLen: 16
 .dmr_force_dmo                           = "DMO", // MaxLen: 16
-.tx_inhibit                              = "Блок. TX", // MaxLen: 16
+.tx_inhibit                              = "Заборона TX", // MaxLen: 16
 .latitude_short                          = "Шир", // MaxLen: 16
 .longitude_short                         = "Довг", // MaxLen: 16
 .text_size                               = "Розмір тексту", // MaxLen: 16
@@ -411,6 +411,14 @@ const stringsTable_t ukrainianLanguage =
 .satellite_mode                          = "Супутник", // MaxLen: 16
 // R94: швидке меню каналу; спільне `talkaround` (голосова підказка) не чіпаємо
 .talkaround_menu                         = "Без репітера", // MaxLen: 16
+// R95: нові підписи меню, окремі від спільних `talker` (значення «Звук RX»), `contact` (інші екрани) -- див. R82/R94
+.talker_beep                             = "Біп абон.", // MaxLen: 16
+.contact_lines                           = "Рядки", // MaxLen: 16
+// R95: значення «Пріор. імені» (КП = кодплаг, БД = база DMR ID, TA = Talker Alias)
+.contact_order_0                         = "КП/БД/TA", // MaxLen: 16
+.contact_order_1                         = "БД/КП/TA", // MaxLen: 16
+.contact_order_2                         = "TA/КП/БД", // MaxLen: 16
+.contact_order_3                         = "TA/БД/КП", // MaxLen: 16
 #endif
 };
 /********************************************************************

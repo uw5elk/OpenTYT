@@ -73,7 +73,7 @@ def check_texts(ua, msgs_ua, gen, sv):
         if f.get(k) != v:
             out.append("ukrainian.h: %s = %r, очікувано %r" % (k, f.get(k), v))
     names = list(f)
-    if not ([n for n in names if n != "talkaround_menu"][-2:] == ["channels_protect", "satellite_mode"]):
+    if not ([n for n in names if n not in ("talkaround_menu", "talker_beep", "contact_lines", "contact_order_0", "contact_order_1", "contact_order_2", "contact_order_3")][-2:] == ["channels_protect", "satellite_mode"]):
         out.append("нові поля не останні в ukrainian.h: %r" % names[-3:])
     if f.get("locked") != "Ch. blocked" or f.get("satellite_short") != "SAT":
         out.append("спільні locked/satellite_short змінено (екран блокування/GPS)")
@@ -120,7 +120,7 @@ def main():
     th = pp(incs, cf["AES0"], "application/include/user_interface/languages/uiLanguage.h")
     check(th is not None and "channels_protect" not in th and "satellite_mode" not in th, "не-UA: stringsTable_t без нових полів (розкладка не змінилась)")
     th = pp(incs, cf["FULLUSER"], "application/include/user_interface/languages/uiLanguage.h")
-    check(th is not None and th.rstrip().rsplit("stringsTable_t", 1)[0].rstrip().rstrip("}").rstrip().replace("const char talkaround_menu[17];", "").rstrip().endswith("satellite_mode[17];"), "UA: нові поля останні в stringsTable_t")
+    check(th is not None and th.rstrip().rsplit("stringsTable_t", 1)[0].rstrip().rstrip("}").rstrip().replace("const char talkaround_menu[17];", "").replace("const char talker_beep[17];", "").replace("const char contact_lines[17];", "").replace("const char contact_order_0[17];", "").replace("const char contact_order_1[17];", "").replace("const char contact_order_2[17];", "").replace("const char contact_order_3[17];", "").rstrip().endswith("satellite_mode[17];"), "UA: нові поля останні в stringsTable_t")
 
     # 3 решта мов не чіпано
     chg = subprocess.run(["git", "-C", FW, "diff", "--name-only", BASE, "--", "application/include/user_interface/languages"], capture_output=True, text=True).stdout.split()
@@ -132,7 +132,7 @@ def main():
             old = fields(b.decode("cp1251"))
             new = fields(ua)
             diff = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
-            check(diff == sorted(["vox_tail", "temperature_calibration", "battery_calibration", "messages", "channels_protect", "satellite_mode", "talkaround_menu"]), "ukrainian.h: змінено рівно 6 полів R82 + talkaround_menu (R94): %r" % diff)
+            check(diff == sorted(["vox_tail", "temperature_calibration", "battery_calibration", "messages", "channels_protect", "satellite_mode", "talkaround_menu", "talker_beep", "contact_lines", "contact_order_0", "contact_order_1", "contact_order_2", "contact_order_3", "key_long", "key_repeat", "dmr_filter_timeout", "private_call_handling", "tx_inhibit", "priority_order", "info"]), "ukrainian.h: змінено рівно 6 полів R82 + talkaround_menu (R94): %r" % diff)
             for k in ("trackball", "hotspot_mode", "dmr_crc", "gps", "on", "off", "yes", "no", "none", "utc"):
                 if k in old:
                     check(old.get(k) == new.get(k), "поле %s не чіпано" % k)

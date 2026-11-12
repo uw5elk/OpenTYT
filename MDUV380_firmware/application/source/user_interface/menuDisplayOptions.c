@@ -78,7 +78,9 @@ static const int BACKLIGHT_MAX_PERCENTAGE = 100;
 static const int BACKLIGHT_PERCENTAGE_STEP = 10;
 static const int BACKLIGHT_PERCENTAGE_STEP_SMALL = 1;
 
+#if !defined(LANGUAGE_BUILD_UKRAINIAN)   // R95: в українській збірці значення беруться з мовних полів contact_order_N
 static const char *contactOrders[] = { "Ct/DB/TA", "DB/Ct/TA", "TA/Ct/DB", "TA/DB/Ct" };
+#endif
 
 enum
 {
@@ -348,13 +350,25 @@ static void updateScreen(bool isFirstRun)
 
 				case DISPLAY_MENU_CONTACT_DISPLAY_ORDER:
 					leftSide = currentLanguage->priority_order;
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+					{
+						// R95: КП/БД/TA -- через мовні поля (кирилиця в .c заборонена)
+						const char *orders[] = { currentLanguage->contact_order_0, currentLanguage->contact_order_1, currentLanguage->contact_order_2, currentLanguage->contact_order_3 };
+						snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", orders[nonVolatileSettings.contactDisplayPriority]);
+					}
+#else
 					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", contactOrders[nonVolatileSettings.contactDisplayPriority]);
+#endif
 					break;
 
 				case DISPLAY_MENU_CONTACT_DISPLAY_SPLIT_CONTACT:
 					{
 						const char *splitContact[] = { currentLanguage->one_line, currentLanguage->two_lines, currentLanguage->Auto };
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+						leftSide = currentLanguage->contact_lines;   // R95: «Рядки імені» (спільне contact -- інші екрани -- не чіпаємо)
+#else
 						leftSide = currentLanguage->contact;
+#endif
 						rightSideConst = splitContact[nonVolatileSettings.splitContact];
 					}
 					break;

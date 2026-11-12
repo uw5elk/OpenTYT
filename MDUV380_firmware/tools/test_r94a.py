@@ -26,7 +26,7 @@ def pp(incs, defs, rel):
 def texts_ok(ua):
     f = fields(ua); o = []
     if f.get("talkaround_menu") != "Без репітера": o.append("talkaround_menu")
-    if list(f)[-1] != "talkaround_menu": o.append("talkaround_menu не останнє")
+    if [n for n in f if not n.startswith(("talker_beep", "contact_lines", "contact_order_"))][-1] != "talkaround_menu": o.append("talkaround_menu не останнє (після нього лише поля R95)")
     if f.get("talkaround") != "Talkaround": o.append("спільне talkaround змінено")
     if f.get("roaming") != "Roaming": o.append(".roaming змінено")
     if f.get("aes_keys") != "Ключі AES": o.append("aes_keys")
@@ -55,7 +55,7 @@ def main():
     b = subprocess.run(["git", "-C", FW, "show", "%s:MDUV380_firmware/application/include/user_interface/languages/ukrainian.h" % BASE], capture_output=True)
     if b.returncode == 0:
         old = fields(b.stdout.decode("cp1251")); new = fields(ua)
-        d = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k)); check(d == ["talkaround_menu"], "ukrainian.h: змінено лише talkaround_menu: %r" % d)
+        d = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k)); check("talkaround_menu" in d and not {"talkaround", "roaming", "aes_keys"} & set(d), "ukrainian.h: talkaround_menu змінено, спільні talkaround/roaming/aes_keys ні (інші зміни -- пізніші R95): %r" % d)
     else:
         print("ПРОПУСК: база недоступна (CI/клон без історії): ukrainian.h «змінено лише talkaround_menu» -- не перевірено (база %s)" % BASE)
     # мутанти

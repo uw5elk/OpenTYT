@@ -223,7 +223,11 @@ static void updateScreen(bool isFirstRun)
 					}
 					break;
 				case OPTIONS_MENU_RX_TALKER_BEGIN_BEEP:
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+					leftSide = currentLanguage->talker_beep;   // R95: «Сигнал абон.» (спільне talker -- значення «Звук RX» -- не чіпаємо)
+#else
 					leftSide = currentLanguage->talker;
+#endif
 					if ((nonVolatileSettings.audioPromptMode == AUDIO_PROMPT_MODE_SILENT) ||
 							((nonVolatileSettings.beepOptions & BEEP_RX_TALKER) == 0) || (((nonVolatileSettings.beepOptions >> 2) & 0x03) == 0))
 					{

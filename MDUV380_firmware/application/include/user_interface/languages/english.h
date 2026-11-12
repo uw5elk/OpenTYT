@@ -410,6 +410,13 @@ const stringsTable_t englishLanguage =
 .satellite_mode                          = "Satellite", // MaxLen: 16
 // R94: UA-only quick-menu label (mirrors ukrainian.h)
 .talkaround_menu                         = "No repeater", // MaxLen: 16
+// R95: UA-only labels (mirrors ukrainian.h; never shown in non-UA builds)
+.talker_beep                             = "Talker beep", // MaxLen: 16
+.contact_lines                           = "Name lines", // MaxLen: 16
+.contact_order_0                         = "Ct/DB/TA", // MaxLen: 16
+.contact_order_1                         = "DB/Ct/TA", // MaxLen: 16
+.contact_order_2                         = "TA/Ct/DB", // MaxLen: 16
+.contact_order_3                         = "TA/DB/Ct", // MaxLen: 16
 #endif
 };
 /********************************************************************

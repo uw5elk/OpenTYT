@@ -447,6 +447,13 @@ typedef struct
    const char satellite_mode[LANGUAGE_TEXTS_LENGTH];
    // R94: підпис швидкого меню каналу, окремий від спільного `talkaround` (голосова підказка)
    const char talkaround_menu[LANGUAGE_TEXTS_LENGTH];
+   // R95: підпис пункту «Сигнал абон.» (спільне `talker` -- значення «Звук RX»), «Рядки імені» (спільне `contact`), значення «Пріор. імені»
+   const char talker_beep[LANGUAGE_TEXTS_LENGTH];
+   const char contact_lines[LANGUAGE_TEXTS_LENGTH];
+   const char contact_order_0[LANGUAGE_TEXTS_LENGTH];
+   const char contact_order_1[LANGUAGE_TEXTS_LENGTH];
+   const char contact_order_2[LANGUAGE_TEXTS_LENGTH];
+   const char contact_order_3[LANGUAGE_TEXTS_LENGTH];
 #endif
 } stringsTable_t;
 

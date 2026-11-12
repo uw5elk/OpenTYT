@@ -95,7 +95,7 @@ def test_w2_labels():
     check(lang_value("ukrainian.h", "cp_channels") == "Канали", "W2: «Канали» в ukrainian.h")
     check(lang_value("ukrainian.h", "cp_set_zone") == "Встановити", "W2: «Встановити» в ukrainian.h")
     check(lang_value("english.h", "cp_set_zone") is not None, "W2: cp_set_zone є в english.h")
-    blk = [x for x in f[f.index("cp_channels"):] if x not in ("channels_protect", "satellite_mode", "talkaround_menu")]   # R82: два UA-поля після cp_set_zone
+    blk = [x for x in f[f.index("cp_channels"):] if x not in ("channels_protect", "satellite_mode", "talkaround_menu", "talker_beep", "contact_lines", "contact_order_0", "contact_order_1", "contact_order_2", "contact_order_3")]   # R82: два UA-поля після cp_set_zone
     check(blk[-1] == "cp_set_zone" and "codeplug_menu" not in f, "W2: cp_set_zone -- останнє поле структури; codeplug_menu прибрано: хвіст %r" % blk[-3:])
     for fld in ("cp_rename", "cp_zone_chans", "cp_delete"):
         check(lang_value("ukrainian.h", fld) is not None, "W2: поле дії %s є" % fld)
@@ -132,7 +132,7 @@ def tokens_of(root, rel, incs, defs):
     if r.returncode != 0:
         return None
     # R82: два нові UA-поля в кінці stringsTable_t (channels_protect, satellite_mode) законно змінюють токени файлів, що підключають uiLanguage.h; вирізаємо їх (їх перевіряє test_r82.py)
-    out = r.stdout.replace(b"const char channels_protect[17];", b"").replace(b"const char satellite_mode[17];", b"").replace(b"const char talkaround_menu[17];", b"")
+    out = r.stdout.replace(b"const char channels_protect[17];", b"").replace(b"const char satellite_mode[17];", b"").replace(b"const char talkaround_menu[17];", b"").replace(b"const char talker_beep[17];", b"").replace(b"const char contact_lines[17];", b"").replace(b"const char contact_order_0[17];", b"").replace(b"const char contact_order_1[17];", b"").replace(b"const char contact_order_2[17];", b"").replace(b"const char contact_order_3[17];", b"")
     return out.split()
 
 
