@@ -36,7 +36,12 @@ static void updateScreen(bool update);
 static void handleEvent(uiEvent_t *ev);
 
 static bool lockDisplayed = false;
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+// R96/А2: в українській збірці екран «SK2 + *» тримається 2 с (500 мс не встигали прочитати); стокова збірка -- 500 мс
+static const uint32_t TIMEOUT_MS = 2000;
+#else
 static const uint32_t TIMEOUT_MS = 500;
+#endif
 static int lockState = LOCK_NONE;
 bool lockscreenIsRearming = false;
 
