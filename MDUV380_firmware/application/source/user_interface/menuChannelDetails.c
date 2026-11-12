@@ -1199,7 +1199,7 @@ static void handleEvent(uiEvent_t *ev)
 		{
 			if ((rootMenuIsVFO == false) && ((menuDataGlobal.currentItemIndex == CH_DETAILS_LOCATION_LAT) || (menuDataGlobal.currentItemIndex == CH_DETAILS_LOCATION_LON)))
 			{
-				if (((SETTINGS_GPS_MODE_GET(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & GPS_STATUS_HAS_FIX) != 0)))
+				if (((SETTINGS_GPS_MODE_EFFECTIVE(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & GPS_STATUS_HAS_FIX) != 0)))
 				{
 					coordinateSetLatOrLonCoord(gpsData.LatitudeHiRes, gpsData.LongitudeHiRes, COORDINATE_CHANNEL_LAT_AND_LON);
 

@@ -377,8 +377,8 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 					settingsLocationIsValid() &&
 					(SETTINGS_CHANNEL_DISTANCE_EFFECTIVE() || (ROAMING_EFFECTIVE() != ROAMING_OFF))
 #if defined(HAS_GPS)
-					&& ((SETTINGS_GPS_MODE_GET(nonVolatileSettings) <= GPS_MODE_OFF) ||
-							((SETTINGS_GPS_MODE_GET(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
+					&& ((SETTINGS_GPS_MODE_EFFECTIVE(nonVolatileSettings) <= GPS_MODE_OFF) ||
+							((SETTINGS_GPS_MODE_EFFECTIVE(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
 #endif
 			)
 			{
@@ -3314,8 +3314,8 @@ static void scanning(void)
 				bool needsToUpdateDistanceDisplay = (settingsLocationIsValid() &&
 						(SETTINGS_CHANNEL_DISTANCE_EFFECTIVE() || (ROAMING_EFFECTIVE() != ROAMING_OFF))
 #if defined(HAS_GPS)
-						&& ((SETTINGS_GPS_MODE_GET(nonVolatileSettings) <= GPS_MODE_OFF) ||
-								((SETTINGS_GPS_MODE_GET(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
+						&& ((SETTINGS_GPS_MODE_EFFECTIVE(nonVolatileSettings) <= GPS_MODE_OFF) ||
+								((SETTINGS_GPS_MODE_EFFECTIVE(nonVolatileSettings) >= GPS_MODE_ON) && ((gpsData.Status & (GPS_STATUS_HAS_FIX | GPS_STATUS_POSITION_UPDATED)) != 0)))
 #endif
 				);
 

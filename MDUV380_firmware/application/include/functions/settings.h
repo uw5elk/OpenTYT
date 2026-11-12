@@ -49,6 +49,13 @@ enum INFO_ON_SCREEN { INFO_ON_SCREEN_OFF = 0x00, INFO_ON_SCREEN_TS = 0x01, INFO_
 #define SETTINGS_GPS_BAUDRATE_GET(x) (((x).gpsModeAndBaudsIndex & 0xF0) >> 4)
 #define SETTINGS_GPS_MODE_SET(x, m) (((x).gpsModeAndBaudsIndex & 0xF0) | ((m) & 0x0F))
 #define SETTINGS_GPS_BAUDRATE_SET(x, b) ((((b) & 0x0F) << 4) | ((x).gpsModeAndBaudsIndex & 0x0F))
+/* R94Б: «ефективний» режим GPS для споживачів інтерфейсу (значок "GPS" у шапці, відстань, копіювання координат у канал). У рації нема GPS-приймача, пункти GPS з меню прибрано
+ * (FORK_NO_GPS_MENU); в українській збірці ефективне значення завжди GPS_MODE_OFF, збережений біт не переписується. Інші збірки -- як було. Апаратну частину (gps.c) не чіпає. */
+#if defined(FORK_NO_GPS_MENU) && defined(LANGUAGE_BUILD_UKRAINIAN)
+#define SETTINGS_GPS_MODE_EFFECTIVE(x) ((void)(x), (uint8_t)GPS_MODE_OFF)
+#else
+#define SETTINGS_GPS_MODE_EFFECTIVE(x) SETTINGS_GPS_MODE_GET(x)
+#endif
 
 typedef enum
 {
