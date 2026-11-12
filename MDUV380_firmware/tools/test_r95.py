@@ -65,6 +65,12 @@ def main():
     r = subprocess.run([sys.executable, os.path.join(HERE, "check_string_encoding.py")], capture_output=True, text=True); check(r.returncode == 0, "check_string_encoding чисто")
     dsp = rd(os.path.join(APP, "source", "user_interface", "menuDisplayOptions.c")); snd = rd(os.path.join(APP, "source", "user_interface", "menuSoundOptions.c"))
     check(not re.search(r'"[^"\n]*[А-Яа-яІіЇїЄєҐґ][^"\n]*"', re.sub(r"//[^\n]*", "", dsp + snd)), "у .c нема кириличних рядкових літералів")
+    wf = os.path.join(FW, "..", ".github", "workflows")
+    if os.path.isdir(wf):
+        txt = "".join(rd(os.path.join(wf, f)) for f in sorted(os.listdir(wf)) if f.endswith((".yml", ".yaml")))
+        check("ubuntu-latest" not in txt and "ubuntu-24.04" in txt, "CI: ubuntu-latest замінено на ubuntu-24.04")
+    else:
+        print("ПРОПУСК: .github/workflows відсутній")
     # база
     if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode == 0:
         b = subprocess.run(["git", "-C", FW, "show", "%s:MDUV380_firmware/application/include/user_interface/languages/ukrainian.h" % BASE], capture_output=True)

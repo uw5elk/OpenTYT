@@ -25,7 +25,7 @@ jobs:
   #                             RCFG_HINT і RCTL_SEND_FAILED;
   #   * check_smeter_align.py -- цифри шкали S-метра стояли на піксель лівіше за поділки.
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: перевірки (синтаксис, ширина меню, вирівнювання S-метра)
     steps:
       - name: Завантажити код (checkout)
@@ -71,7 +71,7 @@ jobs:
         run: ./MDUV380_firmware/tests/run_tests.sh
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         aes: ["0", "1"]
@@ -151,7 +151,7 @@ jobs:
   # Приймач в обох однаковий (приймає MI з ефіру й сам вчить конвенцію). Звичайна збірка aes вище
   # (openuv380-10w-aes1) лишається без змін і збігається з aes-mi-next байт-у-байт за кодом.
   build-aes-mi:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         variant: ["next", "current"]
@@ -210,7 +210,7 @@ jobs:
   # Діагностика коштує CCM (кільця) -- ці збірки НЕ для користування. continue-on-error: переповнення CCMRAM тут не має
   # червонити коміт; звіт про пам'ять (крок нижче) покаже, скільки не вистачило.
   build-aes-diag:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     strategy:
       matrix:
@@ -258,7 +258,7 @@ jobs:
   # тулчейн для цього не потрібен (а на Windows/macOS збірка й неможлива: Makefile
   # викликає tools/codec_cleaner.Linux, x86-64 ELF).
   build-ukrainian:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: build (українська, ENABLE_AES=1 ENABLE_DMR_DATA=1)
     # contents: write -- лише для публікації .bin у GitHub Release (крок нижче). Release-assets
     # НЕ входять у квоту сховища артефактів Actions, тож прошивку можна забрати навіть тоді,
@@ -420,7 +420,7 @@ jobs:
   # проби не містить. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-diag:
     needs: build-ukrainian
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: build (діагностична, APRS проба + приймач)
     permissions:
       contents: write
@@ -508,7 +508,7 @@ jobs:
   # у користувацьку прошивку (build-ukrainian) не потрапляє. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-volprobe:
     needs: build-ukrainian
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: build (діагностична, «Гучн. проба» R77A)
     permissions:
       contents: write
@@ -579,7 +579,7 @@ jobs:
   # не потрапляє. Файл у релізі ci-<sha>: openuv380-10w-ukrainian-tadiag-<sha>.bin. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-tadiag:
     needs: build-ukrainian
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: build (діагностична, «TA diag» R88)
     permissions:
       contents: write
@@ -655,7 +655,7 @@ jobs:
   # Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-roam-diag:
     needs: build-ukrainian
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: build (діагностична, роумінг + журнал пробудження)
     permissions:
       contents: write
@@ -736,7 +736,7 @@ jobs:
   # (tools/mem_report.py). Артефакт і реліз НЕ створює -- у звичайну користувацьку збірку роумінг не вмикається, доки цифри не розглянуто.
   # Без журналу в меню нема пункту «Журнал пробудж.».
   build-ukrainian-roam:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: build (українська користувацька + роумінг, без журналу -- лише виміри)
     steps:
       - name: Завантажити код (checkout)
