@@ -25,7 +25,8 @@
 
 /* R60: вибір списку 1..10. */
 #define ROAM_PICK_TITLE       "Списки роумінгу"
-#define ROAM_PICK_ROW_FMT     "Список %u"
+#define ROAM_PICK_ROW_FMT     "%u"   /* R96: у переліку «Списки» без імені -- лише номер (з іменем: «N ім'я») */
+#define ROAM_PICK_TITLE_FMT   "Список %u"   /* R96: заголовок екрана дій / підтвердження очищення */
 
 /* R60: члени списку; останній рядок додає канал. */
 #define ROAM_MEM_TITLE_FMT    "Список %u (%u)"

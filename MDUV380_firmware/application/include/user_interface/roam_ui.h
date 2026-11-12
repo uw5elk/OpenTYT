@@ -23,6 +23,7 @@
 #define ROAM_DET_LABEL        "Roam list"
 #define ROAM_PICK_TITLE       "Roaming lists"
 #define ROAM_PICK_ROW_FMT     "List %u"
+#define ROAM_PICK_TITLE_FMT   "List %u"   /* R96: заголовок екрана дій / підтвердження; в англійській збігається з рядком переліку */
 #define ROAM_MEM_TITLE_FMT    "List %u (%u)"
 #define ROAM_ADD_ROW          "+ Add channel..."
 #define ROAM_ADD_TITLE_FMT    "To list %u"

@@ -384,8 +384,9 @@ static const char *channelRow(char *buf, size_t len, int num)
 	return buf;
 }
 
-/* Рядок списку list (1..10) для екрана «Списки»: «Список N», а з іменем (R64) -- «N ім'я», до 18 символів. */
-static void pickRowText(char *buf, size_t len, unsigned list)
+/* Рядок списку list (1..10): з іменем (R64) -- «N ім'я», до 18 символів; без імені -- ROAM_PICK_ROW_FMT (R96: в українській лише номер «3» у переліку «Списки»).
+ * asTitle -- заголовок екрана дій і підтвердження очищення: там голий номер нічого не пояснює, тож без імені береться ROAM_PICK_TITLE_FMT («Список 3»). */
+static void pickRowText(char *buf, size_t len, unsigned list, bool asTitle)
 {
 #if defined(ROAM_NAMES_ENABLED)
 	char nm[ROAM_NAME_LEN + 1U];
@@ -397,7 +398,7 @@ static void pickRowText(char *buf, size_t len, unsigned list)
 		return;
 	}
 #endif
-	snprintf(buf, len, ROAM_PICK_ROW_FMT, list);
+	snprintf(buf, len, asTitle ? ROAM_PICK_TITLE_FMT : ROAM_PICK_ROW_FMT, list);
 }
 
 static void listUpdate(void)
@@ -435,7 +436,7 @@ static void listUpdate(void)
 #if defined(ROAM_NAMES_ENABLED)
 	if (view == ROAM_VIEW_ACTIONS)
 	{
-		pickRowText(buf, sizeof buf, s_roam.list);
+		pickRowText(buf, sizeof buf, s_roam.list, true);
 		txt = buf;
 	}
 #endif
@@ -464,7 +465,7 @@ static void listUpdate(void)
 #endif
 		else
 		{
-			pickRowText(buf, sizeof buf, (unsigned)(mNum + 1));
+			pickRowText(buf, sizeof buf, (unsigned)(mNum + 1), false);
 			txt = buf;
 		}
 
@@ -896,7 +897,7 @@ static void confirmUpdate(void)
 	{
 		displayClearBuf();
 		menuDisplayTitle(ROAM_CLR_TITLE);
-		pickRowText(buf, sizeof buf, s_roam.list);
+		pickRowText(buf, sizeof buf, s_roam.list, true);
 		displayPrintCentered(24, buf, FONT_SIZE_3);
 		snprintf(buf, sizeof buf, ROAM_CLR_FMT, (unsigned)s_roam.count);
 		displayPrintCentered(44, buf, FONT_SIZE_3);
