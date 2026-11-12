@@ -126,7 +126,13 @@ static void updateTrxID(void);
 static void initSortedChannels(void);
 #if defined(DUAL_CHANNEL_ENABLED)
 // R97: «Подвійний прийом» (реалізація -- після uiChannelModeIsScanning())
+static bool dualIsRunning(void);
+static void dualSuspend(void);
+static void dualScanning(void);
+static void dualAutoResume(void);
 static void dualQuickMenuApply(bool setB);
+static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
+static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
 #endif
 
 static char currentZoneName[SCREEN_LINE_BUFFER_SIZE];
@@ -306,6 +312,9 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 
 		if (ev->events == NO_EVENT)
 		{
+#if defined(DUAL_CHANNEL_ENABLED)
+			dualAutoResume();   // R97: увімкнений режим, який зупинила клавіша/меню/передача, -- відновити (і відкладений запис блоку 18)
+#endif
 			bool updateLHDisplay = ((nonVolatileSettings.lastTalkerOnScreenTimer > 0U) &&
 					(uiDataGlobal.lastHeardCount > 0) &&
 					(uiDataGlobal.Scan.active == false) &&
@@ -648,6 +657,15 @@ void uiChannelModeLoadChannelData(bool useChannelDataInMemory, bool loadVoicePro
 #endif
 	int previousSelectedChannelNumber = uiDataGlobal.currentSelectedChannelNumber;
 
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (useChannelDataInMemory && dcIsOnB())
+	{
+		// R97: рація на каналі B «Подвійного прийому» -- у пам'яті саме його запис, тож номер -- B (як у роумінгу R59: збереження каналу
+		// піде в його власний запис); «останній канал зони», зона й налаштування НЕ змінюються.
+		uiDataGlobal.currentSelectedChannelNumber = dcChannelB();
+	}
+	else
+#endif
 #if defined(ENABLE_ROAM_RETRY)
 	if (useChannelDataInMemory && roamIsActive())
 	{
@@ -3258,6 +3276,13 @@ static void updateTrxID(void)
 
 static void scanning(void)
 {
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)
+	{
+		dualScanning();   // R97: окремий рушій (звичайне сканування нижче не зачеплене)
+		return;
+	}
+#endif
 	// After initial settling time
 	if((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING) && (uiDataGlobal.Scan.timer.timeout > SCAN_SKIP_CHANNEL_INTERVAL) && (uiDataGlobal.Scan.timer.timeout < (uiDataGlobal.Scan.dwellTime - SCAN_FREQ_CHANGE_SETTLING_INTERVAL)))
 	{
@@ -3461,6 +3486,13 @@ static void scanStop(bool loadChannel)
 
 void uiChannelModeStopScanning(void)
 {
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (dualIsRunning())
+	{
+		dualSuspend();   // R97: швидке меню, «Режим APRS» тощо -- зупинити чергування (рація на A), режим лишається ввімкненим
+		return;
+	}
+#endif
 	uiDataGlobal.Scan.active = false;
 	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN; // Force screen refresh
 
@@ -3506,6 +3538,70 @@ bool uiChannelModeIsScanning(void)
 
 #define DUAL_RESUME_QUIET_MS   1000U   // скільки тиші на клавіатурі перед відновленням чергування
 
+static bool dualIsRunning(void)
+{
+	return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL));
+}
+
+// Витримка на каналі -- той самий розрахунок, що в scanApplyNextChannel() (DMR slow/fast, FM).
+static void dualSetDwell(void)
+{
+	if (trxGetMode() == RADIO_MODE_DIGITAL)
+	{
+		int dwellTime;
+
+		if (uiDataGlobal.Scan.stepTimeMilliseconds > 150)
+		{
+			dwellTime = ((currentRadioDevice->trxDMRModeRx == DMR_MODE_DMO) ? SCAN_DMR_SIMPLEX_SLOW_MIN_DWELL_TIME : SCAN_DMR_DUPLEX_SLOW_MIN_DWELL_TIME);
+		}
+		else
+		{
+			dwellTime = ((currentRadioDevice->trxDMRModeRx == DMR_MODE_DMO) ? SCAN_DMR_SIMPLEX_FAST_MIN_DWELL_TIME : (SCAN_DMR_DUPLEX_FAST_MIN_DWELL_TIME + SCAN_DMR_DUPLEX_FAST_EXTRA_DWELL_TIME));
+		}
+
+		uiDataGlobal.Scan.dwellTime = ((uiDataGlobal.Scan.stepTimeMilliseconds < dwellTime) ? dwellTime : uiDataGlobal.Scan.stepTimeMilliseconds);
+	}
+	else
+	{
+		uiDataGlobal.Scan.dwellTime = uiDataGlobal.Scan.stepTimeMilliseconds;
+	}
+
+	uiDataGlobal.Scan.timer.timeout = uiDataGlobal.Scan.dwellTime;
+}
+
+// Налаштувати рацію на A (поточний канал зони) або B, НЕ змінюючи «останній канал зони», зону й налаштування (на відміну від
+// scanApplyNextChannel()). Для B -- гілка R97 у uiChannelModeLoadChannelData() (номер каналу = B, як у роумінгу R59).
+static void dualTune(bool toB)
+{
+	bool wasOnB = dcIsOnB();
+
+	lastHeardClearLastID();
+
+	if (toB)
+	{
+		if (wasOnB == false)
+		{
+			s_dualTgIdxA = nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE];
+		}
+
+		dcSetOnB(true);
+		codeplugChannelGetDataForIndex(dcChannelB(), &channelScreenChannelData);
+		uiChannelModeLoadChannelData(true, false);
+	}
+	else
+	{
+		dcSetOnB(false);
+
+		if (wasOnB && (nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE] != s_dualTgIdxA))
+		{
+			// індекс ТГ спільний для всіх каналів (як у звичайному скануванні); B міг його скинути -- повернути вибір A
+			settingsSet(nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE], s_dualTgIdxA);
+		}
+
+		uiChannelModeLoadChannelData(false, false);
+	}
+}
+
 static uint16_t dualChannelA(void)
 {
 	return ((currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0) ? (uint16_t)codeplugGetLastUsedChannelNumberInCurrentZone() : 0U);
@@ -3528,7 +3624,188 @@ static void dualShowPairError(dcPairCheck_t err)
 	uiNotificationShowShort(2000U, msg, true);
 }
 
-// Пункти швидкого меню (викликається вже на екрані каналу). R97-К2: лише стан у блоці 18; чергування -- К3.
+// Запустити чергування. holdCurrent -- після власної передачі: рація вже на каналі передачі, утримати його «Затр. скан.».
+static bool dualStart(bool holdCurrent)
+{
+	if (voicePromptsIsPlaying())
+	{
+		voicePromptsTerminate();
+	}
+
+	directChannelNumber = 0;
+	uiDataGlobal.talkaround = false;
+	uiDataGlobal.Scan.active = true;
+	uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL;
+	uiDataGlobal.Scan.lastIteration = false;
+	uiDataGlobal.Scan.direction = 1;
+	uiDataGlobal.Scan.stepTimeMilliseconds = settingsGetScanStepTimeMilliseconds();
+	uiDataGlobal.Scan.state = SCAN_STATE_SCANNING;
+	scanNextChannelReady = false;
+
+	if (holdCurrent)
+	{
+		dualSetDwell();
+		uiDataGlobal.Scan.timer.timeout = (nonVolatileSettings.scanDelay * 1000);
+		uiDataGlobal.Scan.state = SCAN_STATE_PAUSED;
+	}
+	else
+	{
+		if (dcIsOnB())
+		{
+			dualTune(false);   // чергування завжди починається з A
+		}
+		dualSetDwell();
+	}
+
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+	uiChannelModeUpdateScreen(0);
+	return true;
+}
+
+// Зупинити чергування, не вимикаючи режим: рація на A (меню, передача з іншого екрана, «чужа» клавіша працюють з A).
+static void dualSuspend(void)
+{
+	if (dcIsOnB())
+	{
+		dualTune(false);
+	}
+
+	uiDataGlobal.Scan.active = false;
+	uiDataGlobal.Scan.scanType = SCAN_TYPE_NORMAL_STEP;
+	uiDataGlobal.Scan.state = SCAN_STATE_SCANNING;
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+}
+
+// Вимкнути режим (RED або пункт швидкого меню): рація лишається на A, зона й канал ті самі.
+static void dualDisable(void)
+{
+	if (dualIsRunning())
+	{
+		dualSuspend();
+	}
+
+	dcSetTxHold(false);
+	(void)dcSetEnabled(false, true);
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+}
+
+static void dualAutoResume(void)
+{
+	dcSaveIfDue(ticksGetMillis());
+
+	if ((dcIsEnabled() == false) || uiDataGlobal.Scan.active || uiDataGlobal.Scan.toneActive ||
+			(menuSystemGetCurrentMenuNumber() != UI_CHANNEL_MODE) || (directChannelNumber != 0) ||
+			uiDataGlobal.displayChannelSettings || monitorModeData.isEnabled || trxTransmissionEnabled ||
+#if defined(APRS_RX)
+			aprsModeIsActive() ||   // «Режим APRS» слухає свою частоту -- режим чекає його завершення
+#endif
+			((ticksGetMillis() - s_dualKeyMs) < DUAL_RESUME_QUIET_MS))
+	{
+		return;
+	}
+
+	dcPairCheck_t chk = dualCheckPair();
+
+	if (chk == DC_PAIR_B_IS_A)
+	{
+		// Поточний канал і є B (щойно «Встановити як B» або валкодер/зона привели A на B): режим чекає, доки A стане іншим каналом,
+		// без сповіщень (інакше щотіка).
+		dcSetTxHold(false);
+		return;
+	}
+
+	if (chk != DC_PAIR_OK)
+	{
+		dcSetTxHold(false);
+		dualDisable();
+		dualShowPairError(chk);
+		uiChannelModeUpdateScreen(0);
+		return;
+	}
+
+	bool hold = dcTxHoldPending();
+
+	dcSetTxHold(false);
+	(void)dualStart(hold);
+}
+
+static void dualScanning(void)
+{
+	if ((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING) && (uiDataGlobal.Scan.timer.timeout > SCAN_SKIP_CHANNEL_INTERVAL) &&
+			(uiDataGlobal.Scan.timer.timeout < (uiDataGlobal.Scan.dwellTime - SCAN_FREQ_CHANGE_SETTLING_INTERVAL)))
+	{
+		bool found = false;
+		int pause = SCAN_SHORT_PAUSE_TIME;
+
+		// Виявлення -- те саме, що в scanning() (DMR slow: синхронізація/захоплений слот; DMR fast і FM: несуча)
+		if (trxGetMode() == RADIO_MODE_DIGITAL)
+		{
+			if (uiDataGlobal.Scan.stepTimeMilliseconds > 150)
+			{
+				if (((nonVolatileSettings.dmrCcTsFilter & DMR_TS_FILTER_PATTERN) &&
+						((slotState != DMR_STATE_IDLE) && ((dmrMonitorCapturedTS != -1) &&
+								(((currentRadioDevice->trxDMRModeRx == DMR_MODE_DMO) && (dmrMonitorCapturedTS == trxGetDMRTimeSlot())) ||
+										(currentRadioDevice->trxDMRModeRx == DMR_MODE_RMO))))) ||
+						HRC6000HasGotSync())
+				{
+					found = true;
+					pause = ((TIMESLOT_DURATION * 12) + TIMESLOT_DURATION) * 4;
+				}
+			}
+			else if (trxCarrierDetected(RADIO_DEVICE_PRIMARY))
+			{
+				found = true;
+				pause = (((nonVolatileSettings.dmrCcTsFilter & DMR_TS_FILTER_PATTERN) == 0) ? (SCAN_SHORT_PAUSE_TIME * 2) : SCAN_SHORT_PAUSE_TIME);
+			}
+		}
+		else if (trxCarrierDetected(RADIO_DEVICE_PRIMARY))
+		{
+			found = true;
+		}
+
+		if (found)
+		{
+			uiDataGlobal.Scan.state = SCAN_STATE_SHORT_PAUSED;
+			uiDataGlobal.Scan.timer.timeout = pause;
+			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;   // виділити рядок, що приймає
+		}
+	}
+
+	// Утримання: ЗАВЖДИ як HOLD (поки є звук -- таймер «Затр. скан.» перезапускається); «Тип скану» STOP/PAUSE режим не вимикає
+	if ((uiDataGlobal.Scan.state == SCAN_STATE_PAUSED) || (uiDataGlobal.Scan.state == SCAN_STATE_SHORT_PAUSED))
+	{
+		if (audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF)
+		{
+			uiDataGlobal.Scan.timer.timeout = (nonVolatileSettings.scanDelay * 1000);
+			uiDataGlobal.Scan.state = SCAN_STATE_PAUSED;
+		}
+	}
+
+	if (uiDataGlobal.Scan.timer.timeout > 0)
+	{
+		uiDataGlobal.Scan.timer.timeout--;
+	}
+	else
+	{
+		bool wasPaused = (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING);
+
+		hidesChannelDetails();
+		uiDataGlobal.Scan.state = SCAN_STATE_SCANNING;
+		dualTune(dcIsOnB() == false);
+		dualSetDwell();
+
+		if (wasPaused)
+		{
+			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;   // зняти виділення / рядок абонента
+		}
+		else
+		{
+			uiUtilityRedrawHeaderOnly(false, false, false);   // шапка -- режим і TS/CC каналу, що слухається; імена не перемальовуються
+		}
+	}
+}
+
+// Пункти швидкого меню (викликається вже на екрані каналу).
 static void dualQuickMenuApply(bool setB)
 {
 	if (setB)
@@ -3541,6 +3818,7 @@ static void dualQuickMenuApply(bool setB)
 			return;
 		}
 
+		// При ввімкненому режимі поточний канал і є A: після «Встановити як B» режим чекає, доки A стане іншим каналом (dualAutoResume)
 		(void)dcSetChannelB(ch, true);
 		uiNotificationShowShort(1500U, currentLanguage->dual_b_saved, true);
 		return;
@@ -3560,9 +3838,17 @@ static void dualQuickMenuApply(bool setB)
 			dualShowPairError(chk);   // режим не стартує
 			return;
 		}
-	}
 
-	(void)dcSetEnabled(dcMenuValue(), true);
+		dcSetTxHold(false);
+		(void)dcSetEnabled(true, true);
+		s_dualKeyMs = 0U;
+		dualAutoResume();
+	}
+	else
+	{
+		dualDisable();
+		uiChannelModeUpdateScreen(0);
+	}
 }
 
 #endif // DUAL_CHANNEL_ENABLED

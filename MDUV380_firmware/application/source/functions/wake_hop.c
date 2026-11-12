@@ -351,6 +351,9 @@ void wakeHopBegin(void)
 	/* Роумінг -- лише в режимі каналів, цифровий канал, не хотспот/реверс/talkaround, функція увімкнена,
 	 * поточний канал у списку. Одне рішення на PTT. */
 	if (wakeHopMayRoam(roamCfgIsEnabled(), roamCurrentList()) &&
+#if defined(DUAL_CHANNEL_ENABLED)
+			(dcIsEnabled() == false) &&   /* R97: «Подвійний прийом» -- автоперехід роумінгу призупинено (налаштування не змінюються) */
+#endif
 			(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&
 			(trxGetMode() == RADIO_MODE_DIGITAL) &&
 			(settingsUsbMode != USB_MODE_HOTSPOT) &&

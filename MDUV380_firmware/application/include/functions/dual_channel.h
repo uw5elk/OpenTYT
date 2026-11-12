@@ -92,6 +92,7 @@ void     dcSetPointerB(bool pointerB);
 bool     dcSetChannelB(uint16_t chB, bool persistNow);
 void     dcSaveIfDue(uint32_t nowMs);
 bool     dcFlush(void);
+void     dcFlushPending(void);          /* записати, лише якщо є відкладені зміни (вимкнення рації) */
 #endif
 
 #endif /* FUNCTIONS_DUAL_CHANNEL_H_ */

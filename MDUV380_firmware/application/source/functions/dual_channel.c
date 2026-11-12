@@ -220,6 +220,14 @@ bool dcFlush(void)
 	return codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG, (uint8_t *)&want, (int)sizeof(want));
 }
 
+void dcFlushPending(void)
+{
+	if (s_dc.dirty != 0U)
+	{
+		(void)dcFlush();
+	}
+}
+
 static void markDirty(void)
 {
 	s_dc.dirty = 1U;

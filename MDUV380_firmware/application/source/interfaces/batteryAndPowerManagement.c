@@ -301,6 +301,9 @@ void powerDown(bool doNotSavePowerOffState)
 
 	settingsSaveSettings(true);
 	codeplugSaveLastUsedChannelInZone();
+#if defined(DUAL_CHANNEL_ENABLED)
+	dcFlushPending();   // R97: відкладений запис покажчика/B «Подвійного прийому» (якщо ще не минуло 3 с)
+#endif
 
 #if defined(HAS_GPS)
 #if defined(LOG_GPS_DATA)
@@ -794,6 +797,9 @@ void powerOffFinalStage(bool maintainRTC, bool forceSuspend)
 	menuHotspotRestoreSettings();
 
 	codeplugSaveLastUsedChannelInZone();
+#if defined(DUAL_CHANNEL_ENABLED)
+	dcFlushPending();   // R97: відкладений запис покажчика/B «Подвійного прийому» (якщо ще не минуло 3 с)
+#endif
 
 #if defined(LOG_GPS_DATA)
 	gpsLoggingStop();

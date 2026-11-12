@@ -117,7 +117,11 @@ void rxPowerSavingTick(uiEvent_t *ev, bool hasSignal)
 	{
 		if (USB_DeviceIsResetting() || isCompressingAMBE || hasSignal || trxTransmissionEnabled || trxIsTransmitting ||
 				(menuSystemGetCurrentMenuNumber() == UI_TX_SCREEN) || (menuSystemGetCurrentMenuNumber() == UI_CPS) ||
-				(uiDataGlobal.Scan.active && uiDataGlobal.Scan.scanType == SCAN_TYPE_NORMAL_STEP) || ev->hasEvent)
+				(uiDataGlobal.Scan.active && uiDataGlobal.Scan.scanType == SCAN_TYPE_NORMAL_STEP) ||
+#if defined(DUAL_CHANNEL_ENABLED)
+				(uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)) ||   /* R97: приймач не вимикати -- інакше пропуск виклику */
+#endif
+				ev->hasEvent)
 		{
 			if (rxPowerSavingState != ECOPHASE_POWERSAVE_INACTIVE)
 			{

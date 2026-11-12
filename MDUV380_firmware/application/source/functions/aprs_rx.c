@@ -538,6 +538,12 @@ static aprsRxWhy_t evalWanted(uint32_t *freqOut)
 		*freqOut = currentChannelData->rxFreq;
 		return APRS_RX_WHY_NONE;
 	}
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (dcIsEnabled())
+	{
+		return APRS_RX_WHY_SCAN;   /* R97: «Подвійний прийом» -- APRS-прийом призупинено на весь час режиму (і в меню), налаштування не змінюються */
+	}
+#endif
 	if (uiDataGlobal.Scan.active)
 	{
 		return APRS_RX_WHY_SCAN;
