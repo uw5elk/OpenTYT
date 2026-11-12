@@ -57,10 +57,14 @@ OpenGD77 **R20260131**. Додає:
 | **Тон передачі супутників** (перерахунок при зміні набору частот 1/2/3) | `ENABLE_SAT_TONE_SYNC` | ні | `STATUS.md` (R66D) |
 | **«Мін.гучність»** (постійний тихий нижній рівень; з R81 завжди ввімкнено, коліно 16 позицій ручки, пункту меню немає) | `ENABLE_VOLUME_LOW` | ні | `STATUS.md` (R78, R81) |
 | **Українізація** (кириличний шрифт, `ukrainian.h`) | `LANGUAGE_UKRAINIAN=1`; кирилиця в назвах кодплага (R23) | частково: гліф «ю» перевірено (партія правок 2026-09-11); решта — ні | `STATUS.md`, `USAGE.md` |
-| **Швидке меню каналу без стокового «Roaming»** (пункти GPS приховано) | `FORK_NO_GPS_MENU` (у коді), без зсуву нумерації | пункти GPS у меню прибрано — **так** (2026-09-11); «Roaming» у швидкому меню — ні (R74) | `STATUS.md` (R74, партія правок 2026-09-11) |
+| **Швидке меню каналу без стокового «Roaming»** (пункти GPS приховано; з R94Б ефективний режим GPS в українській збірці завжди Off; рядок «Talkaround» називається «Без репітера») | `FORK_NO_GPS_MENU` (у коді), без зсуву нумерації | пункти GPS у меню прибрано — **так** (2026-09-11); «Roaming» у швидкому меню, «Без репітера» (R94А) і «ефективний Off» (R94Б) — ні (R74, R94) | `STATUS.md` (R74, партія правок 2026-09-11) |
 | **Діагностика й обробник збою** (HardFault/сторож показує адресу; `.map`/`.elf` у релізі `ci-<хеш>`; `tools/fault_lookup.py`) | під `ENABLE_APRS_RX`; діагностичні `ENABLE_*` (див. нижче) | ні | `STATUS.md` (R10-fix4, R10-fix6) |
 | Фіксація PTT на каналах без TOT (таймаут 120 с), порожні зони пропускаються, вікно гучності, годинник + заряд | без окремих прапорців (партія правок 2026-09-11) | **так** | `STATUS.md` («Партія правок з фідбеку fleet») |
 | Лінкер: `.rodata` після кодека (дало місце для нових функцій) | `ENABLE_RODATA_AFTER_CODEC` | тестова збірка (блок DJ, R63C): старт, меню, цифровий голос — **так**; AES у ній не підтверджено | `STATUS.md` (R64A), `RELEASE_NOTES.md` |
+
+### Назви пунктів меню (українська збірка)
+
+Підписи, які власник вимагав перекласти (R82, R94): **SMS DMR** (було «Повідомлення»), **Роумінг**, **Захист кан.** (було «Ch. blocked»), **Супутник** (було «SAT»), **Калібр. темп.** / **Калібр. акум.**, **Хвіст VOX**, **Ключі AES** (заголовок екрана), **Без репітера** (швидке меню каналу, було «Talkaround»). Прибрано з меню: «Мін.гучн.», «Гучність», «Показ відст.», «GPS». «Про прошивку» — останній пункт «Налаштувань»; «Опції теми» — в «Дисплей»; «Затр.шуму» — у «Звук». Докладно — `docs/menu-reference.md`, `USAGE.md` (§3.3, §4.1–4.2), калібрування — `docs/calibration.md`. На залізі переклад не перевірявся (`TESTING.md`, блоки EH, EI).
 
 <!-- TODO: фото docs/img/radio-photo-channel.png — екран каналу на реальній рації -->
 <!-- TODO: фото docs/img/radio-photo-aprs-menu.png — меню «APRS» -->
@@ -108,7 +112,7 @@ OpenGD77 **R20260131**. Додає:
 
 Діагностика розшифровки/потоку ключа AES і інші діагностичні екрани компілюються за прапорцями, вимкненими за
 замовчуванням (`DMR_AES_DIAG_RX` / `DMR_AES_DIAG_PATTERN` / `DMR_AES_DIAG_ENCPAT`, `ENABLE_SMS_DIAG`,
-`ENABLE_WAKE_DIAG`, `ENABLE_MEM_DIAG`, `ENABLE_APRS_RX_PROBE`, `ENABLE_VOLUME_PROBE` та ін.). У користувацькі
+`ENABLE_WAKE_DIAG`, `ENABLE_MEM_DIAG`, `ENABLE_APRS_RX_PROBE`, `ENABLE_VOLUME_PROBE`, `ENABLE_TA_DIAG` (R88: сирий Talker Alias і GPS-блок LC, окремий реліз `…-tadiag-<хеш>.bin`) та ін.). У користувацькі
 збірки вони не входять. Читання по USB — `tools/rxdiag.py`, `tools/fragcap.py`, `tools/mem_diag.py`.
 
 ## CPS (`TYT.MD-UV390UKR.exe`)
@@ -229,7 +233,7 @@ ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1`.
 | `MDUV380_firmware/` | вихідний код прошивки (`application/`, `Core/`, `Drivers/`, `Middlewares/`), `Makefile` |
 | `MDUV380_firmware/tools/` | CPS (`cps_ui/`), прошивальник, USB-утиліти, перевірки (`syntax_check.sh`, `check_*.py`), рендерери екранів, тести Python |
 | `MDUV380_firmware/tests/` | хостові тести C і `run_tests.sh` (запускає всі тести, у т.ч. Python/Tk під xvfb) |
-| `docs/` | розвідки й формати (`aprs-icons.md`, `aprs-rx-feasibility.md`, `cps-protocol.md`, `codeplug-encoding.md`, `cps-csv.md`, …); `docs/img/` — зображення цього README |
+| `docs/` | розвідки й формати (`aprs-icons.md`, `aprs-rx-feasibility.md`, `cps-protocol.md`, `codeplug-encoding.md`, `cps-csv.md`, `menu-reference.md`, `calibration.md` (калібрування, R94), `codec-margin-investigation.md` (запас до кодека, R94), …); `docs/img/` — зображення цього README |
 | `.github/workflows/build.yml` | CI: перевірки, збірки, реліз `ci-<хеш>`, `.exe` |
 | `STATUS.md` | що зроблено, що перевірено на залізі, що ні (розділ «Зроблено й перевірено на залізі» — підтверджене) |
 | `TESTING.md` | кроки ручної перевірки на залізі й Windows (блоки за літерами) |
