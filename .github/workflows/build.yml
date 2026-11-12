@@ -277,7 +277,7 @@ jobs:
         # ENABLE_APRS_RX=1 -- R8 (2026-10-11): справжній фоновий приймач APRS (Опції рації -> «APRS станції»,
         # банер, повідомлення нам). Діагностичний екран «APRS проба» (ENABLE_APRS_RX_PROBE) у користувацьку
         # збірку НЕ входить -- він у окремій роботі build-ukrainian-diag нижче.
-        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1 ENABLE_AES_KEY_NAMES=1 ENABLE_RXGROUP_EDIT=1 ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1 ENABLE_LC_DISTANCE=1
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1 ENABLE_AES_KEY_NAMES=1 ENABLE_RXGROUP_EDIT=1 ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1 ENABLE_LC_DISTANCE=1 ENABLE_DUAL_CHANNEL=1
       # R62A: запас (або перевищення) до фіксованої адреси кодека 0x0807537C у байтах -- видно і коли лінкування не вдалось
       # (там нема ні .bin, ні повної .map). Додаткове лінкування з тимчасовою копією лінкер-скрипта у build/codec-margin.*,
       # яке одразу видаляється: .bin/.elf/.map збірки і сам лінкер-скрипт не чіпаються. Див. tools/codec_margin.sh.

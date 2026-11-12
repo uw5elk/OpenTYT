@@ -67,6 +67,9 @@
 #if defined(ENABLE_ROAM_RETRY)
 #include "functions/roam_cfg.h"       // R59: налаштування «Роумінгу» (custom-data блок №15)
 #endif
+#if defined(ENABLE_DUAL_CHANNEL)
+#include "functions/dual_channel.h"   // R97: «Подвійний прийом» (custom-data блок №18)
+#endif
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -509,6 +512,9 @@ void applicationMainTask(void)
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 	roamCfgLoad();            // R59: «Роумінг» -- увімкнено/макс. стрибків із custom-data блоку (немає блоку -- вимкнено, 2)
+#endif
+#if defined(DUAL_CHANNEL_ENABLED)
+	dcLoad();                 // R97: «Подвійний прийом» -- увімкнено/покажчик/канал B із custom-data блоку 18 (немає блоку -- вимкнено)
 #endif
 #if defined(VOLUME_LOW)
 	volumeLowLoad();          // R78: «Мін.гучність» -- режим із custom-data блоку 17 (немає блоку -- вимкнено)

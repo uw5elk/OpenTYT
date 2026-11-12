@@ -203,6 +203,12 @@ ifeq ($(ENABLE_VOLUME_LOW),1)
 DEFS += -DENABLE_VOLUME_LOW
 endif
 
+# R97: «Подвійний прийом» по каналах кодплага (A = поточний канал, B = закріплений; custom-data блок 18). Лише українська збірка UV380
+# (сам код вимикається в інших). У CI ввімкнено в основній українській збірці. Типова збірка без прапорця -- байт-у-байт без змін.
+ifeq ($(ENABLE_DUAL_CHANNEL),1)
+DEFS += -DENABLE_DUAL_CHANNEL
+endif
+
 ifeq ($(ENABLE_VOLUME_PROBE),1)
 DEFS += -DENABLE_VOLUME_PROBE
 endif

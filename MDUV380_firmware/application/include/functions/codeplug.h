@@ -394,6 +394,10 @@ typedef enum
 	CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG = 17, /* R78: «Мін.гучність» -- 1 байт: 0 вимк, 1 = коліно 8, 2 = 16, 3 = 24. З R81 значення НЕ діє (завжди K = 16), блок лишено, довжину не змінювати.
 	                                        * Формат -- volume_low.h. Номер = 17 ЯВНО (нумерація не залежить від дефайнів). */
 #endif
+#if defined(ENABLE_DUAL_CHANNEL)
+	CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG = 18, /* R97: «Подвійний прийом» -- увімкнено, покажчик A/B, номер каналу B. 8 Б, пишеться прямо з рації.
+	                                        * Формат -- dual_channel.h. Номер = 18 ЯВНО (нумерація не залежить від дефайнів). */
+#endif
 } CodeplugCustomDataType_t;
 
 
