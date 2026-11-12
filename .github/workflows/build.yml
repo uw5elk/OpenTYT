@@ -29,12 +29,12 @@ jobs:
     name: перевірки (синтаксис, ширина меню, вирівнювання S-метра)
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # Через setup-python, а не системний pip: на свіжих ubuntu-образах системний
       # Python "externally managed", і pip install без --break-system-packages там падає,
       # а сам той прапорець є не в кожній версії pip. Власне середовище надійніше.
       - name: Встановити Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Залежності python (Pillow для рендерера екрана + tools/requirements.txt)
@@ -78,7 +78,7 @@ jobs:
     name: build (ENABLE_AES=${{ matrix.aes }})
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -122,7 +122,7 @@ jobs:
       # раз на 6-12 год, і старі артефакти блокували upload нових збірок ("Artifact storage
       # quota has been hit"). .bin/.hex стискаються максимально (compression-level: 9).
       - name: Вивантажити артефакт openuv380-10w-aes${{ matrix.aes }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-aes${{ matrix.aes }}
@@ -134,7 +134,7 @@ jobs:
       # .elf + .map (налагоджувальні символи і лінкерна карта) -- лише вручну.
       # Запуск: GitHub → Actions → "Build MD-UV390 10W firmware" → Run workflow.
       - name: Вивантажити артефакт openuv380-10w-aes${{ matrix.aes }}-debug
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         if: github.event_name == 'workflow_dispatch'
         with:
@@ -158,7 +158,7 @@ jobs:
     name: build (aes-mi-${{ matrix.variant }})
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -193,7 +193,7 @@ jobs:
           fi
           echo "OK: aes-mi-${{ matrix.variant }}"
       - name: Вивантажити артефакт openuv380-10w-aes-mi-${{ matrix.variant }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-aes-mi-${{ matrix.variant }}
@@ -218,7 +218,7 @@ jobs:
     name: build (aes-diag-${{ matrix.variant }})
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -243,7 +243,7 @@ jobs:
         working-directory: MDUV380_firmware
         run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
       - name: Вивантажити артефакт openuv380-10w-aes-diag-${{ matrix.variant }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-aes-diag-${{ matrix.variant }}
@@ -267,7 +267,7 @@ jobs:
       contents: write
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -296,7 +296,7 @@ jobs:
       # зібраний .bin все одно має лишитись доступним для завантаження.
       # .bin і .hex -- завжди; .elf і .map -- лише при ручному запуску (workflow_dispatch).
       - name: Вивантажити артефакт openuv380-10w-ukrainian
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian
@@ -309,7 +309,7 @@ jobs:
       # лише за .map ТОГО САМОГО коміту: MDUV380_firmware/tools/fault_lookup.py). Окрім артефакту (квота!), .map і .elf
       # кладуться ще й у GitHub Release (крок нижче) -- їх забирає `gh release download`.
       - name: Вивантажити артефакт openuv380-10w-ukrainian-debug
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian-debug
@@ -426,7 +426,7 @@ jobs:
       contents: write
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -452,7 +452,7 @@ jobs:
         working-directory: MDUV380_firmware
         run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
       - name: Вивантажити артефакт openuv380-10w-ukrainian-diag
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian-diag
@@ -514,7 +514,7 @@ jobs:
       contents: write
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -539,7 +539,7 @@ jobs:
         working-directory: MDUV380_firmware
         run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
       - name: Вивантажити артефакт openuv380-10w-ukrainian-volprobe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian-volprobe
@@ -585,7 +585,7 @@ jobs:
       contents: write
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -610,7 +610,7 @@ jobs:
         working-directory: MDUV380_firmware
         run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
       - name: Вивантажити артефакт openuv380-10w-ukrainian-tadiag
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian-tadiag
@@ -661,7 +661,7 @@ jobs:
       contents: write
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -691,7 +691,7 @@ jobs:
           done
           echo "OK: символи журналу й роумінгу є в збірці"
       - name: Вивантажити артефакт openuv380-10w-ukrainian-roam-diag
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-10w-ukrainian-roam-diag
@@ -740,7 +740,7 @@ jobs:
     name: build (українська користувацька + роумінг, без журналу -- лише виміри)
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install ARM GNU toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -789,7 +789,7 @@ jobs:
       contents: write
     steps:
       - name: Завантажити код (checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # .bin беремо з релізу ci-<sha> (його щойно опублікував build-ukrainian), а НЕ з
       # артефакту: при вичерпаній квоті артефакт не вивантажується, і download-artifact падав.
       - name: Завантажити .bin із релізу ci-<sha>
@@ -805,7 +805,7 @@ jobs:
           mv "firmware/openuv380-10w-ukrainian-${SHORT}.bin" firmware/openuv380-10w.bin
           ls -l firmware
       - name: Встановити Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Python-залежності
@@ -850,7 +850,7 @@ jobs:
             --add-data "build_info.txt;." \
             gui_flasher.py
       - name: Вивантажити артефакт openuv380-flasher-windows
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: openuv380-flasher-windows
