@@ -13,7 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "functions/aprs_rx_cfg.h"
-#include "functions/aprs_rx_parse.h"   /* aprsArrow_t, aprsArrowGeom(), aprsBearingKnown(), APRS_BEARING_MIN_M */
+#include "functions/aprs_rx_parse.h"   /* aprsBearingKnown(), APRS_BEARING_MIN_M */
+#include "functions/aprs_chevron.h"    /* aprsChevron_t, aprsChevronGeom() */
 
 #if defined(ENABLE_LC_DISTANCE) && defined(APRS_RX)
 #define LC_DISTANCE 1
@@ -41,8 +42,7 @@ bool lcDistCompute(double myLat, double myLon, double lat, double lon, uint32_t 
 bool lcDistText(char *buf, size_t size, bool ownPositionValid, double myLat, double myLon, double lat, double lon);
 
 /* ---- R92: напрямок стрілкою ----------------------------------------------------------------------------------------------------------------------------
- * У шрифті (HX8353E_charset_UA.h: коди 32..254, cp1251) стрілок нема, тож напрям малюється примітивами (displayDrawLine) за геометрією aprsArrowGeom() -- та сама,
- * що в екрані APRS, з точним азимутом (не 8 секторів). Літери сторони в тексті більше не друкуються: текст -- лише відстань, напрям -- стрілка. */
+ * У шрифті (HX8353E_charset_UA.h: коди 32..254, cp1251) стрілок нема, тож напрям малюється примітивами за геометрією aprsChevronGeom() -- та сама форма, що в екрані APRS, з точним азимутом (не 8 секторів). Літери сторони в тексті більше не друкуються: текст -- лише відстань, напрям -- стрілка. */
 
 /* Підпис "123м" / "1.2км" / "532км" (БЕЗ літер сторони) і азимут. *bearingKnown = (відстань >= APRS_BEARING_MIN_M): ближче азимут не визначений -- стрілку не малювати.
  * Умови false/true ті самі, що в lcDistText(); buf >= LC_DIST_LABEL_SIZE. */
@@ -55,15 +55,15 @@ typedef enum { LC_ROW_NONE = 0, LC_ROW_FIRST, LC_ROW_SECOND } lcDistRow_t;
 lcDistRow_t lcDistLabelRow(size_t textLen, bool singleLineOnly, bool autoSplit);
 
 /* Комірка стрілки: ЗАВЖДИ в правому полі рядка (текст до 16 символів по 8 px = 128 px, по центру => з кожного боку >= 16 px вільно; комірка 147..157). Центр
- * (cx, cy) = (screenW - 8, rowY + rowH/2), довжина вістря LC_ARROW_LEN, тож стрілка завдовжки 2*LC_ARROW_LEN = 8 px у квадраті 10x10. Хвіст (bx,by) -- дзеркало вістря
- * відносно центру: стрижень = відрізок хвіст->вістря, крила (lx,ly),(rx,ry) -- з aprsArrowGeom(). */
+ * (cx, cy) = (screenW - 8, rowY + rowH/2). З R93 форма -- єдиний «навігаційний наконечник» (aprsChevronGeom(): гострий трикутник з виїмкою ззаду), вісь від центру до вістря
+ * LC_ARROW_LEN = 4 px (повна висота 8 px, кутові точки основи на 1.28*4 = 5.1 від центру -- у квадраті 10x10). Малювати двома залитими трикутниками
+ * (вістря, ліва, виїмка) і (вістря, права, виїмка). */
 #define LC_ARROW_LEN     4
 #define LC_ARROW_MARGIN  8
 typedef struct
 {
-	aprsArrow_t g;      /* вістря tx,ty і крила lx,ly / rx,ry (aprsArrowGeom) */
-	int16_t     bx, by; /* хвіст стрижня */
-	int16_t     cx, cy; /* центр комірки */
+	aprsChevron_t g;    /* вістря tx,ty, кутові точки lx,ly / rx,ry і виїмка nx,ny (aprsChevronGeom) */
+	int16_t       cx, cy; /* центр комірки */
 } lcDistArrow_t;
 void lcDistArrowGeom(lcDistArrow_t *a, int16_t screenW, int16_t rowY, int16_t rowH, uint16_t bearingDeg);
 

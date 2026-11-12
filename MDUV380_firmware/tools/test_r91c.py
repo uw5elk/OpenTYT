@@ -192,7 +192,7 @@ def run(lc_src_text, tx_sub=None, workdir=None):
     exe = os.path.join(d, "drv")
     # lc_distance.c підключено директивою #include (щоб бачити статичні типи); aprs_rx_parse.c -- окремо
     r = subprocess.run(["gcc", "-w", "-std=gnu11", "-I" + APP + "/include", "-I" + FW, "-DLANGUAGE_BUILD_UKRAINIAN", "-DENABLE_LC_DISTANCE", "-DENABLE_APRS_RX", "-o", exe, drv,
-                        os.path.join(SRC, "functions", "aprs_rx_parse.c"), os.path.join(SRC, "functions", "aprs_mode_cfg.c"), os.path.join(SRC, "functions", "dmr_sms_text.c"), "-lm"],
+                        os.path.join(SRC, "functions", "aprs_rx_parse.c"), os.path.join(SRC, "functions", "aprs_chevron.c"), os.path.join(SRC, "functions", "aprs_mode_cfg.c"), os.path.join(SRC, "functions", "dmr_sms_text.c"), "-lm"],
                        capture_output=True, text=True)
     if r.returncode != 0:
         return None, r.stderr[-1500:]

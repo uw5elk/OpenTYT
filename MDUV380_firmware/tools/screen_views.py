@@ -45,7 +45,7 @@ LAYOUT = {
     "SMETER_S0": -129, "SMETER_S9": -93, "SMETER_TEXT_SHIFT": 8,
     "TITLE_BOX_HEIGHT": 21,
     "BEARING_RADIUS": 24, "BEARING_CIRCLE_X_OFFSET": 13, "BEARING_BOX_H": 68, "BEARING_CIRCLE_X_POS": 37, "BEARING_BOX_Y": 30,
-    "TOP_ARROW_OFFSET": 16, "BASE_ARROW_OFFSET": -16, "BEARING_AND_DIST_X_CENTER": 110,
+    "TOP_ARROW_OFFSET": 16, "BEARING_NEEDLE_LEN": 15, "BASE_ARROW_OFFSET": -16, "BEARING_AND_DIST_X_CENTER": 110,
 }
 # menuGPS.c: блок для PLATFORM_MDUV380 (інший за MD9600/RD5R) -- ключі з префіксом GPS_ (в прошивці імена без префікса).
 LAYOUT_GPS = {"RSSI_X_OFFSET": 2, "RSSI_BARS_Y_POS": 120, "NUM_BARS": 17, "MAX_RSSI_Y_PIXELS": 59, "MAIDENHEAD_HDOP_MARGIN": 8, "MAIDENHEAD_HDOP_Y_POS": 32}
@@ -426,6 +426,24 @@ def scr_options(d, st):
 DEG_TO_RAD = struct.unpack("<f", struct.pack("<f", 0.017453292519943295769236907684886))[0]       # float у C
 
 
+def _iround(v):
+    """Округлення «від нуля», як iround() у aprs_rx_parse.c."""
+    return int(v + 0.5) if v >= 0 else int(v - 0.5)
+
+
+def chevron_geom(cx, cy, length, bearing_deg):
+    """aprsChevronGeom() прошивки (aprs_rx_parse.c): (вістря, ліва, права, виїмка) -- «навігаційний наконечник»; азимут від півночі за годинниковою."""
+    b = (bearing_deg % 360) * 0.017453292519943295
+    dx, dy = math.sin(b), -math.cos(b)
+    px, py = -dy, dx
+    hw, nd = 0.8 * length, 0.72 * length
+    tip = (_iround(cx + dx * length), _iround(cy + dy * length))
+    lft = (_iround(cx - dx * length - px * hw), _iround(cy - dy * length - py * hw))
+    rgt = (_iround(cx - dx * length + px * hw), _iround(cy - dy * length + py * hw))
+    notch = (_iround(cx - dx * nd), _iround(cy - dy * nd))
+    return tip, lft, rgt, notch
+
+
 def scr_notification(d, st):
     """Сповіщення «пеленг» (NOTIFICATION_TYPE_BEARING, uiNotificationRefresh): поверх екрана каналу -- картка з компасом, стрілкою, кутом і відстанню.
     Картки гучності/потужності/шумодава малюються фіксованими кольорами поза темою (displayLevelCard), тому передпоказ показує цю."""
@@ -453,18 +471,14 @@ def scr_notification(d, st):
     d.theme_apply(_it("FG_DECORATION"), _it("BG_NOTIFICATION"))
     d.draw_circle(cx, cy, r + 1, True)
     d.theme_apply(_it("FG_GPS_COLOUR"), _it("BG_NOTIFICATION"))
-    needle = bearing - 90.0
-    if needle > 360.0:
-        needle -= 360.0
-    needle *= DEG_TO_RAD
-    top, base = L["TOP_ARROW_OFFSET"], L["BASE_ARROW_OFFSET"]
-    x1 = int(cx + top * math.cos(needle))
-    y1 = int(cy + top * math.sin(needle))
-    x2 = int(cx + base * math.cos(needle + (30 * DEG_TO_RAD)))
-    y2 = int(cy + base * math.sin(needle + (30 * DEG_TO_RAD)))
-    x3 = int(cx + base * math.cos(needle - (30 * DEG_TO_RAD)))
-    y3 = int(cy + base * math.sin(needle - (30 * DEG_TO_RAD)))
-    d.fill_triangle(x1, y1, x2, y2, x3, y3, True)
+    # R93: наконечник (aprsChevronGeom, збірка з APRS_RX): два залиті трикутники + контур (uiNotification.c, NOTIFICATION_TYPE_BEARING)
+    t, lft, rgt, nt = chevron_geom(cx, cy, L["BEARING_NEEDLE_LEN"], int(bearing))
+    d.fill_triangle(t[0], t[1], lft[0], lft[1], nt[0], nt[1], True)
+    d.fill_triangle(t[0], t[1], rgt[0], rgt[1], nt[0], nt[1], True)
+    d.draw_line(t[0], t[1], lft[0], lft[1], True)
+    d.draw_line(lft[0], lft[1], nt[0], nt[1], True)
+    d.draw_line(nt[0], nt[1], rgt[0], rgt[1], True)
+    d.draw_line(rgt[0], rgt[1], t[0], t[1], True)
     d.theme_apply(_it("FG_NOTIFICATION"), _it("BG_NOTIFICATION"))
     buf = "%d%c" % (int(bearing), 176)
     cc = L["BEARING_AND_DIST_X_CENTER"]

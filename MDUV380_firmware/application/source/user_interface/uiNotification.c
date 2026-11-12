@@ -66,6 +66,7 @@
 #define BEARING_BOX_W              (DISPLAY_SIZE_X - 4)
 #define BEARING_BOX_Y             ((DISPLAY_SIZE_Y - BEARING_BOX_H) / 2)
 #define TOP_ARROW_OFFSET           (BEARING_RADIUS - 8)
+#define BEARING_NEEDLE_LEN         (BEARING_RADIUS - 9)   /* R93: вісь наконечника; кутові точки на 1.28*15 = 19.2 від центру -- усередині кола з рисками (R-4..R) */
 #define BASE_ARROW_OFFSET         -(BEARING_RADIUS - 8)
 #define BEARING_AND_DIST_X_CENTER (((DISPLAY_SIZE_X - ((BEARING_RADIUS * 2) + BEARING_CIRCLE_X_OFFSET)) / 2) + ((BEARING_RADIUS * 2) + BEARING_CIRCLE_X_OFFSET))
 
@@ -166,6 +167,7 @@ static uiNotificationData_t notificationData =
 #include "functions/aprs_mode_cfg.h"  /* aprsSymbolNameEx() */
 #include "functions/aprs_icons.h"     /* R14: піктограми символів */
 #include "functions/aprs_msg.h"       /* R15: aprsMsgWrapLine() -- коментар у два рядки */
+#include "functions/aprs_chevron.h"   /* R93: aprsChevronGeom() -- наконечник напрямку */
 #include "user_interface/languages/aprsrx_ua.h"
 #endif
 #if defined(ENABLE_CALL_REPLAY)
@@ -488,6 +490,20 @@ void uiNotificationRefresh(void)
 				displayThemeApply(THEME_ITEM_FG_GPS_COLOUR, THEME_ITEM_BG_NOTIFICATION);
 
 				// Needle
+#if defined(APRS_RX)
+				{
+					// R93: та сама форма, що в екрані APRS і в шапці виклику (aprsChevronGeom); стокова голка-трикутник лишається в збірках без APRS_RX
+					aprsChevron_t ch;
+
+					aprsChevronGeom(&ch, BEARING_CIRCLE_X_POS, ((DISPLAY_SIZE_Y >> 1) - 3), BEARING_NEEDLE_LEN, (uint16_t)notificationData.bearingInfo.bearing);
+					displayFillTriangle(ch.tx, ch.ty, ch.lx, ch.ly, ch.nx, ch.ny, true);
+					displayFillTriangle(ch.tx, ch.ty, ch.rx, ch.ry, ch.nx, ch.ny, true);
+					displayDrawLine(ch.tx, ch.ty, ch.lx, ch.ly, true);
+					displayDrawLine(ch.lx, ch.ly, ch.nx, ch.ny, true);
+					displayDrawLine(ch.nx, ch.ny, ch.rx, ch.ry, true);
+					displayDrawLine(ch.rx, ch.ry, ch.tx, ch.ty, true);
+				}
+#else
 				double needle = (notificationData.bearingInfo.bearing - 90.0);
 
 				if (needle > 360.0)
@@ -507,6 +523,7 @@ void uiNotificationRefresh(void)
 				y3 = (int16_t)(((DISPLAY_SIZE_Y >> 1) - 3) + BASE_ARROW_OFFSET * sin(needle - (30 * DEG_TO_RAD)));
 
 				displayFillTriangle(x1, y1, x2, y2, x3, y3, true);
+#endif
 
 				// Bearing and Distance values
 				displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
@@ -844,24 +861,21 @@ static void displayMessageCard(void)
 #define APRS_WIN_CX      121
 #define APRS_WIN_CY      64
 #define APRS_WIN_R       31
-#define APRS_WIN_ARROW   22    /* R17 Г5: довжина стрілки; кінчик (22) не заходить на риски кільця (R-6..R-2 = 25..29) */
+#define APRS_WIN_ARROW   18    /* R93: довжина осі від центру до вістря; кутові точки основи на 1.28*18 = 23.0 від центру -- не заходять на риски кільця (R-6..R-2 = 25..29) */
 
-/* R17 Г5: стрілка залитими трикутниками (aprsArrowPoly(): стрижень 4 px -- два трикутники, вістря -- один) + контур кожного (щоб шви між трикутниками
- * не лишали пропусків) і диск r = 2 у центрі. */
+/* R93: напрямок -- єдиний «навігаційний наконечник» (aprsChevronGeom(): гострий трикутник з виїмкою ззаду) двома залитими трикутниками + контур кожного (щоб шов уздовж осі не
+ * лишав пропусків) і диск r = 2 у центрі. Раніше (R17 Г5) тут був стрижень із вістрям (aprsArrowPoly()). */
 static void aprsWinDrawArrow(uint16_t bearing)
 {
-	aprsArrowPoly_t p;
+	aprsChevron_t c;
 
-	aprsArrowPoly(&p, APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_ARROW, bearing);
-	for (int i = 0; i < 3; i++)
-	{
-		const aprsTri_t *t = &p.t[i];
-
-		displayFillTriangle(t->x[0], t->y[0], t->x[1], t->y[1], t->x[2], t->y[2], true);
-		displayDrawLine(t->x[0], t->y[0], t->x[1], t->y[1], true);
-		displayDrawLine(t->x[1], t->y[1], t->x[2], t->y[2], true);
-		displayDrawLine(t->x[2], t->y[2], t->x[0], t->y[0], true);
-	}
+	aprsChevronGeom(&c, APRS_WIN_CX, APRS_WIN_CY, APRS_WIN_ARROW, bearing);
+	displayFillTriangle(c.tx, c.ty, c.lx, c.ly, c.nx, c.ny, true);
+	displayFillTriangle(c.tx, c.ty, c.rx, c.ry, c.nx, c.ny, true);
+	displayDrawLine(c.tx, c.ty, c.lx, c.ly, true);
+	displayDrawLine(c.lx, c.ly, c.nx, c.ny, true);
+	displayDrawLine(c.nx, c.ny, c.rx, c.ry, true);
+	displayDrawLine(c.rx, c.ry, c.tx, c.ty, true);
 	displayFillCircle(APRS_WIN_CX, APRS_WIN_CY, 2, true);
 }
 

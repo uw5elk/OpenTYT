@@ -1791,9 +1791,12 @@ static bool qsoShowNameWithDistance(const char *name)
 			lcDistArrowGeom(&a, DISPLAY_SIZE_X, ((row == LC_ROW_FIRST) ? uiUtilityChannelFirstLineY() : DISPLAY_Y_POS_CHANNEL_SECOND_LINE), rowH, bearing);
 
 			displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_BG);
-			displayDrawLine(a.bx, a.by, a.g.tx, a.g.ty, true);      // стрижень
-			displayDrawLine(a.g.tx, a.g.ty, a.g.lx, a.g.ly, true);  // крила
-			displayDrawLine(a.g.tx, a.g.ty, a.g.rx, a.g.ry, true);
+			displayFillTriangle(a.g.tx, a.g.ty, a.g.lx, a.g.ly, a.g.nx, a.g.ny, true);   // наконечник (R93): два залиті трикутники з виїмкою
+			displayFillTriangle(a.g.tx, a.g.ty, a.g.rx, a.g.ry, a.g.nx, a.g.ny, true);
+			displayDrawLine(a.g.tx, a.g.ty, a.g.lx, a.g.ly, true);                      // контур: без пропусків уздовж осі
+			displayDrawLine(a.g.lx, a.g.ly, a.g.nx, a.g.ny, true);
+			displayDrawLine(a.g.nx, a.g.ny, a.g.rx, a.g.ry, true);
+			displayDrawLine(a.g.rx, a.g.ry, a.g.tx, a.g.ty, true);
 			displayThemeResetToDefault();
 		}
 

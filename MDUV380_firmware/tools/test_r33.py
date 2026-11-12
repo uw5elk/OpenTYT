@@ -322,7 +322,7 @@ LAYOUT_SOURCES = {          # ключі sv.LAYOUT, що є #define у прош�
                     "DISPLAY_Y_POS_RX_FREQ", "DISPLAY_Y_POS_TX_FREQ", "DISPLAY_Y_POS_ZONE", "FREQUENCY_X_POS", "VFO_LETTER_Y_OFFSET", "TITLE_BOX_HEIGHT",
                     "SMETER_S0", "SMETER_S9"),
     "menuSystem.h": ("MENU_MAX_DISPLAYED_ENTRIES",),
-    "uiNotification.c": ("BEARING_RADIUS", "BEARING_CIRCLE_X_OFFSET", "BEARING_BOX_H", "BEARING_CIRCLE_X_POS", "BEARING_BOX_Y", "TOP_ARROW_OFFSET", "BASE_ARROW_OFFSET",
+    "uiNotification.c": ("BEARING_RADIUS", "BEARING_CIRCLE_X_OFFSET", "BEARING_BOX_H", "BEARING_CIRCLE_X_POS", "BEARING_BOX_Y", "TOP_ARROW_OFFSET", "BEARING_NEEDLE_LEN", "BASE_ARROW_OFFSET",
                          "BEARING_AND_DIST_X_CENTER"),
 }
 # Ключі sv.LAYOUT, що НЕ є #define (виведені з коду функцій uiUtilities.c: смуга S-метра тощо): їх звіряє не цей тест, а check_smeter_align.py та

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """R92 (хост, без заліза): напрямок до кореспондента СТРІЛКОЮ у шапці виклику + підпис відстані в УСІХ гілках імені. УСІ ДАНІ СИНТЕТИЧНІ (вигадані координати,
 вигадані позивні; реального ефіру й екрана рації не було -- перевіряється геометрія й розкладка за реальним кодом, вирізаним з вихідників).
-  1  геометрія lcDistArrowGeom (справжній код, aprsArrowGeom з прошивки): кути 0/45/90/135/180/225/270/315/359/360 -- вістря у очікуваній точці ±1 px (незалежний еталон);
+  1  геометрія lcDistArrowGeom (справжній код, aprsChevronGeom з прошивки): кути 0/45/90/135/180/225/270/315/359/360 -- вістря у очікуваній точці ±1 px (незалежний еталон);
      вся стрілка в комірці 10x10 у правому полі рядка, в межах висоти рядка (16 і 32 при подвійній висоті);
   2  підпис lcDistLabel: лише відстань (без літер сторони), поріг 50 м (45 м -- стрілки нема, 55 м -- є), азимут проти незалежного еталона, неприда­тні координати/своя позиція;
   3  розкладка за РЕАЛЬНИМИ displayContactTextInfos + displaySplitOrSpanText + switch з uiUtilities.c (вирізані, із заглушками дисплея): для кожної з 4 пріоритетів і 3 режимів
@@ -158,6 +158,8 @@ typedef struct { int kind; int a, b, c, d; int font; char text[64]; } Ev;   /* k
 static Ev ev[64]; static int nev;
 static void addprint(int y, const char *t, int font) { Ev *e = &ev[nev++]; e->kind = 1; e->a = y; e->font = font; snprintf(e->text, sizeof e->text, "%%s", t); }
 void displayDrawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool inv) { (void)inv; Ev *e = &ev[nev++]; e->kind = 2; e->a = x0; e->b = y0; e->c = x1; e->d = y1; }
+static int tri[8][6]; static int ntri;
+void displayFillTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2, bool inv) { (void)inv; Ev *e = &ev[nev++]; e->kind = 3; e->a = ntri; tri[ntri][0] = x0; tri[ntri][1] = y0; tri[ntri][2] = x1; tri[ntri][3] = y1; tri[ntri][4] = x2; tri[ntri][5] = y2; ntri++; }
 void displayPrintCenteredDoubleHeight(uint16_t y, const char *text, ucFont_t f, bool dbl) { (void)dbl; addprint(y, text, f); }
 void uiUtilityDisplayInformation(const char *str, int line, int yo) { (void)line; (void)yo; addprint(64, str, 3); }
 static void displayChannelNameOrRxFrequency(char *buffer, size_t maxLen) { (void)buffer; (void)maxLen; addprint(96, "CHANNEL", 3); }
@@ -187,7 +189,7 @@ int main(void)
 		{
 			int rowY = atoi(fld(&p)), rowH = atoi(fld(&p)); unsigned b = (unsigned)atoi(fld(&p));
 			lcDistArrow_t a; lcDistArrowGeom(&a, 160, (int16_t)rowY, (int16_t)rowH, (uint16_t)b);
-			printf("A %%d %%d %%d %%d %%d %%d %%d %%d %%d %%d\n", a.g.tx, a.g.ty, a.g.lx, a.g.ly, a.g.rx, a.g.ry, a.bx, a.by, a.cx, a.cy);
+			printf("A %%d %%d %%d %%d %%d %%d %%d %%d %%d %%d\n", a.g.tx, a.g.ty, a.g.lx, a.g.ly, a.g.rx, a.g.ry, a.g.nx, a.g.ny, a.cx, a.cy);
 		}
 		else if (strcmp(op, "LABEL") == 0)
 		{
@@ -209,12 +211,13 @@ int main(void)
 			static LinkItem_t it; memset(&it, 0, sizeof it); LinkHead = &it;
 			it.locationLat = atof(fld(&p)); it.locationLon = atof(fld(&p));
 			snprintf(it.contact, sizeof it.contact, "%%s", fld(&p)); snprintf(it.talkerAlias, sizeof it.talkerAlias, "%%s", fld(&p));
-			nev = 0; runswitch();
+			nev = 0; ntri = 0; runswitch();
 			printf("N %%d\n", nev);
 			for (int i = 0; i < nev; i++)
 			{
 				if (ev[i].kind == 1) printf("P %%d %%d [%%s]\n", ev[i].a, ev[i].font, ev[i].text);
-				else printf("D %%d %%d %%d %%d\n", ev[i].a, ev[i].b, ev[i].c, ev[i].d);
+				else if (ev[i].kind == 2) printf("D %%d %%d %%d %%d\n", ev[i].a, ev[i].b, ev[i].c, ev[i].d);
+				else printf("T %%d %%d %%d %%d %%d %%d\n", tri[ev[i].a][0], tri[ev[i].a][1], tri[ev[i].a][2], tri[ev[i].a][3], tri[ev[i].a][4], tri[ev[i].a][5]);
 			}
 		}
 		fflush(stdout);
@@ -243,7 +246,7 @@ def build(lc_text, ui_text, lc_h_text=None, tag="r92_"):
     open(drv, "w", encoding="utf-8").write(src)
     exe = os.path.join(d, "drv")
     r = subprocess.run(["gcc", "-w", "-std=gnu11", "-I" + APP + "/include", "-I" + FW, "-DLANGUAGE_BUILD_UKRAINIAN", "-DENABLE_LC_DISTANCE", "-DENABLE_APRS_RX", "-o", exe, drv,
-                        os.path.join(SRC, "functions", "aprs_rx_parse.c"), os.path.join(SRC, "functions", "aprs_mode_cfg.c"), os.path.join(SRC, "functions", "dmr_sms_text.c"), "-lm"],
+                        os.path.join(SRC, "functions", "aprs_rx_parse.c"), os.path.join(SRC, "functions", "aprs_chevron.c"), os.path.join(SRC, "functions", "aprs_mode_cfg.c"), os.path.join(SRC, "functions", "dmr_sms_text.c"), "-lm"],
                        capture_output=True, text=True)
     if r.returncode != 0:
         return None, r.stderr[-2500:]
@@ -279,13 +282,20 @@ def test_geometry(exe, label):
             check(False, "%s: геометрія -- отримано %d рядків" % (label, len(out)))
             return False
         for a, l in zip(ANGLES, out):
-            tx, ty, lx, ly, rx, ry, bx, by, cx, cy = map(int, l.split()[1:])
+            tx, ty, lx, ly, rx, ry, nx, ny, cx, cy = map(int, l.split()[1:])
             ex = cx + 4 * math.sin(math.radians(a))
             ey = cy - 4 * math.cos(math.radians(a))
-            good = abs(tx - ex) <= 1.0 and abs(ty - ey) <= 1.0 and abs(bx - (2 * cx - tx)) == 0 and abs(by - (2 * cy - ty)) == 0
-            good = good and cx == 152 and cy == rowY + rowH // 2
-            # усі точки в комірці 10x10 (cx±5) і в межах рядка
-            xs, ys = [tx, lx, rx, bx], [ty, ly, ry, by]
+            good = abs(tx - ex) <= 1.0 and abs(ty - ey) <= 1.0 and cx == 152 and cy == rowY + rowH // 2
+            # виїмка на осі позаду центру (0.72*4 = 2.9 px): відстань від осі <= 1 px, позаду
+            ux, uy = math.sin(math.radians(a)), -math.cos(math.radians(a))
+            good = good and abs((nx - cx) * uy - (ny - cy) * ux) <= 1.0 and ((nx - cx) * ux + (ny - cy) * uy) < -1.5
+            # кутові точки основи: позаду на ~4 px і на ~3.2 px убік, симетрично відносно осі
+            for qx, qy, sg in ((lx, ly, -1), (rx, ry, 1)):
+                back = -((qx - cx) * ux + (qy - cy) * uy)
+                side = sg * ((qx - cx) * (-uy) + (qy - cy) * ux)
+                good = good and abs(back - 4.0) <= 1.5 and abs(side - 3.2) <= 1.5
+            # усі точки в комірці 10x10 і в межах рядка
+            xs, ys = [tx, lx, rx, nx], [ty, ly, ry, ny]
             good = good and min(xs) >= cx - 5 and max(xs) <= cx + 5 and min(ys) >= rowY and max(ys) < rowY + rowH
             # комірка правіше за найширший текст (16*8 = 128 px по центру => правий край 144)
             good = good and min(xs) > 144
@@ -410,8 +420,10 @@ def parse(rows):
         if r.startswith("P "):
             mm = re.match(r"P (\d+) (\d+) \[(.*)\]$", r)
             prints.append((int(mm.group(1)), int(mm.group(2)), mm.group(3)))
+        elif r.startswith("T "):
+            lines.append(("T",) + tuple(int(x) for x in r.split()[1:]))
         else:
-            lines.append(tuple(int(x) for x in r.split()[1:]))
+            lines.append(("D",) + tuple(int(x) for x in r.split()[1:]))
     return prints, lines
 
 
@@ -445,25 +457,32 @@ def test_cases(exe, label):
             # без підпису -- стокова поведінка: лише TA з координатами може мати Maidenhead
             if (not (own and usable)) and not any("JO60AA" in t for _, _, t in prints) and ta and name == ta and not (la != la):
                 pass
-        if len(lines) == 3:
+        tris = [l[1:] for l in lines if l[0] == "T"]
+        segs = [l[1:] for l in lines if l[0] == "D"]
+        has_arrow = (len(tris) == 2 and len(segs) == 4)
+        if has_arrow:
             ARROWS[0] += 1
-        if want_arrow != (len(lines) == 3):
+        if want_arrow != has_arrow or (not want_arrow and lines):
             ok = False
-            check(False, "%s: ліній стрілки %d, очікувано %d" % (where, len(lines), 3 if want_arrow else 0))
-        if lines and len(lines) == 3:
-            # лінії: хвіст->вістря, вістря->ліве крило, вістря->праве крило
-            (bx, by, tx, ty), (t2x, t2y, lx, ly), (t3x, t3y, rx, ry) = lines
+            check(False, "%s: примітивів стрілки: %d трикутників + %d ліній, очікувано %s" % (where, len(tris), len(segs), "2 + 4" if want_arrow else "0"))
+        if has_arrow:
+            # два залиті трикутники (вістря, ліва, виїмка) і (вістря, права, виїмка) + 4 лінії контуру
+            (tx, ty, lx, ly, nx, ny), (t2x, t2y, rx, ry, n2x, n2y) = tris
             _, brg = ref_dist_bearing(MY[0], MY[1], la, lo)
-            cx, cy = (bx + tx) / 2.0, (by + ty) / 2.0
+            rowH0 = 32 if dbl else 16
+            lab_y0 = [y for y, f, t in prints if "[" in t and re.search(r"\d(\u043c|\u043a\u043c)\]", t)]
+            rs0 = 64 if (lab_y0 and lab_y0[0] == 64) else 96
+            cx, cy = 152, rs0 + rowH0 // 2
             ex, ey = cx + 4 * math.sin(math.radians(brg)), cy - 4 * math.cos(math.radians(brg))
-            if not (abs(tx - ex) <= 1.0 and abs(ty - ey) <= 1.0 and (t2x, t2y) == (tx, ty) and (t3x, t3y) == (tx, ty)):
+            if not (abs(tx - ex) <= 1.0 and abs(ty - ey) <= 1.0 and (t2x, t2y) == (tx, ty) and (n2x, n2y) == (nx, ny)):
                 ok = False
                 check(False, "%s: напрям стрілки не збігається з азимутом %.1f° (вістря (%d,%d), очікувано (%.1f,%.1f))" % (where, brg, tx, ty, ex, ey))
+            bx, by = nx, ny
             rowH = 32 if dbl else 16
             # у якому рядку надруковано підпис?
             lab_y = [y for y, f, t in prints if "[" in t and re.search(r"\d(м|км)\]", t)]
             row_start = 64 if (lab_y and lab_y[0] == 64) else 96
-            xs, ys = [bx, tx, lx, rx], [by, ty, ly, ry]
+            xs, ys = [nx, tx, lx, rx], [ny, ty, ly, ry]
             if not (min(ys) >= row_start and max(ys) < row_start + rowH):
                 ok = False
                 check(False, "%s: стрілка (y %d..%d) не в рядку підпису (початок %d, висота %d)" % (where, min(ys), max(ys), row_start, rowH))
@@ -507,7 +526,7 @@ def main():
           "усі виклики під #if defined(LC_DISTANCE)")
     check("qsoShowNameWithDistance(LinkHead->talkerAlias)" in sw and sw.count("qsoShowNameWithDistance(LinkHead->contact)") == 2, "імена: talkerAlias -- в TA-гілках, contact -- у двох гілках БД/кодплагу")
     h = rd(os.path.join(APP, "include", "functions", "lc_distance.h"))
-    check("aprsArrowGeom" in rd(os.path.join(SRC, "functions", "lc_distance.c")) and "ENABLE_LC_DISTANCE" in h, "геометрія -- через aprsArrowGeom (без дубліката)")
+    check("aprsChevronGeom" in rd(os.path.join(SRC, "functions", "lc_distance.c")) and "ENABLE_LC_DISTANCE" in h, "геометрія -- через aprsChevronGeom (без дубліката)")
     check(not re.search(r"\bsin\(|\bcos\(", rd(os.path.join(SRC, "functions", "lc_distance.c"))), "lc_distance.c не дублює тригонометрію стрілки")
 
     # ---- мутанти ----
@@ -536,8 +555,8 @@ def main():
         del FAILS[n0:]               # провали мутанта -- очікувані, у підсумок не йдуть
         check(caught, "мутант «%s» ловиться" % name)
 
-    mut("кут від півдня (+180)", lc_c.replace("aprsArrowGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, bearingDeg);", "aprsArrowGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, (uint16_t)(bearingDeg + 180U));"))
-    mut("проти годинникової (360-кут)", lc_c.replace("aprsArrowGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, bearingDeg);", "aprsArrowGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, (uint16_t)((360U - (bearingDeg % 360U)) %% 360U));".replace("%%", "%")))
+    mut("кут від півдня (+180)", lc_c.replace("aprsChevronGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, bearingDeg);", "aprsChevronGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, (uint16_t)(bearingDeg + 180U));"))
+    mut("проти годинникової (360-кут)", lc_c.replace("aprsChevronGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, bearingDeg);", "aprsChevronGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, (uint16_t)((360U - (bearingDeg % 360U)) %% 360U));".replace("%%", "%")))
     mut("без порогу 50 м", lc_c.replace("*bearingKnown = aprsBearingKnown(distM);", "*bearingKnown = true;"))
     mut("комірка в тексті (поле 40 px)", lc_c.replace("a->cx = (int16_t)(screenW - LC_ARROW_MARGIN);", "a->cx = (int16_t)(screenW - 40);"))
     mut("завжди другий рядок", lc_c.replace("return (textLen <= 16U) ? LC_ROW_FIRST : LC_ROW_NONE;", "return LC_ROW_SECOND;"))
