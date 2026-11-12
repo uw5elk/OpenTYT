@@ -194,6 +194,34 @@ for left, f, key, label, fmt in sorted(tight, key=lambda x: x[0]):
 print(f'  разом підозрілих: {len(tight)}')
 fails += tight
 
+# --- 3б. R96/А1: «Кор.темп.» / «Кор. акум.» -- значення ДИНАМІЧНЕ (%s у форматі), розділ 3 його пропускає ---
+# R82 дав довгі підписи («Калібр. темп.»), і на значення лишалося 2 символи: кроки 0,1 В і 0,5 °C
+# не було видно. Рахуємо НАЙГІРШЕ значення з реального формату menuGeneralOptions.c.
+print('\n=== 3б. Кор.темп. / Кор. акум.: найгірше динамічне значення ===')
+cal_over = []
+_gen = open([p_ for p_ in files if p_.endswith('menuGeneralOptions.c')][0], encoding='utf-8', errors='replace').read()
+def _cal(case, key, args, suffix, lim_ok):
+    blk = re.split(r'case\s+' + case + r'\s*:', _gen)[1][:900]
+    m_ = re.search(r'snprintf\(\s*buf2\s*,[^,]+,\s*"((?:[^"\\]|\\.)*)"', blk)
+    if not m_:
+        cal_over.append((key, 'формат значення не знайдено у menuGeneralOptions.c', 0, 0)); return
+    fmt = m_.group(1); it = iter(args)
+    val = re.sub(r'%[-+ #0]*\d*[a-zA-Z]', lambda _: next(it), fmt) + suffix
+    full = ua[key] + ':' + val
+    print(f'  {key}: "{full}" = {len(full)} (ліміт {lim_ok})')
+    if len(full) > lim_ok:
+        cal_over.append((key, full, len(full), lim_ok))
+    return val
+# температура: крок 0,5 °C, діапазон -10.0..+10.0; ±9.5 мусить влізти ЦІЛКОМ, ±10.0 -- допустимо обрізати останню літеру
+_cel = ua['celcius']
+_cal('GENERAL_OPTIONS_MENU_TEMPERATURE_CALIBRATON', 'temperature_calibration', ['+', '9', '5'], _cel, LINE_CHARS)
+# акумулятор: -0.5..+0.5 В, крок 0,1
+_cal('GENERAL_OPTIONS_MENU_BATTERY_CALIBRATON', 'battery_calibration', ['+', '5'], 'V', LINE_CHARS)
+_t10 = ua['temperature_calibration'] + ':+10.0' + _cel
+print(f'  (довідково) ±10.0: "{_t10}" = {len(_t10)}; зайве {max(0, len(_t10) - LINE_CHARS)} симв. -- допустимо (рішення власника R96)')
+print(f'  разом: {len(cal_over)}')
+fails += cal_over
+
 # ---------------------------------------------------------------------------
 # 4. ПІКСЕЛЬНА ширина рядків, які малюються НЕ через меню-список.
 #

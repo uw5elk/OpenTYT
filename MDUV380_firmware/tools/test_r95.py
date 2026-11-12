@@ -76,7 +76,7 @@ def main():
         b = subprocess.run(["git", "-C", FW, "show", "%s:MDUV380_firmware/application/include/user_interface/languages/ukrainian.h" % BASE], capture_output=True)
         old = fields(b.stdout.decode("cp1251")); new = fields(ua)
         d = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
-        check(d == sorted(list(OLD) + NEW_TAIL), "ukrainian.h: змінено рівно очікувані поля: %r" % d)
+        check(d == sorted(list(OLD) + NEW_TAIL + ["temperature_calibration", "battery_calibration"]), "ukrainian.h: змінено рівно очікувані поля: %r" % d)
     else:
         print("ПРОПУСК: база недоступна (CI/клон без історії): ukrainian.h «змінено рівно очікувані поля» -- не перевірено (база %s)" % BASE)
     # мутанти

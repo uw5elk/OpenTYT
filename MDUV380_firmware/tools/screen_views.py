@@ -60,7 +60,7 @@ UA = {
     "firmware_info": "Про прошивку", "satellite": "Супутники", "gps": "GPS", "messages": "SMS DMR", "remote_control": "Адміністрування",
     "zone": "Зона", "channel_details": "Канал", "tg": "TG", "ts": "TS", "none": "Немає", "private_call": "Приватний виклик",
     "error": "ПОМИЛКА", "timeout": "ТАЙМАУТ", "tg_entry": "Ввід TG", "key_long": "Довгий нат.", "key_repeat": "Повт. клав.", "auto_lock": "Автоблок.",
-    "hotspot_mode": "Hotspot", "temperature_calibration": "Калібр. темп.", "battery_calibration": "Калібр. акум.", "eco_level": "Рівень Eco",
+    "hotspot_mode": "Hotspot", "temperature_calibration": "Кор.темп.", "battery_calibration": "Кор. акум.", "eco_level": "Рівень Eco",
     "off": "Off", "celcius": "°C", "maximum": "Макс", "radio_options": "Опції рації", "display_options": "Дисплей",
     "radio_info": "Параметри", "aprs_options": "APRS", "rx_only": "Тільки RX", "symbols": "NSEW",
 }

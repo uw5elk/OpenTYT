@@ -27,7 +27,7 @@ FAILS = []
 N = [0]
 QUIET = [False]
 
-WANT = {"vox_tail": "Хвіст VOX", "temperature_calibration": "Калібр. темп.", "battery_calibration": "Калібр. акум.", "messages": "SMS DMR",
+WANT = {"vox_tail": "Хвіст VOX", "temperature_calibration": "Кор.темп.", "battery_calibration": "Кор. акум.", "messages": "SMS DMR",
         "channels_protect": "Захист кан.", "satellite_mode": "Супутник"}
 OLD = {"vox_tail": "VOX tail", "temperature_calibration": "Temp Cal", "battery_calibration": "Batt. Cal", "messages": "Повідомлення"}
 
@@ -83,7 +83,7 @@ def check_texts(ua, msgs_ua, gen, sv):
         pass
     if '#define APRSMSG_MENU          "Повідом. APRS"' not in rd(os.path.join(LANG, "aprsmsg_ua.h")):
         out.append("«Повідом. APRS» змінено")
-    if '"messages": "SMS DMR"' not in sv or '"temperature_calibration": "Калібр. темп."' not in sv or '"battery_calibration": "Калібр. акум."' not in sv:
+    if '"messages": "SMS DMR"' not in sv or '"temperature_calibration": "Кор.темп."' not in sv or '"battery_calibration": "Кор. акум."' not in sv:
         out.append("передпоказ CPS (screen_views.py): підписи не оновлено")
     for v in ("VOX tail", "Temp Cal", "Batt. Cal"):
         for k, val in f.items():
