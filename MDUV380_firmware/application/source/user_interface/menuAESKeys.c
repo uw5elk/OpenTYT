@@ -140,7 +140,11 @@ static void updateScreen(void)
 	char buf[16 + LANGUAGE_TEXTS_LENGTH];
 
 	displayClearBuf();
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+	menuDisplayTitle(currentLanguage->aes_keys);   // R94: «Ключі AES» (той самий підпис, що в меню «Налаштування»)
+#else
 	menuDisplayTitle("AES Keys");
+#endif
 
 	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
 	{

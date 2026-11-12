@@ -2419,7 +2419,11 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					rightSideConst = (uiDataGlobal.QuickMenu.tmpDmrCcTsFilterLevel & DMR_TS_FILTER_PATTERN) ? currentLanguage->on : currentLanguage->off;
 					break;
 				case CH_SCREEN_QUICK_MENU_TALKAROUND:
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+					leftSide = currentLanguage->talkaround_menu;   // R94: «Без репітера» (спільне talkaround -- голосова підказка -- не чіпаємо)
+#else
 					leftSide = currentLanguage->talkaround;
+#endif
 					rightSideConst = ((currentChannelData->txFreq != currentChannelData->rxFreq) ? (uiDataGlobal.QuickMenu.tmpTalkaround ? currentLanguage->on : currentLanguage->off) : currentLanguage->n_a);
 					break;
 				case CH_SCREEN_QUICK_MENU_ROAMING:

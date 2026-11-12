@@ -408,6 +408,8 @@ const stringsTable_t englishLanguage =
 // R82: UA-only menu labels (mirrors ukrainian.h; never shown in non-UA builds)
 .channels_protect                        = "Chan. protect", // MaxLen: 16
 .satellite_mode                          = "Satellite", // MaxLen: 16
+// R94: UA-only quick-menu label (mirrors ukrainian.h)
+.talkaround_menu                         = "No repeater", // MaxLen: 16
 #endif
 };
 /********************************************************************

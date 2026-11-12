@@ -409,6 +409,8 @@ const stringsTable_t ukrainianLanguage =
 // R82: нові підписи меню, окремі від спільних `locked` (екран блокування, сповіщення) і `satellite_short` (екран GPS)
 .channels_protect                        = "Захист кан.", // MaxLen: 16
 .satellite_mode                          = "Супутник", // MaxLen: 16
+// R94: швидке меню каналу; спільне `talkaround` (голосова підказка) не чіпаємо
+.talkaround_menu                         = "Без репітера", // MaxLen: 16
 #endif
 };
 /********************************************************************

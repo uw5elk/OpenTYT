@@ -445,6 +445,8 @@ typedef struct
    // R82: підписи меню, окремі від спільних `locked` і `satellite_short`
    const char channels_protect[LANGUAGE_TEXTS_LENGTH];
    const char satellite_mode[LANGUAGE_TEXTS_LENGTH];
+   // R94: підпис швидкого меню каналу, окремий від спільного `talkaround` (голосова підказка)
+   const char talkaround_menu[LANGUAGE_TEXTS_LENGTH];
 #endif
 } stringsTable_t;
 
