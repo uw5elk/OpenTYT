@@ -419,6 +419,16 @@ const stringsTable_t ukrainianLanguage =
 .contact_order_1                         = "БД/КП/TA", // MaxLen: 16
 .contact_order_2                         = "TA/КП/БД", // MaxLen: 16
 .contact_order_3                         = "TA/БД/КП", // MaxLen: 16
+#if defined(ENABLE_DUAL_CHANNEL)
+// R97: «Подвійний прийом» (лише ENABLE_DUAL_CHANNEL)
+.dual_rx                                 = "Подв. прийом", // MaxLen: 16 (пункт швидкого меню каналу (значення On/Off: «Подв. прийом:Off» = 16))
+.dual_set_b                              = "Встановити як B", // MaxLen: 16 (пункт швидкого меню каналу (дія))
+.dual_title                              = "Подвійний прийом", // MaxLen: 16 (заголовок на екрані режиму)
+.dual_b_saved                            = "B встановлено", // MaxLen: 16 (сповіщення)
+.dual_err_no_b                           = "B не задано", // MaxLen: 16 (сповіщення: режим не стартує)
+.dual_err_b_gone                         = "Канал B видалено", // MaxLen: 16 (сповіщення: режим не стартує)
+.dual_err_b_is_a                         = "B збігається з A", // MaxLen: 16 (сповіщення: режим не стартує)
+#endif
 #endif
 };
 /********************************************************************

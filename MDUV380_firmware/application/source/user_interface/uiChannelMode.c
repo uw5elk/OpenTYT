@@ -46,6 +46,12 @@
 #include "hardware/radioHardwareInterface.h"
 #endif
 #include "interfaces/gps.h"
+#if defined(ENABLE_DUAL_CHANNEL)
+#include "functions/dual_channel.h"   // R97: «Подвійний прийом»
+#if defined(ENABLE_LC_DISTANCE)
+#include "functions/lc_distance.h"    // R97: відстань R92 у рядку абонента режиму
+#endif
+#endif
 
 #if defined(HAS_COLOURS)
 #define NAME_BUFFER_LEN   25
@@ -118,6 +124,10 @@ static void scanApplyNextChannel(void);
 static void scanStop(bool loadChannel);
 static void updateTrxID(void);
 static void initSortedChannels(void);
+#if defined(DUAL_CHANNEL_ENABLED)
+// R97: «Подвійний прийом» (реалізація -- після uiChannelModeIsScanning())
+static void dualQuickMenuApply(bool setB);
+#endif
 
 static char currentZoneName[SCREEN_LINE_BUFFER_SIZE];
 static int directChannelNumber = 0;
@@ -2169,6 +2179,9 @@ menuStatus_t uiChannelModeQuickMenu(uiEvent_t *ev, bool isFirstRun)
 		uiDataGlobal.QuickMenu.tmpTalkaround = uiDataGlobal.talkaround;
 		uiDataGlobal.QuickMenu.tmpRoaming = nonVolatileSettings.roaming;
 		uiDataGlobal.QuickMenu.tmpAudioMute = audioAmpIsMuted();
+#if defined(DUAL_CHANNEL_ENABLED)
+		dcSetMenuValue(dcIsEnabled());   // R97: тимчасове значення пункту «Подв. прийом»
+#endif
 
 		menuDataGlobal.numItems = NUM_CH_SCREEN_QUICK_MENU_ITEMS;
 #if defined(ROAMING_STOCK_HIDDEN)
@@ -2465,6 +2478,15 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					rightSideConst = currentLanguage->zone_ch_remove;
 					break;
 #endif
+#if defined(DUAL_CHANNEL_ENABLED)
+				case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97
+					leftSide = currentLanguage->dual_rx;
+					rightSideConst = (dcMenuValue() ? currentLanguage->on : currentLanguage->off);
+					break;
+				case CH_SCREEN_QUICK_MENU_SET_B:          // R97
+					rightSideConst = currentLanguage->dual_set_b;
+					break;
+#endif
 				default:
 					buf[0] = 0;
 			}
@@ -2535,6 +2557,9 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					case CH_SCREEN_QUICK_MENU_TALKAROUND:
 					case CH_SCREEN_QUICK_MENU_ROAMING:
 					case CH_SCREEN_QUICK_MENU_AUDIO_MUTE:
+#if defined(DUAL_CHANNEL_ENABLED)
+					case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97: значення On/Off -- кольором значення
+#endif
 						menuDisplayEntry(i, mNum, buf, (strlen(leftSide) + 1), THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 						break;
 
@@ -2795,6 +2820,15 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 					break;
 #endif
 
+#if defined(DUAL_CHANNEL_ENABLED)
+				case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97: увімкнути/вимкнути режим
+				case CH_SCREEN_QUICK_MENU_SET_B:          // R97: поточний канал стає B
+					menuDataGlobal.menuOptionsTimeout = 0;
+					menuSystemPopPreviousMenu();
+					dualQuickMenuApply(menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);   // після повернення на екран каналу: сповіщення не перекриє меню
+					return;
+#endif
+
 #if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 				case CH_SCREEN_QUICK_MENU_ZONE_REMOVE:
 				{
@@ -3016,6 +3050,11 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 				case CH_SCREEN_QUICK_MENU_AUDIO_MUTE:
 					uiDataGlobal.QuickMenu.tmpAudioMute = true;
 					break;
+#if defined(DUAL_CHANNEL_ENABLED)
+				case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97
+					dcSetMenuValue(true);
+					break;
+#endif
 			}
 
 			if (executingQuickKey) // Instantly apply new setting
@@ -3085,6 +3124,11 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 				case CH_SCREEN_QUICK_MENU_AUDIO_MUTE:
 					uiDataGlobal.QuickMenu.tmpAudioMute = false;
 					break;
+#if defined(DUAL_CHANNEL_ENABLED)
+				case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97
+					dcSetMenuValue(false);
+					break;
+#endif
 			}
 
 			if (executingQuickKey) // Instantly apply new setting
@@ -3446,6 +3490,82 @@ bool uiChannelModeIsScanning(void)
 {
 	return uiDataGlobal.Scan.active;
 }
+
+#if defined(DUAL_CHANNEL_ENABLED)
+/*
+ * ============================================================================================================================
+ * R97: «Подвійний прийом» по каналах кодплага. A = поточний канал зони (звичайний вибір), B = закріплений канал з будь-якої
+ * зони (custom-data блок 18, dual_channel.c). Рушій -- наявне сканування (uiDataGlobal.Scan) з окремим scanType, тож звичайне
+ * сканування зони, VFO Dual Watch і роумінг поводяться як до R97: усі вставки в спільних гілках -- за dualIsRunning().
+ *
+ * Стани: SCANNING -- по черзі A/B (витримка як у scanApplyNextChannel); SHORT_PAUSED -- є несуча/синхронізація; PAUSED -- є звук,
+ * утримання «Затр. скан.» (scanDelay), ЗАВЖДИ як HOLD. Будь-яка «чужа» клавіша, меню чи передача лише ЗУПИНЯЮТЬ чергування
+ * (dualSuspend: рація на A), режим лишається ввімкненим; dualAutoResume() відновлює його на екрані каналу.
+ * ============================================================================================================================
+ */
+
+#define DUAL_RESUME_QUIET_MS   1000U   // скільки тиші на клавіатурі перед відновленням чергування
+
+static uint16_t dualChannelA(void)
+{
+	return ((currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0) ? (uint16_t)codeplugGetLastUsedChannelNumberInCurrentZone() : 0U);
+}
+
+static dcPairCheck_t dualCheckPair(void)
+{
+	uint16_t chB = dcChannelB();
+	bool bInUse = (((chB >= DC_CH_MIN) && (chB <= DC_CH_MAX)) ? codeplugAllChannelsIndexIsInUse(chB) : false);
+
+	return dcCheckPair(dualChannelA(), chB, bInUse);
+}
+
+static void dualShowPairError(dcPairCheck_t err)
+{
+	const char *msg = ((err == DC_PAIR_NO_B) ? currentLanguage->dual_err_no_b :
+			((err == DC_PAIR_B_DELETED) ? currentLanguage->dual_err_b_gone : currentLanguage->dual_err_b_is_a));
+
+	soundSetMelody(MELODY_ERROR_BEEP);
+	uiNotificationShowShort(2000U, msg, true);
+}
+
+// Пункти швидкого меню (викликається вже на екрані каналу). R97-К2: лише стан у блоці 18; чергування -- К3.
+static void dualQuickMenuApply(bool setB)
+{
+	if (setB)
+	{
+		uint16_t ch = dualChannelA();
+
+		if ((ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
+		{
+			soundSetMelody(MELODY_ERROR_BEEP);
+			return;
+		}
+
+		(void)dcSetChannelB(ch, true);
+		uiNotificationShowShort(1500U, currentLanguage->dual_b_saved, true);
+		return;
+	}
+
+	if (dcMenuValue() == dcIsEnabled())
+	{
+		return;
+	}
+
+	if (dcMenuValue())
+	{
+		dcPairCheck_t chk = dualCheckPair();
+
+		if (chk != DC_PAIR_OK)
+		{
+			dualShowPairError(chk);   // режим не стартує
+			return;
+		}
+	}
+
+	(void)dcSetEnabled(dcMenuValue(), true);
+}
+
+#endif // DUAL_CHANNEL_ENABLED
 
 void uiChannelModeColdStart(void)
 {

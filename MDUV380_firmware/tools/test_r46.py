@@ -96,7 +96,7 @@ def test_w2_labels():
     check(lang_value("ukrainian.h", "cp_channels") == "Канали", "W2: «Канали» в ukrainian.h")
     check(lang_value("ukrainian.h", "cp_set_zone") == "Встановити", "W2: «Встановити» в ukrainian.h")
     check(lang_value("english.h", "cp_set_zone") is not None, "W2: cp_set_zone є в english.h")
-    blk = [x for x in f[f.index("cp_channels"):] if x not in ("channels_protect", "satellite_mode", "talkaround_menu", "talker_beep", "contact_lines", "contact_order_0", "contact_order_1", "contact_order_2", "contact_order_3")]   # R82: два UA-поля після cp_set_zone
+    blk = [x for x in f[f.index("cp_channels"):] if (not x.startswith("dual_")) and x not in ("channels_protect", "satellite_mode", "talkaround_menu", "talker_beep", "contact_lines", "contact_order_0", "contact_order_1", "contact_order_2", "contact_order_3")]   # R82: два UA-поля після cp_set_zone
     check(blk[-1] == "cp_set_zone" and "codeplug_menu" not in f, "W2: cp_set_zone -- останнє поле структури; codeplug_menu прибрано: хвіст %r" % blk[-3:])
     for fld in ("cp_rename", "cp_zone_chans", "cp_delete"):
         check(lang_value("ukrainian.h", fld) is not None, "W2: поле дії %s є" % fld)
@@ -129,6 +129,7 @@ FILES = ["menuSystem.c", "menuZoneList.c", "menuDisplayMenuList.c", "menuCodeplu
 
 
 def tokens_of(root, rel, incs, defs):
+    defs = [d for d in defs if d != "-DENABLE_DUAL_CHANNEL"]   # R97: «Подвійний прийом» -- новий код лише під прапорцем; без нього токени мають збігтися з базою
     r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w"] + incs + defs + [rel], cwd=root, capture_output=True)   # байти: мовні файли в cp1251
     if r.returncode != 0:
         return None

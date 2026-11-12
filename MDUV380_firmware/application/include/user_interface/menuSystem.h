@@ -448,6 +448,10 @@ enum CHANNEL_SCREEN_QUICK_MENU_ITEMS
 #if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
 	CH_SCREEN_QUICK_MENU_ZONE_REMOVE,   /* R43: «Вийняти із зони» -- ДОДАНО ПІСЛЯ видалення (теж в кінці), номери наявних пунктів не зсуваються */
 #endif
+#if defined(DUAL_CHANNEL_ENABLED)
+	CH_SCREEN_QUICK_MENU_DUAL_CHANNEL,  /* R97: «Подв. прийом» On/Off -- В КІНЦІ, номери наявних пунктів не зсуваються (швидкі клавіші) */
+	CH_SCREEN_QUICK_MENU_SET_B,         /* R97: «Встановити як B» */
+#endif
 	NUM_CH_SCREEN_QUICK_MENU_ITEMS
 };
 

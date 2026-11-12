@@ -37,6 +37,9 @@
 #include "functions/codeplug.h"
 #include "functions/ticks.h"
 #include "functions/aprs.h"
+#if defined(ENABLE_DUAL_CHANNEL)
+#include "functions/dual_channel.h"   /* R97: DUAL_CHANNEL_ENABLED -- SCAN_TYPE_DUAL_CHANNEL нижче */
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -396,6 +399,9 @@ typedef enum
 {
 	SCAN_TYPE_NORMAL_STEP = 0,
 	SCAN_TYPE_DUAL_WATCH
+#if defined(DUAL_CHANNEL_ENABLED)
+	, SCAN_TYPE_DUAL_CHANNEL   /* R97: «Подвійний прийом» по каналах кодплага (uiChannelMode.c) */
+#endif
 } ScanType_t;
 
 typedef struct

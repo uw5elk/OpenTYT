@@ -417,6 +417,16 @@ const stringsTable_t englishLanguage =
 .contact_order_1                         = "DB/Ct/TA", // MaxLen: 16
 .contact_order_2                         = "TA/Ct/DB", // MaxLen: 16
 .contact_order_3                         = "TA/DB/Ct", // MaxLen: 16
+#if defined(ENABLE_DUAL_CHANNEL)
+// R97: UA-only dual watch strings (mirrors ukrainian.h; never shown in non-UA builds)
+.dual_rx                                 = "Dual watch", // MaxLen: 16
+.dual_set_b                              = "Set as B", // MaxLen: 16
+.dual_title                              = "Dual watch", // MaxLen: 16
+.dual_b_saved                            = "B set", // MaxLen: 16
+.dual_err_no_b                           = "B not set", // MaxLen: 16
+.dual_err_b_gone                         = "B deleted", // MaxLen: 16
+.dual_err_b_is_a                         = "B equals A", // MaxLen: 16
+#endif
 #endif
 };
 /********************************************************************

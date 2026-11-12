@@ -72,6 +72,7 @@ def find_base():
 
 
 def tokens_of(root, rel, incs, defs):
+    defs = [d for d in defs if d != "-DENABLE_DUAL_CHANNEL"]   # R97: «Подвійний прийом» -- новий код лише під прапорцем; без нього токени мають збігтися з базою
     r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w"] + incs + defs + [rel], cwd=root, capture_output=True)
     if r.returncode != 0:
         return None

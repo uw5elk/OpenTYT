@@ -454,6 +454,16 @@ typedef struct
    const char contact_order_1[LANGUAGE_TEXTS_LENGTH];
    const char contact_order_2[LANGUAGE_TEXTS_LENGTH];
    const char contact_order_3[LANGUAGE_TEXTS_LENGTH];
+#if defined(ENABLE_DUAL_CHANNEL)
+   // R97: «Подвійний прийом» -- ОСТАННІМИ, лише з ENABLE_DUAL_CHANNEL (розкладка решти збірок та сама); код -- під DUAL_CHANNEL_ENABLED
+   const char dual_rx[LANGUAGE_TEXTS_LENGTH];
+   const char dual_set_b[LANGUAGE_TEXTS_LENGTH];
+   const char dual_title[LANGUAGE_TEXTS_LENGTH];
+   const char dual_b_saved[LANGUAGE_TEXTS_LENGTH];
+   const char dual_err_no_b[LANGUAGE_TEXTS_LENGTH];
+   const char dual_err_b_gone[LANGUAGE_TEXTS_LENGTH];
+   const char dual_err_b_is_a[LANGUAGE_TEXTS_LENGTH];
+#endif
 #endif
 } stringsTable_t;
 

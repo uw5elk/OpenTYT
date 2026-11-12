@@ -21,7 +21,7 @@ def check(c, m):
     if not c:
         FAILS.append(m); print("ПРОВАЛ: " + m)
 def rd(p, enc="utf-8"): return open(p, "rb").read().decode(enc)
-def fields(t): return dict((m.group(1), m.group(2)) for m in re.finditer(r'^\.(\w+)\s*=\s*"([^"]*)"', t, re.M))
+def fields(t): return dict((m.group(1), m.group(2)) for m in re.finditer(r'^\.((?!dual_)\w+)\s*=\s*"([^"]*)"', t, re.M))   # R97: поля dual_* -- пізніші (test_r97)
 def pp(incs, defs, rel):
     r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w"] + incs + defs + [rel], cwd=FW, capture_output=True)
     return r.stdout.decode("cp1251", "replace") if r.returncode == 0 else None

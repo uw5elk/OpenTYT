@@ -52,7 +52,7 @@ def rd(p, enc=None):
 
 
 def fields(text):
-    return dict((m.group(1), m.group(2)) for m in re.finditer(r'^\.(\w+)\s*=\s*"([^"]*)"', text, re.M))
+    return dict((m.group(1), m.group(2)) for m in re.finditer(r'^\.((?!dual_)\w+)\s*=\s*"([^"]*)"', text, re.M))   # R97: поля dual_* -- пізніші (test_r97)
 
 
 def git_show(rel):
