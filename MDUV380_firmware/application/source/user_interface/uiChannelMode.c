@@ -129,6 +129,7 @@ static void initSortedChannels(void);
 static bool dualIsRunning(void);
 static void dualSuspend(void);
 static void dualScanning(void);
+static void dualRenderScreen(void);
 static void dualAutoResume(void);
 static void dualQuickMenuApply(bool setB);
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
@@ -863,6 +864,15 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 	bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #endif
 	bool isTransmitting = isTransmittingIgnoringAPRSBeaconing();
+
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (dualIsRunning() && (uiDataGlobal.displayChannelSettings == false) && (isTransmitting == false))
+	{
+		dualRenderScreen();   // R97: власний екран режиму (два рядки каналів); стоковий нижче не малюється
+		uiDataGlobal.displayQSOState = QSO_DISPLAY_IDLE;
+		return;
+	}
+#endif
 
 	// Only render the header, then wait for the next run
 	// Otherwise the screen could remain blank if TG and PC are == 0
@@ -3851,6 +3861,115 @@ static void dualQuickMenuApply(bool setB)
 	}
 }
 
+// ---- екран режиму ----
+static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool pointer, bool active)
+{
+	CodeplugChannel_t tmp;   // стек: лише 16 байтів імені читаються з кодплага (імена НЕ кешуються в RAM)
+	char name[17];
+	char line[24];           // маркер + літера + пробіл + 16 символів імені
+
+	name[0] = 0;
+
+	if ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch))
+	{
+		codeplugChannelGetDataWithOffsetAndLengthForIndex(ch, &tmp, 0, 16);
+		codeplugUtilConvertBufToDisplayString(tmp.name, name, 16);
+	}
+	else
+	{
+		snprintf(name, sizeof(name), "---");
+	}
+
+	snprintf(line, sizeof(line), "%c%c %s", (pointer ? '>' : ' '), (isB ? 'B' : 'A'), name);
+
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+
+	if (active)
+	{
+		displayFillRect(0, y, DISPLAY_SIZE_X, FONT_SIZE_3_HEIGHT, false);
+	}
+
+	displayPrintCore(0, y, line, FONT_SIZE_3, TEXT_ALIGN_LEFT, active);
+	displayThemeResetToDefault();
+}
+
+static void dualRenderCaller(void)
+{
+	char text[17];
+	char info[27];
+	LinkItem_t *item = LinkHead;
+	bool useTA = false;
+
+	switch (nonVolatileSettings.contactDisplayPriority)   // те саме правило, що для «останнього абонента» на звичайному екрані
+	{
+		case CONTACT_DISPLAY_PRIO_CC_DB_TA:
+		case CONTACT_DISPLAY_PRIO_DB_CC_TA:
+			useTA = ((strncmp(item->contact, "ID:", 3) == 0) && (item->talkerAlias[0] != 0x00));
+			break;
+		default:
+			useTA = (item->talkerAlias[0] != 0x00);
+			break;
+	}
+
+	snprintf(text, sizeof(text), "%.16s", (useTA ? item->talkerAlias : item->contact));
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_BG);
+	displayPrintCentered(DISPLAY_Y_POS_CONTACT, chomp(text), FONT_SIZE_3);
+
+	snprintf(info, sizeof(info), "%.16s", item->talkgroup);
+#if defined(LC_DISTANCE)
+	{
+		char label[LC_DIST_LABEL_SIZE];
+		uint16_t bearing = 0;
+		bool bearingKnown = false;
+
+		// R92: відстань до кореспондента (якщо він передав координати в цьому виклику) -- текстом поруч із ТГ
+		if ((item->locationLat <= 90) && settingsLocationIsValid() &&
+				lcDistLabel(label, sizeof(label), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), item->locationLat, item->locationLon, &bearing, &bearingKnown))
+		{
+			size_t l = strlen(info);
+
+			snprintf(info + l, sizeof(info) - l, " %s", label);
+		}
+	}
+#endif
+	displayPrintCentered(DISPLAY_Y_POS_ZONE, info, FONT_SIZE_1);
+	displayThemeResetToDefault();
+}
+
+static void dualRenderScreen(void)
+{
+	bool active = (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING);
+	bool caller = (((uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA) || (uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA_UPDATE)) &&
+			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL));
+
+	displayClearBuf();
+	uiUtilityRenderHeader(false, false, ((buttonsRead() & BUTTON_SK1) == BUTTON_SK1));
+
+	if (caller)
+	{
+		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_CALLER_DATA;
+		uiDataGlobal.isDisplayingQSOData = true;
+		dualRenderCaller();
+	}
+	else
+	{
+		lastHeardClearLastID();
+		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_DEFAULT_SCREEN;
+		uiDataGlobal.isDisplayingQSOData = false;
+		uiDataGlobal.receivedPcId = 0x00;
+		displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG);
+		displayPrintCentered(DISPLAY_Y_POS_CONTACT, currentLanguage->dual_title, FONT_SIZE_3);
+		displayThemeResetToDefault();
+	}
+
+	dualRenderRow(DISPLAY_Y_POS_RX_FREQ, false, dualChannelA(), (dcPointerB() == false), (active && (dcIsOnB() == false)));
+	dualRenderRow(DISPLAY_Y_POS_TX_FREQ, true, dcChannelB(), dcPointerB(), (active && dcIsOnB()));
+
+#if defined(ENABLE_AES)
+	uiDrawAesEnabledIcon();
+#endif
+	displayRender();
+}
 #endif // DUAL_CHANNEL_ENABLED
 
 void uiChannelModeColdStart(void)
