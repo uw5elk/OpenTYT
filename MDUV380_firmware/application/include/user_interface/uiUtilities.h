@@ -378,4 +378,10 @@ uint32_t cpuGetPackage(void);
 int32_t cpuGetFlashSize(void);
 #endif
 
+#if defined(ENABLE_AES)
+/* R96/А3: маленька галочка 7x6 px, лінії товщиною 2 px, у клітинці FONT_SIZE_3 (8x16 px) з лівим верхнім кутом (cx, cy) рядка меню.
+ * focused -- рядок виділено смугою: тоді колір тла (як інвертований текст), інакше fg. Спільна для «Надісланих» (menuMessages.c) і списку ключів AES. */
+void uiDrawTickMark(int16_t cx, int16_t cy, themeItem_t fg, bool focused);
+#endif
+
 #endif

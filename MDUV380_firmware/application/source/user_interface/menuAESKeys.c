@@ -30,6 +30,9 @@
 #if defined(ENABLE_AES)
 
 #include "functions/aes_key_name.h"
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/aeskeys_ua.h"   /* R96/А3: AESK_LIST_FMT (захист від подвійного включення є) */
+#endif
 #if defined(AES_KEY_NAMES_ENABLED)
 #include "user_interface/uiNameEditor.h"
 #include "user_interface/languages/aeskeys_ua.h"
@@ -150,6 +153,9 @@ static void updateScreen(void)
 	{
 		int mNum = menuGetMenuOffset(AES_NUM_ITEMS, i);
 		const char *value;
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+		bool keyIsSet = false;
+#endif
 
 		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
 		{
@@ -162,8 +168,15 @@ static void updateScreen(void)
 
 		{
 			int keyId = mNum + 1;
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+			// R96/А3: «Ключ N:» і галочка (записано) або «---» (порожньо); текст значення для записаного порожній -- галочку малюємо нижче
+			keyIsSet = ((s_aes.keyMask & (1u << keyId)) != 0);
+			value = keyIsSet ? "" : "---";
+			snprintf(buf, sizeof buf, AESK_LIST_FMT "%s", keyId, value);
+#else
 			value = (s_aes.keyMask & (1u << keyId)) ? "set" : "---";
 			snprintf(buf, sizeof buf, "Key %d:%s", keyId, value);
+#endif
 		}
 
 		// Colour the value after the ':' like the other option menus.
@@ -184,6 +197,14 @@ static void updateScreen(void)
 		}
 #endif
 		menuDisplayEntry(i, mNum, buf, optStart, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+		if (keyIsSet)
+		{
+			// та сама галочка, що в «Надісланих» (uiDrawTickMark), на місці значення; колір як у інших значень
+			uiDrawTickMark((int16_t)(DISPLAY_X_POS_MENU_TEXT_OFFSET + (optStart * 8)), (int16_t)(DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + (i * MENU_ENTRY_HEIGHT)),
+					THEME_ITEM_FG_OPTIONS_VALUE, (mNum == menuDataGlobal.currentItemIndex));
+		}
+#endif
 	}
 
 	displayRender();

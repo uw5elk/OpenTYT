@@ -5500,3 +5500,17 @@ int32_t cpuGetFlashSize(void)
 	return (*(__IO uint16_t *) (0x1FFF7A22));
 }
 #endif
+
+#if defined(ENABLE_AES)
+void uiDrawTickMark(int16_t cx, int16_t cy, themeItem_t fg, bool focused)
+{
+	displayThemeApply(focused ? THEME_ITEM_BG : fg,
+	                  focused ? THEME_ITEM_BG_MENU_ITEM_SELECTED : THEME_ITEM_BG);
+	for (int16_t k = 0; k < 2; k++)
+	{
+		displayDrawLine(cx, (int16_t)(cy + 8 + k), (int16_t)(cx + 2), (int16_t)(cy + 11 + k), true);
+		displayDrawLine((int16_t)(cx + 2), (int16_t)(cy + 11 + k), (int16_t)(cx + 7), (int16_t)(cy + 5 + k), true);
+	}
+	displayThemeResetToDefault();
+}
+#endif

@@ -894,15 +894,7 @@ static void listUpdate(void)
 			{
 				int16_t cx = DISPLAY_X_POS_MENU_TEXT_OFFSET;
 				int16_t cy = (int16_t)(DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + (i * MENU_ENTRY_HEIGHT));
-				bool focused = (mNum == menuDataGlobal.currentItemIndex);
-				displayThemeApply(focused ? THEME_ITEM_BG : THEME_ITEM_FG_RSSI_BAR,
-				                  focused ? THEME_ITEM_BG_MENU_ITEM_SELECTED : THEME_ITEM_BG);
-				for (int16_t k = 0; k < 2; k++)
-				{
-					displayDrawLine(cx, (int16_t)(cy + 8 + k), (int16_t)(cx + 2), (int16_t)(cy + 11 + k), true);
-					displayDrawLine((int16_t)(cx + 2), (int16_t)(cy + 11 + k), (int16_t)(cx + 7), (int16_t)(cy + 5 + k), true);
-				}
-				displayThemeResetToDefault();
+				uiDrawTickMark(cx, cy, THEME_ITEM_FG_RSSI_BAR, (mNum == menuDataGlobal.currentItemIndex));   // R96: спільна галочка (uiUtilities.c)
 			}
 		}
 	}
