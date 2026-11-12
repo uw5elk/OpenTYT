@@ -687,6 +687,13 @@ bool codeplugGetSignallingDTMFDurations(CodeplugSignallingDTMFDurations_t *signa
 bool codeplugZoneAddChannelToZoneAndSave(int channelIndex, CodeplugZone_t *zoneBuf);
 bool codeplugGetDeviceInfo(CodeplugDeviceInfo_t *deviceInfoBuffer);
 
+/* R96/А5: незаписаний слот швидкої клавіші в EEPROM читається як 0xFFFF. Без цієї перевірки QUICKKEY_TYPE=MENU, QUICKKEY_MENUID=31 (в українській збірці з HAS_GPS це MENU_APRS_HUB),
+ * тож SK2+цифра відкривала «APRS», а quickkeyIsEmpty() вважав слот зайнятим (призначити не можна). Лише українська збірка; інакше макрос = 0 і код стоковий. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#define QUICKKEY_SLOT_UNWRITTEN(d)   ((d) == 0xFFFF)
+#else
+#define QUICKKEY_SLOT_UNWRITTEN(d)   (0)
+#endif
 uint16_t codeplugGetQuickkeyFunctionID(char key);
 bool codeplugSetQuickkeyFunctionID(char key, uint16_t functionId);
 

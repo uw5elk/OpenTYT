@@ -2623,7 +2623,7 @@ static bool quickkeyIsEmpty(char key, uint16_t functionId)
 
 	uint16_t data = codeplugGetQuickkeyFunctionID(key);
 
-	if ((data == 0x8000) ||
+	if ((data == 0x8000) || QUICKKEY_SLOT_UNWRITTEN(data) ||   // R96/А5: 0xFFFF -- незаписаний слот EEPROM, вважаємо порожнім
 			(((data & 0x8000) == 0) && ((data < CODEPLUG_CONTACTS_MIN) || (data > CODEPLUG_CONTACTS_MAX))))
 	{
 		return true;

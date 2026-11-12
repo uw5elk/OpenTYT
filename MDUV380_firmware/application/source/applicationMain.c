@@ -1336,6 +1336,10 @@ void applicationMainTask(void)
 		if (KEYCHECK_SHORTUP_NUMBER(keys) && (buttons & BUTTON_SK2) && ((currentMenu == UI_VFO_MODE) || (currentMenu == UI_CHANNEL_MODE)))
 		{
 			keyFunction = codeplugGetQuickkeyFunctionID(keys.key);
+			if (QUICKKEY_SLOT_UNWRITTEN(keyFunction))
+			{
+				keyFunction = 0;   // R96/А5: незаписаний слот (0xFFFF) -- нічого не відкривати
+			}
 			int menuFunction = QUICKKEY_MENUID(keyFunction);
 
 #if 0 // For demo screen
