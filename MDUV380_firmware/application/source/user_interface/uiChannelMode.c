@@ -3687,6 +3687,12 @@ static void dualRenderHeader(bool force)
 	uiUtilityRenderHeaderForChannel(&ov, force);
 }
 
+// R97-FIX7: для uiUtilityRedrawHeaderOnly() -- та сама шапка екрана режиму без залежності від стану сканування.
+void uiChannelModeDualRenderHeader(bool force)
+{
+	dualRenderHeader(force);
+}
+
 // Для applicationMain.c (headerRowIsDirty: заряд, зміна CC): true -- шапку намалювано тут (режим чергує без активності).
 bool uiChannelModeDualHeader(bool force)
 {

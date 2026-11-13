@@ -946,6 +946,15 @@ void applicationMainTask(void)
 #if defined(PLATFORM_RD5R)
 					displayFillRect(0, 0, DISPLAY_SIZE_X, 9, true);
 #else
+					// R97-FIX7: на екрані режиму подвійного прийому заливка 14 px стирала верхню лінію картки A (y=11) і 3 рядки
+					// під нею -- шапка займає лише y=0..DISPLAY_Y_POS_BAR-1, тож чистимо рівно її.
+#if defined(DUAL_CHANNEL_ENABLED)
+					if ((currentMenu == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown())
+					{
+						displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_Y_POS_BAR, true);
+					}
+					else
+#endif
 					displayFillRect(0, 0, DISPLAY_SIZE_X, 14, true); // 2 rows are two much (16 pixels), switched to FillRect.
 #endif
 				}

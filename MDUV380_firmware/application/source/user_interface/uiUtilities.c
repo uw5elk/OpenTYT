@@ -2713,6 +2713,25 @@ void uiUtilityRenderHeaderForChannel(const uiHeaderOverride_t *ov, bool forceBat
 
 void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
 {
+#if defined(DUAL_CHANNEL_ENABLED)
+	// R97-FIX7: екран режиму подвійного прийому -- clearRows(0,2) стирала б y=0..23, тобто верхню лінію картки A (y=11) і її початок.
+	// Чистимо лише рядок шапки (y=0..DISPLAY_Y_POS_BAR-1) і малюємо шапку режиму (чергування -- з кодплага).
+	if ((menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown())
+	{
+		displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_Y_POS_BAR, true);
+		uiChannelModeDualRenderHeader(forceBatteryDisplay);
+
+		if (uiNotificationIsVisible())
+		{
+			displayRender();
+		}
+		else
+		{
+			displayRenderRows(0, 2);
+		}
+		return;
+	}
+#endif
 	if (isVFOSweepScanning)
 	{
 		displayFillRect(0, 0, DISPLAY_SIZE_X, 9, true);
