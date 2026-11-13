@@ -2870,10 +2870,16 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 #if defined(DUAL_CHANNEL_ENABLED)
 				case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97: увімкнути/вимкнути режим
 				case CH_SCREEN_QUICK_MENU_SET_B:          // R97: поточний канал стає B
+				{
+					// R97-FIX: пункт -- ДО menuSystemPopPreviousMenu(): Pop -> menuSystemPushMenuFirstRun() перезаписує currentItemIndex
+					// індексом екрана каналу, і «Встановити як B» ішло гілкою On/Off (знайдено на рації).
+					bool setB = (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);
+
 					menuDataGlobal.menuOptionsTimeout = 0;
 					menuSystemPopPreviousMenu();
-					dualQuickMenuApply(menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);   // після повернення на екран каналу: сповіщення не перекриє меню
+					dualQuickMenuApply(setB);   // після повернення на екран каналу: сповіщення не перекриє меню
 					return;
+				}
 #endif
 
 #if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)

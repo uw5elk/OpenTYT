@@ -10,6 +10,7 @@
   4  збірки без прапорця: токени ВСІХ application/source/**/*.c для AES0 (без дефайнів), ENDATA (англійська) і UA -- як у базі;
      прапорець в англійській збірці (DUALCHEN) -- мертвий;
   5  мовні поля: в ukrainian.h/english.h/uiLanguage.h, останні, під ENABLE_DUAL_CHANNEL, ширина;
+  7  R97-FIX: у швидкому меню пункт читається ДО menuSystemPopPreviousMenu() (статично + мутант), dualQuickMenuApply() хостово (setB -> dcSetChannelB(dualChannelA()), інакше On/Off);
   6  CPS не ламає невідомий блок 18: розбір області, ущільнення, файл налаштувань, план відновлення (custom_region.py, custom_compact.py).
 Порівняння з комітом бази стійке до його відсутності: без коміта -- ПРОПУСК з повідомленням.
 Запуск: python3 tools/test_r97.py"""
@@ -306,12 +307,105 @@ def test_cps():
         check(False, "CPS: ущільнення з блоком 18: %s" % e)
 
 
+
+# ------------------------------------------------------------------------------------------------ 7 (R97-FIX)
+QM_HARNESS = r"""
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#define DUAL_CHANNEL_HOST_TEST 1
+#include "functions/dual_channel.h"
+enum { NOTIFICATION_TYPE_MESSAGE = 1, NOTIFICATION_ID_CARD = 2 };
+static const int MELODY_ERROR_BEEP[1];
+struct { char dual_b_saved[17]; } lang = { "B saved" }, *currentLanguage = &lang;
+static int chA = 0, inUse = 1, menuVal = 0, enabled = 0, setBcalls = 0, setBval = 0, notif = 0, beep = 0, enCalls = 0, enVal = -1, resume = 0, disable = 0, pairErr = 0;
+static dcPairCheck_t pair = DC_PAIR_OK;
+static uint32_t s_dualKeyMs = 77;
+static uint16_t dualChannelA(void) { return (uint16_t)chA; }
+bool codeplugAllChannelsIndexIsInUse(int ch) { (void)ch; return inUse; }
+void soundSetMelody(const int *m) { (void)m; beep++; }
+bool dcSetChannelB(uint16_t ch, bool now) { setBcalls++; setBval = ch; (void)now; return true; }
+void uiNotificationShow(int t, int id, uint32_t ms, const char *msg, bool imm) { (void)t; (void)id; (void)ms; (void)msg; (void)imm; notif++; }
+bool dcMenuValue(void) { return menuVal; }
+bool dcIsEnabled(void) { return enabled; }
+static dcPairCheck_t dualCheckPair(void) { return pair; }
+static void dualShowPairError(dcPairCheck_t e) { (void)e; pairErr++; }
+void dcSetTxHold(bool h) { (void)h; }
+bool dcSetEnabled(bool on, bool now) { (void)now; enCalls++; enVal = on; enabled = on; return true; }
+static void dualAutoResume(void) { resume++; }
+static void dualDisable(void) { disable++; enabled = 0; }
+void uiChannelModeUpdateScreen(int x) { (void)x; }
+%(fn)s
+static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; }
+int main(void)
+{
+	reset(); chA = 42; dualQuickMenuApply(true); printf("b1=%%d,%%d,%%d,%%d\n", setBcalls, setBval, notif, enCalls);
+	reset(); chA = 42; enabled = 1; menuVal = 1; dualQuickMenuApply(true); printf("b2=%%d,%%d,%%d,%%d\n", setBcalls, setBval, enabled, disable);
+	reset(); chA = 42; inUse = 0; dualQuickMenuApply(true); printf("b3=%%d,%%d\n", setBcalls, beep);
+	reset(); chA = 42; menuVal = 1; dualQuickMenuApply(false); printf("o1=%%d,%%d,%%d,%%d\n", setBcalls, enCalls, enVal, resume);
+	reset(); chA = 42; menuVal = 1; pair = DC_PAIR_NO_B; dualQuickMenuApply(false); printf("o2=%%d,%%d,%%d\n", pairErr, enCalls, setBcalls);
+	reset(); chA = 42; enabled = 1; menuVal = 0; dualQuickMenuApply(false); printf("o3=%%d,%%d\n", disable, setBcalls);
+	reset(); chA = 42; dualQuickMenuApply(false); printf("o4=%%d,%%d,%%d\n", setBcalls, enCalls, disable);
+	return 0;
+}
+"""
+
+
+
+def qm_case_problems(src):
+    """Статично: у case «Подв. прийом»/«Встановити як B» пункт меню читається ДО menuSystemPopPreviousMenu(), після Pop -- жодного menuDataGlobal."""
+    m = re.search(r"case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:[^\n]*\n\t*case CH_SCREEN_QUICK_MENU_SET_B:(.*?)\breturn;", src, re.S)
+    if m is None:
+        return ["case пунктів R97 у швидкому меню не знайдено"]
+    body = m.group(1)
+    p = []
+    i_pop = body.find("menuSystemPopPreviousMenu();")
+    i_read = body.find("menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B")
+    if i_pop < 0:
+        p.append("Pop не знайдено")
+    elif i_read < 0 or i_read > i_pop:
+        p.append("пункт меню читається ПІСЛЯ menuSystemPopPreviousMenu() (Pop перезаписує currentItemIndex)")
+    if i_pop >= 0 and "menuDataGlobal" in body[i_pop:]:
+        p.append("після Pop ще читається menuDataGlobal")
+    return p
+
+
+def test_quickmenu_fix(incs, cf):
+    src = rd(os.path.join(APP, "source", "user_interface", "uiChannelMode.c"))
+    check(qm_case_problems(src) == [], "R97-FIX: у case «Подв. прийом»/«Встановити як B» пункт береться ДО Pop: %r" % qm_case_problems(src))
+    bug = src.replace("bool setB = (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);\n", "", 1).replace(
+        "dualQuickMenuApply(setB);", "dualQuickMenuApply(menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);", 1)
+    check(bug != src and qm_case_problems(bug) != [], "R97-FIX (мутант): старий порядок (читання після Pop) ловиться")
+    blk = src[src.find("#define DUAL_RESUME_QUIET_MS"):src.find("#endif // DUAL_CHANNEL_ENABLED")]
+    check(blk and "menuDataGlobal" not in blk, "R97-FIX: у блоці R97 (рушій/екран/клавіші) стан меню не читається")
+    if "DUALCH" not in cf:
+        return
+    t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
+    fn = carve_fn(t or "", "static void dualQuickMenuApply(_Bool setB)")
+    check(fn is not None, "R97-FIX: dualQuickMenuApply знайдено")
+    if fn is None:
+        return
+    out = run_c(QM_HARNESS % {"fn": fn})
+    check(out is not None, "R97-FIX: хостова збірка dualQuickMenuApply")
+    if out is None:
+        return
+    o = dict(l.split("=", 1) for l in out.split())
+    check(o.get("b1") == "1,42,1,0", "«Встановити як B»: dcSetChannelB(dualChannelA()) + сповіщення, стан режиму не чіпає: %s" % o.get("b1"))
+    check(o.get("b2") == "1,42,1,0", "«Встановити як B» при ввімкненому режимі: B = A, режим лишається ввімкненим (чекає іншого A): %s" % o.get("b2"))
+    check(o.get("b3") == "0,1", "«Встановити як B» на неіснуючому каналі: нічого не пише, звук помилки: %s" % o.get("b3"))
+    check(o.get("o1") == "0,1,1,1", "«Подв. прийом» On: вмикає й запускає, B не чіпає: %s" % o.get("o1"))
+    check(o.get("o2") == "1,0,0", "«Подв. прийом» On без B: сповіщення, режим не вмикається: %s" % o.get("o2"))
+    check(o.get("o3") == "1,0", "«Подв. прийом» Off: вимикає: %s" % o.get("o3"))
+    check(o.get("o4") == "0,0,0", "«Подв. прийом» без зміни значення: нічого: %s" % o.get("o4"))
+
+
 def main():
     if not shutil.which("gcc"):
         print("ПРОПУСК: gcc нема"); return 0
     test_block18()
     incs, cfgs = cmt.load_configs(FW)
     test_engine(incs, dict(cfgs))
+    test_quickmenu_fix(incs, dict(cfgs))
     test_lang()
     test_cps()
     test_vs_base(incs, cfgs)
