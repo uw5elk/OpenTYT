@@ -4320,6 +4320,10 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_METER_SEGS    9
 
 // Текст абонента за тим самим правилом, що «останній абонент» звичайного екрана (contactDisplayPriority).
+#define DW_UN_DY         45                                // R98 Д1: індикатор непрочитаних у нижній частині квадрата з літерою: y+45..52 (під ▸ y+40..44)
+#define DW_UN_LETTER_X   4                                 // літера D/A (6 px): x=4..9
+#define DW_UN_ENV_X      11                                // конверт 8x6: x=11..18, y+46..51
+#define DW_UN_NUM_X      20                                // число (одна цифра) або «+» (понад 9): x=20..25; усе в x=4..25 (внутрішня ширина квадрата)
 static void dualCallerText(char *text17)
 {
 	LinkItem_t *item = LinkHead;
@@ -4593,6 +4597,29 @@ bool uiChannelModeDualScreenShown(void)
 {
 	return (dualIsRunning() || dualHoldScreen());
 }
+	{
+		// R98 Д1: індикатор непрочитаних -- у квадраті з літерою (стокове місце в шапці, y=16, налазило на картку A). Картка A -- SMS DMR («D»),
+		// картка B -- APRS («A»); умова показу -- лічильник > 0, як у стоку. Обраний квадрат залитий -- малюємо кольором фону.
+		unsigned un = uiUnreadCount(isB ? 'A' : 'D');
+
+		if (un > 0U)
+		{
+			char kind[2];
+			char num[2];
+
+			kind[0] = (isB ? 'A' : 'D');
+			kind[1] = 0;
+			num[0] = ((un > 9U) ? '+' : (char)('0' + un));
+			num[1] = 0;
+			displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+			displayPrintCore(DW_UN_LETTER_X, (y + DW_UN_DY), kind, FONT_SIZE_1, TEXT_ALIGN_LEFT, selected);
+			displayDrawRect(DW_UN_ENV_X, (y + DW_UN_DY + 1), 8, 6, (selected == false));
+			displayDrawLine(DW_UN_ENV_X, (y + DW_UN_DY + 1), (DW_UN_ENV_X + 4), (y + DW_UN_DY + 4), (selected == false));
+			displayDrawLine((DW_UN_ENV_X + 7), (y + DW_UN_DY + 1), (DW_UN_ENV_X + 4), (y + DW_UN_DY + 4), (selected == false));
+			displayPrintCore(DW_UN_NUM_X, (y + DW_UN_DY), num, FONT_SIZE_1, TEXT_ALIGN_LEFT, selected);
+		}
+	}
+
 
 static void dualRenderScreen(void)
 {

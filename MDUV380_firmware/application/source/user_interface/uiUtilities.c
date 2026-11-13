@@ -2180,6 +2180,38 @@ static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
 }
 #endif
 
+#if defined(DUAL_CHANNEL_ENABLED)
+// R98 Д1: на екрані «Подвійного прийому» конверт непрочитаних малюють картки (dualRenderRow, у квадраті з літерою), а не шапка (її конверт на y=16
+// налазив на картку A). Умова показу -- та сама, що в стоку (лічильник > 0); тут лише ознака «екран режиму показано» і лічильники.
+static bool dualEnvelopeInCards(void)
+{
+	return ((menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown());
+}
+
+// kind: 'D' -- непрочитані SMS DMR, 'A' -- APRS; без відповідної збірки -- 0.
+unsigned uiUnreadCount(char kind)
+{
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	if (kind == 'D')
+	{
+		int unread = dmrSmsUnreadCount();
+
+		return ((unread > 0) ? (unsigned)unread : 0U);
+	}
+#endif
+#if defined(APRS_RX)
+	if (kind == 'A')
+	{
+		const aprsMsgBox_t *ab = aprsModeMsgBox();
+
+		return ((ab != NULL) ? aprsMsgUnreadCount(ab) : 0U);
+	}
+#endif
+	(void)kind;
+	return 0U;
+}
+#endif
+
 #if defined(APRS_R21_TXLABEL)
 /* R21 З6: див. uiUtilities.h. APRS-ui M2: на час маяка прапорець «a» не малюється (напис «APRS» стоїть замість нього). Слот: x = 25..48 (4 символи по 6 px) -- прапорець «a» (коли малюється) закінчується на x = 24 (DMR: 1+18+6), потужність у найгіршому випадку
  * ("250mW", 30 px) починається з x = 50. Малюється в шапці, тож S-метр (нижче шапки) і рядок контакту не зачіпаються. */
@@ -2662,6 +2694,12 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 	// persistent reminder. Drawn only when there are unread Inbox messages.
 	{
 		int unread = dmrSmsUnreadCount();
+#if defined(DUAL_CHANNEL_ENABLED)
+		if (dualEnvelopeInCards())
+		{
+			unread = 0;   // R98 Д1: на екрані режиму конверт малюють картки (не налазить на картку A)
+		}
+#endif
 		if (unread > 0)
 		{
 			// R15: конверт спільний з APRS (drawMsgEnvelope), справа; блок притиснутий до правого краю. Число -- справжнє (до 99).
@@ -2679,6 +2717,12 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 	{
 		const aprsMsgBox_t *ab = aprsModeMsgBox();
 		unsigned aun = (ab != NULL) ? aprsMsgUnreadCount(ab) : 0U;
+#if defined(DUAL_CHANNEL_ENABLED)
+		if (dualEnvelopeInCards())
+		{
+			aun = 0U;   // R98 Д1: див. вище
+		}
+#endif
 
 		if (aun > 0U)
 		{

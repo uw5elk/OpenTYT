@@ -210,6 +210,9 @@ int uiChannelDataHasAes(CodeplugChannel_t *ch);   /* R97-FIX6: те саме д�
 void uiDrawAesIconAt(int16_t x, int16_t y);       /* R97-FIX6: замок 10x9 у заданому місці */
 #endif
 #endif
+#if defined(DUAL_CHANNEL_ENABLED)
+unsigned uiUnreadCount(char kind);   /* R98 Д1: 'D' -- непрочитані SMS DMR, 'A' -- APRS (0, якщо збірка без них); для карток «Подвійного прийому» */
+#endif
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
 void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
 #if defined(DUAL_CHANNEL_ENABLED)
