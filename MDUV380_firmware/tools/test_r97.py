@@ -11,6 +11,7 @@
      прапорець в англійській збірці (DUALCHEN) -- мертвий;
   5  мовні поля: в ukrainian.h/english.h/uiLanguage.h, останні, під ENABLE_DUAL_CHANNEL, ширина;
   7  R97-FIX: у швидкому меню пункт читається ДО menuSystemPopPreviousMenu() (статично + мутант), dualQuickMenuApply() хостово (setB -> dcSetChannelB(dualChannelA()), інакше On/Off);
+  8  R97-FIX2: шапка за станом (dualRenderScreen хостово + мутант), гаряча клавіша -- довге ▼ (dualSetMode/dualHotkeyToggle хостово, статично: без автоповтору, SK2/SK1, набір номера), вибір A/B у «Всіх каналах» (-1) на справжніх codeplug*LastUsed*;
   6  CPS не ламає невідомий блок 18: розбір області, ущільнення, файл налаштувань, план відновлення (custom_region.py, custom_compact.py).
 Порівняння з комітом бази стійке до його відсутності: без коміта -- ПРОПУСК з повідомленням.
 Запуск: python3 tools/test_r97.py"""
@@ -20,7 +21,7 @@ import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages")
 BASE = os.environ.get("R97_BASE", "7fa5fe8")
 FAILS = []; N = [0]
-DUAL_FIELDS = ["dual_rx", "dual_set_b", "dual_title", "dual_b_saved", "dual_err_no_b", "dual_err_b_gone", "dual_err_b_is_a"]
+DUAL_FIELDS = ["dual_rx", "dual_set_b", "dual_title", "dual_b_saved", "dual_err_no_b", "dual_err_b_gone", "dual_err_b_is_a", "dual_on", "dual_off"]
 
 
 def check(c, m):
@@ -167,7 +168,7 @@ int main(void)
 	// б) несуча на B: коротка пауза, звук -> утримання scanDelay*1000, поки є звук, рація на B
 	reset(); ticks(41); carrier = 1; ticks(5); int st1 = uiDataGlobal.Scan.state; rf = 1; ticks(3); int st2 = uiDataGlobal.Scan.state, to = uiDataGlobal.Scan.timer.timeout;
 	ticks(5000); int stay = (onB == 1) && (tunes == 1);
-	carrier = 0; rf = 0; ticks(1990); int still = (onB == 1); ticks(20); printf("hold=%%d,%%d,%%d,%%d,%%d,%%d,%%d\n", st1, st2, to, stay, still, onB, uiDataGlobal.Scan.state);
+	carrier = 0; rf = 0; ticks(1990); int still = (onB == 1); uiDataGlobal.displayQSOState = QSO_DISPLAY_IDLE; ticks(20); int dq0 = uiDataGlobal.displayQSOState; printf("hold=%%d,%%d,%%d,%%d,%%d,%%d,%%d\n", st1, st2, to, stay, still, onB, uiDataGlobal.Scan.state); printf("holdscr=%%d,%%d\n", dq0 == QSO_DISPLAY_DEFAULT_SCREEN, hdr);
 	// в) DMR slow: синхронізація -> пауза (1 надкадр + 1 TS) * 4
 	reset(); mode = RADIO_MODE_DIGITAL; uiDataGlobal.Scan.stepTimeMilliseconds = 200; ticks(10); sync = 1; ticks(1); printf("dmr=%%d,%%d\n", uiDataGlobal.Scan.state, uiDataGlobal.Scan.timer.timeout);
 	// г) PTT: без активності -- покажчик; під час утримання -- де рація; не той екран / не працює -- false
@@ -200,8 +201,9 @@ def test_engine(incs, cf):
     if out is None:
         return
     o = dict(l.split("=", 1) for l in out.split())
-    check(o.get("alt") == "6,0,6", "чергування A<->B: 6 перемикань за 6 витримок, кожне -- лише шапка: %s" % o.get("alt"))
+    check(o.get("alt") == "6,0,0", "чергування A<->B: 6 перемикань за 6 витримок; R97-FIX2: шапка при перемиканні НЕ перемальовується (статична «[DW]»): %s" % o.get("alt"))
     check(o.get("hold") == "1,2,1999,1,1,0,0", "утримання: SHORT_PAUSED -> PAUSED (scanDelay*1000, мінус поточний тік), поки є звук -- на B; після -- поновлення на A: %s" % o.get("hold"))
+    check(o.get("holdscr") == "1,0", "R97-FIX2: перехід із виклику/утримання в чергування -- повне перемальовування екрана (QSO_DISPLAY_DEFAULT_SCREEN), шапка окремо не малюється: %s" % o.get("holdscr"))
     check(o.get("dmr") == "1,1559", "DMR slow: синхронізація -> пауза ((TIMESLOT*12)+TIMESLOT)*4 мінус поточний тік: %s" % o.get("dmr"))
     check(o.get("ptt1") == "1,1,1,0", "PTT без активності, покажчик на B: рація на B, утримання після TX, Scan.active знято: %s" % o.get("ptt1"))
     check(o.get("ptt2") == "1,1,0", "PTT під час утримання на B при покажчику на A: передача на B (без перелаштування): %s" % o.get("ptt2"))
@@ -317,7 +319,7 @@ QM_HARNESS = r"""
 #include "functions/dual_channel.h"
 enum { NOTIFICATION_TYPE_MESSAGE = 1, NOTIFICATION_ID_CARD = 2 };
 static const int MELODY_ERROR_BEEP[1];
-struct { char dual_b_saved[17]; } lang = { "B saved" }, *currentLanguage = &lang;
+struct { char dual_b_saved[17]; char dual_on[17]; char dual_off[17]; } lang = { "B saved", "ON", "OFF" }, *currentLanguage = &lang;
 static int chA = 0, inUse = 1, menuVal = 0, enabled = 0, setBcalls = 0, setBval = 0, notif = 0, beep = 0, enCalls = 0, enVal = -1, resume = 0, disable = 0, pairErr = 0;
 static dcPairCheck_t pair = DC_PAIR_OK;
 static uint32_t s_dualKeyMs = 77;
@@ -381,10 +383,11 @@ def test_quickmenu_fix(incs, cf):
     if "DUALCH" not in cf:
         return
     t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
-    fn = carve_fn(t or "", "static void dualQuickMenuApply(_Bool setB)")
-    check(fn is not None, "R97-FIX: dualQuickMenuApply знайдено")
-    if fn is None:
+    fn = [carve_fn(t or "", "static void dualSetMode(_Bool on, _Bool notify)"), carve_fn(t or "", "static void dualQuickMenuApply(_Bool setB)")]
+    check(all(fn), "R97-FIX: dualQuickMenuApply і dualSetMode знайдено")
+    if not all(fn):
         return
+    fn = "\n".join(fn)
     out = run_c(QM_HARNESS % {"fn": fn})
     check(out is not None, "R97-FIX: хостова збірка dualQuickMenuApply")
     if out is None:
@@ -399,6 +402,258 @@ def test_quickmenu_fix(incs, cf):
     check(o.get("o4") == "0,0,0", "«Подв. прийом» без зміни значення: нічого: %s" % o.get("o4"))
 
 
+# ------------------------------------------------------------------------------------------------ 8 (R97-FIX2)
+HK_HARNESS = r"""
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#define DUAL_CHANNEL_HOST_TEST 1
+#include "functions/dual_channel.h"
+enum { NOTIFICATION_TYPE_MESSAGE = 1, NOTIFICATION_ID_CARD = 2 };
+static const int MELODY_ERROR_BEEP[1];
+struct { char dual_b_saved[17]; char dual_on[17]; char dual_off[17]; } lang = { "B saved", "ON", "OFF" }, *currentLanguage = &lang;
+static int chA = 0, inUse = 1, menuVal = 0, enabled = 0, setBcalls = 0, setBval = 0, notif = 0, beep = 0, enCalls = 0, enVal = -1, resume = 0, disable = 0, pairErr = 0, lastNotifOn = -1;
+static dcPairCheck_t pair = DC_PAIR_OK;
+static uint32_t s_dualKeyMs = 77;
+static uint16_t dualChannelA(void) { return (uint16_t)chA; }
+bool codeplugAllChannelsIndexIsInUse(int ch) { (void)ch; return inUse; }
+void soundSetMelody(const int *m) { (void)m; beep++; }
+bool dcSetChannelB(uint16_t ch, bool now) { setBcalls++; setBval = ch; (void)now; return true; }
+void uiNotificationShow(int t, int id, uint32_t ms, const char *msg, bool imm) { (void)t; (void)id; (void)ms; (void)imm; notif++; lastNotifOn = (msg == lang.dual_on); }
+bool dcMenuValue(void) { return menuVal; }
+bool dcIsEnabled(void) { return enabled; }
+static dcPairCheck_t dualCheckPair(void) { return pair; }
+static void dualShowPairError(dcPairCheck_t e) { (void)e; pairErr++; beep++; }
+void dcSetTxHold(bool h) { (void)h; }
+bool dcSetEnabled(bool on, bool now) { (void)now; enCalls++; enVal = on; enabled = on; return true; }
+static void dualAutoResume(void) { resume++; }
+static void dualDisable(void) { disable++; enabled = 0; }
+void uiChannelModeUpdateScreen(int x) { (void)x; }
+%(fn)s
+static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; lastNotifOn = -1; }
+int main(void)
+{
+	reset(); chA = 42; dualQuickMenuApply(true); printf("b1=%%d,%%d,%%d,%%d\n", setBcalls, setBval, notif, enCalls);
+	reset(); chA = 42; enabled = 1; menuVal = 1; dualQuickMenuApply(true); printf("b2=%%d,%%d,%%d,%%d\n", setBcalls, setBval, enabled, disable);
+	reset(); chA = 42; inUse = 0; dualQuickMenuApply(true); printf("b3=%%d,%%d\n", setBcalls, beep);
+	reset(); chA = 42; menuVal = 1; dualQuickMenuApply(false); printf("o1=%%d,%%d,%%d,%%d,%%d\n", setBcalls, enCalls, enVal, resume, notif);
+	reset(); chA = 42; menuVal = 1; pair = DC_PAIR_NO_B; dualQuickMenuApply(false); printf("o2=%%d,%%d,%%d\n", pairErr, enCalls, setBcalls);
+	reset(); chA = 42; enabled = 1; menuVal = 0; dualQuickMenuApply(false); printf("o3=%%d,%%d,%%d\n", disable, setBcalls, notif);
+	reset(); chA = 42; dualQuickMenuApply(false); printf("o4=%%d,%%d,%%d\n", setBcalls, enCalls, disable);
+	/* гаряча клавіша (довге ▼): та сама логіка */
+	reset(); dualHotkeyToggle(); printf("h1=%%d,%%d,%%d,%%d,%%d,%%d\n", enCalls, enVal, resume, notif, lastNotifOn, pairErr);
+	reset(); enabled = 1; dualHotkeyToggle(); printf("h2=%%d,%%d,%%d,%%d,%%d\n", disable, enabled, notif, lastNotifOn, enCalls);
+	reset(); pair = DC_PAIR_NO_B; dualHotkeyToggle(); printf("h3=%%d,%%d,%%d,%%d,%%d\n", pairErr, beep, enCalls, notif, enabled);
+	reset(); pair = DC_PAIR_B_DELETED; dualHotkeyToggle(); printf("h4=%%d,%%d,%%d\n", pairErr, enCalls, notif);
+	reset(); pair = DC_PAIR_B_IS_A; dualHotkeyToggle(); printf("h5=%%d,%%d,%%d\n", pairErr, enCalls, notif);
+	reset(); dualHotkeyToggle(); dualHotkeyToggle(); printf("h6=%%d,%%d,%%d,%%d\n", enCalls, disable, enabled, notif);
+	return 0;
+}
+"""
+
+RS_HARNESS = r"""
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+enum { SCAN_STATE_SCANNING = 0, SCAN_STATE_SHORT_PAUSED, SCAN_STATE_PAUSED };
+enum { SCAN_TYPE_NORMAL_STEP = 0, SCAN_TYPE_DUAL_CHANNEL = 2 };
+enum { QSO_DISPLAY_IDLE = 0, QSO_DISPLAY_DEFAULT_SCREEN, QSO_DISPLAY_CALLER_DATA, QSO_DISPLAY_CALLER_DATA_UPDATE };
+enum { RADIO_MODE_ANALOG = 1, RADIO_MODE_DIGITAL = 2 };
+enum { THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG };
+#define FONT_SIZE_3 3
+struct { struct { bool active; int scanType; int state; } Scan; int displayQSOState, displayQSOStatePrev; bool isDisplayingQSOData; uint32_t receivedPcId; } uiDataGlobal;
+struct { char dual_title[17]; } lang, *currentLanguage = &lang;
+static int hdrCalls = 0, hdrDW = -1, hdrSweep = -1, clears = 0, renders = 0, rows = 0, mode = RADIO_MODE_ANALOG;
+static void *LinkHead = 0;
+void displayClearBuf(void) { clears++; }
+void uiUtilityRenderHeader(bool dw, bool sweep, bool force) { (void)force; hdrCalls++; hdrDW = dw; hdrSweep = sweep; }
+uint32_t buttonsRead(void) { return 0; }
+int trxGetMode(void) { return mode; }
+uint32_t HRC6000GetReceivedTgOrPcId(void) { return 0; }
+void lastHeardClearLastID(void) {}
+void displayThemeApply(int a, int b) { (void)a; (void)b; }
+void displayThemeResetToDefault(void) {}
+void displayPrintCentered(int y, const char *t, int f) { (void)y; (void)t; (void)f; }
+void dualRenderRow(int y, bool isB, uint16_t ch, bool p, bool a) { (void)y; (void)isB; (void)ch; (void)p; (void)a; rows++; }
+void dualRenderCaller(void) {}
+uint16_t dualChannelA(void) { return 1; }
+uint16_t dcChannelB(void) { return 2; }
+bool dcPointerB(void) { return false; }
+bool dcIsOnB(void) { return false; }
+void uiDrawAesEnabledIcon(void) {}
+void displayRender(void) { renders++; }
+%(fns)s
+int main(void)
+{
+	for (int st = SCAN_STATE_SCANNING; st <= SCAN_STATE_PAUSED; st++)
+	{
+		hdrCalls = 0; hdrDW = -1; hdrSweep = -1; rows = 0; renders = 0;
+		uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = st;
+		dualRenderScreen();
+		printf("rs%%d=%%d,%%d,%%d,%%d,%%d,%%d\n", st, hdrCalls, hdrDW, hdrSweep, rows, renders, uiChannelModeDualHeaderStatic());
+	}
+	uiDataGlobal.Scan.state = SCAN_STATE_SCANNING; uiDataGlobal.Scan.active = false; printf("st_off=%%d\n", uiChannelModeDualHeaderStatic());
+	uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_NORMAL_STEP; printf("st_plain=%%d\n", uiChannelModeDualHeaderStatic());
+	return 0;
+}
+"""
+
+ZONE_HARNESS = r"""
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#define DUAL_CHANNEL_HOST_TEST 1
+#include "functions/dual_channel.h"
+#include "%(dc)s"
+typedef struct { uint16_t channels[80]; int NOT_IN_CODEPLUGDATA_numChannelsInZone; int NOT_IN_CODEPLUGDATA_highestIndex; int NOT_IN_CODEPLUGDATA_indexNumber; } zone_t;
+static zone_t currentZone;
+static uint8_t lastUsedChannelInZoneData[70];
+static bool lastUsedChannelInZoneHasChanged;
+static uint8_t codeplugAllChannelsCache[128];
+static uint16_t chB = 0;
+uint16_t dcChannelB(void) { return chB; }
+bool dcSetChannelB(uint16_t c, bool now) { (void)now; chB = c; return true; }
+bool dcIsOnB(void) { return false; }
+enum { SCAN_STATE_SCANNING = 0 };
+struct { struct { int state; } Scan; } uiDataGlobal;
+static const int MELODY_ERROR_BEEP[1];
+static int beeps = 0;
+void soundSetMelody(const int *m) { (void)m; beeps++; }
+static void dualTune(bool t) { (void)t; }
+static void dualSetDwell(void) {}
+static void setUse(int ch) { ch--; codeplugAllChannelsCache[ch / 8] |= (uint8_t)(1u << (ch %% 8)); }
+%(fns)s
+static void allZone(int hi) { memset(&currentZone, 0, sizeof(currentZone)); currentZone.NOT_IN_CODEPLUGDATA_indexNumber = -1; currentZone.NOT_IN_CODEPLUGDATA_highestIndex = hi;
+	int n = 0; for (int c = 1; c <= 1024; c++) if (codeplugAllChannelsIndexIsInUse(c)) n++; currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone = n; }
+int main(void)
+{
+	memset(codeplugAllChannelsCache, 0, sizeof(codeplugAllChannelsCache));
+	setUse(1); setUse(2); setUse(5); setUse(7); setUse(10); setUse(1024);
+	/* «Всі канали»: A = номер каналу, збережений як (номер-1) у int16 -- ЯК у стоку (handleUpKey пише номер) */
+	allZone(1024);
+	codeplugSetLastUsedChannelInZone(-1, 5);
+	printf("a1=%%d\n", dualChannelA());                                   /* 5 */
+	codeplugSetLastUsedChannelInZone(-1, 1024);
+	printf("a2=%%d\n", dualChannelA());                                   /* 1024 */
+	codeplugSetLastUsedChannelInZone(-1, 5); chB = 7;
+	printf("a3=%%d\n", dcCheckPair(dualChannelA(), chB, codeplugAllChannelsIndexIsInUse(chB)));   /* OK=0 */
+	/* крок B валкодером від 7: 10, 1024, 1 (обхід через край), 2, (5 = A пропускається) 7 */
+	int seq[8], k = 0;
+	for (k = 0; k < 6; k++) { dualStepB(1); seq[k] = chB; }
+	printf("s1=%%d,%%d,%%d,%%d,%%d,%%d\n", seq[0], seq[1], seq[2], seq[3], seq[4], seq[5]);
+	chB = 7; for (k = 0; k < 4; k++) { dualStepB(-1); seq[k] = chB; }
+	printf("s2=%%d,%%d,%%d,%%d\n", seq[0], seq[1], seq[2], seq[3]);       /* 2 (5=A пропущено), 1, 1024, 10 */
+	/* highestIndex < 1024: той самий обхід */
+	setUse(1024); codeplugAllChannelsCache[127] = 0; allZone(10); chB = 10; dualStepB(1); printf("s3=%%d\n", chB);   /* 1 */
+	/* A збігається з B у «Всіх каналах» */
+	chB = 5; printf("p1=%%d\n", dcCheckPair(dualChannelA(), chB, codeplugAllChannelsIndexIsInUse(chB)));   /* B_IS_A=3 */
+	/* B видалено (поза маскою) */
+	chB = 6; printf("p2=%%d\n", dcCheckPair(dualChannelA(), chB, codeplugAllChannelsIndexIsInUse(chB)));   /* B_DELETED=2 */
+	/* зона з каналами: A = channels[індекс] */
+	memset(&currentZone, 0, sizeof(currentZone)); currentZone.NOT_IN_CODEPLUGDATA_indexNumber = 3; currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone = 3; currentZone.NOT_IN_CODEPLUGDATA_highestIndex = 3;
+	currentZone.channels[0] = 2; currentZone.channels[1] = 7; currentZone.channels[2] = 10;
+	codeplugSetLastUsedChannelInZone(3, 1); printf("z1=%%d\n", dualChannelA());           /* 7 */
+	chB = 10; dualStepB(1); printf("z2=%%d\n", chB);                                       /* 2 (з 10 -> 2; A=7 пропущено не потрібно) */
+	chB = 2; dualStepB(1); printf("z3=%%d\n", chB);                                       /* 10 (7=A пропущено) */
+	/* порожня зона / «Всі канали» без каналів: A = 0 */
+	allZone(0); currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone = 0; printf("e1=%%d\n", dualChannelA());
+	/* «Всі канали» й зона не змішують «останній канал» (різні комірки) */
+	allZone(1024); codeplugSetLastUsedChannelInZone(-1, 7); codeplugSetLastUsedChannelInZone(3, 2);
+	printf("m1=%%d,%%d\n", codeplugGetLastUsedChannelInZone(-1), codeplugGetLastUsedChannelInZone(3));   /* 7,2 */
+	return 0;
+}
+"""
+
+
+def test_fix2(incs, cf):
+    src = rd(os.path.join(APP, "source", "user_interface", "uiChannelMode.c"))
+    uu = rd(os.path.join(APP, "source", "user_interface", "uiUtilities.c"), "utf-8")
+    am = rd(os.path.join(APP, "source", "applicationMain.c"))
+    # ---- п.1: шапка (статично) ----
+    check("scanType != SCAN_TYPE_DUAL_CHANNEL" in uu and "R97-FIX2" in uu, "п.1: uiUtilityRenderHeader -- у режимі подвійного прийому шапка не блимає (scanIsActive без SCAN_TYPE_DUAL_CHANNEL, лише під DUAL_CHANNEL_ENABLED)")
+    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*//[^\n]*\n\s*(//[^\n]*\n\s*)*bool scanIsActive = \(\(uiDataGlobal\.Scan\.active && \(uiDataGlobal\.Scan\.scanType != SCAN_TYPE_DUAL_CHANNEL\)\) \|\| uiDataGlobal\.Scan\.toneActive\);\s*#else\s*bool scanIsActive = \(uiDataGlobal\.Scan\.active \|\| uiDataGlobal\.Scan\.toneActive\);\s*#endif", uu) is not None,
+          "п.1: зміна scanIsActive -- лише під DUAL_CHANNEL_ENABLED, інакше рядок стоковий")
+    blk = src[src.find("static void dualScanning(void)\n{"):src.find("// ---- валкодер на рядку B")]
+    check("uiUtilityRedrawHeaderOnly" not in blk, "п.1: dualScanning() не перемальовує шапку при перемиканні A/B")
+    tick = src[src.find("if ((ev->time - m) > RSSI_UPDATE_COUNTER_RELOAD)"):]
+    tick = tick[:tick.find("if (uiNotificationIsVisible())")]
+    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*if \(rxPowerSavingIsRxOn\(\) && \(\(dualIsRunning\(\) && \(uiDataGlobal\.Scan\.state == SCAN_STATE_SCANNING\)\) == false\)\)[^\n]*\n#else\s*if \(rxPowerSavingIsRxOn\(\)\)\s*#endif", tick) is not None,
+          "п.1: RSSI-тік -- під час чергування (SCANNING) без S-метра й виводу на екран (під DUAL_CHANNEL_ENABLED, стоковий рядок збережено)")
+    check("uiChannelModeDualHeaderStatic()" in am and "headerRowIsDirty" in am and
+          re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)[^\n]*\n[^\n]*\n\s*uiUtilityRenderHeader\(\(uiVFOModeDualWatchIsScanning\(\) \|\| \(\(currentMenu == UI_CHANNEL_MODE\) && uiChannelModeDualHeaderStatic\(\)\)\)", am) is not None,
+          "п.1: applicationMain (headerRowIsDirty: батарея/CC) -- під час чергування шапка статична")
+    if "DUALCH" not in cf:
+        check(False, "конфігурація DUALCH є в syntax_check.sh"); return
+    t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
+    check(t is not None, "п.1-3: uiChannelMode.c препроцесується в DUALCH")
+    if t is None:
+        return
+    # ---- п.1: dualRenderScreen за станом ----
+    fns = [carve_fn(t, s) for s in ("_Bool uiChannelModeDualHeaderStatic(void)", "static void dualRenderScreen(void)")]
+    check(all(fns), "п.1: знайдено uiChannelModeDualHeaderStatic / dualRenderScreen")
+    if all(fns):
+        pre = "static _Bool dualIsRunning(void) { return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)); }\n"
+        out = run_c(RS_HARNESS % {"fns": pre + "\n".join(fns)})
+        check(out is not None, "п.1: хостова збірка dualRenderScreen")
+        if out is not None:
+            o = dict(l.split("=", 1) for l in out.split())
+            check(o.get("rs0") == "1,1,0,2,1,1", "п.1 (а): SCANNING -- шапка «[DW]» (isVFODualWatchScanning=true), без свіпу, два рядки, один рендер; прапорець статичної шапки: %s" % o.get("rs0"))
+            check(o.get("rs1") == "1,0,0,2,1,0", "п.1 (б): SHORT_PAUSED (виклик) -- справжня шапка (isVFODualWatchScanning=false): %s" % o.get("rs1"))
+            check(o.get("rs2") == "1,0,0,2,1,0", "п.1 (в): PAUSED (утримання) -- справжня шапка: %s" % o.get("rs2"))
+            mut = [fns[0], fns[1].replace("uiUtilityRenderHeader((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING), 0,", "uiUtilityRenderHeader(0, 0,")]
+            mo = run_c(RS_HARNESS % {"fns": pre + "\n".join(mut)})
+            check(fns[1] != mut[1] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("rs0") != o.get("rs0"),
+                  "п.1 (мутант): стара шапка (завжди справжня) ловиться тестом (а)")
+            check(o.get("st_off") == "0" and o.get("st_plain") == "0", "п.1 (г): статична шапка лише коли режим чергує (не при зупиненому режимі й не при звичайному скануванні): %s/%s" % (o.get("st_off"), o.get("st_plain")))
+    # ---- п.2: гаряча клавіша ----
+    ev = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):src.find("static bool dualIsRunning(void)\n{")]
+    hk = re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*else if \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) && \(KEYCHECK_LONGDOWN_REPEAT\(ev->keys, KEY_FRONT_DOWN\) == false\) &&\s*\(BUTTONCHECK_DOWN\(ev, BUTTON_SK2\) == 0\) && \(BUTTONCHECK_DOWN\(ev, BUTTON_SK1\) == 0\) && \(directChannelNumber == 0\)\)\s*\{[^}]*dualHotkeyToggle\(\);\s*return;\s*\}\s*#endif", ev)
+    check(hk is not None, "п.2: handleEvent -- довге ▼ без SK2/SK1 (і без набору номера) викликає dualHotkeyToggle(), без автоповтору")
+    dk = src[src.find("static bool dualHandleKey(uiEvent_t *ev)\n{"):src.find("// Увімкнути/вимкнути режим")]
+    check("KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN)" in dk and "KEYCHECK_LONGDOWN_REPEAT(ev->keys, KEY_FRONT_DOWN) == false" in dk and "dualHotkeyToggle();" in dk and
+          "BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1)" in dk,
+          "п.2: dualHandleKey -- у режимі, що чергує, довге ▼ вимикає (без автоповтору; з SK2/SK1 -- не наше)")
+    check("KEYCHECK_SHORTUP(ev->keys, KEY_DECREASE)" in ev and "KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN)" not in ev.replace(hk.group(0) if hk else "", ""),
+          "п.2: коротке ▼ (KEY_DECREASE) без змін; довге ▼ більше ніде в handleEvent не використовується")
+    check(len(re.findall(r"KEYCHECK_LONGDOWN\(ev->keys,\s*KEY_FRONT_UP", ev)) + len(re.findall(r"KEY_FRONT_UP\s*\n", ev)) >= 1 and "scanStart(true);" in ev,
+          "п.2: довге ▲ (старт сканування зони) не зачеплено")
+    fn = [carve_fn(t, s) for s in ("static void dualSetMode(_Bool on, _Bool notify)", "static void dualHotkeyToggle(void)", "static void dualQuickMenuApply(_Bool setB)")]
+    check(all(fn), "п.2: знайдено dualSetMode / dualHotkeyToggle / dualQuickMenuApply")
+    if all(fn):
+        out = run_c(HK_HARNESS % {"fn": "\n".join(fn)})
+        check(out is not None, "п.2: хостова збірка гарячої клавіші")
+        if out is not None:
+            o = dict(l.split("=", 1) for l in out.split())
+            check(o.get("o1") == "0,1,1,1,0", "п.2: пункт меню «Подв. прийом» On -- як раніше (без сповіщення «вкл»): %s" % o.get("o1"))
+            check(o.get("o3") == "1,0,0", "п.2: пункт меню Off -- як раніше (без сповіщення): %s" % o.get("o3"))
+            check(o.get("h1") == "1,1,1,1,1,0", "п.2: довге ▼ при вимкненому режимі й валідній парі: вмикає, запускає чергування, сповіщення «вкл»: %s" % o.get("h1"))
+            check(o.get("h2") == "1,0,1,0,0", "п.2: довге ▼ при ввімкненому режимі: вимикає, сповіщення «вимк»: %s" % o.get("h2"))
+            check(o.get("h3") == "1,1,0,0,0", "п.2: довге ▼ без B: «B не задано» + звук помилки, режим не вмикається, сповіщення «вкл» нема: %s" % o.get("h3"))
+            check(o.get("h4") == "1,0,0" and o.get("h5") == "1,0,0", "п.2: канал B видалено / B збігається з A -- помилка, режим не вмикається: %s / %s" % (o.get("h4"), o.get("h5")))
+            check(o.get("h6") == "1,1,0,2", "п.2: два довгі ▼ підряд -- вмикає, потім вимикає: %s" % o.get("h6"))
+    # ---- п.3: «Всі канали» (-1) ----
+    cp = pp(FW, incs, cf["DUALCH"], "application/source/functions/codeplug.c")
+    zf = [carve_fn(t, s) for s in ("static uint16_t dualChannelA(void)", "static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static void dualStepB(int dir)")]
+    cf2 = [carve_fn(cp or "", s) for s in ("int16_t codeplugGetLastUsedChannelInZone(int zoneNum)", "int16_t codeplugGetLastUsedChannelNumberInCurrentZone(void)",
+                                          "int16_t codeplugSetLastUsedChannelInZone(int zoneNum, int16_t channelNum)", "_Bool codeplugAllChannelsIndexIsInUse(int index)")]
+    check(all(zf) and all(cf2), "п.3: знайдено dualChannelA/dualZoneChannelAt/dualStepB (uiChannelMode.c) і codeplug*LastUsed*/codeplugAllChannelsIndexIsInUse (codeplug.c)")
+    if all(zf) and all(cf2):
+        out = run_c(ZONE_HARNESS % {"dc": os.path.join(APP, "source", "functions", "dual_channel.c"), "fns": "\n".join(cf2 + zf)})
+        check(out is not None, "п.3: хостова збірка вибору A/B у «Всіх каналах»")
+        if out is not None:
+            o = dict(l.split("=", 1) for l in out.split())
+            check(o.get("a1") == "5" and o.get("a2") == "1024", "п.3: «Всі канали» -- A = номер каналу з «останнього каналу зони» (справжні codeplug*LastUsed*): %s/%s" % (o.get("a1"), o.get("a2")))
+            check(o.get("a3") == "0", "п.3: «Всі канали» -- пара A=5, B=7 валідна: %s" % o.get("a3"))
+            check(o.get("s1") == "10,1024,1,2,7,10", "п.3: «Всі канали» -- валкодер B вгору: 10,1024,1,2,(5=A пропущено)7,10: %s" % o.get("s1"))
+            check(o.get("s2") == "2,1,1024,10", "п.3: «Всі канали» -- валкодер B вниз від 7: 2 (A=5 пропущено),1,1024,10: %s" % o.get("s2"))
+            check(o.get("s3") == "1", "п.3: «Всі канали», найвищий канал 10: обхід через край на 1: %s" % o.get("s3"))
+            check(o.get("p1") == "3" and o.get("p2") == "2", "п.3: «Всі канали» -- B=A і видалений B виявляються: %s/%s" % (o.get("p1"), o.get("p2")))
+            check(o.get("z1") == "7" and o.get("z2") == "2" and o.get("z3") == "10", "п.3: звичайна зона -- A=channels[індекс], B по каналах зони: %s,%s,%s" % (o.get("z1"), o.get("z2"), o.get("z3")))
+            check(o.get("e1") == "0", "п.3: порожня зона -- A=0 (режим не стартує): %s" % o.get("e1"))
+            check(o.get("m1") == "7,2", "п.3: «останній канал» зони -1 і звичайної зони -- різні комірки: %s" % o.get("m1"))
+
+
 def main():
     if not shutil.which("gcc"):
         print("ПРОПУСК: gcc нема"); return 0
@@ -406,6 +661,7 @@ def main():
     incs, cfgs = cmt.load_configs(FW)
     test_engine(incs, dict(cfgs))
     test_quickmenu_fix(incs, dict(cfgs))
+    test_fix2(incs, dict(cfgs))
     test_lang()
     test_cps()
     test_vs_base(incs, cfgs)
