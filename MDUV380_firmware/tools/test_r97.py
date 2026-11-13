@@ -322,6 +322,8 @@ static const int MELODY_ERROR_BEEP[1];
 struct { char dual_b_saved[17]; char dual_on[17]; char dual_off[17]; } lang = { "B saved", "ON", "OFF" }, *currentLanguage = &lang;
 static int chA = 0, inUse = 1, menuVal = 0, enabled = 0, setBcalls = 0, setBval = 0, notif = 0, beep = 0, enCalls = 0, enVal = -1, resume = 0, disable = 0, pairErr = 0;
 static dcPairCheck_t pair = DC_PAIR_OK;
+static int onBq = 0;
+bool dcIsOnB(void) { return onBq; }
 static uint32_t s_dualKeyMs = 77;
 static uint16_t dualChannelA(void) { return (uint16_t)chA; }
 bool codeplugAllChannelsIndexIsInUse(int ch) { (void)ch; return inUse; }
@@ -338,7 +340,7 @@ static void dualAutoResume(void) { resume++; }
 static void dualDisable(void) { disable++; enabled = 0; }
 void uiChannelModeUpdateScreen(int x) { (void)x; }
 %(fn)s
-static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; }
+static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; onBq = 0; }
 int main(void)
 {
 	reset(); chA = 42; dualQuickMenuApply(true); printf("b1=%%d,%%d,%%d,%%d\n", setBcalls, setBval, notif, enCalls);
@@ -414,6 +416,8 @@ static const int MELODY_ERROR_BEEP[1];
 struct { char dual_b_saved[17]; char dual_on[17]; char dual_off[17]; } lang = { "B saved", "ON", "OFF" }, *currentLanguage = &lang;
 static int chA = 0, inUse = 1, menuVal = 0, enabled = 0, setBcalls = 0, setBval = 0, notif = 0, beep = 0, enCalls = 0, enVal = -1, resume = 0, disable = 0, pairErr = 0, lastNotifOn = -1;
 static dcPairCheck_t pair = DC_PAIR_OK;
+static int onBq = 0;
+bool dcIsOnB(void) { return onBq; }
 static uint32_t s_dualKeyMs = 77;
 static uint16_t dualChannelA(void) { return (uint16_t)chA; }
 bool codeplugAllChannelsIndexIsInUse(int ch) { (void)ch; return inUse; }
@@ -430,12 +434,13 @@ static void dualAutoResume(void) { resume++; }
 static void dualDisable(void) { disable++; enabled = 0; }
 void uiChannelModeUpdateScreen(int x) { (void)x; }
 %(fn)s
-static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; lastNotifOn = -1; }
+static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; lastNotifOn = -1; onBq = 0; }
 int main(void)
 {
 	reset(); chA = 42; dualQuickMenuApply(true); printf("b1=%%d,%%d,%%d,%%d\n", setBcalls, setBval, notif, enCalls);
 	reset(); chA = 42; enabled = 1; menuVal = 1; dualQuickMenuApply(true); printf("b2=%%d,%%d,%%d,%%d\n", setBcalls, setBval, enabled, disable);
 	reset(); chA = 42; inUse = 0; dualQuickMenuApply(true); printf("b3=%%d,%%d\n", setBcalls, beep);
+	reset(); chA = 42; onBq = 1; dualQuickMenuApply(true); printf("b4=%%d,%%d,%%d\n", setBcalls, beep, notif);   /* R97-FIX4: меню на B -- помилка, B не змінюється */
 	reset(); chA = 42; menuVal = 1; dualQuickMenuApply(false); printf("o1=%%d,%%d,%%d,%%d,%%d\n", setBcalls, enCalls, enVal, resume, notif);
 	reset(); chA = 42; menuVal = 1; pair = DC_PAIR_NO_B; dualQuickMenuApply(false); printf("o2=%%d,%%d,%%d\n", pairErr, enCalls, setBcalls);
 	reset(); chA = 42; enabled = 1; menuVal = 0; dualQuickMenuApply(false); printf("o3=%%d,%%d,%%d\n", disable, setBcalls, notif);
@@ -529,7 +534,7 @@ DIS_HARNESS = r"""
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
 #include "%(dc)s"
-enum { SCAN_STATE_SCANNING = 0 };
+enum { SCAN_STATE_SCANNING = 0, SCAN_STATE_SHORT_PAUSED, SCAN_STATE_PAUSED };
 enum { SCAN_TYPE_NORMAL_STEP = 0, SCAN_TYPE_DUAL_CHANNEL = 2 };
 enum { QSO_DISPLAY_DEFAULT_SCREEN = 1 };
 enum { NOTIFICATION_TYPE_MESSAGE = 1, NOTIFICATION_ID_CARD = 2 };
@@ -538,7 +543,7 @@ static zone_t currentZone;
 struct { int16_t currentZone; } nonVolatileSettings;
 struct { char dual_zone_all[17]; } lang, *currentLanguage = &lang;
 struct { struct { bool active; int scanType; int state; } Scan; int displayQSOState; } uiDataGlobal;
-static int zoneSets = 0, notif = 0, loads = 0, suspends = 0, tunes = 0, initCalls = 0, lastZ = -99, lastV = -99, onB = 0, enabled = 1, holdClr = 0, scanNextChannelReady = 1; static uint16_t chB = 0;
+static int zoneSets = 0, notif = 0, loads = 0, suspends = 0, tunes = 0, initCalls = 0, lastZ = -99, lastV = -99, onB = 0, enabled = 1, holdClr = 0, scanNextChannelReady = 1, ptrB = 0; static uint16_t chB = 0;
 bool settingsSetBOOL(bool *p, bool v) { (void)p; (void)v; return 0; }
 bool settingsSetINT8(int8_t *p, int8_t v) { (void)p; (void)v; return 0; }
 bool settingsSetUINT8(uint8_t *p, uint8_t v) { (void)p; (void)v; return 0; }
@@ -554,31 +559,41 @@ void uiNotificationShow(int t, int id, uint32_t ms, const char *msg, bool imm) {
 void uiChannelModeLoadChannelData(bool mem, bool vp) { (void)vp; if (mem == 0) loads++; }
 void lastHeardClearLastID(void) {}
 bool dcIsOnB(void) { return onB; }
+bool dcPointerB(void) { return ptrB; }
 void dcSetOnB(bool b) { onB = b; }
 uint16_t dcChannelB(void) { return chB; }
 void dcSetTxHold(bool h) { (void)h; holdClr++; }
 bool dcSetEnabled(bool on, bool now) { (void)now; enabled = on; return 1; }
 static bool dualIsRunning(void) { return uiDataGlobal.Scan.active && uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL; }
-static void dualSuspend(void) { suspends++; onB = 0; uiDataGlobal.Scan.active = false; }
 static void dualTune(bool toB) { tunes++; onB = toB; }
 %(fns)s
-static void setup(int zoneIdx, int n, int c0, int c1, int c2, uint16_t b, int run, int onb)
+static void setup(int zoneIdx, int n, int c0, int c1, int c2, uint16_t b, int run, int onb, int ptr, int st)
 {
 	memset(&currentZone, 0, sizeof(currentZone)); currentZone.NOT_IN_CODEPLUGDATA_indexNumber = zoneIdx; currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone = n;
 	currentZone.NOT_IN_CODEPLUGDATA_highestIndex = (zoneIdx < 0 ? 1024 : n); currentZone.channels[0] = c0; currentZone.channels[1] = c1; currentZone.channels[2] = c2;
-	chB = b; onB = onb; enabled = 1; zoneSets = notif = loads = suspends = tunes = initCalls = 0; lastZ = lastV = -99; scanNextChannelReady = 1;
-	nonVolatileSettings.currentZone = zoneIdx; uiDataGlobal.Scan.active = run; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = 2;
+	chB = b; onB = onb; enabled = 1; zoneSets = notif = loads = suspends = tunes = initCalls = 0; lastZ = lastV = -99; scanNextChannelReady = 1; ptrB = ptr;
+	nonVolatileSettings.currentZone = zoneIdx; uiDataGlobal.Scan.active = run; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = st;
 }
 static void rep(const char *n) { printf("%%s=%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d\n", n, lastZ, lastV, zoneSets, notif, loads, onB, enabled, uiDataGlobal.Scan.active, suspends, tunes, nonVolatileSettings.currentZone); }
 int main(void)
 {
-	setup(3, 3, 3, 7, 9, 7, 1, 1); dualDisable(); rep("d1");       /* B у поточній зоні (позиція 1) */
-	setup(3, 3, 3, 7, 9, 12, 1, 1); dualDisable(); rep("d2");      /* B не з поточної зони -> «Всі канали» */
-	setup(-1, 5, 0, 0, 0, 7, 1, 1); dualDisable(); rep("d3");      /* поточна зона «Всі канали» */
-	setup(3, 3, 3, 7, 9, 7, 1, 0); dualDisable(); rep("d4");       /* рація на A -- лишається на A */
-	setup(3, 3, 3, 7, 9, 8, 1, 1); dualDisable(); rep("d5");       /* B видалено -> як раніше, на A */
-	setup(3, 3, 3, 7, 9, 3, 0, 1); dualDisable(); rep("d6");       /* режим не чергує, рація на B (після TX): лишаємось на B, позиція 0 */
-	setup(3, 3, 3, 7, 9, 0, 0, 1); dualDisable(); rep("d7");       /* B не задано, рація на B (зіпсований стан) -> на A */
+	/* R97-FIX4: ОБРАНИЙ канал -- активність (state != SCANNING): де рація (onB); чергування: покажчик; режим зупинено (не чергує): де стоїть рація */
+	setup(3, 3, 3, 7, 9, 7, 1, 1, 0, 2); dualDisable(); rep("d1");  /* виклик на B (покажчик на A), B у поточній зоні (позиція 1) -> лишаємось на B */
+	setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 0); dualDisable(); rep("d1b"); /* чергування, покажчик на B, рація фізично на A -> на B */
+	setup(3, 3, 3, 7, 9, 12, 1, 1, 1, 2); dualDisable(); rep("d2"); /* B не з поточної зони -> «Всі канали» */
+	setup(-1, 5, 0, 0, 0, 7, 1, 1, 1, 2); dualDisable(); rep("d3"); /* поточна зона «Всі канали» */
+	setup(3, 3, 3, 7, 9, 7, 1, 1, 0, 0); dualDisable(); rep("d4");  /* чергування, покажчик на A, рація на B -> на A */
+	setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 2); dualDisable(); rep("d4b"); /* виклик на A (покажчик на B) -> лишаємось на A */
+	setup(3, 3, 3, 7, 9, 8, 1, 1, 1, 2); dualDisable(); rep("d5");  /* B видалено -> на A */
+	setup(3, 3, 3, 7, 9, 3, 0, 1, 0, 0); dualDisable(); rep("d6");  /* режим зупинено меню на B (не чергує) -> лишаємось на B, позиція 0 */
+	setup(3, 3, 3, 7, 9, 0, 0, 1, 0, 0); dualDisable(); rep("d7");  /* B не задано, рація на B (зіпсований стан) -> на A */
+	setup(3, 3, 3, 7, 9, 7, 0, 0, 1, 0); dualDisable(); rep("d8");  /* режим зупинено меню на A -> лишаємось на A (покажчик не враховується) */
+	/* dualSuspend() налаштовує рацію на ОБРАНИЙ канал */
+	setup(3, 3, 3, 7, 9, 7, 1, 1, 0, 0); dualSuspend(); printf("s1=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* чергування, покажчик A, рація на B -> A */
+	setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 0); dualSuspend(); printf("s2=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* чергування, покажчик B, рація на A -> B */
+	setup(3, 3, 3, 7, 9, 7, 1, 1, 0, 2); dualSuspend(); printf("s3=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* виклик на B -> лишається на B */
+	setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 2); dualSuspend(); printf("s4=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* виклик на A -> лишається на A */
+	setup(3, 3, 3, 7, 9, 8, 1, 0, 1, 0); dualSuspend(); printf("s5=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* покажчик на B, але B видалено -> A */
 	return 0;
 }
 """
@@ -701,25 +716,56 @@ def test_fix2(incs, cf):
             mo = run_c(RS_HARNESS % {"fns": pre + "\n".join(mut)})
             check(fns[0] != mut[0] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("rs00") != o.get("rs00"), "п.2 (мутант): шапка з даних trx замість кодплага ловиться тестом (а)")
     # ---- R97-FIX3 п.1: вимкнення на B ----
-    dsf = [carve_fn(t, s_) for s_ in ("static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static void dualLeaveOnB(void)", "static void dualDisable(void)")]
-    check(all(dsf), "R97-FIX3: знайдено dualZoneChannelAt / dualLeaveOnB / dualDisable")
+    dsf = [carve_fn(t, s_) for s_ in ("static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static _Bool dualSelectedIsB(void)", "static void dualSuspend(void)",
+                                      "static void dualLeaveOnB(void)", "static void dualDisable(void)")]
+    check(all(dsf), "R97-FIX3/4: знайдено dualZoneChannelAt / dualSelectedIsB / dualSuspend / dualLeaveOnB / dualDisable")
     if all(dsf):
-        out = run_c(DIS_HARNESS % {"dc": os.path.join(APP, "source", "functions", "dual_channel.c"), "fns": "static uint16_t dualZoneChannelAt(int pos, void *ctx);\n" + "\n".join(dsf[0:1] + dsf[1:])})
-        check(out is not None, "R97-FIX3: хостова збірка вимкнення на B")
+        pre = "static uint16_t dualZoneChannelAt(int pos, void *ctx);\n"
+        mk = lambda fl: DIS_HARNESS % {"dc": os.path.join(APP, "source", "functions", "dual_channel.c"), "fns": pre + "\n".join(fl)}
+        out = run_c(mk(dsf))
+        check(out is not None, "R97-FIX3/4: хостова збірка вимкнення/зупинки на обраному")
         if out is not None:
             o = dict(l.split("=", 1) for l in out.split())
             # формат: зона last-used, значення, змін зони, сповіщень, завантажень каналу, onB, увімкнено, Scan.active, suspend, tune, currentZone
-            exp = {"d1": "3,1,0,0,1,0,0,0,0,0,3", "d2": "-1,12,1,1,1,0,0,0,0,0,9", "d3": "-1,7,0,0,1,0,0,0,0,0,-1", "d4": "-99,-99,0,0,0,0,0,0,1,0,3",
-                   "d5": "-99,-99,0,0,0,0,0,0,1,0,3", "d6": "3,0,0,0,1,0,0,0,0,0,3", "d7": "-99,-99,0,0,0,0,0,0,0,1,3"}
-            names = {"d1": "на B, B у поточній зоні: last-used = позиція B, зона та сама, без сповіщення", "d2": "на B, B з іншої зони: зона «Всі канали» (9), last-used(-1) = номер B, сповіщення",
-                     "d3": "на B у зоні «Всі канали»: last-used(-1) = номер B, зона та сама", "d4": "на A: як раніше (dualSuspend), канал не перезавантажується",
-                     "d5": "на B, але B видалено: як раніше на A", "d6": "режим не чергує, рація на B (після TX): лишаємось на B, позиція 0", "d7": "рація на B без B (зіпсований стан): на A"}
+            exp = {"d1": "3,1,0,0,1,0,0,0,0,0,3", "d1b": "3,1,0,0,1,0,0,0,0,0,3", "d2": "-1,12,1,1,1,0,0,0,0,0,9", "d3": "-1,7,0,0,1,0,0,0,0,0,-1",
+                   "d4": "-99,-99,0,0,0,0,0,0,0,1,3", "d4b": "-99,-99,0,0,0,0,0,0,0,0,3", "d5": "-99,-99,0,0,0,0,0,0,0,1,3",
+                   "d6": "3,0,0,0,1,0,0,0,0,0,3", "d7": "-99,-99,0,0,0,0,0,0,0,1,3", "d8": "-99,-99,0,0,0,0,0,0,0,0,3"}
+            names = {"d1": "виклик на B (покажчик на A), B у поточній зоні: last-used = позиція B, зона та сама, без сповіщення",
+                     "d1b": "чергування, покажчик на B (рація фізично на A): вихід на B (за покажчиком)",
+                     "d2": "B не з поточної зони: зона «Всі канали» (9), last-used(-1) = номер B, сповіщення",
+                     "d3": "обраний B у зоні «Всі канали»: last-used(-1) = номер B, зона та сама",
+                     "d4": "чергування, покажчик на A, рація на B: вихід на A", "d4b": "виклик на A (покажчик на B): лишаємось на A",
+                     "d5": "обраний B, але B видалено: на A", "d6": "режим зупинено меню на B: лишаємось на B, позиція 0",
+                     "d7": "рація на B без B (зіпсований стан): на A", "d8": "режим зупинено меню на A: лишаємось на A"}
             for k in exp:
-                check(o.get(k) == exp[k], "п.1 %s -- %s: %s" % (k, names[k], o.get(k)))
-            bug = [dsf[0], dsf[1], dsf[2].replace("_Bool stayB = (dcIsOnB()", "_Bool stayB = (0 && dcIsOnB()")]
-            mo = run_c(DIS_HARNESS % {"dc": os.path.join(APP, "source", "functions", "dual_channel.c"), "fns": "static uint16_t dualZoneChannelAt(int pos, void *ctx);\n" + "\n".join(bug)})
-            check(bug[2] != dsf[2] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("d1") != o.get("d1"), "п.1 (мутант): старий dualDisable (завжди на A) ловиться тестом d1")
-    check(src.count("dualDisable()") >= 3 and "dualLeaveOnB();" in src, "R97-FIX3: dualDisable викликається з RED, dualSetMode(off) і dualAutoResume (помилка пари) -- усі через нову логіку")
+                check(o.get(k) == exp[k], "FIX4 вимкнення %s -- %s: %s" % (k, names[k], o.get(k)))
+            sx = {"s1": "0,1,0,0", "s2": "1,1,0,0", "s3": "1,0,0,0", "s4": "0,0,0,0", "s5": "0,0,0,0"}
+            sn = {"s1": "чергування, покажчик A, рація на B -> зупинка на A", "s2": "чергування, покажчик B, рація на A -> зупинка на B", "s3": "виклик на B -> лишається на B",
+                  "s4": "виклик на A -> лишається на A", "s5": "покажчик на B, але B видалено -> A"}
+            for k in sx:
+                check(o.get(k) == sx[k], "FIX4 dualSuspend %s -- %s (onB,tunes,active,scanType): %s" % (k, sn[k], o.get(k)))
+            for what, mut in (("«завжди A»", dsf[4].replace("_Bool stayB = dualSelectedIsB();", "_Bool stayB = 0;")),
+                              ("«за станом рації замість обраного»", dsf[1].replace("dcPointerB()", "dcIsOnB()"))):
+                fl = list(dsf); fl[4 if "stayB" in mut else 1] = mut
+                mo = run_c(mk(fl))
+                mm = dict(l.split("=", 1) for l in mo.split()) if mo else {}
+                check(mut != (dsf[4] if "stayB" in mut else dsf[1]) and any(mm.get(k) != o.get(k) for k in list(exp) + list(sx)), "FIX4 (мутант): %s ловиться тестами" % what)
+    check(src.count("dualDisable()") >= 2 and "dualLeaveOnB();" in src, "R97-FIX3: dualDisable викликається з dualSetMode(off) і dualAutoResume (помилка пари) -- через логіку обраного")
+    m_red = re.search(r"case KEY_RED:(.*?)return true;", dk if False else src[src.find("static bool dualHandleKey(uiEvent_t *ev)\n{"):], re.S)
+    check(m_red is not None and "dualDisable" not in m_red.group(1) and "dualSuspend" not in m_red.group(1) and "UpdateScreen" not in m_red.group(1),
+          "FIX4 З1: червона в режимі нічого не робить (не вимикає режим)")
+    hv = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):]
+    hv = hv[:hv.find("if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))")]
+    check("dualSuspend();" in hv and re.search(r"if \(dcIsOnB\(\) && \(ev->keys\.key != KEY_GREEN\) && \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) == false\)\)\s*\{[^}]*dualTune\(false\);", hv) is not None,
+          "FIX4 З2: «чужі» клавіші на B повертають на A, крім зеленої (меню) і довгого ▼ (вимкнення)")
+    ro = src[src.find("// Покажчик на A -- звичайна зміна каналу зони"):]
+    ro = ro[:ro.find("return true;")]
+    ia, ib, ic, idd = ro.find("s_dualQuiet = true;"), ro.find("handleUpKey(ev);"), ro.find("s_dualQuiet = false;"), ro.find("dualAutoResume();")
+    check(0 < ia < ib < ic < idd and "if (dcIsOnB())" in ro[:ia], "FIX4 З4: ручка на A -- UpdateScreen придушено на час кроку каналу (s_dualQuiet), знято до dualAutoResume; перед кроком рація на A")
+    us = src[src.find("void uiChannelModeUpdateScreen(int txTimeSecs)\n{"):]
+    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*if \(s_dualQuiet\)\s*\{\s*return;\s*\}\s*#endif", us[:600]) is not None,
+          "FIX4 З4: uiChannelModeUpdateScreen() на початку виходить при s_dualQuiet (лише під DUAL_CHANNEL_ENABLED)")
+    check(re.search(r"static bool\s+s_dualQuiet;", src) is not None and src.count("s_dualQuiet") == 4, "FIX4 З4: одна нова статична змінна (1 Б), s_dualQuiet")
     # ---- п.2: гаряча клавіша ----
     ev = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):src.find("static bool dualIsRunning(void)\n{")]
     hk = re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*else if \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) && \(KEYCHECK_LONGDOWN_REPEAT\(ev->keys, KEY_FRONT_DOWN\) == false\) &&\s*\(BUTTONCHECK_DOWN\(ev, BUTTON_SK2\) == 0\) && \(BUTTONCHECK_DOWN\(ev, BUTTON_SK1\) == 0\) && \(directChannelNumber == 0\)\)\s*\{[^}]*dualHotkeyToggle\(\);\s*return;\s*\}\s*#endif", ev)
@@ -728,7 +774,7 @@ def test_fix2(incs, cf):
     check("KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN)" in dk and "KEYCHECK_LONGDOWN_REPEAT(ev->keys, KEY_FRONT_DOWN) == false" in dk and "dualHotkeyToggle();" in dk and
           "BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1)" in dk,
           "п.2: dualHandleKey -- у режимі, що чергує, довге ▼ вимикає (без автоповтору; з SK2/SK1 -- не наше)")
-    check("KEYCHECK_SHORTUP(ev->keys, KEY_DECREASE)" in ev and "KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN)" not in ev.replace(hk.group(0) if hk else "", ""),
+    check("KEYCHECK_SHORTUP(ev->keys, KEY_DECREASE)" in ev and "KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN)" not in ev.replace(hk.group(0) if hk else "", "").replace("(KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN) == false)", ""),
           "п.2: коротке ▼ (KEY_DECREASE) без змін; довге ▼ більше ніде в handleEvent не використовується")
     check(len(re.findall(r"KEYCHECK_LONGDOWN\(ev->keys,\s*KEY_FRONT_UP", ev)) + len(re.findall(r"KEY_FRONT_UP\s*\n", ev)) >= 1 and "scanStart(true);" in ev,
           "п.2: довге ▲ (старт сканування зони) не зачеплено")
@@ -739,6 +785,7 @@ def test_fix2(incs, cf):
         check(out is not None, "п.2: хостова збірка гарячої клавіші")
         if out is not None:
             o = dict(l.split("=", 1) for l in out.split())
+            check(o.get("b4") == "0,1,0", "R97-FIX4: «Встановити як B», коли рація на B (меню на обраному B) -- звук помилки, B не змінюється, сповіщення «B встановлено» нема: %s" % o.get("b4"))
             check(o.get("o1") == "0,1,1,1,0", "п.2: пункт меню «Подв. прийом» On -- як раніше (без сповіщення «вкл»): %s" % o.get("o1"))
             check(o.get("o3") == "1,0,0", "п.2: пункт меню Off -- як раніше (без сповіщення): %s" % o.get("o3"))
             check(o.get("h1") == "1,1,1,1,1,0", "п.2: довге ▼ при вимкненому режимі й валідній парі: вмикає, запускає чергування, сповіщення «вкл»: %s" % o.get("h1"))
