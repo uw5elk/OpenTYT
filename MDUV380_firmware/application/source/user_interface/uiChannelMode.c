@@ -137,6 +137,7 @@ static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
 static void dualTune(bool toB);
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
+static bool     s_dualQuiet;   // R97-FIX4: придушити uiChannelModeUpdateScreen() на час кроку каналу ручкою на A (S-метр звичайного екрана не спалахує)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
 #endif
 
@@ -868,6 +869,12 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 {
 	char nameBuf[NAME_BUFFER_LEN];
 	char buffer[SCREEN_LINE_BUFFER_SIZE];
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (s_dualQuiet)
+	{
+		return;
+	}
+#endif
 #if defined(PLATFORM_VARIANT_DM1701)
 	bool dblHeight = UI_USES_DOUBLE_HEIGHT();
 #endif
@@ -4054,6 +4061,8 @@ static bool dualHandleKey(uiEvent_t *ev)
 						dualTune(false);   // R97-FIX4: виклик на B (обраний B), покажчик на A -- канал зони міняємо з A
 					}
 
+					s_dualQuiet = true;   // R97-FIX4: стокове перемальовування (з S-метром) на час кроку каналу придушено -- екран малює лише dualRenderScreen
+
 					for (int i = 0; i < 2; i++)
 					{
 						if (dir > 0)
@@ -4071,8 +4080,15 @@ static bool dualHandleKey(uiEvent_t *ev)
 						}
 					}
 
+					s_dualQuiet = false;
 					s_dualKeyMs = 0U;   // чергування -- одразу, без паузи тиші
 					dualAutoResume();
+
+					if (dualIsRunning() == false)
+					{
+						uiChannelModeUpdateScreen(0);   // чергування не стартувало (B==A чекає, помилка пари) -- звичайний екран, а не порожній
+					}
+
 					return true;
 				}
 
