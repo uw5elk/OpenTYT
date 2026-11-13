@@ -72,7 +72,7 @@ static void overrideWithSelectedContact(void)
 	{
 		int ts = ((contactListContactData.reserve1 & CODEPLUG_CONTACT_FLAG_TS_OVERRIDE_TIMESLOT_MASK) >> 1);
 		trxSetDMRTimeSlot(ts, true);
-		tsSetManualOverride(((menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) ? CHANNEL_CHANNEL : (CHANNEL_VFO_A + nonVolatileSettings.currentVFONumber)), (ts + 1));
+		tsSetManualOverride(((menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) ? CHANNEL_ROOT_TS_BUCKET() : (CHANNEL_VFO_A + nonVolatileSettings.currentVFONumber)), (ts + 1));
 	}
 }
 

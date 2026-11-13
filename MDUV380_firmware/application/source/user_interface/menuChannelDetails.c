@@ -150,6 +150,14 @@ menuStatus_t menuChannelDetails(uiEvent_t *ev, bool isFirstRun)
 		nameInError = false;
 		shiftOffsetIndex = 0;
 		rootMenuIsVFO = (menuSystemGetRootMenuNumber() == UI_VFO_MODE);
+#if defined(DUAL_CHANNEL_ENABLED)
+		// R98-FIX1 Г: екран «Подвійного прийому» з обраним B = VFO -- деталі VFO (без канальних пунктів, позначка «VFO брудний» при збереженні,
+		// без «перечитати зону» -- яка стерла б частоту VFO), хоч корінь меню -- екран каналу
+		if (uiChannelModeDualOnVfo())
+		{
+			rootMenuIsVFO = true;
+		}
+#endif
 
 		if (memcmp(tmpChannel.name, CHANNEL_UNSET, 5) == 0) // Check if the channel was already loaded (TX Screen was triggered within this menu)
 		{

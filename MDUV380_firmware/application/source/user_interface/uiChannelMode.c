@@ -138,7 +138,7 @@ static bool dualHoldScreen(void);
 static bool dualSingle(void);
 static bool dualRenderMeter(void);
 static void dualQuietEnd(void);
-static void dualQuickMenuApply(bool setB);
+static void dualQuickMenuApply(void);
 static void dualHotkeyToggle(void);
 static void dualTune(bool toB);
 static bool dualBExists(void);
@@ -2628,9 +2628,6 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					leftSide = currentLanguage->dual_rx;
 					rightSideConst = (dcMenuValue() ? currentLanguage->on : currentLanguage->off);
 					break;
-				case CH_SCREEN_QUICK_MENU_SET_B:          // R97
-					rightSideConst = currentLanguage->dual_set_b;
-					break;
 #endif
 				default:
 					buf[0] = 0;
@@ -2833,7 +2830,7 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 					case CH_SCREEN_QUICK_MENU_COPY2VFO:
 					case CH_SCREEN_QUICK_MENU_COPY_FROM_VFO:
 					case CH_SCREEN_QUICK_MENU_TALKAROUND:
-					case CH_SCREEN_QUICK_MENU_SET_B:
+					case CH_SCREEN_QUICK_MENU_ROAMING:   // R98-FIX1 Г: його застосування ставить currentChannelData->rxFreq = 0 («перечитати зону») -- на VFO стерло б частоту VFO
 #if defined(CH_QUICKMENU_DELETE_ENABLED)
 					case CH_SCREEN_QUICK_MENU_DELETE:
 #endif
@@ -2992,16 +2989,11 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 #endif
 
 #if defined(DUAL_CHANNEL_ENABLED)
-				case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97: увімкнути/вимкнути режим
-				case CH_SCREEN_QUICK_MENU_SET_B:          // R97: поточний канал стає B
+				case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R97: увімкнути/вимкнути режим (R98-FIX1: «Встановити як B» прибрано -- B вибирається ручкою на картці B)
 				{
-					// R97-FIX: пункт -- ДО menuSystemPopPreviousMenu(): Pop -> menuSystemPushMenuFirstRun() перезаписує currentItemIndex
-					// індексом екрана каналу, і «Встановити як B» ішло гілкою On/Off (знайдено на рації).
-					bool setB = (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);
-
 					menuDataGlobal.menuOptionsTimeout = 0;
 					menuSystemPopPreviousMenu();
-					dualQuickMenuApply(setB);   // після повернення на екран каналу: сповіщення не перекриє меню
+					dualQuickMenuApply();   // після повернення на екран каналу: сповіщення не перекриє меню
 					return;
 				}
 #endif
@@ -3659,6 +3651,15 @@ void uiChannelModeStopScanning(void)
 	// Reload the channel as voice prompts aren't set while scanning
 	if (nonVolatileSettings.audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD)
 	{
+#if defined(DUAL_CHANNEL_ENABLED)
+		if (dcIsEnabled() && dcIsOnB())
+		{
+			// R98-FIX1 В3: режим ввімкнено, зупинено на ОБРАНОМУ B (канал або VFO) -- перезавантажуємо саме його з пам'яті (ранні гілки
+			// uiChannelModeLoadChannelData), а не A з «останнього каналу зони»: без стрибка на A при виході з меню/старті швидкого меню.
+			uiChannelModeLoadChannelData(true, true);
+		}
+		else
+#endif
 		uiChannelModeLoadChannelData(false, true);
 	}
 
@@ -4396,6 +4397,20 @@ static void dualSetMode(bool on, bool notify)
 	{
 		dcPairCheck_t chk = dualCheckPair();
 
+		if (chk == DC_PAIR_NO_B)
+		{
+			// R98-FIX1: B не задано -- автоматично B = поточний канал A (тип «канал», абсолютний індекс), запис блоку 18 одразу.
+			// Далі -- як A==B (R97-FIX6): помилки й звуку нема. Якщо в A немає допустимого абсолютного індексу -- нічого не вигадуємо:
+			// лишається «B не задано», режим не вмикається.
+			uint16_t chA = dualChannelA();
+
+			if ((chA >= DC_CH_MIN) && (chA <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(chA))
+			{
+				(void)dcSetChannelB(chA, true);
+				chk = dualCheckPair();
+			}
+		}
+
 		if (chk != DC_PAIR_OK)
 		{
 			dualShowPairError(chk);   // режим не стартує (B не задано / видалено); A==B -- не помилка (R97-FIX6)
@@ -4435,26 +4450,8 @@ static void dualHotkeyToggle(void)
 }
 
 // Пункти швидкого меню (викликається вже на екрані каналу).
-static void dualQuickMenuApply(bool setB)
+static void dualQuickMenuApply(void)
 {
-	if (setB)
-	{
-		uint16_t ch = dualChannelA();
-
-		// R97-FIX4: меню відкрито на B (зупинка на обраному B) -- на екрані B, а «поточний канал зони» (A) інший: безпечно нічого не змінювати
-		// (R98: на B = VFO -- теж: «Встановити як B» нічого б не змінило, бо A -- канал, а рація на VFO)
-		if (dcIsOnB() || (ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
-		{
-			soundSetMelody(MELODY_ERROR_BEEP);
-			return;
-		}
-
-		// При ввімкненому режимі поточний канал і є A: після «Встановити як B» режим чекає, доки A стане іншим каналом (dualAutoResume)
-		(void)dcSetChannelB(ch, true);
-		uiNotificationShowShort(1500U, currentLanguage->dual_b_saved, true);
-		return;
-	}
-
 	if (dcMenuValue() == dcIsEnabled())
 	{
 		return;
@@ -4807,16 +4804,25 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 #endif
 
 	{
-		// R98 Д1: індикатор непрочитаних -- у квадраті з літерою (стокове місце в шапці, y=16, налазило на картку A). Картка A -- SMS DMR («D»),
-		// картка B -- APRS («A»); умова показу -- лічильник > 0, як у стоку. Обраний квадрат залитий -- малюємо кольором фону.
-		unsigned un = uiUnreadCount(isB ? 'A' : 'D');
+		// R98 Д1: індикатор непрочитаних -- у квадраті з літерою (стокове місце в шапці, y=16, налазило на картку A). R98-FIX1: «D» -- на картці-джерелі SMS,
+		// «A» (APRS) -- на картці B; умова показу -- лічильник > 0, як у стоку. Обраний квадрат залитий -- малюємо кольором фону.
+		// R98-FIX1 Д: SMS DMR -- за ДЖЕРЕЛОМ (картка A/B, uiUnreadCountCard); APRS -- без прив'язки до каналу (приймач на час режиму призупинено),
+		// лишається на картці B, коли в неї нема власних непрочитаних SMS (слот індикатора один).
+		char kindCh = 'D';
+		unsigned un = uiUnreadCountCard(isB);
+
+		if (isB && (un == 0U))
+		{
+			un = uiUnreadCount('A');
+			kindCh = 'A';
+		}
 
 		if (un > 0U)
 		{
 			char kind[2];
 			char num[2];
 
-			kind[0] = (isB ? 'A' : 'D');
+			kind[0] = kindCh;
 			kind[1] = 0;
 			num[0] = ((un > 9U) ? '+' : (char)('0' + un));
 			num[1] = 0;
@@ -4867,6 +4873,36 @@ static bool dualRenderMeter(void)
 bool uiChannelModeDualScreenShown(void)
 {
 	return (dualIsRunning() || dualHoldScreen());
+}
+
+// R98-FIX1 В2: панель деталей каналу (SK1) при ввімкненому режимі: стоковий екран деталей ОБРАНОГО каналу (рація стоїть на ньому), але без S-метра
+// в шапці (uiUtilityDrawRSSIBarGraph() не малює). Окремий предикат: uiChannelModeDualScreenShown() для панелі деталей лишається false,
+// інакше тік RSSI (вище) малював би смугу режиму поверх панелі.
+bool uiChannelModeDualDetailsShown(void)
+{
+	return (dcIsEnabled() && uiDataGlobal.displayChannelSettings && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE));
+}
+
+// R98-FIX1 Д: нове непрочитане SMS DMR прийнято. Картка-джерело: режим ввімкнено -- де стоїть рація (B лише якщо B != A), інакше -- без прив'язки
+// (різниця до загального числа на екрані йде на картку A).
+void uiChannelModeDualSmsReceived(void)
+{
+	if (dcIsEnabled())
+	{
+		dcUnreadNote(dcIsOnB() && (dualBSameAsA() == false));
+	}
+}
+
+// R98-FIX1 Г: рація на B = VFO при ввімкненому режимі. Меню відкриваються з кореня «екран каналу», тож стокова логіка вважає, що діє на канал.
+bool uiChannelModeDualOnVfo(void)
+{
+	return (dcIsEnabled() && dcIsOnB() && dcBIsVfo());
+}
+
+// «Відро» ТС-перекриття (tsSetManualOverride) -- ті самі біти, що вибирають відро в trxUpdateTsForCurrentChannelWithSpecifiedContact(): обраний VFO -- його відро.
+int uiChannelModeDualTsBucket(void)
+{
+	return (uiChannelModeDualOnVfo() ? (int)(CHANNEL_VFO_A + dualVfoIdx()) : (int)CHANNEL_CHANNEL);
 }
 
 static void dualRenderScreen(void)

@@ -87,6 +87,13 @@ int dcStepExt(int n, int fromExt, int dir, dcChanAt_t at, void *ctx);
 /* Позиція каналу ch серед n позицій або -1. */
 int dcFindPos(int n, uint16_t ch, dcChanAt_t at, void *ctx);
 
+/* R98-FIX1 Д: непрочитані SMS за джерелом (картка A/B). cnt[0] -- прийняті на A, cnt[1] -- на B (два байти, насичення 255).
+ * dcUnreadCountsNote -- нове SMS прийнято на картці (cardB). dcUnreadCountsSplit -- узгодження із загальним числом непрочитаних total
+ * (його веде сховище SMS): total == 0 -> обидва лічильники 0; інакше A = min(A, total), B = min(B, total - A) (записується назад);
+ * cardA = total - B (разом із НЕприв'язаною різницею total - A - B: прийнято до режиму/до перезапуску/при вимкненому режимі), cardB = B. */
+void dcUnreadCountsNote(uint8_t cnt[2], bool cardB);
+void dcUnreadCountsSplit(uint8_t cnt[2], unsigned total, unsigned *cardA, unsigned *cardB);
+
 #endif /* DUAL_CHANNEL_ENABLED || DUAL_CHANNEL_HOST_TEST */
 
 #if defined(DUAL_CHANNEL_ENABLED)
@@ -98,6 +105,8 @@ uint16_t dcChannelB(void);
 uint8_t  dcTypeB(void);                /* R98: DC_TYPE_* цілі B */
 bool     dcBIsVfo(void);
 void     dcSetTypeB(uint8_t typeB);     /* відкладений запис (як покажчик/B з валкодера) */
+void     dcUnreadNote(bool cardB);      /* R98-FIX1 Д: прийнято нове SMS на картці (2 байти RAM) */
+void     dcUnreadCards(unsigned total, unsigned *cardA, unsigned *cardB);   /* R98-FIX1 Д: узгодження із total і розподіл по картках */
 bool     dcIsOnB(void);                /* рація ЗАРАЗ налаштована на B */
 void     dcSetOnB(bool onB);
 bool     dcTxHoldPending(void);        /* після власної передачі з режиму -- утримати той канал */

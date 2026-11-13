@@ -2134,6 +2134,9 @@ void dmrSmsRxTick(void)
 		}
 	}
 	SMS_DG(s_diagMsg++);
+#if defined(DUAL_CHANNEL_ENABLED)
+	uiChannelModeDualSmsReceived();   /* R98-FIX1 Д: картка-джерело (A/B) нового непрочитаного SMS для екрана «Подвійного прийому» */
+#endif
 
 	/* notify the user: visual banner (existing) + audible alert (new — раніше цей шлях був
 	 * німим, і вхідне SMS можна було пропустити, якщо не дивитись на екран саме в цю мить).

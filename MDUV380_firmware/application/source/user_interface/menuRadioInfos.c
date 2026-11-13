@@ -951,6 +951,9 @@ static void handleEvent(uiEvent_t *ev)
 								// Roaming is enabled, and root menu is Channel mode => trigger distance sorting.
 								if ((ROAMING_EFFECTIVE() != ROAMING_OFF) &&
 										(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&
+#if defined(DUAL_CHANNEL_ENABLED)
+										(uiChannelModeDualOnVfo() == false) &&   // R98-FIX1 Г: на обраному VFO «перечитати зону» стерло б частоту VFO
+#endif
 										(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) == false))
 								{
 									currentChannelData->rxFreq = 0U;

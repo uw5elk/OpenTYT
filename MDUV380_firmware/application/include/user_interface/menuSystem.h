@@ -252,6 +252,13 @@ bool uiChannelModeDualPrepareTx(void);   /* R97: PTT під час «Подві�
 bool uiChannelModeDualHeader(bool forceBattery);   /* R97-FIX3: чергування без активності -- шапка обраного каналу з кодплага; true = намальовано (applicationMain.c) */
 void uiChannelModeDualRenderHeader(bool forceBattery);   /* R97-FIX7: шапка екрана режиму (чергування -- з кодплага, пауза -- справжня); висота лише рядок шапки */
 bool uiChannelModeDualScreenShown(void);   /* R97-FIX5: екран «Подвійного прийому» на дисплеї (чергування або пауза після клавіші) -- стоковий S-метр шапки не малюється (uiUtilities.c) */
+void uiChannelModeDualSmsReceived(void);   /* R98-FIX1 Д: прийнято нове непрочитане SMS DMR (dmr_sms.c) -- записати картку-джерело (A/B) */
+bool uiChannelModeDualOnVfo(void);   /* R98-FIX1 Г: режим ввімкнено і обраний (рація стоїть на) B = VFO -- меню з кореня екрана каналу мають діяти на VFO, а не на канальний буфер */
+int uiChannelModeDualTsBucket(void);   /* R98-FIX1 Г: «відро» ТС-перекриття для меню контактів/«Останні»: VFO A/B обраного VFO, інакше CHANNEL_CHANNEL */
+bool uiChannelModeDualDetailsShown(void);   /* R98-FIX1 В2: режим ввімкнено і показано панель деталей (SK1) -- стоковий екран деталей обраного каналу без S-метра шапки (uiUtilities.c) */
+#define CHANNEL_ROOT_TS_BUCKET() uiChannelModeDualTsBucket()   /* R98-FIX1 Г: відро ТС-перекриття для меню з кореня екрана каналу */
+#else
+#define CHANNEL_ROOT_TS_BUCKET() CHANNEL_CHANNEL               /* без режиму -- стоково */
 #endif
 void uiChannelInitializeCurrentZone(void);
 
@@ -458,7 +465,6 @@ enum CHANNEL_SCREEN_QUICK_MENU_ITEMS
 #endif
 #if defined(DUAL_CHANNEL_ENABLED)
 	CH_SCREEN_QUICK_MENU_DUAL_CHANNEL,  /* R97: «Подв. прийом» On/Off -- В КІНЦІ, номери наявних пунктів не зсуваються (швидкі клавіші) */
-	CH_SCREEN_QUICK_MENU_SET_B,         /* R97: «Встановити як B» */
 #endif
 	NUM_CH_SCREEN_QUICK_MENU_ITEMS
 };

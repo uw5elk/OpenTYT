@@ -311,7 +311,7 @@ void menuLastHeardHandleEvent(uiEvent_t *ev)
 			if ((timeslot != -1) && (timeslot != trxGetDMRTimeSlot()))
 			{
 				trxSetDMRTimeSlot(timeslot, true);
-				tsSetManualOverride(((menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) ? CHANNEL_CHANNEL : (CHANNEL_VFO_A + nonVolatileSettings.currentVFONumber)), (timeslot + 1));
+				tsSetManualOverride(((menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) ? CHANNEL_ROOT_TS_BUCKET() : (CHANNEL_VFO_A + nonVolatileSettings.currentVFONumber)), (timeslot + 1));
 			}
 
 			announceItem(PROMPT_SEQUENCE_CONTACT_TG_OR_PC, PROMPT_THRESHOLD_3);

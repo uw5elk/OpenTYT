@@ -1998,6 +1998,15 @@ void uiUtilityDisplayInformation(const char *str, displayInformation_t line, int
 
 void uiUtilityRenderQSODataAndUpdateScreen(void)
 {
+#if defined(DUAL_CHANNEL_ENABLED)
+	// R98-FIX1 В1: таймер ~2 с після клавіші ТГ/режиму (uiChannelMode.c, uiUtilities.c) малював би стокову шапку + дані QSO
+	// поверх екрана «Подвійного прийому» (S-метр/артефакти). У режимі -- лише власний екран режиму.
+	if ((menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown())
+	{
+		uiChannelModeUpdateScreen(0);
+		return;
+	}
+#endif
 	if (isQSODataAvailableForCurrentTalker())
 	{
 		displayClearBuf();
@@ -2186,6 +2195,23 @@ static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
 static bool dualEnvelopeInCards(void)
 {
 	return ((menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown());
+}
+
+// R98-FIX1 Д: непрочитані SMS DMR для картки (за джерелом прийому). Загальне число веде сховище SMS (dmrSmsUnreadCount); тут його лише
+// розкладено на картки (dcUnreadCards: clamp, неприв'язана різниця -- на A). Без AES/DMR-даних -- 0.
+unsigned uiUnreadCountCard(bool cardB)
+{
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	unsigned a;
+	unsigned b;
+	int unread = dmrSmsUnreadCount();
+
+	dcUnreadCards(((unread > 0) ? (unsigned)unread : 0U), &a, &b);
+	return (cardB ? b : a);
+#else
+	(void)cardB;
+	return 0U;
+#endif
 }
 
 // kind: 'D' -- непрочитані SMS DMR, 'A' -- APRS; без відповідної збірки -- 0.
@@ -3050,9 +3076,9 @@ int16_t uiUtilityRSSIRenderEndRow(int16_t defaultEndRow)
 void uiUtilityDrawRSSIBarGraph(void)
 {
 #if defined(DUAL_CHANNEL_ENABLED)
-	if (uiChannelModeDualScreenShown())
+	if (uiChannelModeDualScreenShown() || uiChannelModeDualDetailsShown())
 	{
-		return;   // R97-FIX5: екран «Подвійного прийому» має власний S-метр (нижній рядок); стоковий блок/смуга не малюються
+		return;   // R97-FIX5: екран «Подвійного прийому» має власний S-метр (нижній рядок); стоковий блок/смуга не малюються (R98-FIX1 В2: і в панелі деталей SK1)
 	}
 #endif
 	int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);

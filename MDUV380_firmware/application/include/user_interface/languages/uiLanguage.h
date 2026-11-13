@@ -458,8 +458,10 @@ typedef struct
    // R97: «Подвійний прийом» -- ОСТАННІМИ, лише з ENABLE_DUAL_CHANNEL (розкладка решти збірок та сама); код -- під DUAL_CHANNEL_ENABLED
    const char dual_rx[LANGUAGE_TEXTS_LENGTH];
    const char dual_set_b[LANGUAGE_TEXTS_LENGTH];
+   // R98-FIX1: dual_set_b у коді не використовується (пункт «Встановити як B» прибрано); поле лишено для сталої розкладки
    const char dual_title[LANGUAGE_TEXTS_LENGTH];
    const char dual_b_saved[LANGUAGE_TEXTS_LENGTH];
+   // R98-FIX1: dual_b_saved теж не використовується (було сповіщення після «Встановити як B»)
    const char dual_err_no_b[LANGUAGE_TEXTS_LENGTH];
    const char dual_err_b_gone[LANGUAGE_TEXTS_LENGTH];
    const char dual_err_b_is_a[LANGUAGE_TEXTS_LENGTH];   // R97-FIX6: у коді не використовується (A==B дозволено); поле лишено -- розкладка мовних файлів не змінюється

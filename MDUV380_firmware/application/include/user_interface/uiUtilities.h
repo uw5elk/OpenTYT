@@ -211,6 +211,7 @@ void uiDrawAesIconAt(int16_t x, int16_t y);       /* R97-FIX6: замок 10x9 �
 #endif
 #endif
 #if defined(DUAL_CHANNEL_ENABLED)
+unsigned uiUnreadCountCard(bool cardB);   /* R98-FIX1 Д: непрочитані SMS DMR для картки A/B (прив'язка за джерелом; неприв'язане -- на A) */
 unsigned uiUnreadCount(char kind);   /* R98 Д1: 'D' -- непрочитані SMS DMR, 'A' -- APRS (0, якщо збірка без них); для карток «Подвійного прийому» */
 #endif
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
