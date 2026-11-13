@@ -4372,6 +4372,63 @@ static void dualMeterRow(int16_t y)
 	displayThemeResetToDefault();
 }
 
+// Призначення передачі (PTT) для картки каналу -- ті самі правила, що в стоковому завантаженні каналу (uiChannelModeLoadChannelData) і updateTrxID():
+//  1) перекриття ТГ (nonVolatileSettings.overrideTG != 0; ставиться клавішею «*»/меню/ТГ-списком) -- діє на ОБРАНІЙ картці (куди піде PTT);
+//  2) список прийому каналу (rxGroupList): контакт на позиції currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE] (поза списком -> перший);
+//  3) інакше контакт самого каналу. codeplugContactGetDataForIndex() для 0/недійсного індексу ПОВЕРТАЄ «TG 9» -- саме так рація й передає (ТГ 9),
+//     тож «контакт не заданий» показуємо чесно як ТГ 9, а не прочерком.
+// out -- до 16 символів (ім'я контакту або «TG n»/«PC n»); *numOnly -- true, якщо ім'я порожнє й показано лише тип+номер. Повертає ID: (прапорець<<24)|номер.
+static uint32_t dualDestination(const CodeplugChannel_t *ch, bool selected, char *out, bool *numOnly)
+{
+	CodeplugContact_t ct;
+	uint32_t packed;
+	bool pc;
+
+	out[0] = 0;
+	*numOnly = false;
+
+	if (selected && (nonVolatileSettings.overrideTG != 0))
+	{
+		packed = nonVolatileSettings.overrideTG;
+		pc = ((packed >> 24) != TG_CALL_FLAG);   // як uiUtilityBuildTgOrPCDisplayName(): не ТГ -- приватний
+
+		if ((pc == false) && ((packed & 0x00FFFFFFU) == ALL_CALL_VALUE))
+		{
+			snprintf(out, 17, "%.16s", currentLanguage->all_call);
+			return packed;
+		}
+
+		if (codeplugContactIndexByTGorPC((packed & 0x00FFFFFFU), (pc ? CONTACT_CALLTYPE_PC : CONTACT_CALLTYPE_TG), &ct,
+				(uint8_t)((codeplugChannelGetFlag((CodeplugChannel_t *)ch, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2 : 1)) != -1)
+		{
+			codeplugUtilConvertBufToDisplayString(ct.name, out, 16);
+		}
+	}
+	else
+	{
+		int num;
+		int ci = codeplugRxGroupGetContactAt(ch->rxGroupList, nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE], &num);
+
+		if (ci == 0)
+		{
+			ci = ch->contact;
+		}
+
+		(void)codeplugContactGetDataForIndex(ci, &ct);   // недійсний -> «TG 9» (як на PTT)
+		packed = codeplugContactGetPackedId(&ct);
+		pc = (ct.callType == CONTACT_CALLTYPE_PC);
+		codeplugUtilConvertBufToDisplayString(ct.name, out, 16);
+	}
+
+	if (out[0] == 0)
+	{
+		snprintf(out, 17, "%s %u", (pc ? currentLanguage->pc : currentLanguage->tg), (unsigned)(packed & 0x00FFFFFFU));
+		*numOnly = true;
+	}
+
+	return packed;
+}
+
 // Одна картка каналу: рамка, квадрат з літерою (обраний -- інвертований, під літерою ▸), рядок 1 (номер+назва), рядок 2 (абонент / контакт-ТГ / FM+частота),
 // рядок 3 (TS/CC/ТГ виклику або тон/смуга FM), замок AES, смуга активності (RX + S-метр). Усе на стеку, з кодплага; імена в RAM не кешуються.
 static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool active, bool callerHere)
@@ -4395,30 +4452,27 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 
 		if (tmp.chMode == RADIO_MODE_DIGITAL)
 		{
-			CodeplugContact_t ct;
-
-			if ((tmp.contact != 0) && codeplugContactGetDataForIndex(tmp.contact, &ct))
-			{
-				codeplugUtilConvertBufToDisplayString(ct.name, l2, 16);   // ТГ/контакт каналу з кодплага
-
-				if (l2[0] == 0)
-				{
-					snprintf(l2, sizeof(l2), "%s %u", ((ct.callType == CONTACT_CALLTYPE_PC) ? currentLanguage->pc : currentLanguage->tg), (unsigned)ct.tgNumber);   // ім'я порожнє -- «TG 91»
-				}
-			}
-
-			if (l2[0] == 0)
-			{
-				snprintf(l2, sizeof(l2), "--");   // контакт не заданий
-			}
+			bool numOnly;
+			uint32_t dest = dualDestination(&tmp, selected, l2, &numOnly);   // куди піде виклик (PTT)
+			size_t n;
 
 			snprintf(l3, sizeof(l3), "TS%d CC%d", ((codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2 : 1), (int)tmp.txColor);
+			n = strlen(l3);
 
 			if (callerHere && (LinkHead != NULL))
 			{
-				size_t n = strlen(l3);
-
 				snprintf((l3 + n), (sizeof(l3) - n), " %.11s", LinkHead->talkgroup);   // ТГ/ID призначення виклику, що триває
+			}
+			else if (numOnly == false)
+			{
+				char num[12];
+
+				snprintf(num, sizeof(num), "%s%u", (((dest >> 24) != TG_CALL_FLAG) ? currentLanguage->pc : currentLanguage->tg), (unsigned)(dest & 0x00FFFFFFU));
+
+				if ((n + 1U + strlen(num)) <= DW_LINE3_MAX)   // число ТГ/ID -- лише якщо влазить
+				{
+					snprintf((l3 + n), (sizeof(l3) - n), " %s", num);
+				}
 			}
 		}
 		else
@@ -4438,19 +4492,12 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 				n = (size_t)snprintf(l3, sizeof(l3), "DCS ");
 				(void)dcsPrintf((l3 + n), (sizeof(l3) - n), NULL, tmp.rxTone);
 			}
-			else
-			{
-				snprintf(l3, sizeof(l3), "--");
-			}
 
-			n = strlen(l3);
-			snprintf((l3 + n), (sizeof(l3) - n), " %s", ((codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_BW_25K) != 0) ? "25k" : "12.5k"));   // смуга -- якщо влазить (обрізається snprintf)
+			n = strlen(l3);   // без тону -- лише смуга (без прочерків)
+			snprintf((l3 + n), (sizeof(l3) - n), "%s%s", ((n != 0U) ? " " : ""), ((codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_BW_25K) != 0) ? "25k" : "12.5k"));   // смуга -- якщо влазить (обрізається snprintf)
 		}
 	}
-	else
-	{
-		snprintf(name, sizeof(name), "---");
-	}
+	// каналу нема (не задано/видалено) -- назва порожня (без прочерків)
 
 	if (callerHere)
 	{
@@ -4484,7 +4531,14 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 		displayFillTriangle((cx - 2), (y + DW_ARROW_DY), (cx - 2), (y + DW_ARROW_DY + 4), (cx + 2), (y + DW_ARROW_DY + 2), false);   // ▸ під літерою
 	}
 
-	snprintf(l1, sizeof(l1), "%u %s", (unsigned)ch, name);
+	if (ch >= DC_CH_MIN)
+	{
+		snprintf(l1, sizeof(l1), ((name[0] != 0) ? "%u %s" : "%u"), (unsigned)ch, name);
+	}
+	else
+	{
+		l1[0] = 0;
+	}
 	displayPrintCore(DW_TXT_X, (y + DW_LINE1_DY), l1, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 
 	displayThemeApply((callerHere ? THEME_ITEM_FG_CHANNEL_CONTACT_INFO : THEME_ITEM_FG_CHANNEL_CONTACT), THEME_ITEM_BG);

@@ -1404,6 +1404,40 @@ bool codeplugRxGroupGetDataForIndex(int index, CodeplugRxGroup_t *rxGroupBuf)
 	return false;
 }
 
+#if defined(ENABLE_DUAL_CHANNEL) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = DUAL_CHANNEL_ENABLED (dual_channel.h) */
+// R97-FIX7: індекс контакту в списку прийому каналу за позицією -- для екрана «Подвійного прийому» (призначення передачі). Читає лише 64 байти
+// списку контактів (а не 212-байтову CodeplugRxGroup_t зі 32 запитами контактів). Правило позиції -- як у стоковому завантаженні каналу:
+// позиція поза списком -> перший. Повертає 0, якщо списку нема або він порожній (тоді діє контакт самого каналу); *numTGs -- кількість ТГ.
+int codeplugRxGroupGetContactAt(int index, int pos, int *numTGs)
+{
+	uint16_t contacts[32];
+	int n = 0;
+
+	*numTGs = 0;
+
+	if ((index < 1) || (index > CODEPLUG_RX_GROUPLIST_MAX) || (codeplugRXGroupCache[index - 1] == 0))
+	{
+		return 0;
+	}
+
+	SPI_Flash_read(FLASH_ADDRESS_OFFSET + CODEPLUG_ADDR_RX_GROUP + ((index - 1) * CODEPLUG_RXGROUP_DATA_STRUCT_SIZE) + 16, (uint8_t *)contacts, sizeof(contacts));
+
+	while ((n < 32) && (contacts[n] != 0))
+	{
+		n++;
+	}
+
+	*numTGs = n;
+
+	if (n == 0)
+	{
+		return 0;
+	}
+
+	return contacts[((pos < 0) || (pos >= n)) ? 0 : pos];
+}
+#endif
+
 int codeplugDTMFContactsGetCount(void)
 {
 	return codeplugContactsCache.numDTMFContacts;

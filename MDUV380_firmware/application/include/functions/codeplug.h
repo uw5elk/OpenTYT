@@ -667,6 +667,9 @@ int codeplugContactsGetCount(uint32_t callType);
 int codeplugContactGetDataForNumberInType(int number, uint32_t callType, CodeplugContact_t *contact);
 int codeplugDTMFContactGetDataForNumber(int number, CodeplugDTMFContact_t *contact);
 int codeplugContactIndexByTGorPCFromNumber(int number, uint32_t tgorpc, ContactCalltype_t callType, CodeplugContact_t *contact, uint8_t optionalTS);
+#if defined(ENABLE_DUAL_CHANNEL) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = DUAL_CHANNEL_ENABLED (dual_channel.h) */
+int codeplugRxGroupGetContactAt(int index, int pos, int *numTGs);   /* R97-FIX7 */
+#endif
 int codeplugContactIndexByTGorPC(uint32_t tgorpc, ContactCalltype_t callType, CodeplugContact_t *contact, uint8_t optionalTS);
 int codeplugContactSaveDataForIndex(int index, CodeplugContact_t *contact);
 uint32_t codeplugContactGetPackedId(CodeplugContact_t *contact);
