@@ -10,7 +10,17 @@
 
 bool dcCfgParse(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint16_t *chB)
 {
+	uint8_t tb, ta;
+
+	return dcCfgParseEx(raw, enabled, pointerB, chB, &tb, &ta);
+}
+
+bool dcCfgParseEx(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint16_t *chB, uint8_t *typeB, uint8_t *typeA)
+{
 	uint16_t ch;
+
+	*typeB = DC_TYPE_CHANNEL;
+	*typeA = DC_TYPE_CHANNEL;
 
 	*enabled = false;
 	*pointerB = false;
@@ -25,11 +35,30 @@ bool dcCfgParse(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint16
 	*chB = (((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX)) ? ch : 0U);
 	*enabled = ((raw->flags & DC_FLAG_ENABLED) != 0U);
 	*pointerB = ((raw->flags & DC_FLAG_POINTER_B) != 0U);
+	*typeB = ((raw->reserved[0] == DC_TYPE_VFO_A) || (raw->reserved[0] == DC_TYPE_VFO_B)) ? raw->reserved[0] : (uint8_t)DC_TYPE_CHANNEL;
+	/* тип A: підтримано лише «канал»; ненульове читаємо як 0 без помилки */
 	return true;
 }
 
 void dcCfgBuild(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB)
 {
+	dcCfgBuildEx(raw, enabled, pointerB, chB, DC_TYPE_CHANNEL, DC_TYPE_CHANNEL);
+}
+
+bool dcSameTarget(uint8_t typeA, uint16_t idxA, uint8_t typeB, uint16_t idxB)
+{
+	if (typeA != typeB)
+	{
+		return false;
+	}
+
+	return (typeA == DC_TYPE_CHANNEL) ? (idxA == idxB) : true;
+}
+
+void dcCfgBuildEx(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB, uint8_t typeB, uint8_t typeA)
+{
+	(void)typeA;   /* тип A -- лише 0 */
+
 	if ((chB < DC_CH_MIN) || (chB > DC_CH_MAX))
 	{
 		chB = 0U;
@@ -40,6 +69,7 @@ void dcCfgBuild(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB)
 	raw->flags = (uint8_t)((enabled ? DC_FLAG_ENABLED : 0U) | (pointerB ? DC_FLAG_POINTER_B : 0U));
 	raw->chBLo = (uint8_t)(chB & 0xFFU);
 	raw->chBHi = (uint8_t)(chB >> 8);
+	raw->reserved[0] = (((typeB == DC_TYPE_VFO_A) || (typeB == DC_TYPE_VFO_B)) ? typeB : (uint8_t)DC_TYPE_CHANNEL);
 }
 
 dcPairCheck_t dcCheckPair(uint16_t chA, uint16_t chB, bool bInUse)
@@ -123,6 +153,7 @@ static struct
 {
 	uint32_t dirtyMs;       /* коли востаннє змінено покажчик/B (для відкладеного запису) */
 	uint16_t chB;
+	uint8_t  typeB;         /* R98: DC_TYPE_* -- у колишньому байті вирівнювання (розмір структури той самий) */
 	uint8_t  enabled  : 1;
 	uint8_t  pointerB : 1;
 	uint8_t  onB      : 1;
@@ -136,6 +167,7 @@ void dcLoad(void)
 	dcOnFlashCfg_t raw;
 	bool en, ptr;
 	uint16_t ch;
+	uint8_t tb, ta;
 
 	memset(&raw, 0, sizeof(raw));
 
@@ -144,7 +176,8 @@ void dcLoad(void)
 		memset(&raw, 0, sizeof(raw));   /* блоку нема -- нечинна версія -> типові значення */
 	}
 
-	(void)dcCfgParse(&raw, &en, &ptr, &ch);
+	(void)dcCfgParseEx(&raw, &en, &ptr, &ch, &tb, &ta);
+	s_dc.typeB = tb;
 	s_dc.enabled = (en ? 1U : 0U);
 	s_dc.pointerB = (ptr ? 1U : 0U);
 	s_dc.chB = ch;
@@ -166,6 +199,16 @@ bool dcPointerB(void)
 uint16_t dcChannelB(void)
 {
 	return s_dc.chB;
+}
+
+uint8_t dcTypeB(void)
+{
+	return s_dc.typeB;
+}
+
+bool dcBIsVfo(void)
+{
+	return (s_dc.typeB != DC_TYPE_CHANNEL);
 }
 
 bool dcIsOnB(void)
@@ -204,7 +247,7 @@ bool dcFlush(void)
 	dcOnFlashCfg_t cur;
 	dcOnFlashCfg_t want;
 
-	dcCfgBuild(&want, (s_dc.enabled != 0U), (s_dc.pointerB != 0U), s_dc.chB);
+	dcCfgBuildEx(&want, (s_dc.enabled != 0U), (s_dc.pointerB != 0U), s_dc.chB, s_dc.typeB, DC_TYPE_CHANNEL);
 	memset(&cur, 0, sizeof(cur));
 	s_dc.dirty = 0U;
 
@@ -253,8 +296,20 @@ void dcSetPointerB(bool pointerB)
 	}
 }
 
+void dcSetTypeB(uint8_t typeB)
+{
+	typeB = (((typeB == DC_TYPE_VFO_A) || (typeB == DC_TYPE_VFO_B)) ? typeB : (uint8_t)DC_TYPE_CHANNEL);
+
+	if (s_dc.typeB != typeB)
+	{
+		s_dc.typeB = typeB;
+		markDirty();
+	}
+}
+
 bool dcSetChannelB(uint16_t chB, bool persistNow)
 {
+	s_dc.typeB = DC_TYPE_CHANNEL;   /* R98: вибір каналу B -- це тип «канал» */
 	s_dc.chB = (((chB >= DC_CH_MIN) && (chB <= DC_CH_MAX)) ? chB : 0U);
 
 	if (persistNow)

@@ -11,8 +11,11 @@
  *   [1] flags: біт 0 -- режим увімкнено; біт 1 -- покажчик на B (0 = на A); решта бітів -- 0
  *   [2] номер каналу B, молодший байт  } абсолютний індекс каналу кодплага 1..1024; 0 = «B не задано»
  *   [3] номер каналу B, старший байт   }
- *   [4..7] резерв (0)
- * Якщо блоку нема або він нечинний -- режим вимкнено, покажчик на A, B не задано.
+ *   [4] R98: тип B: 0 -- канал кодплага (номер у [2..3]); 1 -- VFO A; 2 -- VFO B; інше -> 0 (канал). Для VFO номер у [2..3]
+ *       зберігається як є (останній канал B), але не використовується
+ *   [5] R98: тип A (читається; підтримано лише 0 -- «поточний канал»; ненульове трактується як 0, без помилки)
+ *   [6..7] резерв (0)
+ * Старі записи (R97: [4..7] = 0) читаються як «B -- канал». Якщо блоку нема або він нечинний -- режим вимкнено, покажчик на A, B не задано.
  * Формат знадобиться CPS (R98) -- змінюючи тут, змінюй там.
  */
 #ifndef FUNCTIONS_DUAL_CHANNEL_H_
@@ -33,6 +36,9 @@
 #define DC_FLAG_POINTER_B   0x02U
 #define DC_CH_MIN           1U
 #define DC_CH_MAX           1024U
+#define DC_TYPE_CHANNEL     0U     /* R98: B -- канал кодплага */
+#define DC_TYPE_VFO_A       1U     /* R98: B -- VFO A */
+#define DC_TYPE_VFO_B       2U     /* R98: B -- VFO B */
 
 /* Розкладка блоку на флеші (8 байт, без вирівнювання -- лише uint8_t). */
 typedef struct
@@ -48,6 +54,12 @@ typedef struct
 bool dcCfgParse(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint16_t *chB);
 /* Зібрати блок для запису (номер B поза 1..1024 -> 0). */
 void dcCfgBuild(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB);
+/* R98: те саме з типами A/B (reserved[1]/reserved[0]); тип поза 0..2 -> 0; тип A -- лише 0 (ненульове -> 0). Старі виклики = типи 0. */
+bool dcCfgParseEx(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint16_t *chB, uint8_t *typeB, uint8_t *typeA);
+void dcCfgBuildEx(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB, uint8_t typeB, uint8_t typeA);
+/* R98: чи ціль (тип, індекс) A збігається з ціллю B. Ключ -- пара (тип, індекс): канали -- за номером, VFO -- за типом
+ * (індекс ігнорується); пара «канал A, VFO B» ніколи не рівна, два різні VFO -- теж. Номер -1 як ключ не використовується. */
+bool dcSameTarget(uint8_t typeA, uint16_t idxA, uint8_t typeB, uint16_t idxB);
 
 typedef enum
 {
@@ -79,6 +91,9 @@ void     dcLoad(void);                 /* на старті: блок 18 -> RAM 
 bool     dcIsEnabled(void);
 bool     dcPointerB(void);
 uint16_t dcChannelB(void);
+uint8_t  dcTypeB(void);                /* R98: DC_TYPE_* цілі B */
+bool     dcBIsVfo(void);
+void     dcSetTypeB(uint8_t typeB);     /* відкладений запис (як покажчик/B з валкодера) */
 bool     dcIsOnB(void);                /* рація ЗАРАЗ налаштована на B */
 void     dcSetOnB(bool onB);
 bool     dcTxHoldPending(void);        /* після власної передачі з режиму -- утримати той канал */
