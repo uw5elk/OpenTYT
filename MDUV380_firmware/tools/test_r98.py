@@ -355,7 +355,7 @@ def test_static():
     # швидке меню на обраному VFO
     qk = src[src.find("quickKeyApply: // branching here when to quickkey was used."):]
     qk = qk[:qk.find("switch(menuDataGlobal.currentItemIndex)\n\t\t\t{\n\t\t\t\tcase CH_SCREEN_QUICK_MENU_COPY2VFO:")]
-    for item in ("COPY2VFO", "COPY_FROM_VFO", "TALKAROUND", "SET_B", "DELETE", "ZONE_REMOVE"):
+    for item in ("COPY2VFO", "COPY_FROM_VFO", "TALKAROUND", "DELETE", "ZONE_REMOVE"):
         check("case CH_SCREEN_QUICK_MENU_%s:" % item in qk, "В6: пункт швидкого меню «%s» на обраному VFO -- сигнал помилки, стан не змінюється" % item)
     check("dcIsEnabled() && dcIsOnB() && dcBIsVfo()" in qk and "MELODY_ERROR_BEEP" in qk and "return;" in qk, "В6: захист пунктів меню діє лише коли рація на B = VFO, піп помилки, вихід без дій")
     # В7: червона/VFO-екран під час режиму (UV380: перехід у VFO -- стокова КОРОТКА червона)
@@ -377,11 +377,11 @@ def test_static():
     dcc = T.rd(os.path.join(APP, "source", "functions", "dual_channel.c"))
     sd = dcc[dcc.find("static struct\n{"):dcc.find("} s_dc;")]
     check("uint8_t  typeB;" in sd and sd.count("[") == 0, "В9: тип B -- байт у колишньому вирівнюванні s_dc (8 байт), масивів/нових змінних нема")
-    check(re.search(r"^static [a-z_0-9]+ [a-zA-Z_0-9]+\[", dcc, re.M) is None, "В9: у dual_channel.c нових статичних масивів нема")
+    check([m for m in re.findall(r"^static [a-z_0-9]+ ([a-zA-Z_0-9]+)\[", dcc, re.M) if m != "s_dcUnread"] == [], "В9: у dual_channel.c нових статичних масивів нема (R98-FIX1 Д: єдиний виняток -- s_dcUnread[2], 2 байти)")
     # Д1: конверт
     check("static bool dualEnvelopeInCards(void)" in uu and uu.count("if (dualEnvelopeInCards())") == 2, "Д1: конверт непрочитаних у шапці вимкнено на екрані карток (SMS і APRS), на інших екранах -- як було")
     rowb = src[src.find("static void dualRenderRow("):src.find("static bool dualActivity(")]
-    check("uiUnreadCount(isB ? 'A' : 'D')" in rowb and "drawMsgEnvelope" not in rowb, "Д1: індикатор у квадраті літери картки (D на A, A на B); стокова шапкова функція в картках не викликається")
+    check("uiUnreadCountCard(isB)" in rowb and "uiUnreadCount('A')" in rowb and "drawMsgEnvelope" not in rowb, "Д1: індикатор у квадраті літери картки (D на A, A на B); стокова шапкова функція в картках не викликається")
     # Д3: показ перекриття ТГ -- на обох DMR-картках (глобальне)
     check("nonVolatileSettings.overrideTG != 0" in src[src.find("static uint32_t dualDestination(const"):src.find("static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)\n{")], "Д3: dualDestination враховує глобальне перекриття ТГ (показ = реальний PTT)")
     # символи: «VFO A/B» -- латиниця, без нових полів мови

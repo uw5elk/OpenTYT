@@ -219,6 +219,7 @@ SCAN_FNS = ["static void scanning(void)", "static void scanStart(_Bool longPress
 def strip_dual(fn):
     fn = re.sub(r"if \(uiDataGlobal\.Scan\.scanType == SCAN_TYPE_DUAL_CHANNEL\)\s*\{\s*dualScanning\(\);\s*return;\s*\}", "", fn)
     fn = re.sub(r"if \(dualIsRunning\(\)\)\s*\{\s*dualSuspend\(\);\s*return;\s*\}", "", fn)
+    fn = re.sub(r"if \(dcIsEnabled\(\) && dcIsOnB\(\)\)\s*\{\s*uiChannelModeLoadChannelData\(1, 1\);\s*\}\s*else", "", fn)   # R98-FIX1 В3: вставка в uiChannelModeStopScanning
     return fn.split()
 
 
@@ -328,7 +329,7 @@ static uint32_t s_dualKeyMs = 77;
 static uint16_t dualChannelA(void) { return (uint16_t)chA; }
 bool codeplugAllChannelsIndexIsInUse(int ch) { (void)ch; return inUse; }
 void soundSetMelody(const int *m) { (void)m; beep++; }
-bool dcSetChannelB(uint16_t ch, bool now) { setBcalls++; setBval = ch; (void)now; return true; }
+bool dcSetChannelB(uint16_t ch, bool now) { setBcalls++; setBval = ch; (void)now; pair = DC_PAIR_OK; return true; }
 void uiNotificationShow(int t, int id, uint32_t ms, const char *msg, bool imm) { (void)t; (void)id; (void)ms; (void)msg; (void)imm; notif++; }
 bool dcMenuValue(void) { return menuVal; }
 bool dcIsEnabled(void) { return enabled; }
@@ -347,13 +348,10 @@ int menuSystemGetCurrentMenuNumber(void) { return UI_CHANNEL_MODE; }   /* R98: d
 static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; onBq = 0; }
 int main(void)
 {
-	reset(); chA = 42; dualQuickMenuApply(true); printf("b1=%%d,%%d,%%d,%%d\n", setBcalls, setBval, notif, enCalls);
-	reset(); chA = 42; enabled = 1; menuVal = 1; dualQuickMenuApply(true); printf("b2=%%d,%%d,%%d,%%d\n", setBcalls, setBval, enabled, disable);
-	reset(); chA = 42; inUse = 0; dualQuickMenuApply(true); printf("b3=%%d,%%d\n", setBcalls, beep);
-	reset(); chA = 42; menuVal = 1; dualQuickMenuApply(false); printf("o1=%%d,%%d,%%d,%%d\n", setBcalls, enCalls, enVal, resume);
-	reset(); chA = 42; menuVal = 1; pair = DC_PAIR_NO_B; dualQuickMenuApply(false); printf("o2=%%d,%%d,%%d\n", pairErr, enCalls, setBcalls);
-	reset(); chA = 42; enabled = 1; menuVal = 0; dualQuickMenuApply(false); printf("o3=%%d,%%d\n", disable, setBcalls);
-	reset(); chA = 42; dualQuickMenuApply(false); printf("o4=%%d,%%d,%%d\n", setBcalls, enCalls, disable);
+	reset(); chA = 42; menuVal = 1; dualQuickMenuApply(); printf("o1=%%d,%%d,%%d,%%d\n", setBcalls, enCalls, enVal, resume);
+	reset(); chA = 42; menuVal = 1; pair = DC_PAIR_NO_B; dualQuickMenuApply(); printf("o2=%%d,%%d,%%d\n", pairErr, enCalls, setBcalls);
+	reset(); chA = 42; enabled = 1; menuVal = 0; dualQuickMenuApply(); printf("o3=%%d,%%d\n", disable, setBcalls);
+	reset(); chA = 42; dualQuickMenuApply(); printf("o4=%%d,%%d,%%d\n", setBcalls, enCalls, disable);
 	return 0;
 }
 """
@@ -361,18 +359,15 @@ int main(void)
 
 
 def qm_case_problems(src):
-    """Статично: у case «Подв. прийом»/«Встановити як B» пункт меню читається ДО menuSystemPopPreviousMenu(), після Pop -- жодного menuDataGlobal."""
-    m = re.search(r"case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:[^\n]*\n\t*case CH_SCREEN_QUICK_MENU_SET_B:(.*?)\breturn;", src, re.S)
+    """Статично: у case «Подв. прийом» після menuSystemPopPreviousMenu() -- жодного menuDataGlobal (Pop перезаписує currentItemIndex)."""
+    m = re.search(r"case CH_SCREEN_QUICK_MENU_DUAL_CHANNEL:[^\n]*\n\t*\{(.*?)\breturn;", src, re.S)
     if m is None:
-        return ["case пунктів R97 у швидкому меню не знайдено"]
+        return ["case пункту R97 у швидкому меню не знайдено"]
     body = m.group(1)
     p = []
     i_pop = body.find("menuSystemPopPreviousMenu();")
-    i_read = body.find("menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B")
     if i_pop < 0:
         p.append("Pop не знайдено")
-    elif i_read < 0 or i_read > i_pop:
-        p.append("пункт меню читається ПІСЛЯ menuSystemPopPreviousMenu() (Pop перезаписує currentItemIndex)")
     if i_pop >= 0 and "menuDataGlobal" in body[i_pop:]:
         p.append("після Pop ще читається menuDataGlobal")
     return p
@@ -380,16 +375,15 @@ def qm_case_problems(src):
 
 def test_quickmenu_fix(incs, cf):
     src = rd(os.path.join(APP, "source", "user_interface", "uiChannelMode.c"))
-    check(qm_case_problems(src) == [], "R97-FIX: у case «Подв. прийом»/«Встановити як B» пункт береться ДО Pop: %r" % qm_case_problems(src))
-    bug = src.replace("bool setB = (menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);\n", "", 1).replace(
-        "dualQuickMenuApply(setB);", "dualQuickMenuApply(menuDataGlobal.currentItemIndex == CH_SCREEN_QUICK_MENU_SET_B);", 1)
-    check(bug != src and qm_case_problems(bug) != [], "R97-FIX (мутант): старий порядок (читання після Pop) ловиться")
+    check(qm_case_problems(src) == [], "R97-FIX: у case «Подв. прийом» після Pop стан меню не читається: %r" % qm_case_problems(src))
+    bug = src.replace("menuSystemPopPreviousMenu();\n\t\t\t\t\tdualQuickMenuApply();", "menuSystemPopPreviousMenu();\n\t\t\t\t\tdualQuickMenuApply(menuDataGlobal.currentItemIndex);", 1)
+    check(bug != src and qm_case_problems(bug) != [], "R97-FIX (мутант): читання стану меню після Pop ловиться")
     blk = src[src.find("#define DUAL_RESUME_QUIET_MS"):src.find("#endif // DUAL_CHANNEL_ENABLED")]
     check(blk and "menuDataGlobal" not in blk, "R97-FIX: у блоці R97 (рушій/екран/клавіші) стан меню не читається")
     if "DUALCH" not in cf:
         return
     t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
-    fn = [carve_fn(t or "", "static void dualSetMode(_Bool on, _Bool notify)"), carve_fn(t or "", "static void dualQuickMenuApply(_Bool setB)")]
+    fn = [carve_fn(t or "", "static void dualSetMode(_Bool on, _Bool notify)"), carve_fn(t or "", "static void dualQuickMenuApply(void)")]
     check(all(fn), "R97-FIX: dualQuickMenuApply і dualSetMode знайдено")
     if not all(fn):
         return
@@ -399,11 +393,8 @@ def test_quickmenu_fix(incs, cf):
     if out is None:
         return
     o = dict(l.split("=", 1) for l in out.split())
-    check(o.get("b1") == "1,42,1,0", "«Встановити як B»: dcSetChannelB(dualChannelA()) + сповіщення, стан режиму не чіпає: %s" % o.get("b1"))
-    check(o.get("b2") == "1,42,1,0", "«Встановити як B» при ввімкненому режимі: B = A, режим лишається ввімкненим (чекає іншого A): %s" % o.get("b2"))
-    check(o.get("b3") == "0,1", "«Встановити як B» на неіснуючому каналі: нічого не пише, звук помилки: %s" % o.get("b3"))
     check(o.get("o1") == "0,1,1,1", "«Подв. прийом» On: вмикає й запускає, B не чіпає: %s" % o.get("o1"))
-    check(o.get("o2") == "1,0,0", "«Подв. прийом» On без B: сповіщення, режим не вмикається: %s" % o.get("o2"))
+    check(o.get("o2") == "0,1,1", "R98-FIX1: «Подв. прийом» On без B (A=42 існує): B = A автоматично, помилки нема, режим вмикається: %s" % o.get("o2"))
     check(o.get("o3") == "1,0", "«Подв. прийом» Off: вимикає: %s" % o.get("o3"))
     check(o.get("o4") == "0,0,0", "«Подв. прийом» без зміни значення: нічого: %s" % o.get("o4"))
 
@@ -426,7 +417,7 @@ static uint32_t s_dualKeyMs = 77;
 static uint16_t dualChannelA(void) { return (uint16_t)chA; }
 bool codeplugAllChannelsIndexIsInUse(int ch) { (void)ch; return inUse; }
 void soundSetMelody(const int *m) { (void)m; beep++; }
-bool dcSetChannelB(uint16_t ch, bool now) { setBcalls++; setBval = ch; (void)now; return true; }
+bool dcSetChannelB(uint16_t ch, bool now) { setBcalls++; setBval = ch; (void)now; pair = DC_PAIR_OK; return true; }
 void uiNotificationShow(int t, int id, uint32_t ms, const char *msg, bool imm) { (void)t; (void)id; (void)ms; (void)imm; notif++; lastNotifOn = (msg == lang.dual_on); }
 bool dcMenuValue(void) { return menuVal; }
 bool dcIsEnabled(void) { return enabled; }
@@ -445,14 +436,10 @@ int menuSystemGetCurrentMenuNumber(void) { return UI_CHANNEL_MODE; }   /* R98: d
 static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; lastNotifOn = -1; onBq = 0; }
 int main(void)
 {
-	reset(); chA = 42; dualQuickMenuApply(true); printf("b1=%%d,%%d,%%d,%%d\n", setBcalls, setBval, notif, enCalls);
-	reset(); chA = 42; enabled = 1; menuVal = 1; dualQuickMenuApply(true); printf("b2=%%d,%%d,%%d,%%d\n", setBcalls, setBval, enabled, disable);
-	reset(); chA = 42; inUse = 0; dualQuickMenuApply(true); printf("b3=%%d,%%d\n", setBcalls, beep);
-	reset(); chA = 42; onBq = 1; dualQuickMenuApply(true); printf("b4=%%d,%%d,%%d\n", setBcalls, beep, notif);   /* R97-FIX4: меню на B -- помилка, B не змінюється */
-	reset(); chA = 42; menuVal = 1; dualQuickMenuApply(false); printf("o1=%%d,%%d,%%d,%%d,%%d\n", setBcalls, enCalls, enVal, resume, notif);
-	reset(); chA = 42; menuVal = 1; pair = DC_PAIR_NO_B; dualQuickMenuApply(false); printf("o2=%%d,%%d,%%d\n", pairErr, enCalls, setBcalls);
-	reset(); chA = 42; enabled = 1; menuVal = 0; dualQuickMenuApply(false); printf("o3=%%d,%%d,%%d\n", disable, setBcalls, notif);
-	reset(); chA = 42; dualQuickMenuApply(false); printf("o4=%%d,%%d,%%d\n", setBcalls, enCalls, disable);
+	reset(); chA = 42; menuVal = 1; dualQuickMenuApply(); printf("o1=%%d,%%d,%%d,%%d,%%d\n", setBcalls, enCalls, enVal, resume, notif);
+	reset(); chA = 42; menuVal = 1; pair = DC_PAIR_NO_B; dualQuickMenuApply(); printf("o2=%%d,%%d,%%d\n", pairErr, enCalls, setBcalls);
+	reset(); chA = 42; enabled = 1; menuVal = 0; dualQuickMenuApply(); printf("o3=%%d,%%d,%%d\n", disable, setBcalls, notif);
+	reset(); chA = 42; dualQuickMenuApply(); printf("o4=%%d,%%d,%%d\n", setBcalls, enCalls, disable);
 	/* гаряча клавіша (довге ▼): та сама логіка */
 	reset(); dualHotkeyToggle(); printf("h1=%%d,%%d,%%d,%%d,%%d,%%d\n", enCalls, enVal, resume, notif, lastNotifOn, pairErr);
 	reset(); enabled = 1; dualHotkeyToggle(); printf("h2=%%d,%%d,%%d,%%d,%%d\n", disable, enabled, notif, lastNotifOn, enCalls);
@@ -884,14 +871,13 @@ def test_fix2(incs, cf):
           "п.2: коротке ▼ (KEY_DECREASE) без змін; довге ▼ більше ніде в handleEvent не використовується")
     check(len(re.findall(r"KEYCHECK_LONGDOWN\(ev->keys,\s*KEY_FRONT_UP", ev)) + len(re.findall(r"KEY_FRONT_UP\s*\n", ev)) >= 1 and "scanStart(true);" in ev,
           "п.2: довге ▲ (старт сканування зони) не зачеплено")
-    fn = [carve_fn(t, s) for s in ("static void dualSetMode(_Bool on, _Bool notify)", "static void dualHotkeyToggle(void)", "static void dualQuickMenuApply(_Bool setB)")]
+    fn = [carve_fn(t, s) for s in ("static void dualSetMode(_Bool on, _Bool notify)", "static void dualHotkeyToggle(void)", "static void dualQuickMenuApply(void)")]
     check(all(fn), "п.2: знайдено dualSetMode / dualHotkeyToggle / dualQuickMenuApply")
     if all(fn):
         out = run_c(HK_HARNESS % {"fn": "\n".join(fn)})
         check(out is not None, "п.2: хостова збірка гарячої клавіші")
         if out is not None:
             o = dict(l.split("=", 1) for l in out.split())
-            check(o.get("b4") == "0,1,0", "R97-FIX4: «Встановити як B», коли рація на B (меню на обраному B) -- звук помилки, B не змінюється, сповіщення «B встановлено» нема: %s" % o.get("b4"))
             check(o.get("o1") == "0,1,1,1,0", "п.2: пункт меню «Подв. прийом» On -- як раніше (без сповіщення «вкл»): %s" % o.get("o1"))
             check(o.get("o3") == "1,0,0", "п.2: пункт меню Off -- як раніше (без сповіщення): %s" % o.get("o3"))
             check(o.get("h1") == "1,1,1,1,1,0", "п.2: довге ▼ при вимкненому режимі й валідній парі: вмикає, запускає чергування, сповіщення «вкл»: %s" % o.get("h1"))
@@ -1105,6 +1091,7 @@ int8_t tsGetManualOverride(Channel_t c) { gLastChan = c; return gMan; }
 bool tsIsContactHasBeenOverridden(Channel_t c) { gLastChan = c; return gOv; }
 static CodeplugChannel_t settingsVFOChannel[2];
 unsigned uiUnreadCount(char k) { return (k == 'D') ? gUnD : ((k == 'A') ? gUnA : 0U); }
+unsigned uiUnreadCountCard(bool cardB) { return cardB ? 0U : (unsigned)gUnD; }   /* R98-FIX1 Д: SMS DMR за карткою; на B власних SMS нема -- показується APRS */
 void displayDrawLine(int a, int b, int c, int d, bool inv) { (void)inv; chkp(a, b); chkp(c, d); lines++; }
 typedef struct { char contact[32]; char talkerAlias[32]; char talkgroup[17]; } LinkItem_t;
 struct { int contactDisplayPriority; uint32_t overrideTG; int currentIndexInTRxGroupList[3]; } nonVolatileSettings;
