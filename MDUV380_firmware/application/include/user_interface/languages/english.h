@@ -428,6 +428,7 @@ const stringsTable_t englishLanguage =
 .dual_err_b_is_a                         = "B equals A", // MaxLen: 16
 .dual_on                                 = "Dual watch on", // MaxLen: 16
 .dual_off                                = "Dual watch off", // MaxLen: 16
+.dual_zone_all                           = "Zone: All chan.", // MaxLen: 16
 #endif
 #endif
 };

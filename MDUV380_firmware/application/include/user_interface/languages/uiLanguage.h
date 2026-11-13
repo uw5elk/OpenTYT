@@ -465,6 +465,7 @@ typedef struct
    const char dual_err_b_is_a[LANGUAGE_TEXTS_LENGTH];
    const char dual_on[LANGUAGE_TEXTS_LENGTH];    // R97-FIX2: сповіщення гарячої клавіші (довге ▼)
    const char dual_off[LANGUAGE_TEXTS_LENGTH];
+   const char dual_zone_all[LANGUAGE_TEXTS_LENGTH];   // R97-FIX3: сповіщення -- режим вимкнено на B з іншої зони, відкрито «Всі канали»
 #endif
 #endif
 } stringsTable_t;

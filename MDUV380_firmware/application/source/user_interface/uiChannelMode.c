@@ -3731,12 +3731,62 @@ static void dualSuspend(void)
 	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
 }
 
-// Вимкнути режим (RED або пункт швидкого меню): рація лишається на A, зона й канал ті самі.
+// R97-FIX3: режим вимикається, а рація зараз на B -- лишаємось на B як на звичайному каналі.
+//  * B є в поточній зоні -- «останній канал зони» = позиція B у списку зони (для «Всіх каналів» -- номер B), зона та сама;
+//  * B не з поточної зони -- відкриваємо B у зоні «Всі канали» (зона змінюється, коротке сповіщення), «останній канал» зони -1 = номер B.
+// Канал завантажується звичайним шляхом (uiChannelModeLoadChannelData(false, ...)), тож номер, голосові підказки, збереження, TX і швидкі
+// клавіші працюють на ньому, а вибраний ТГ у списку прийому лишається таким, яким його залишив B (не повертається до A).
+static uint16_t dualZoneChannelAt(int pos, void *ctx);
+static void dualLeaveOnB(void)
+{
+	uint16_t b = dcChannelB();
+	int pos = -1;
+	bool wasAll = CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone);
+
+	dcSetOnB(false);
+	lastHeardClearLastID();
+
+	if (wasAll == false)
+	{
+		pos = dcFindPos(currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone, b, dualZoneChannelAt, NULL);
+	}
+
+	if (wasAll || (pos >= 0))
+	{
+		codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, (int16_t)(wasAll ? b : pos));
+	}
+	else
+	{
+		settingsSet(nonVolatileSettings.currentZone, (int16_t)(codeplugZonesGetCount() - 1));   // «Всі канали» -- остання (віртуальна) зона
+		uiChannelInitializeCurrentZone();                                                         // currentZone + назва зони
+		codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, (int16_t)b);
+		uiNotificationShowShort(2000U, currentLanguage->dual_zone_all, true);
+	}
+
+	uiChannelModeLoadChannelData(false, false);
+}
+
+// Вимкнути режим (RED, довге ▼ або пункт швидкого меню): рація на A -- лишається на A; рація на B -- лишається на B (dualLeaveOnB()).
+// Якщо B уже не існує (видалено/не задано) -- як раніше, на A.
 static void dualDisable(void)
 {
-	if (dualIsRunning())
+	bool stayB = (dcIsOnB() && (dcChannelB() >= DC_CH_MIN) && codeplugAllChannelsIndexIsInUse(dcChannelB()));
+
+	if (stayB)
+	{
+		uiDataGlobal.Scan.active = false;
+		uiDataGlobal.Scan.scanType = SCAN_TYPE_NORMAL_STEP;
+		uiDataGlobal.Scan.state = SCAN_STATE_SCANNING;
+		scanNextChannelReady = false;
+		dualLeaveOnB();
+	}
+	else if (dualIsRunning())
 	{
 		dualSuspend();
+	}
+	else if (dcIsOnB())
+	{
+		dualTune(false);   // B не існує, а рація ще на ньому (після передачі) -- повернути на A
 	}
 
 	dcSetTxHold(false);
