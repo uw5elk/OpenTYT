@@ -135,6 +135,7 @@ static uint16_t dualChannelA(void);
 static void dualAutoResume(void);
 static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
+static void dualTune(bool toB);
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
 #endif
@@ -1222,8 +1223,16 @@ static void handleEvent(uiEvent_t *ev)
 				return;
 			}
 
-			// R97: решта клавіш -- як без режиму: чергування зупиняється (рація на A), клавіша обробляється нижче, режим лишається ввімкненим
+			// R97: решта клавіш -- як без режиму: чергування зупиняється, клавіша обробляється нижче, режим лишається ввімкненим
 			dualSuspend();
+		}
+
+		if (dcIsOnB() && (ev->keys.key != KEY_GREEN) && (KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN) == false))
+		{
+			// R97-FIX4: рація стоїть на B (зупинено на обраному B, або чекає поновлення після меню). Зелена (головне меню) працює з обраним;
+			// решта клавіш (ручка, цифри/прямий номер, зона SK2+▲/▼, ...) припускають, що канал на екрані -- канал зони (A): спершу на A.
+			// Виняток -- довге ▼ (гаряча клавіша вимкнення): вимикає, лишаючись на обраному B.
+			dualTune(false);
 		}
 	}
 #endif
@@ -3754,12 +3763,24 @@ static bool dualStart(bool holdCurrent)
 	return true;
 }
 
-// Зупинити чергування, не вимикаючи режим: рація на A (меню, передача з іншого екрана, «чужа» клавіша працюють з A).
+// R97-FIX4: ОБРАНИЙ канал. Виклик/утримання (state != SCANNING) -- де рація зараз (dcIsOnB()); чергування без активності -- за покажчиком;
+// режим уже зупинений (меню) -- де стоїть рація. B вважається обраним, лише якщо він існує (задано й використовується).
+static bool dualSelectedIsB(void)
+{
+	bool b = (dualIsRunning() ? ((uiDataGlobal.Scan.state != SCAN_STATE_SCANNING) ? dcIsOnB() : dcPointerB()) : dcIsOnB());
+
+	return (b && (dcChannelB() >= DC_CH_MIN) && (dcChannelB() <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(dcChannelB()));
+}
+
+// Зупинити чергування, не вимикаючи режим: рація стає на ОБРАНИЙ канал (A або B; R97-FIX4 -- раніше завжди на A). Меню (швидке, головне,
+// «Режим APRS») працюють з обраним; «чужі» клавіші, небезпечні для B, повертають на A самі (handleEvent, ручка на A).
 static void dualSuspend(void)
 {
-	if (dcIsOnB())
+	bool selB = dualSelectedIsB();
+
+	if (selB != dcIsOnB())
 	{
-		dualTune(false);
+		dualTune(selB);
 	}
 
 	uiDataGlobal.Scan.active = false;
@@ -3803,11 +3824,11 @@ static void dualLeaveOnB(void)
 	uiChannelModeLoadChannelData(false, false);
 }
 
-// Вимкнути режим (RED, довге ▼ або пункт швидкого меню): рація на A -- лишається на A; рація на B -- лишається на B (dualLeaveOnB()).
+// Вимкнути режим (довге ▼ або пункт швидкого меню; червона з R97-FIX4 не вимикає): лишаємось на ОБРАНОМУ каналі -- A лишається на A, B (dualLeaveOnB()).
 // Якщо B уже не існує (видалено/не задано) -- як раніше, на A.
 static void dualDisable(void)
 {
-	bool stayB = (dcIsOnB() && (dcChannelB() >= DC_CH_MIN) && codeplugAllChannelsIndexIsInUse(dcChannelB()));
+	bool stayB = dualSelectedIsB();   // R97-FIX4: лишаємось на ОБРАНОМУ (активність -- де рація; чергування -- за покажчиком; з меню -- де стоїть)
 
 	if (stayB)
 	{
@@ -4028,6 +4049,11 @@ static bool dualHandleKey(uiEvent_t *ev)
 					// Покажчик на A -- звичайна зміна каналу зони (ті самі handleUpKey/handleDownKey); A не може стати B -- перескакуємо
 					dualSuspend();
 
+					if (dcIsOnB())
+					{
+						dualTune(false);   // R97-FIX4: виклик на B (обраний B), покажчик на A -- канал зони міняємо з A
+					}
+
 					for (int i = 0; i < 2; i++)
 					{
 						if (dir > 0)
@@ -4112,7 +4138,8 @@ static void dualQuickMenuApply(bool setB)
 	{
 		uint16_t ch = dualChannelA();
 
-		if ((ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
+		// R97-FIX4: меню відкрито на B (зупинка на обраному B) -- на екрані B, а «поточний канал зони» (A) інший: безпечно нічого не змінювати
+		if (dcIsOnB() || (ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
 		{
 			soundSetMelody(MELODY_ERROR_BEEP);
 			return;
