@@ -2190,7 +2190,13 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 	uint8_t powerLevel = trxGetPowerLevel();
 	bool audioIsMuted = audioAmpIsMuted();
 	bool isPerChannelPower = (currentChannelData->libreDMR_Power != 0x00);
+	#if defined(DUAL_CHANNEL_ENABLED)
+	// R97-FIX2: «Подвійний прийом» -- шапка НЕ блимає (ні «[DW]» під час чергування, ні режим/TS/CC під час виклику): блимання шапки
+	// стокового сканування в ньому лише заважає (кожне перемикання A/B давало б мерехтіння). Блимання низького заряду лишається.
+	bool scanIsActive = ((uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType != SCAN_TYPE_DUAL_CHANNEL)) || uiDataGlobal.Scan.toneActive);
+#else
 	bool scanIsActive = (uiDataGlobal.Scan.active || uiDataGlobal.Scan.toneActive);
+#endif
 	bool batteryIsLow = batteryIsLowWarning();
 	int volts = -1, mvolts = -1;
 	int batteryPercentage = -1;

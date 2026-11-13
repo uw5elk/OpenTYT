@@ -357,7 +357,11 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 			{
 				if ((ev->time - m) > RSSI_UPDATE_COUNTER_RELOAD)
 				{
-					if (rxPowerSavingIsRxOn())
+					if (rxPowerSavingIsRxOn()
+#if defined(DUAL_CHANNEL_ENABLED)
+							&& ((dualIsRunning() && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)) == false)   // R97-FIX2: чергування -- статична шапка «[DW]», S-метра й виводу на екран нема
+#endif
+					)
 					{
 						if (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED))
 						{
@@ -3578,6 +3582,12 @@ static bool dualIsRunning(void)
 	return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL));
 }
 
+// Чи шапка зараз статична «[DW]» (чергування A/B без виклику/утримання); для applicationMain.c (headerRowIsDirty).
+bool uiChannelModeDualHeaderStatic(void)
+{
+	return (dualIsRunning() && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING));
+}
+
 // Витримка на каналі -- той самий розрахунок, що в scanApplyNextChannel() (DMR slow/fast, FM).
 static void dualSetDwell(void)
 {
@@ -3831,12 +3841,10 @@ static void dualScanning(void)
 
 		if (wasPaused)
 		{
-			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;   // зняти виділення / рядок абонента
+			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;   // зняти виділення / рядок абонента; повний екран -- шапка стає статичною «[DW]»
 		}
-		else
-		{
-			uiUtilityRedrawHeaderOnly(false, false, false);   // шапка -- режим і TS/CC каналу, що слухається; імена не перемальовуються
-		}
+		// R97-FIX2: у звичайному перемиканні A/B шапку НЕ перемальовуємо: під час чергування вона статична («[DW]», без TS/CC/S-метра),
+		// тож зміна каналу нічого на екрані не міняє (раніше перемальовування кожні ~кілька сотень мс давало мерехтіння).
 	}
 }
 
@@ -4108,7 +4116,9 @@ static void dualRenderScreen(void)
 			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL));
 
 	displayClearBuf();
-	uiUtilityRenderHeader(false, false, ((buttonsRead() & BUTTON_SK1) == BUTTON_SK1));
+	// R97-FIX2: SCANNING -- статична шапка «[DW]» (без TS/фільтра/CC/S-метра); виклик/утримання (state != SCANNING) -- справжня шапка
+	// каналу, що приймає (режим, TS, CC, S-метр). Передача сюди не потрапляє (dualSuspend() -> звичайний екран).
+	uiUtilityRenderHeader((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING), false, ((buttonsRead() & BUTTON_SK1) == BUTTON_SK1));
 
 	if (caller)
 	{
