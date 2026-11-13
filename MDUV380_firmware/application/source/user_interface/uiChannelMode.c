@@ -4058,7 +4058,7 @@ static bool dualHandleKey(uiEvent_t *ev)
 		case KEY_RED:
 			if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 			{
-				dualDisable();   // вихід з режиму: рація на A, зона й канал ті самі
+				dualDisable();   // вихід з режиму: на A -- лишається на A; на B -- лишається на B (R97-FIX3)
 				uiChannelModeUpdateScreen(0);
 			}
 			return true;
