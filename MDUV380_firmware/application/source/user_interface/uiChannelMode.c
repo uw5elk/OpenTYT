@@ -130,6 +130,7 @@ static bool dualIsRunning(void);
 static void dualSuspend(void);
 static void dualScanning(void);
 static bool dualHandleKey(uiEvent_t *ev);
+static bool dualIsVfoStepKey(const uiEvent_t *ev);
 static void dualRenderScreen(void);
 static uint16_t dualChannelA(void);
 static void dualAutoResume(void);
@@ -140,6 +141,8 @@ static void dualQuietEnd(void);
 static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
 static void dualTune(bool toB);
+static bool dualBExists(void);
+static uint8_t dualVfoIdx(void);
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
 static bool     s_dualQuiet;   // R97-FIX4/5: придушити uiChannelModeUpdateScreen() на час обробки клавіші в режимі (S-метр звичайного екрана не спалахує); скидається наприкінці handleEvent()
@@ -692,6 +695,15 @@ void uiChannelModeLoadChannelData(bool useChannelDataInMemory, bool loadVoicePro
 	int previousSelectedChannelNumber = uiDataGlobal.currentSelectedChannelNumber;
 
 #if defined(DUAL_CHANNEL_ENABLED)
+	if (useChannelDataInMemory && dcIsOnB() && dcBIsVfo())
+	{
+		// R98 В2: рація на B = VFO (повернення з екрана передачі/меню): у пам'яті -- запис VFO, налаштовуємо його ізольовано (uiVFOModeDualLoad):
+		// стокові канальні гілки нижче (група каналу, ТГ каналу, номер каналу) для VFO не годяться. Нічого не пишемо в налаштування.
+		uiDataGlobal.currentSelectedChannelNumber = CH_DETAILS_VFO_CHANNEL;
+		uiVFOModeDualLoad(dualVfoIdx(), false);
+		return;
+	}
+	else
 	if (useChannelDataInMemory && dcIsOnB())
 	{
 		// R97: рація на каналі B «Подвійного прийому» -- у пам'яті саме його запис, тож номер -- B (як у роумінгу R59: збереження каналу
@@ -1098,6 +1110,13 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 					codeplugUtilConvertBufToDisplayString(currentChannelData->name, nameBuf, 16);
 				}
 
+#if defined(DUAL_CHANNEL_ENABLED)
+				if (dcIsOnB() && dcBIsVfo() && (currentChannelData == &settingsVFOChannel[dualVfoIdx()]))
+				{
+					snprintf(nameBuf, NAME_BUFFER_LEN, "VFO %c", (char)('A' + dualVfoIdx()));   // R98: передача з картки VFO -- стокове ім'я VFO зазвичай порожнє
+				}
+#endif
+
 				uiUtilityDisplayInformation(nameBuf, (uiDataGlobal.reverseRepeaterChannel ? DISPLAY_INFO_CHANNEL_INVERTED : DISPLAY_INFO_CHANNEL), yOverride);
 			}
 
@@ -1262,7 +1281,7 @@ static void handleEvent(uiEvent_t *ev)
 
 		bool dwRunning = dualIsRunning();
 
-		if (dwRunning || dualSingle())
+		if (dwRunning || dualSingle() || dualIsVfoStepKey(ev))
 		{
 			if (dualHandleKey(ev))
 			{
@@ -2804,6 +2823,32 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 		{
 			quickKeyApply: // branching here when to quickkey was used.
 
+#if defined(DUAL_CHANNEL_ENABLED)
+			if (dcIsEnabled() && dcIsOnB() && dcBIsVfo())
+			{
+				// R98 В6: обраний -- VFO (картка B). Пункти, що мають сенс лише для каналу кодплага, не виконуємо: сигнал помилки, меню лишається,
+				// стан (канал/VFO/зона/B) не змінюється.
+				switch (menuDataGlobal.currentItemIndex)
+				{
+					case CH_SCREEN_QUICK_MENU_COPY2VFO:
+					case CH_SCREEN_QUICK_MENU_COPY_FROM_VFO:
+					case CH_SCREEN_QUICK_MENU_TALKAROUND:
+					case CH_SCREEN_QUICK_MENU_SET_B:
+#if defined(CH_QUICKMENU_DELETE_ENABLED)
+					case CH_SCREEN_QUICK_MENU_DELETE:
+#endif
+#if defined(CH_QUICKMENU_ZONE_REMOVE_ENABLED)
+					case CH_SCREEN_QUICK_MENU_ZONE_REMOVE:
+#endif
+						soundSetMelody(MELODY_ERROR_BEEP);
+						return;
+
+					default:
+						break;
+				}
+			}
+#endif
+
 			switch(menuDataGlobal.currentItemIndex)
 			{
 				case CH_SCREEN_QUICK_MENU_COPY2VFO:
@@ -3660,6 +3705,12 @@ static bool dualIsRunning(void)
 static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, bool *numOnly, uint8_t *tsFlags);
 static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags);
 
+// R98 В3: який «канал» TS/ТГ-стану описує запис: VFO A/B (прапорці NOT_IN_CODEPLUG_flag, як tsGetManualOverrideFromCurrentChannel()) чи канал кодплага.
+static Channel_t dualChanOf(const CodeplugChannel_t *ch)
+{
+	return (((ch->NOT_IN_CODEPLUG_flag & 0x01) == 0x01) ? (((ch->NOT_IN_CODEPLUG_flag & 0x02) == 0x02) ? CHANNEL_VFO_B : CHANNEL_VFO_A) : CHANNEL_CHANNEL);
+}
+
 // R97-FIX3: шапка екрана режиму. Виклик/утримання (state != SCANNING) -- справжня шапка (рація на цьому каналі, S-метр). Чергування без
 // активності -- СТАТИЧНА шапка ОБРАНОГО каналу (покажчик: A або B): режим, смуга, TS, CC, тони, потужність беруться з даних кодплага
 // цього каналу (стек, без RAM-кешу), а не з налаштування радіо, яке чергується; S-метра нема. Перемикання A<->B шапку не чіпає.
@@ -3672,29 +3723,38 @@ static void dualRenderHeader(bool force)
 	}
 
 	CodeplugChannel_t tmp;
+	CodeplugChannel_t *rec = &tmp;
 	uiHeaderOverride_t ov;
 	uint16_t ch = (dcPointerB() ? dcChannelB() : dualChannelA());
 
-	if ((ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
+	if (dcPointerB() && dcBIsVfo())
 	{
-		uiUtilityRenderHeader(false, false, force);   // не мало б траплятись (пару перевірено при старті)
-		return;
+		rec = &settingsVFOChannel[dualVfoIdx()];   // R98: B = VFO -- дані прямо з запису VFO (без копії)
+	}
+	else
+	{
+		if ((ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
+		{
+			uiUtilityRenderHeader(false, false, force);   // не мало б траплятись (пару перевірено при старті)
+			return;
+		}
+
+		codeplugChannelGetDataForIndex(ch, &tmp);
 	}
 
-	codeplugChannelGetDataForIndex(ch, &tmp);
-	ov.ch = &tmp;
-	ov.mode = (uint8_t)tmp.chMode;
-	ov.bw25 = (uint8_t)(codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_BW_25K) != 0);
+	ov.ch = rec;
+	ov.mode = (uint8_t)rec->chMode;
+	ov.bw25 = (uint8_t)(codeplugChannelGetFlag(rec, CHANNEL_FLAG_BW_25K) != 0);
 	{
 		// R98 Д2: ЕФЕКТИВНИЙ ТС передачі за правилом trxUpdateTsForCurrentChannelWithSpecifiedContact() (лише читання), а не ТС запису каналу
 		char nm[17];
 		bool numOnly;
 		uint8_t tsFlags;
 
-		(void)dualDestination(&tmp, nm, &numOnly, &tsFlags);
-		ov.ts = (uint8_t)(dualEffectiveTs(&tmp, tsFlags) - 1U);
+		(void)dualDestination(rec, nm, &numOnly, &tsFlags);
+		ov.ts = (uint8_t)(dualEffectiveTs(rec, tsFlags) - 1U);
 	}
-	ov.cc = tmp.txColor;
+	ov.cc = rec->txColor;
 	uiUtilityRenderHeaderForChannel(&ov, force);
 }
 
@@ -3758,12 +3818,26 @@ static void dualTune(bool toB)
 		}
 
 		dcSetOnB(true);
-		codeplugChannelGetDataForIndex(dcChannelB(), &channelScreenChannelData);
-		uiChannelModeLoadChannelData(true, false);
+
+		if (dcBIsVfo())
+		{
+			// R98 В2: B = VFO. Запис VFO лишається в settingsVFOChannel (канальний буфер channelScreenChannelData не чіпаємо -- там A);
+			// стан стока (overrideTG, currentVFONumber, previousVFONumber) ізольований у uiVFOModeDualLoad().
+			currentChannelData = &settingsVFOChannel[dualVfoIdx()];
+			uiDataGlobal.currentSelectedChannelNumber = CH_DETAILS_VFO_CHANNEL;
+			uiVFOModeDualLoad(dualVfoIdx(), true);
+		}
+		else
+		{
+			currentChannelData = &channelScreenChannelData;
+			codeplugChannelGetDataForIndex(dcChannelB(), &channelScreenChannelData);
+			uiChannelModeLoadChannelData(true, false);
+		}
 	}
 	else
 	{
 		dcSetOnB(false);
+		currentChannelData = &channelScreenChannelData;   // R98: після VFO на B -- знову канальний буфер (A)
 
 		if (wasOnB && (nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE] != s_dualTgIdxA))
 		{
@@ -3780,10 +3854,34 @@ static uint16_t dualChannelA(void)
 	return ((currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0) ? (uint16_t)codeplugGetLastUsedChannelNumberInCurrentZone() : 0U);
 }
 
+// R98: B = VFO завжди існує (запис VFO є завжди); B = канал -- як раніше. Ключ рівності -- пара (тип, індекс), не «-1».
+static uint8_t dualVfoIdx(void)
+{
+	return ((dcTypeB() == DC_TYPE_VFO_B) ? 1U : 0U);
+}
+
+static bool dualBExists(void)
+{
+	uint16_t b = dcChannelB();
+
+	return (dcBIsVfo() || ((b >= DC_CH_MIN) && (b <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(b)));
+}
+
+// A (канал кодплага; тип A лише «канал») збігається з B: лише канал з тим самим номером; пара «канал A, VFO B» -- ніколи.
+static bool dualBSameAsA(void)
+{
+	return dcSameTarget((uint8_t)DC_TYPE_CHANNEL, dualChannelA(), dcTypeB(), dcChannelB());
+}
+
 static dcPairCheck_t dualCheckPair(void)
 {
 	uint16_t chB = dcChannelB();
 	bool bInUse = (((chB >= DC_CH_MIN) && (chB <= DC_CH_MAX)) ? codeplugAllChannelsIndexIsInUse(chB) : false);
+
+	if (dcBIsVfo())
+	{
+		return DC_PAIR_OK;   // R98: VFO -- валідна ціль B без номера каналу
+	}
 
 	return dcCheckPair(dualChannelA(), chB, bInUse);
 }
@@ -3841,7 +3939,7 @@ static bool dualSelectedIsB(void)
 {
 	bool b = (dualIsRunning() ? ((uiDataGlobal.Scan.state != SCAN_STATE_SCANNING) ? dcIsOnB() : dcPointerB()) : dcIsOnB());
 
-	return (b && (dcChannelB() >= DC_CH_MIN) && (dcChannelB() <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(dcChannelB()));
+	return (b && dualBExists());
 }
 
 // Зупинити чергування, не вимикаючи режим: рація стає на ОБРАНИЙ канал (A або B; R97-FIX4 -- раніше завжди на A). Меню (швидке, головне,
@@ -3867,6 +3965,27 @@ static void dualSuspend(void)
 // Канал завантажується звичайним шляхом (uiChannelModeLoadChannelData(false, ...)), тож номер, голосові підказки, збереження, TX і швидкі
 // клавіші працюють на ньому, а вибраний ТГ у списку прийому лишається таким, яким його залишив B (не повертається до A).
 static uint16_t dualZoneChannelAt(int pos, void *ctx);
+
+// R98 В6: B = VFO і режим вимикається, а обраний саме він -- лишаємось на цьому VFO як у стоку: екран VFO з цим VFO поточним (currentVFONumber).
+// Налаштування VFO не губляться (запис VFO -- той самий settingsVFOChannel). Перемикання поточного VFO -- стокове settingsSet(currentVFONumber).
+// Вихід у VFO-екран -- стоковою menuSystemPopAllAndDisplaySpecificRootMenu() (як «Канал -> VFO»): стек меню чистий, перша ініціалізація VFO-екрана
+// сама виставляє currentChannelData/номер вибраного. Канальний буфер (A) не чіпаємо -- повернення на канал працює як звичайно.
+static void dualLeaveOnVfo(void)
+{
+	uint8_t v = dualVfoIdx();
+
+	dcSetOnB(false);
+	lastHeardClearLastID();
+
+	if (nonVolatileSettings.currentVFONumber != v)
+	{
+		settingsSet(nonVolatileSettings.currentVFONumber, v);
+	}
+
+	currentChannelData = &settingsVFOChannel[v];
+	menuSystemPopAllAndDisplaySpecificRootMenu(UI_VFO_MODE, true);
+}
+
 static void dualLeaveOnB(void)
 {
 	uint16_t b = dcChannelB();
@@ -3908,7 +4027,18 @@ static void dualDisable(void)
 		uiDataGlobal.Scan.scanType = SCAN_TYPE_NORMAL_STEP;
 		uiDataGlobal.Scan.state = SCAN_STATE_SCANNING;
 		scanNextChannelReady = false;
-		dualLeaveOnB();
+
+		if (dcBIsVfo())
+		{
+			// R98: режим вимкнено ДО виходу на VFO-екран (запис блоку 18 -- як раніше, одразу)
+			dcSetTxHold(false);
+			(void)dcSetEnabled(false, true);
+			dualLeaveOnVfo();
+		}
+		else
+		{
+			dualLeaveOnB();
+		}
 	}
 	else if (dualIsRunning())
 	{
@@ -3950,7 +4080,7 @@ static void dualAutoResume(void)
 		return;
 	}
 
-	if (dualChannelA() == dcChannelB())
+	if (dualBSameAsA())
 	{
 		// R97-FIX6: A == B -- не помилка: режим лишається ввімкненим, чергування не крутиться (той самий канал), екран режиму показано,
 		// рація стоїть на каналі. Щойно A і B стануть різними -- наступний виклик запустить чергування саме; без сповіщень.
@@ -3982,7 +4112,7 @@ static bool dualSingle(void)
 {
 	uint16_t b = dcChannelB();
 
-	return (dcIsEnabled() && (dualIsRunning() == false) && (b >= DC_CH_MIN) && (b <= DC_CH_MAX) && (b == dualChannelA()) && codeplugAllChannelsIndexIsInUse(b));
+	return (dcIsEnabled() && (dualIsRunning() == false) && (dcBIsVfo() == false) && (b >= DC_CH_MIN) && (b <= DC_CH_MAX) && dualBSameAsA() && codeplugAllChannelsIndexIsInUse(b));
 }
 
 // R97-FIX5: кінець обробника клавіші: «тишу» знято безумовно (інваріант), екран каналу перемальовано рівно один раз
@@ -4087,26 +4217,43 @@ static uint16_t dualZoneChannelAt(int pos, void *ctx)
 	return (((pos >= 0) && (pos < currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone)) ? currentZone.channels[pos] : 0U);
 }
 
+// R98 В8: ручка на картці B -- ЗАМКНЕНИЙ цикл «канали поточної зони -> VFO A -> VFO B -> перший канал» (в обидва боки), dcStepExt().
+// Поточна позиція: B = канал -- його позиція в зоні (B не з цієї зони -- крок від A, як раніше); B = VFO -- n або n+1.
 static void dualStepB(int dir)
 {
 	int n = (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? currentZone.NOT_IN_CODEPLUGDATA_highestIndex : currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone);
-	uint16_t chA = dualChannelA();
-	int from = dcFindPos(n, dcChannelB(), dualZoneChannelAt, NULL);
+	int from;
 
-	if (from < 0)
+	if (dcBIsVfo())
 	{
-		from = dcFindPos(n, chA, dualZoneChannelAt, NULL);   // B не з цієї зони -- крок від A
+		from = (n + (int)dualVfoIdx());
+	}
+	else
+	{
+		from = dcFindPos(n, dcChannelB(), dualZoneChannelAt, NULL);
+
+		if (from < 0)
+		{
+			from = dcFindPos(n, dualChannelA(), dualZoneChannelAt, NULL);   // B не з цієї зони -- крок від A
+		}
 	}
 
-	int pos = dcStepPos(n, from, dir, 0U, dualZoneChannelAt, NULL);   // R97-FIX6: B може збігатися з A -- жодного каналу не пропускаємо
+	int pos = dcStepExt(n, from, dir, dualZoneChannelAt, NULL);
 
 	if (pos < 0)
 	{
-		soundSetMelody(MELODY_ERROR_BEEP);   // у зоні нема іншого каналу, крім A
+		soundSetMelody(MELODY_ERROR_BEEP);
 		return;
 	}
 
-	(void)dcSetChannelB(dualZoneChannelAt(pos, NULL), false);   // відкладений запис (3 с без змін)
+	if (pos >= n)
+	{
+		dcSetTypeB((pos == n) ? DC_TYPE_VFO_A : DC_TYPE_VFO_B);   // відкладений запис (3 с без змін), номер каналу B лишається
+	}
+	else
+	{
+		(void)dcSetChannelB(dualZoneChannelAt(pos, NULL), false);   // відкладений запис (3 с без змін); тип -> «канал»
+	}
 
 	if (dualIsRunning() == false)
 	{
@@ -4121,9 +4268,41 @@ static void dualStepB(int dir)
 	}
 }
 
+// R98 В8: SK2 + ручка при покажчику на B = VFO (режим ввімкнено, екран каналу) -- крок частоти цього VFO.
+static bool dualIsVfoStepKey(const uiEvent_t *ev)
+{
+	return (dcIsEnabled() && dcPointerB() && dcBIsVfo() && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) &&
+			BUTTONCHECK_DOWN(ev, BUTTON_SK2) && (BUTTONCHECK_DOWN(ev, BUTTON_SK1) == false) &&
+			((ev->keys.key == KEY_ROTARY_INCREMENT) || (ev->keys.key == KEY_ROTARY_DECREMENT)));
+}
+
 // Клавіші під час чергування: true -- оброблено (решта -- як без режиму, через dualSuspend()).
 static bool dualHandleKey(uiEvent_t *ev)
 {
+	if (dualIsVfoStepKey(ev))
+	{
+		// R98 В8: SK2 + ручка на картці B = VFO -- крок частоти цього VFO (стокова stepFrequency(), VFO_FREQ_STEP_TABLE); звичайна ручка -- вибір каналу/VFO.
+		// Цифри/введення частоти -- лише у VFO-екрані. Чергування призупиняється на B (тиша DUAL_RESUME_QUIET_MS), далі -- як після будь-якої клавіші.
+		if (KEYCHECK_SHORTUP(ev->keys, ev->keys.key))
+		{
+			dualSuspend();   // чергування стоп; рація на обраному B (VFO)
+
+			if (dcIsOnB() == false)
+			{
+				dualTune(true);   // не чергувало, а рація на A -- на B (VFO); currentChannelData -- запис цього VFO
+			}
+
+			if (dcIsOnB() && dcBIsVfo())
+			{
+				uiVFOModeDualStep(dualVfoIdx(), ((ev->keys.key == KEY_ROTARY_INCREMENT) ? 1 : -1));
+			}
+
+			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+			uiChannelModeUpdateScreen(0);
+		}
+		return true;
+	}
+
 	if (BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1))
 	{
 		return false;
@@ -4236,10 +4415,14 @@ static void dualSetMode(bool on, bool notify)
 	else
 	{
 		dualDisable();
-		uiChannelModeUpdateScreen(0);
+
+		if (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE)   // R98: «лишитись на VFO» перейшло на VFO-екран -- канальний екран не малюємо
+		{
+			uiChannelModeUpdateScreen(0);
+		}
 	}
 
-	if (notify)
+	if (notify && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE))
 	{
 		uiNotificationShowShort(1500U, (on ? currentLanguage->dual_on : currentLanguage->dual_off), true);
 	}
@@ -4259,6 +4442,7 @@ static void dualQuickMenuApply(bool setB)
 		uint16_t ch = dualChannelA();
 
 		// R97-FIX4: меню відкрито на B (зупинка на обраному B) -- на екрані B, а «поточний канал зони» (A) інший: безпечно нічого не змінювати
+		// (R98: на B = VFO -- теж: «Встановити як B» нічого б не змінило, бо A -- канал, а рація на VFO)
 		if (dcIsOnB() || (ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
 		{
 			soundSetMelody(MELODY_ERROR_BEEP);
@@ -4425,7 +4609,8 @@ static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, bool *nu
 	else
 	{
 		int num;
-		int ci = codeplugRxGroupGetContactAt(ch->rxGroupList, nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE], &num);
+		Channel_t chan = dualChanOf(ch);   // R98: VFO -- свій індекс ТГ у списку (SETTINGS_VFO_A_MODE + VFO), канал -- SETTINGS_CHANNEL_MODE
+		int ci = codeplugRxGroupGetContactAt(ch->rxGroupList, nonVolatileSettings.currentIndexInTRxGroupList[(chan == CHANNEL_CHANNEL) ? SETTINGS_CHANNEL_MODE : (SETTINGS_VFO_A_MODE + (int)chan)], &num);
 
 		if (ci == 0)
 		{
@@ -4455,12 +4640,13 @@ static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, bool *nu
 // tsFlags -- reserve1 контакту призначення (dualDestination). Канал -- CHANNEL_CHANNEL (картки каналів).
 static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)
 {
-	int8_t man = tsGetManualOverride(CHANNEL_CHANNEL);
+	Channel_t chan = dualChanOf(ch);   // R98: VFO A/B або канал
+	int8_t man = tsGetManualOverride(chan);
 	uint8_t chTs = ((codeplugChannelGetFlag((CodeplugChannel_t *)ch, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2U : 1U);
 
 	if ((nonVolatileSettings.overrideTG == 0) && ((tsFlags & CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE) == 0x00))
 	{
-		if (tsIsContactHasBeenOverridden(CHANNEL_CHANNEL) && (man != 0))
+		if (tsIsContactHasBeenOverridden(chan) && (man != 0))
 		{
 			return (uint8_t)man;
 		}
@@ -4473,15 +4659,17 @@ static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)
 
 // Одна картка каналу: рамка, квадрат з літерою (обраний -- інвертований, під літерою ▸), рядок 1 (номер+назва), рядок 2 (абонент / контакт-ТГ / FM+частота),
 // рядок 3 (TS/CC/ТГ виклику або тон/смуга FM), замок AES, смуга активності (RX + S-метр). Усе на стеку, з кодплага; імена в RAM не кешуються.
-static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool active, bool callerHere)
+static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, bool selected, bool active, bool callerHere)
 {
 	CodeplugChannel_t tmp;
+	const CodeplugChannel_t *rec = &tmp;
 	char name[17];
 	char l1[24];
 	char l2[17];
 	char l3[DW_LINE3_MAX + 1];
 	char letter[2];
-	bool known = ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch));
+	bool isVfo = (vfoType != DC_TYPE_CHANNEL);   // R98 В3: картка VFO -- дані прямо із запису VFO
+	bool known = (isVfo || ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch)));
 
 	name[0] = 0;
 	l2[0] = 0;
@@ -4489,17 +4677,24 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 
 	if (known)
 	{
-		codeplugChannelGetDataForIndex(ch, &tmp);
-		codeplugUtilConvertBufToDisplayString(tmp.name, name, 16);
+		if (isVfo)
+		{
+			rec = &settingsVFOChannel[(vfoType == DC_TYPE_VFO_B) ? 1 : 0];
+		}
+		else
+		{
+			codeplugChannelGetDataForIndex(ch, &tmp);
+			codeplugUtilConvertBufToDisplayString(tmp.name, name, 16);
+		}
 
-		if (tmp.chMode == RADIO_MODE_DIGITAL)
+		if (rec->chMode == RADIO_MODE_DIGITAL)
 		{
 			bool numOnly;
 			uint8_t tsFlags;
-			uint32_t dest = dualDestination(&tmp, l2, &numOnly, &tsFlags);   // куди піде виклик (PTT)
+			uint32_t dest = dualDestination(rec, l2, &numOnly, &tsFlags);   // куди піде виклик (PTT)
 			size_t n;
 
-			snprintf(l3, sizeof(l3), "TS%d CC%d", (int)dualEffectiveTs(&tmp, tsFlags), (int)tmp.txColor);   // ефективний ТС передачі (Д2)
+			snprintf(l3, sizeof(l3), "TS%d CC%d", (int)dualEffectiveTs(rec, tsFlags), (int)rec->txColor);   // ефективний ТС передачі (Д2)
 			n = strlen(l3);
 
 			if (callerHere && (LinkHead != NULL))
@@ -4520,24 +4715,24 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 		}
 		else
 		{
-			int mhz = (int)(tmp.rxFreq / 100000U);
+			int mhz = (int)(rec->rxFreq / 100000U);
 			size_t n;
-			CodeplugCSSTypes_t type = codeplugGetCSSType(tmp.rxTone);
+			CodeplugCSSTypes_t type = codeplugGetCSSType(rec->rxTone);
 
-			snprintf(l2, sizeof(l2), "FM %d.%05d", mhz, (int)(tmp.rxFreq - ((uint32_t)mhz * 100000U)));
+			snprintf(l2, sizeof(l2), "FM %d.%05d", mhz, (int)(rec->rxFreq - ((uint32_t)mhz * 100000U)));
 
 			if (type == CSS_TYPE_CTCSS)
 			{
-				snprintf(l3, sizeof(l3), "CTCSS %d.%d", (tmp.rxTone / 10), (tmp.rxTone % 10));
+				snprintf(l3, sizeof(l3), "CTCSS %d.%d", (rec->rxTone / 10), (rec->rxTone % 10));
 			}
 			else if (type & CSS_TYPE_DCS)
 			{
 				n = (size_t)snprintf(l3, sizeof(l3), "DCS ");
-				(void)dcsPrintf((l3 + n), (sizeof(l3) - n), NULL, tmp.rxTone);
+				(void)dcsPrintf((l3 + n), (sizeof(l3) - n), NULL, rec->rxTone);
 			}
 
 			n = strlen(l3);   // без тону -- лише смуга (без прочерків)
-			snprintf((l3 + n), (sizeof(l3) - n), "%s%s", ((n != 0U) ? " " : ""), ((codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_BW_25K) != 0) ? "25k" : "12.5k"));   // смуга -- якщо влазить (обрізається snprintf)
+			snprintf((l3 + n), (sizeof(l3) - n), "%s%s", ((n != 0U) ? " " : ""), ((codeplugChannelGetFlag((CodeplugChannel_t *)rec, CHANNEL_FLAG_BW_25K) != 0) ? "25k" : "12.5k"));   // смуга -- якщо влазить (обрізається snprintf)
 		}
 	}
 	// каналу нема (не задано/видалено) -- назва порожня (без прочерків)
@@ -4574,7 +4769,21 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 		displayFillTriangle((cx - 2), (y + DW_ARROW_DY), (cx - 2), (y + DW_ARROW_DY + 4), (cx + 2), (y + DW_ARROW_DY + 2), false);   // ▸ під літерою
 	}
 
-	if (ch >= DC_CH_MIN)
+	if (isVfo)
+	{
+		// R98 В3: картка VFO -- «VFO A»/«VFO B» (латиниця); у DMR частота -- тут же (рядок 2 -- абонент призначення), у FM вона в рядку 2
+		if (rec->chMode == RADIO_MODE_DIGITAL)
+		{
+			int mhz = (int)(rec->rxFreq / 100000U);
+
+			snprintf(l1, sizeof(l1), "VFO %c %d.%05d", ((vfoType == DC_TYPE_VFO_B) ? 'B' : 'A'), mhz, (int)(rec->rxFreq - ((uint32_t)mhz * 100000U)));
+		}
+		else
+		{
+			snprintf(l1, sizeof(l1), "VFO %c", ((vfoType == DC_TYPE_VFO_B) ? 'B' : 'A'));
+		}
+	}
+	else if (ch >= DC_CH_MIN)
 	{
 		snprintf(l1, sizeof(l1), ((name[0] != 0) ? "%u %s" : "%u"), (unsigned)ch, name);
 	}
@@ -4591,7 +4800,7 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 	displayPrintCore(DW_TXT_X, (y + DW_LINE3_DY), l3, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 
 #if defined(ENABLE_AES)
-	if (known && uiChannelDataHasAes(&tmp))
+	if (known && (isVfo == false) && uiChannelDataHasAes(&tmp))
 	{
 		uiDrawAesIconAt(DW_LOCK_X, (y + DW_LOCK_DY));   // замок -- на картці каналу, що має ключ (не в шапці: там тепер картки)
 	}
@@ -4690,8 +4899,8 @@ static void dualRenderScreen(void)
 		uiDataGlobal.receivedPcId = 0x00;
 	}
 
-	dualRenderRow(DW_CARD_A_Y, false, dualChannelA(), (selB == false), (active && (cardB == false)), (caller && (cardB == false)));
-	dualRenderRow(DW_CARD_B_Y, true, dcChannelB(), selB, (active && cardB), (caller && cardB));
+	dualRenderRow(DW_CARD_A_Y, false, dualChannelA(), (uint8_t)DC_TYPE_CHANNEL, (selB == false), (active && (cardB == false)), (caller && (cardB == false)));
+	dualRenderRow(DW_CARD_B_Y, true, dcChannelB(), dcTypeB(), selB, (active && cardB), (caller && cardB));
 	displayRender();
 }
 #endif // DUAL_CHANNEL_ENABLED
