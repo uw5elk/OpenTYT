@@ -358,11 +358,11 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 			{
 				if ((ev->time - m) > RSSI_UPDATE_COUNTER_RELOAD)
 				{
-					if (rxPowerSavingIsRxOn()
 #if defined(DUAL_CHANNEL_ENABLED)
-							&& ((dualIsRunning() && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)) == false)   // R97-FIX2: чергування -- статична шапка «[DW]», S-метра й виводу на екран нема
+					if (rxPowerSavingIsRxOn() && ((dualIsRunning() && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)) == false))   // R97-FIX2: чергування -- статична шапка «[DW]», S-метра й виводу на екран нема
+#else
+					if (rxPowerSavingIsRxOn())
 #endif
-					)
 					{
 						if (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED))
 						{
