@@ -21,7 +21,7 @@ import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages")
 BASE = os.environ.get("R97_BASE", "7fa5fe8")
 FAILS = []; N = [0]
-DUAL_FIELDS = ["dual_rx", "dual_set_b", "dual_title", "dual_b_saved", "dual_err_no_b", "dual_err_b_gone", "dual_err_b_is_a", "dual_on", "dual_off", "dual_zone_all"]
+DUAL_FIELDS = ["dual_rx", "dual_set_b", "dual_title", "dual_b_saved", "dual_err_no_b", "dual_err_b_gone", "dual_err_b_is_a", "dual_on", "dual_off", "dual_zone_all", "dual_rx_on", "dual_wait"]
 
 
 def check(c, m):
@@ -35,7 +35,7 @@ def rd(p, enc="utf-8"): return open(p, "rb").read().decode(enc)
 
 def pp(root, incs, defs, rel):
     for _attempt in range(2):   # один повтор: поодинокий збій запуску gcc не має давати хибну «різницю токенів»
-        r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w"] + incs + defs + [rel], cwd=root, capture_output=True)
+        r = subprocess.run(["gcc", "-E", "-P", "-std=gnu11", "-w", "-Wno-builtin-macro-redefined", "-D__TIME__=\"00:00:00\"", "-D__DATE__=\"Jan  1 2000\""] + incs + defs + [rel], cwd=root, capture_output=True)   # __TIME__ у заголовку давав хибну різницю токенів на межі секунди
         if r.returncode == 0:
             return r.stdout.decode("cp1251", "replace")
     return None
@@ -489,12 +489,15 @@ void lastHeardClearLastID(void) {}
 void displayThemeApply(int a, int b) { (void)a; (void)b; }
 void displayThemeResetToDefault(void) {}
 void displayPrintCentered(int y, const char *t, int f) { (void)y; (void)t; (void)f; }
-void dualRenderRow(int y, bool isB, uint16_t ch, bool p, bool a) { (void)y; (void)isB; (void)ch; (void)p; (void)a; rows++; }
-void dualRenderCaller(void) {}
+int onBflag = 0;
+int rowSel[2], rowAct[2], rowCal[2], statusAct = -1, statusOnB = -1;
+void dualRenderRow(int y, bool isB, uint16_t ch, bool sel, bool a, bool cal) { (void)y; (void)ch; rowSel[isB] = sel; rowAct[isB] = a; rowCal[isB] = cal; rows++; }
+void dualRenderStatus(bool a, bool b) { statusAct = a; statusOnB = b; }
+bool dualSelectedIsB(void) { return (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING) ? (bool)onBflag : (bool)ptrB; }
 uint16_t dualChannelA(void) { return chA; }
 uint16_t dcChannelB(void) { return chB; }
 bool dcPointerB(void) { return ptrB; }
-bool dcIsOnB(void) { return false; }
+bool dcIsOnB(void) { return onBflag; }
 void uiDrawAesEnabledIcon(void) {}
 void displayRender(void) { renders++; }
 %(fns)s
@@ -510,8 +513,13 @@ int main(void)
 			uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = st;
 			dualRenderScreen();
 			printf("rs%%d%%d=%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d\n", st, ptrB, plain, plainDW, forCalls, got.mode, got.bw25, got.ts, got.cc, rows, renders, redraw + rssi);
+			printf("rr%%d%%d=%%d,%%d,%%d,%%d,%%d,%%d\n", st, ptrB, rowSel[0], rowAct[0], rowSel[1], rowAct[1], statusAct, statusOnB);
 		}
 	}
+	/* рація на B, активність: RX-мітка на B, статусний рядок «Прийом на B» */
+	onBflag = 1; ptrB = 0; uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = SCAN_STATE_PAUSED; dualRenderScreen();
+	printf("rb=%%d,%%d,%%d,%%d,%%d,%%d\n", rowSel[0], rowAct[0], rowSel[1], rowAct[1], statusAct, statusOnB);
+	onBflag = 0;
 	/* uiChannelModeDualHeader (applicationMain): true лише при чергуванні без активності */
 	ptrB = 1; uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = SCAN_STATE_SCANNING; forCalls = 0;
 	int h1 = uiChannelModeDualHeader(false); int f1 = forCalls;
@@ -712,6 +720,10 @@ def test_fix2(incs, cf):
                   "п.2 (б): виклик/утримання -- справжня шапка (isVFODualWatchScanning=false, не «[DW]»), покажчик значення не має: %s %s %s %s" % (o.get("rs10"), o.get("rs11"), o.get("rs20"), o.get("rs21")))
             check(o.get("hd") == "1,1,0,0,0", "п.2 (в): uiChannelModeDualHeader (applicationMain) -- true лише при чергуванні без активності: %s" % o.get("hd"))
             check(o.get("bad") == "1,0", "п.2 (г): недійсний канал -- запасна справжня шапка: %s" % o.get("bad"))
+            check(o.get("rr00") == "1,0,0,0,0,0" and o.get("rr01") == "0,0,1,0,0,0", "FIX5 З2: чергування -- обраний (покажчик) інвертований, RX-мітки нема, статус без активності: %s / %s" % (o.get("rr00"), o.get("rr01")))
+            check(o.get("rr20") == "1,1,0,0,1,0" and o.get("rr21") == "1,1,0,0,1,0", "FIX5 З2: активність на A (обраний = де активність, покажчик не важить) -- мітка RX на A, статус «Прийом на A» (з S-метром): %s / %s" % (o.get("rr20"), o.get("rr21")))
+            check(o.get("rr10") == o.get("rr20") and o.get("rr11") == o.get("rr21"), "FIX5 З2: коротка пауза вважається активністю: %s" % o.get("rr10"))
+            check(o.get("rb") == "0,0,1,1,1,1", "FIX5 З2: активність на B -- мітка RX на B, обрана картка B, статус «Прийом на B»: %s" % o.get("rb"))
             mut = [fns[0].replace("uiUtilityRenderHeaderForChannel(&ov, force);", "uiUtilityRenderHeader(0, 0, force);"), fns[1], fns[2]]
             mo = run_c(RS_HARNESS % {"fns": pre + "\n".join(mut)})
             check(fns[0] != mut[0] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("rs00") != o.get("rs00"), "п.2 (мутант): шапка з даних trx замість кодплага ловиться тестом (а)")
@@ -937,6 +949,175 @@ def test_fix5_z1(incs, cf):
             check(mm.get("w") != o.get("w") or mm.get("k4") != o.get("k4"), "FIX5 З1 (мутант): набраний номер не тримає екран режиму -- ловиться")
 
 
+ROW_HARNESS = r"""
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#define DISPLAY_SIZE_X 160
+#define DISPLAY_SIZE_Y 128
+#define DC_CH_MIN 1
+#define DC_CH_MAX 1024
+#define SMETER_S0 -129
+enum { RADIO_MODE_ANALOG = 1, RADIO_MODE_DIGITAL = 2 };
+enum { FONT_SIZE_1 = 1, FONT_SIZE_3 = 3, FONT_SIZE_4 = 4 };
+enum { TEXT_ALIGN_LEFT = 0 };
+enum { THEME_ITEM_FG_DECORATION, THEME_ITEM_BG, THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_FG_DEFAULT, THEME_ITEM_FG_RSSI_BAR };
+enum { CONTACT_DISPLAY_PRIO_CC_DB_TA, CONTACT_DISPLAY_PRIO_DB_CC_TA, CONTACT_DISPLAY_PRIO_TA_CC_DB };
+typedef struct { char name[16]; uint32_t rxFreq; uint8_t chMode; uint16_t contact; } CodeplugChannel_t;
+typedef struct { char name[16]; } CodeplugContact_t;
+typedef struct { char contact[32]; char talkerAlias[32]; } LinkItem_t;
+struct { int contactDisplayPriority; } nonVolatileSettings;
+struct { char dual_rx_on[40]; char dual_wait[40]; } lang, *currentLanguage = &lang;
+static LinkItem_t item; static LinkItem_t *LinkHead = &item;
+static int directChannelNumber = 0, rssi = -200, ndraw = 0, bad = 0;
+static CodeplugChannel_t chans[1100]; static char used[1100];
+static CodeplugContact_t cts[8];
+static void chk(int x, int y, int w, int h, int x0, int y0, int x1, int y1) { if (x < x0 || y < y0 || x + w - 1 > x1 || y + h - 1 > y1) bad++; }
+static int cx0 = 0, cy0 = 0, cx1 = 159, cy1 = 127;   /* поточна «клітка», в яку все має вкластись */
+static char texts[40][40]; static int tx[40], ty[40], tf[40], tinv[40], nt = 0, nrect = 0, nfill = 0, ntri = 0, lit = 0, outl = 0;
+static int tri[6];
+bool codeplugAllChannelsIndexIsInUse(int ch) { return used[ch]; }
+void codeplugChannelGetDataForIndex(int ch, CodeplugChannel_t *c) { *c = chans[ch]; }
+bool codeplugContactGetDataForIndex(int i, CodeplugContact_t *c) { if (i >= 8 || i == 7) return false; *c = cts[i]; return true; }
+void codeplugUtilConvertBufToDisplayString(char *in, char *out, int len) { memcpy(out, in, len); out[len] = 0; for (int i = len - 1; i >= 0 && out[i] == ' '; i--) out[i] = 0; }
+char *chomp(char *s) { int n = strlen(s); while (n > 0 && s[n-1] == ' ') s[--n] = 0; return s; }
+void displayThemeApply(int a, int b) { (void)a; (void)b; }
+void displayThemeResetToDefault(void) {}
+void displayDrawRect(int x, int y, int w, int h, bool inv) { (void)inv; chk(x, y, w, h, cx0, cy0, cx1, cy1); nrect++; outl++; }
+void displayFillRect(int x, int y, int w, int h, bool inv) { (void)inv; chk(x, y, w, h, cx0, cy0, cx1, cy1); nfill++; lit++; }
+void displayDrawFastHLine(int x, int y, int w, bool inv) { (void)inv; chk(x, y, w, 1, 0, 0, 159, 127); }
+void displayFillTriangle(int a, int b, int c, int d, int e, int f, bool inv) { (void)inv; tri[0]=a;tri[1]=b;tri[2]=c;tri[3]=d;tri[4]=e;tri[5]=f; ntri++; }
+int displayPrintCore(int x, int y, const char *t, int f, int al, bool inv)
+{
+	int w = (f == FONT_SIZE_1) ? 6 : (f == FONT_SIZE_3 ? 8 : 16), h = (f == FONT_SIZE_1) ? 8 : (f == FONT_SIZE_3 ? 16 : 32);
+	(void)al;
+	/* як справжній displayPrintCore: довше за екран обрізається, але ми вимагаємо, щоб і не потребувало обрізання у картці */
+	chk(x, y, (int)strlen(t) * w, h, cx0, cy0, cx1, cy1);
+	strncpy(texts[nt], t, 39); tx[nt] = x; ty[nt] = y; tf[nt] = f; tinv[nt] = inv; nt++;
+	return 0;
+}
+int trxGetRSSIdBm(int d) { (void)d; return rssi; }
+#define RADIO_DEVICE_PRIMARY 0
+%(fns)s
+static void reset(void) { nt = ntri = nrect = nfill = bad = lit = outl = 0; }
+int main(void)
+{
+	strcpy(lang.dual_rx_on, "%(rx)s"); strcpy(lang.dual_wait, "%(wait)s");
+	memset(chans, ' ', sizeof(chans));
+	for (int i = 1; i < 1100; i++) { chans[i].name[0] = 0; memset(chans[i].name, 'W', 16); used[i] = 1; chans[i].rxFreq = 14550000U; chans[i].chMode = RADIO_MODE_ANALOG; }
+	used[1025] = 0;
+	chans[5].chMode = RADIO_MODE_DIGITAL; chans[5].contact = 2; memcpy(cts[2].name, "TG Ukraine 255  ", 16);
+	chans[6].chMode = RADIO_MODE_DIGITAL; chans[6].contact = 7;   /* контакт не читається */
+	chans[1024].rxFreq = 44612500U;
+	/* r1: A, FM, 4-значний номер, найдовше ім'я (16 «W»), обраний, активний */
+	cx0 = 1; cy0 = 24; cx1 = 158; cy1 = 24 + 42 - 1;
+	reset(); dualRenderRow(24, false, 1024, true, true, false);
+	printf("r1=%%d,%%d,%%d,%%d,%%d,%%s|%%s|%%s\n", bad, ntri, nt, tf[0], tf[1], texts[1], texts[2], texts[3]);
+	printf("r1b=%%d,%%d\n", tri[0], tri[5]);
+	/* r2: B, DMR із контактом, не обраний, неактивний */
+	reset(); cy0 = 68; cy1 = 68 + 42 - 1; dualRenderRow(68, true, 5, false, false, false);
+	printf("r2=%%d,%%d,%%d,%%s|%%s|%%s\n", bad, ntri, nt, texts[1], texts[2], texts[3]);
+	/* r3: DMR, виклик -- найдовший абонент (16) замість ТГ каналу */
+	strcpy(item.contact, "ID:1234567"); strcpy(item.talkerAlias, "ABCDEFGHIJKLMNOP"); nonVolatileSettings.contactDisplayPriority = CONTACT_DISPLAY_PRIO_TA_CC_DB;
+	reset(); dualRenderRow(68, true, 5, true, true, true);
+	printf("r3=%%d,%%d,%%s|%%s\n", bad, nt, texts[2], texts[3]);
+	/* r4: канал не використовується / контакт не читається */
+	reset(); dualRenderRow(68, true, 1025, false, false, false);
+	printf("r4=%%d,%%s|%%s\n", bad, texts[1], texts[2]);
+	reset(); dualRenderRow(68, true, 6, false, false, false);
+	printf("r5=%%d,%%d,%%s|[%%s]\n", bad, nt, texts[1], texts[2]);
+	/* статусний рядок */
+	cx0 = 0; cy0 = 111; cx1 = 159; cy1 = 127;
+	for (int k = 0; k < 6; k++)
+	{
+		int v[6] = { -200, -130, -125, -109, -93, -20 };
+		rssi = v[k]; reset(); dualRenderStatus(true, true);
+		printf("m%%d=%%d,%%d,%%d,%%s\n", k, bad, lit - 1, outl, texts[0]);   /* lit-1: перший fill -- очищення рядка */
+	}
+	reset(); dualRenderStatus(false, false); printf("w=%%d,%%d,%%d,%%s\n", bad, lit - 1, outl, texts[0]);
+	directChannelNumber = 1024; rssi = -50; reset(); dualRenderStatus(true, false); printf("n=%%d,%%d,%%d,%%s\n", bad, lit - 1, outl, texts[0]);
+	return 0;
+}
+"""
+
+
+def test_fix5_z2(incs, cf):
+    src = rd(os.path.join(APP, "source", "user_interface", "uiChannelMode.c"))
+    t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
+    check(t is not None, "FIX5 З2: uiChannelMode.c препроцесується в DUALCH")
+    if t is None:
+        return
+    # ---- геометрія з макросів (кожна константа -- з коду) ----
+    D = {}
+    for m in re.finditer(r"^#define (DW_\w+)\s+(.+?)(?:\s*//.*)?$", src, re.M):
+        try:
+            D[m.group(1)] = int(eval(re.sub(r"\bDW_(\w+)", lambda x: str(D["DW_" + x.group(1)]), m.group(2).strip())))
+        except Exception:
+            pass
+    need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_SQ_X", "DW_SQ_W", "DW_SQ_DY", "DW_SQ_H", "DW_LETTER_X", "DW_LETTER_DY", "DW_TXT_X",
+            "DW_LINE1_DY", "DW_LINE2_DY", "DW_TAG_DY", "DW_TAG_W", "DW_TAG_H", "DW_SEP_Y", "DW_STATUS_Y", "DW_STATUS_X", "DW_METER_X", "DW_METER_Y", "DW_METER_SEG_W",
+            "DW_METER_SEG_H", "DW_METER_STEP", "DW_METER_SEGS"]
+    check(all(k in D for k in need), "FIX5 З2: усі геометричні константи DW_* знайдено й обчислено")
+    if not all(k in D for k in need):
+        return
+    g = type("G", (), D)
+    cardR = g.DW_CARD_X + g.DW_CARD_W - 1
+    check(g.DW_CARD_A_Y >= 23 and g.DW_CARD_B_Y >= g.DW_CARD_A_Y + g.DW_CARD_H and g.DW_CARD_B_Y + g.DW_CARD_H - 1 < g.DW_SEP_Y,
+          "FIX5 З2: картки нижче шапки (замок AES y=14..22), одна під одною без накладання, над роздільником")
+    check(g.DW_STATUS_Y > g.DW_SEP_Y and g.DW_STATUS_Y + 16 <= 128 and g.DW_METER_Y >= g.DW_STATUS_Y and g.DW_METER_Y + g.DW_METER_SEG_H <= 128,
+          "FIX5 З2: нижній рядок (текст 16 px, сегменти) у межах екрана 128")
+    check(g.DW_METER_X + (g.DW_METER_SEGS - 1) * g.DW_METER_STEP + g.DW_METER_SEG_W - 1 <= 159, "FIX5 З2: сегменти S-метра в межах екрана праворуч")
+    check(g.DW_SQ_X >= g.DW_CARD_X + 1 and g.DW_SQ_X + g.DW_SQ_W <= g.DW_TXT_X and g.DW_SQ_DY >= 1 and g.DW_SQ_DY + g.DW_SQ_H <= g.DW_CARD_H - 1,
+          "FIX5 З2: квадрат з літерою всередині картки й лівіше тексту")
+    check(g.DW_LETTER_X >= g.DW_SQ_X and g.DW_LETTER_X + 16 <= g.DW_SQ_X + g.DW_SQ_W and g.DW_LETTER_DY + 32 <= 35 and 35 + 5 <= g.DW_SQ_DY + g.DW_SQ_H + 1,
+          "FIX5 З2: літера 16x32 у квадраті, ▸ (y+35..39) під літерою й у квадраті")
+    check(g.DW_TXT_X + 21 * 6 - 1 <= cardR - 1, "FIX5 З2: рядок 1 -- номер (до 4 цифр) + пробіл + 16 символів назви = 21 символ FONT_SIZE_1 -- вміщується в картку")
+    check(g.DW_TXT_X + 16 * 8 - 1 <= cardR - 1, "FIX5 З2: рядок 2 -- 16 символів FONT_SIZE_3 вміщується в картку")
+    check(g.DW_LINE1_DY + 8 <= g.DW_LINE2_DY and g.DW_LINE2_DY + 16 <= g.DW_TAG_DY and g.DW_TAG_DY + g.DW_TAG_H <= g.DW_CARD_H - 1 and g.DW_TXT_X + g.DW_TAG_W <= cardR,
+          "FIX5 З2: рядок 1 (8), рядок 2 (16) і мітка RX не перетинаються й лишаються в картці")
+    check(g.DW_STATUS_X + 11 * 8 < g.DW_METER_X, "FIX5 З2: «Прийом на» + пробіл + літера (11 символів FONT_SIZE_3) не заходить на S-метр")
+    # ---- хост: справжні dualRenderRow / dualRenderStatus / dualCallerText ----
+    fn = [carve_fn(t, s_) for s_ in ("static void dualCallerText(char *text17)", "static void dualRenderRow(int16_t y, _Bool isB, uint16_t ch, _Bool selected, _Bool active, _Bool callerHere)",
+                                     "static void dualRenderStatus(_Bool active, _Bool onB)")]
+    check(all(fn), "FIX5 З2: знайдено dualCallerText / dualRenderRow / dualRenderStatus")
+    if not all(fn):
+        return
+    ua = rd(os.path.join(APP, "include", "user_interface", "languages", "ukrainian.h"), "cp1251")
+    en = rd(os.path.join(APP, "include", "user_interface", "languages", "english.h"), "cp1251")
+    fld = lambda txt, n: re.search(r"^\.%s\s*=\s*\"([^\"]*)\"" % n, txt, re.M).group(1)
+    for nm, txt in (("ukrainian.h", ua), ("english.h", en)):
+        a, b = fld(txt, "dual_rx_on"), fld(txt, "dual_wait")
+        check(len(a) <= 16 and len(b) <= 16 and (len(a) + 2) * 8 + g.DW_STATUS_X < g.DW_METER_X and len(b) * 8 + g.DW_STATUS_X <= 159,
+              "FIX5 З2: %s -- «%s»/«%s» ≤16 символів, «+ літера» не заходить на S-метр" % (nm, a, b))
+    defs = "".join(l + "\n" for l in (src[src.find("#define DW_CARD_X"):src.find("// Текст абонента")]).splitlines() if l.startswith("#define"))
+    # макроси DW_* вставляємо як є (з коментарями «//»)
+    out = run_c(ROW_HARNESS % {"fns": defs + "\n".join(fn), "rx": "R" * len(fld(ua, "dual_rx_on")), "wait": "W" * len(fld(ua, "dual_wait"))})
+    check(out is not None, "FIX5 З2: хостова збірка карток/статусного рядка")
+    if out is None:
+        return
+    o = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+    # r1: 0 виходів за картку; ▸ (трикутник) 1; текстів: літера, рядок1, рядок2, RX = 5 (+ «RX»), шрифти літери 4 / рядка 1
+    r1 = o.get("r1", "").split("|"); p1 = r1[0].split(",")
+    check(p1[:5] == ["0", "1", "4", "4", "1"] and p1[5] == "1024 " + "W" * 16 and r1[1] == "FM 446.12500" and r1[2] == "RX",
+          "FIX5 З2 (r1): A=1024, 16-символьна назва, FM, обраний+активний: нічого не виходить за картку; літера FONT4; ▸ є; рядок 1 «1024 WWWW…», рядок 2 «FM 446.12500», мітка RX: %s" % o.get("r1"))
+    r2 = o.get("r2", "").split("|"); p2 = r2[0].split(",")
+    check(p2[:3] == ["0", "0", "3"] and p2[3] == "5 " + "W" * 16 and r2[1] == "TG Ukraine 255",
+          "FIX5 З2 (r2): неактивна DMR-картка -- ТГ/контакт каналу з кодплага, без ▸ і без RX (3 тексти), нічого не виходить: %s" % o.get("r2"))
+    r3 = o.get("r3", "").split("|"); p3 = r3[0].split(",")
+    check(p3[:2] == ["0", "4"] and p3[2] == "ABCDEFGHIJKLMNOP" and r3[1] == "RX",
+          "FIX5 З2 (r3): виклик -- 16-символьний абонент замість ТГ каналу, мітка RX, нічого не виходить за картку: %s" % o.get("r3"))
+    check(o.get("r4") == "0,1025 ---|", "FIX5 З2 (r4): неіснуючий канал -- «---», порожній рядок 2, без виходів: %s" % o.get("r4"))
+    check(o.get("r5", "").split("|")[0].startswith("0,3,") and o.get("r5", "").endswith("|[]"), "FIX5 З2 (r5): DMR-канал, контакт не читається -- порожній рядок 2: %s" % o.get("r5"))
+    exp = {"m0": "0,0,9", "m1": "0,0,9", "m2": "0,1,8", "m3": "0,5,4", "m4": "0,9,0", "m5": "0,9,0"}
+    for k in exp:
+        v = o.get(k, "").split(",")
+        check(",".join(v[:3]) == exp[k], "FIX5 З2 (%s): сегментований S-метр -- (виходів,залито,контурних) = %s: %s" % (k, exp[k], o.get(k)))
+    check(o.get("m4", "").endswith(",%s B" % ("R" * len(fld(ua, "dual_rx_on")))), "FIX5 З2: активність -- «Прийом на B»: %s" % o.get("m4"))
+    check(o.get("w", "").split(",")[:3] == ["0", "0", "0"] and o.get("w", "").endswith(",%s" % ("W" * len(fld(ua, "dual_wait")))), "FIX5 З2: без активності -- «Очікування», S-метра нема: %s" % o.get("w"))
+    check(o.get("n", "").split(",")[:3] == ["0", "0", "0"] and o.get("n", "").endswith(",# 1024"), "FIX5 З2: набір номера -- «# 1024» у нижньому рядку, S-метра нема: %s" % o.get("n"))
+
+
 def main():
     if not shutil.which("gcc"):
         print("ПРОПУСК: gcc нема"); return 0
@@ -946,6 +1127,7 @@ def main():
     test_quickmenu_fix(incs, dict(cfgs))
     test_fix2(incs, dict(cfgs))
     test_fix5_z1(incs, dict(cfgs))
+    test_fix5_z2(incs, dict(cfgs))
     test_lang()
     test_cps()
     test_vs_base(incs, cfgs)

@@ -248,6 +248,7 @@ bool uiChannelModeIsScanning(void);
 #if defined(DUAL_CHANNEL_ENABLED)
 bool uiChannelModeDualPrepareTx(void);   /* R97: PTT під час «Подвійного прийому» (uiChannelMode.c) */
 bool uiChannelModeDualHeader(bool forceBattery);   /* R97-FIX3: чергування без активності -- шапка обраного каналу з кодплага; true = намальовано (applicationMain.c) */
+bool uiChannelModeDualScreenShown(void);   /* R97-FIX5: екран «Подвійного прийому» на дисплеї (чергування або пауза після клавіші) -- стоковий S-метр шапки не малюється (uiUtilities.c) */
 #endif
 void uiChannelInitializeCurrentZone(void);
 

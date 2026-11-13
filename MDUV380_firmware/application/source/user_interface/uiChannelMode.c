@@ -134,6 +134,7 @@ static void dualRenderScreen(void);
 static uint16_t dualChannelA(void);
 static void dualAutoResume(void);
 static bool dualHoldScreen(void);
+static void dualRenderMeter(void);
 static void dualQuietEnd(void);
 static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
@@ -383,7 +384,16 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 							uiUtilityDrawRSSIBarGraph();
 						}
 
+#if defined(DUAL_CHANNEL_ENABLED)
+						if (dualIsRunning())
+						{
+							dualRenderMeter();   // R97-FIX5: S-метр режиму -- сегментований, у нижньому рядку екрана режиму (стоковий блок вимкнено)
+						}
+
+						if (uiNotificationIsVisible() || dualIsRunning())
+#else
 						if (uiNotificationIsVisible())
+#endif
 						{
 							displayRender();
 						}
@@ -4245,46 +4255,42 @@ bool uiChannelModeDualPrepareTx(void)
 	return true;
 }
 
-// ---- екран режиму ----
-static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool pointer, bool active)
+// ---- екран режиму (R97-FIX5): шапка, дві картки A/B, роздільник, нижній статусний рядок. Екран 160x128 ----
+// Координати (таблиця -- у звіті r97-fix5-result.md); висоти шрифтів: FONT_SIZE_1 = 8, FONT_SIZE_3 = 16, FONT_SIZE_4 = 32 (16 px завширшки).
+#define DW_CARD_X        1                       // картка: рамка x=1..158
+#define DW_CARD_W        158
+#define DW_CARD_H        42                      // y..y+41
+#define DW_CARD_A_Y      24                      // нижче шапки (AES-замок шапки: x=147..156, y=14..22)
+#define DW_CARD_B_Y      (DW_CARD_A_Y + DW_CARD_H + 2)   // 68; картка B закінчується на y=109
+#define DW_SQ_X          3                       // ліве квадратне поле з літерою A/B
+#define DW_SQ_W          24
+#define DW_SQ_DY         2
+#define DW_SQ_H          38
+#define DW_LETTER_X      (DW_SQ_X + ((DW_SQ_W - 16) / 2))   // літера FONT_SIZE_4: 16x32
+#define DW_LETTER_DY     3
+#define DW_TXT_X         30                      // текст праворуч від поля; до x=157 -- 128 px (16 символів FONT_SIZE_3)
+#define DW_LINE1_DY      3                       // рядок 1: номер + назва, FONT_SIZE_1 (до 21 символу = 126 px)
+#define DW_LINE2_DY      13                      // рядок 2: абонент/ТГ/«FM»+частота, FONT_SIZE_3 (до 16 символів = 128 px)
+#define DW_TAG_DY        30                      // мітка «RX»: 14x10, y+30..39
+#define DW_TAG_W         14
+#define DW_TAG_H         10
+#define DW_SEP_Y         111                     // роздільник (1 px) і початок нижнього рядка
+#define DW_STATUS_Y      112                     // текст FONT_SIZE_3: y=112..127
+#define DW_STATUS_X      2
+#define DW_METER_X       94                      // сегментований S-метр: 9 сегментів 6x10 із кроком 7 px = x=94..155
+#define DW_METER_Y       115
+#define DW_METER_SEG_W   6
+#define DW_METER_SEG_H   10
+#define DW_METER_STEP    7
+#define DW_METER_SEGS    9
+
+// Текст абонента за тим самим правилом, що «останній абонент» звичайного екрана (contactDisplayPriority).
+static void dualCallerText(char *text17)
 {
-	CodeplugChannel_t tmp;   // стек: лише 16 байтів імені читаються з кодплага (імена НЕ кешуються в RAM)
-	char name[17];
-	char line[24];           // маркер + літера + пробіл + 16 символів імені
-
-	name[0] = 0;
-
-	if ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch))
-	{
-		codeplugChannelGetDataWithOffsetAndLengthForIndex(ch, &tmp, 0, 16);
-		codeplugUtilConvertBufToDisplayString(tmp.name, name, 16);
-	}
-	else
-	{
-		snprintf(name, sizeof(name), "---");
-	}
-
-	snprintf(line, sizeof(line), "%c%c %s", (pointer ? '>' : ' '), (isB ? 'B' : 'A'), name);
-
-	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
-
-	if (active)
-	{
-		displayFillRect(0, y, DISPLAY_SIZE_X, FONT_SIZE_3_HEIGHT, false);
-	}
-
-	displayPrintCore(0, y, line, FONT_SIZE_3, TEXT_ALIGN_LEFT, active);
-	displayThemeResetToDefault();
-}
-
-static void dualRenderCaller(void)
-{
-	char text[17];
-	char info[27];
 	LinkItem_t *item = LinkHead;
 	bool useTA = false;
 
-	switch (nonVolatileSettings.contactDisplayPriority)   // те саме правило, що для «останнього абонента» на звичайному екрані
+	switch (nonVolatileSettings.contactDisplayPriority)
 	{
 		case CONTACT_DISPLAY_PRIO_CC_DB_TA:
 		case CONTACT_DISPLAY_PRIO_DB_CC_TA:
@@ -4295,57 +4301,175 @@ static void dualRenderCaller(void)
 			break;
 	}
 
-	snprintf(text, sizeof(text), "%.16s", (useTA ? item->talkerAlias : item->contact));
-	displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_BG);
-	displayPrintCentered(DISPLAY_Y_POS_CONTACT, chomp(text), FONT_SIZE_3);
+	snprintf(text17, 17, "%.16s", (useTA ? item->talkerAlias : item->contact));
+	(void)chomp(text17);
+}
 
-	snprintf(info, sizeof(info), "%.16s", item->talkgroup);
-#if defined(LC_DISTANCE)
+// Одна картка каналу: рамка, квадрат з літерою (обраний -- інвертований, під літерою ▸), номер+назва, абонент/ТГ/FM, мітка RX.
+// Усе -- на стеку, з кодплага; імена в RAM не кешуються.
+static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool active, bool callerHere)
+{
+	CodeplugChannel_t tmp;
+	char name[17];
+	char l1[24];
+	char l2[17];
+	char letter[2];
+
+	name[0] = 0;
+	l2[0] = 0;
+
+	if ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch))
 	{
-		char label[LC_DIST_LABEL_SIZE];
-		uint16_t bearing = 0;
-		bool bearingKnown = false;
+		codeplugChannelGetDataForIndex(ch, &tmp);
+		codeplugUtilConvertBufToDisplayString(tmp.name, name, 16);
 
-		// R92: відстань до кореспондента (якщо він передав координати в цьому виклику) -- текстом поруч із ТГ
-		if ((item->locationLat <= 90) && settingsLocationIsValid() &&
-				lcDistLabel(label, sizeof(label), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), item->locationLat, item->locationLon, &bearing, &bearingKnown))
+		if (tmp.chMode == RADIO_MODE_DIGITAL)
 		{
-			size_t l = strlen(info);
+			CodeplugContact_t ct;
 
-			snprintf(info + l, sizeof(info) - l, " %s", label);
+			if ((tmp.contact != 0) && codeplugContactGetDataForIndex(tmp.contact, &ct))
+			{
+				codeplugUtilConvertBufToDisplayString(ct.name, l2, 16);   // ТГ/контакт каналу з кодплага
+			}
+		}
+		else
+		{
+			int mhz = (int)(tmp.rxFreq / 100000U);
+
+			snprintf(l2, sizeof(l2), "FM %d.%05d", mhz, (int)(tmp.rxFreq - ((uint32_t)mhz * 100000U)));
 		}
 	}
-#endif
-	displayPrintCentered(DISPLAY_Y_POS_ZONE, info, FONT_SIZE_1);
+	else
+	{
+		snprintf(name, sizeof(name), "---");
+	}
+
+	if (callerHere)
+	{
+		dualCallerText(l2);   // хто зараз говорить -- замість ТГ каналу
+	}
+
+	// рамка картки
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
+	displayDrawRect(DW_CARD_X, y, DW_CARD_W, DW_CARD_H, true);
+
+	// квадрат з літерою; обраний -- залитий, літера і ▸ кольором фону
+	letter[0] = (isB ? 'B' : 'A');
+	letter[1] = 0;
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+
+	if (selected)
+	{
+		displayFillRect(DW_SQ_X, (y + DW_SQ_DY), DW_SQ_W, DW_SQ_H, false);
+	}
+	else
+	{
+		displayDrawRect(DW_SQ_X, (y + DW_SQ_DY), DW_SQ_W, DW_SQ_H, true);
+	}
+
+	displayPrintCore(DW_LETTER_X, (y + DW_LETTER_DY), letter, FONT_SIZE_4, TEXT_ALIGN_LEFT, selected);
+
+	if (selected)
+	{
+		int16_t cx = (DW_SQ_X + (DW_SQ_W / 2));
+
+		displayFillTriangle((cx - 2), (y + 35), (cx - 2), (y + 39), (cx + 2), (y + 37), false);   // ▸ під літерою
+	}
+
+	snprintf(l1, sizeof(l1), "%u %s", (unsigned)ch, name);
+	displayPrintCore(DW_TXT_X, (y + DW_LINE1_DY), l1, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+
+	displayThemeApply((callerHere ? THEME_ITEM_FG_CHANNEL_CONTACT_INFO : THEME_ITEM_FG_CHANNEL_CONTACT), THEME_ITEM_BG);
+	displayPrintCore(DW_TXT_X, (y + DW_LINE2_DY), l2, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+
+	if (active)
+	{
+		displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+		displayFillRect(DW_TXT_X, (y + DW_TAG_DY), DW_TAG_W, DW_TAG_H, false);
+		displayPrintCore((DW_TXT_X + 1), (y + DW_TAG_DY + 1), "RX", FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+	}
+
 	displayThemeResetToDefault();
+}
+
+// Нижній рядок: «Прийом на A» + сегментований S-метр (лише під час активності) / «Очікування» (без S-метра) / набраний номер.
+static void dualRenderStatus(bool active, bool onB)
+{
+	char line[20];
+
+	displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
+	displayFillRect(0, DW_SEP_Y, DISPLAY_SIZE_X, (DISPLAY_SIZE_Y - DW_SEP_Y), true);
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
+	displayDrawFastHLine(0, DW_SEP_Y, DISPLAY_SIZE_X, true);
+
+	if (directChannelNumber != 0)
+	{
+		snprintf(line, sizeof(line), "# %d", directChannelNumber);   // набір номера (пауза режиму)
+		active = false;
+	}
+	else if (active)
+	{
+		snprintf(line, sizeof(line), "%s %c", currentLanguage->dual_rx_on, (onB ? 'B' : 'A'));
+	}
+	else
+	{
+		snprintf(line, sizeof(line), "%s", currentLanguage->dual_wait);
+	}
+
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG);
+	displayPrintCore(DW_STATUS_X, DW_STATUS_Y, line, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+
+	if (active)
+	{
+		int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);
+
+		for (int i = 1; i <= DW_METER_SEGS; i++)
+		{
+			int16_t sx = (DW_METER_X + ((i - 1) * DW_METER_STEP));
+
+			if (rssi >= (SMETER_S0 + (i * 4)))
+			{
+				displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG);
+				displayFillRect(sx, DW_METER_Y, DW_METER_SEG_W, DW_METER_SEG_H, false);
+			}
+			else
+			{
+				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
+				displayDrawRect(sx, DW_METER_Y, DW_METER_SEG_W, DW_METER_SEG_H, true);
+			}
+		}
+	}
+
+	displayThemeResetToDefault();
+}
+
+// Оновлення S-метра в тіку (applicationMain/uiChannelMode): перемальовується лише нижній рядок у буфері, виштовхує тік.
+static void dualRenderMeter(void)
+{
+	dualRenderStatus((uiDataGlobal.Scan.state != SCAN_STATE_SCANNING), dcIsOnB());
+}
+
+bool uiChannelModeDualScreenShown(void)
+{
+	return (dualIsRunning() || dualHoldScreen());
 }
 
 static void dualRenderScreen(void)
 {
 	bool active = (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING);
 	bool caller = (((uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA) || (uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA_UPDATE)) &&
-			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL));
+			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL) && (directChannelNumber == 0));
+	bool selB = dualSelectedIsB();
+	bool onB = dcIsOnB();
 
 	displayClearBuf();
 	// R97-FIX3: чергування -- статична шапка ОБРАНОГО каналу з кодплага; виклик/утримання -- справжня шапка. Передача сюди не потрапляє.
 	dualRenderHeader((buttonsRead() & BUTTON_SK1) == BUTTON_SK1);
 
-	if (directChannelNumber != 0)
-	{
-		char num[12];   // R97-FIX5: набраний номер каналу (пауза режиму) -- замість заголовка; стокового екрана з S-метром нема
-
-		snprintf(num, sizeof(num), "# %d", directChannelNumber);
-		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_DEFAULT_SCREEN;
-		uiDataGlobal.isDisplayingQSOData = false;
-		displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG);
-		displayPrintCentered(DISPLAY_Y_POS_CONTACT, num, FONT_SIZE_3);
-		displayThemeResetToDefault();
-	}
-	else if (caller)
+	if (caller)
 	{
 		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_CALLER_DATA;
 		uiDataGlobal.isDisplayingQSOData = true;
-		dualRenderCaller();
 	}
 	else
 	{
@@ -4353,13 +4477,11 @@ static void dualRenderScreen(void)
 		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_DEFAULT_SCREEN;
 		uiDataGlobal.isDisplayingQSOData = false;
 		uiDataGlobal.receivedPcId = 0x00;
-		displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG);
-		displayPrintCentered(DISPLAY_Y_POS_CONTACT, currentLanguage->dual_title, FONT_SIZE_3);
-		displayThemeResetToDefault();
 	}
 
-	dualRenderRow(DISPLAY_Y_POS_RX_FREQ, false, dualChannelA(), (dcPointerB() == false), (active && (dcIsOnB() == false)));
-	dualRenderRow(DISPLAY_Y_POS_TX_FREQ, true, dcChannelB(), dcPointerB(), (active && dcIsOnB()));
+	dualRenderRow(DW_CARD_A_Y, false, dualChannelA(), (selB == false), (active && (onB == false)), (caller && (onB == false)));
+	dualRenderRow(DW_CARD_B_Y, true, dcChannelB(), selB, (active && onB), (caller && onB));
+	dualRenderStatus(active, onB);
 
 #if defined(ENABLE_AES)
 	uiDrawAesEnabledIcon();

@@ -429,6 +429,8 @@ const stringsTable_t englishLanguage =
 .dual_on                                 = "Dual watch on", // MaxLen: 16
 .dual_off                                = "Dual watch off", // MaxLen: 16
 .dual_zone_all                           = "Zone: All chan.", // MaxLen: 16
+.dual_rx_on                              = "Receive", // MaxLen: 16
+.dual_wait                               = "Waiting", // MaxLen: 16
 #endif
 #endif
 };

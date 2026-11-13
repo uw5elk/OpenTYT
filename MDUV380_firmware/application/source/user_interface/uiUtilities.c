@@ -2961,6 +2961,12 @@ int16_t uiUtilityRSSIRenderEndRow(int16_t defaultEndRow)
 
 void uiUtilityDrawRSSIBarGraph(void)
 {
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (uiChannelModeDualScreenShown())
+	{
+		return;   // R97-FIX5: екран «Подвійного прийому» має власний S-метр (нижній рядок); стоковий блок/смуга не малюються
+	}
+#endif
 	int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);
 	int rssiDbmRaw = rssi; // необроблене значення в дБм -- для текстового виводу нижче, до масштабування
 
