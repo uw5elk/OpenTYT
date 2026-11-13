@@ -133,12 +133,14 @@ static bool dualHandleKey(uiEvent_t *ev);
 static void dualRenderScreen(void);
 static uint16_t dualChannelA(void);
 static void dualAutoResume(void);
+static bool dualHoldScreen(void);
+static void dualQuietEnd(void);
 static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
 static void dualTune(bool toB);
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
-static bool     s_dualQuiet;   // R97-FIX4: придушити uiChannelModeUpdateScreen() на час кроку каналу ручкою на A (S-метр звичайного екрана не спалахує)
+static bool     s_dualQuiet;   // R97-FIX4/5: придушити uiChannelModeUpdateScreen() на час обробки клавіші в режимі (S-метр звичайного екрана не спалахує); скидається наприкінці handleEvent()
 #endif
 
 static char currentZoneName[SCREEN_LINE_BUFFER_SIZE];
@@ -881,9 +883,9 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 	bool isTransmitting = isTransmittingIgnoringAPRSBeaconing();
 
 #if defined(DUAL_CHANNEL_ENABLED)
-	if (dualIsRunning() && (uiDataGlobal.displayChannelSettings == false) && (isTransmitting == false))
+	if ((dualIsRunning() || dualHoldScreen()) && (uiDataGlobal.displayChannelSettings == false) && (isTransmitting == false))
 	{
-		dualRenderScreen();   // R97: власний екран режиму (два рядки каналів); стоковий нижче не малюється
+		dualRenderScreen();   // R97: власний екран режиму (два рядки каналів); стоковий нижче не малюється (R97-FIX5: і в паузі після клавіші)
 		uiDataGlobal.displayQSOState = QSO_DISPLAY_IDLE;
 		return;
 	}
@@ -1211,7 +1213,20 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 	uiDataGlobal.displayQSOState = QSO_DISPLAY_IDLE;
 }
 
+#if defined(DUAL_CHANNEL_ENABLED)
+static void handleEventCore(uiEvent_t *ev);
+
+// R97-FIX5: «тиша» (s_dualQuiet) охоплює весь обробник клавіші; наприкінці -- гарантоване скидання й один перемальований екран
 static void handleEvent(uiEvent_t *ev)
+{
+	handleEventCore(ev);
+	dualQuietEnd();
+}
+
+static void handleEventCore(uiEvent_t *ev)
+#else
+static void handleEvent(uiEvent_t *ev)
+#endif
 {
 #if defined(PLATFORM_GD77S)
 	handleEventForGD77S(ev);
@@ -1232,6 +1247,12 @@ static void handleEvent(uiEvent_t *ev)
 
 			// R97: решта клавіш -- як без режиму: чергування зупиняється, клавіша обробляється нижче, режим лишається ввімкненим
 			dualSuspend();
+		}
+
+		if (dcIsEnabled())
+		{
+			// R97-FIX5: стокова обробка клавіші (будь-якої) не малює свій екран із S-метром -- екран малює dualQuietEnd() після обробника
+			s_dualQuiet = true;
 		}
 
 		if (dcIsOnB() && (ev->keys.key != KEY_GREEN) && (KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN) == false))
@@ -3899,6 +3920,34 @@ static void dualAutoResume(void)
 	(void)dualStart(hold);
 }
 
+// R97-FIX5: режим ввімкнено, чергування призупинене клавішею (набір номера або пауза DUAL_RESUME_QUIET_MS) і ми на екрані каналу --
+// тоді екран малює dualRenderScreen(), а не стоковий (S-метр не спалахує). Умови -- ті самі, що в dualAutoResume().
+static bool dualHoldScreen(void)
+{
+	return (dcIsEnabled() && (dualIsRunning() == false) && (uiDataGlobal.Scan.active == false) && (uiDataGlobal.Scan.toneActive == false) &&
+			(menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && (uiDataGlobal.displayChannelSettings == false) &&
+			(monitorModeData.isEnabled == false) && (trxTransmissionEnabled == false) &&
+#if defined(APRS_RX)
+			(aprsModeIsActive() == false) &&
+#endif
+			((directChannelNumber != 0) || ((ticksGetMillis() - s_dualKeyMs) < DUAL_RESUME_QUIET_MS)));
+}
+
+// R97-FIX5: кінець обробника клавіші: «тишу» знято безумовно (інваріант), екран каналу перемальовано рівно один раз
+// (UpdateScreen сам вибере dualRenderScreen() у режимі/паузі або стоковий -- сканування, деталі, передача); інше меню -- нічого не малюємо.
+static void dualQuietEnd(void)
+{
+	if (s_dualQuiet)
+	{
+		s_dualQuiet = false;
+
+		if (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE)
+		{
+			uiChannelModeUpdateScreen(0);
+		}
+	}
+}
+
 static void dualScanning(void)
 {
 	if ((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING) && (uiDataGlobal.Scan.timer.timeout > SCAN_SKIP_CHANNEL_INTERVAL) &&
@@ -4281,7 +4330,18 @@ static void dualRenderScreen(void)
 	// R97-FIX3: чергування -- статична шапка ОБРАНОГО каналу з кодплага; виклик/утримання -- справжня шапка. Передача сюди не потрапляє.
 	dualRenderHeader((buttonsRead() & BUTTON_SK1) == BUTTON_SK1);
 
-	if (caller)
+	if (directChannelNumber != 0)
+	{
+		char num[12];   // R97-FIX5: набраний номер каналу (пауза режиму) -- замість заголовка; стокового екрана з S-метром нема
+
+		snprintf(num, sizeof(num), "# %d", directChannelNumber);
+		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_DEFAULT_SCREEN;
+		uiDataGlobal.isDisplayingQSOData = false;
+		displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG);
+		displayPrintCentered(DISPLAY_Y_POS_CONTACT, num, FONT_SIZE_3);
+		displayThemeResetToDefault();
+	}
+	else if (caller)
 	{
 		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_CALLER_DATA;
 		uiDataGlobal.isDisplayingQSOData = true;

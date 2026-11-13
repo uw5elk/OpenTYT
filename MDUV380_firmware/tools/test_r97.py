@@ -700,7 +700,7 @@ def test_fix2(incs, cf):
     fns = [carve_fn(t, s_) for s_ in ("static void dualRenderHeader(_Bool force)", "_Bool uiChannelModeDualHeader(_Bool force)", "static void dualRenderScreen(void)")]
     check(all(fns), "R97-FIX3: знайдено dualRenderHeader / uiChannelModeDualHeader / dualRenderScreen")
     if all(fns):
-        pre = "static _Bool dualIsRunning(void) { return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)); }\n"
+        pre = "static int directChannelNumber = 0;\nstatic _Bool dualIsRunning(void) { return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)); }\n"
         out = run_c(RS_HARNESS % {"fns": pre + "\n".join(fns)})
         check(out is not None, "R97-FIX3: хостова збірка шапки екрана режиму")
         if out is not None:
@@ -765,7 +765,7 @@ def test_fix2(incs, cf):
     us = src[src.find("void uiChannelModeUpdateScreen(int txTimeSecs)\n{"):]
     check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*if \(s_dualQuiet\)\s*\{\s*return;\s*\}\s*#endif", us[:600]) is not None,
           "FIX4 З4: uiChannelModeUpdateScreen() на початку виходить при s_dualQuiet (лише під DUAL_CHANNEL_ENABLED)")
-    check(re.search(r"static bool\s+s_dualQuiet;", src) is not None and src.count("s_dualQuiet") == 4, "FIX4 З4: одна нова статична змінна (1 Б), s_dualQuiet")
+    check(re.search(r"static bool\s+s_dualQuiet;", src) is not None and src.count("s_dualQuiet") == 8, "FIX4 З4: одна нова статична змінна (1 Б), s_dualQuiet (FIX5: 8 згадок -- додано хук, dualQuietEnd)")
     # ---- п.2: гаряча клавіша ----
     ev = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):src.find("static bool dualIsRunning(void)\n{")]
     hk = re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*else if \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) && \(KEYCHECK_LONGDOWN_REPEAT\(ev->keys, KEY_FRONT_DOWN\) == false\) &&\s*\(BUTTONCHECK_DOWN\(ev, BUTTON_SK2\) == 0\) && \(BUTTONCHECK_DOWN\(ev, BUTTON_SK1\) == 0\) && \(directChannelNumber == 0\)\)\s*\{[^}]*dualHotkeyToggle\(\);\s*return;\s*\}\s*#endif", ev)
@@ -815,6 +815,128 @@ def test_fix2(incs, cf):
             check(o.get("m1") == "7,2", "п.3: «останній канал» зони -1 і звичайної зони -- різні комірки: %s" % o.get("m1"))
 
 
+Q_HARNESS = r"""
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+typedef struct { int dummy; } uiEvent_t;
+enum { UI_CHANNEL_MODE = 5, UI_OTHER = 9 };
+#define DUAL_RESUME_QUIET_MS 1000U
+static bool s_dualQuiet;
+static uint32_t s_dualKeyMs, g_now;
+static int directChannelNumber, g_menu = UI_CHANNEL_MODE, g_en = 1, g_run = 0, g_scanActive = 0, g_det = 0, g_stock = 0, g_dual = 0, g_scn = 0;
+struct { struct { int active; int toneActive; } Scan; int displayChannelSettings; } uiDataGlobal;
+struct { int isEnabled; } monitorModeData;
+static int trxTransmissionEnabled;
+static bool dcIsEnabled(void) { return g_en; }
+static bool dualIsRunning(void) { return g_run; }
+static int menuSystemGetCurrentMenuNumber(void) { return g_menu; }
+static uint32_t ticksGetMillis(void) { return g_now; }
+static bool aprsModeIsActive(void) { return false; }
+static bool dualHoldScreen(void);
+static void dualQuietEnd(void);
+void uiChannelModeUpdateScreen(int t)
+{
+	(void)t;
+	if (s_dualQuiet) { return; }
+	if ((dualIsRunning() || dualHoldScreen()) && (uiDataGlobal.displayChannelSettings == 0)) { g_dual++; } else { g_stock++; }
+}
+static int scenario;
+static void handleEventCore(uiEvent_t *ev)
+{
+	(void)ev;
+	s_dualKeyMs = g_now;
+	if (g_en) { s_dualQuiet = true; }   // повторює хук: тиша на весь обробник
+	switch (scenario)
+	{
+		case 0: uiChannelModeUpdateScreen(0); uiChannelModeUpdateScreen(0); uiChannelModeUpdateScreen(0); break;   // обробник кілька разів малює
+		case 1: g_menu = UI_OTHER; break;                                                                          // відкрито інше меню
+		case 2: uiDataGlobal.Scan.active = 1; uiChannelModeUpdateScreen(0); break;                                 // стартувало звичайне сканування
+		case 3: uiChannelModeUpdateScreen(0); g_menu = UI_OTHER; break;                                            // малює і йде в меню
+		case 4: directChannelNumber = 5; uiChannelModeUpdateScreen(0); break;                                      // цифра: набір номера
+		case 5: break;                                                                                             // нічого не малює
+		case 6: g_en = 0; uiChannelModeUpdateScreen(0); break;                                                     // обробник вимкнув режим
+		default: break;
+	}
+}
+%(fns)s
+int main(void)
+{
+	for (int sc = 0; sc <= 6; sc++)
+	{
+		scenario = sc; s_dualQuiet = false; g_menu = UI_CHANNEL_MODE; g_en = 1; g_run = 0; uiDataGlobal.Scan.active = 0; directChannelNumber = 0;
+		g_stock = g_dual = 0; g_now = 5000U; s_dualKeyMs = 0U;
+		uiEvent_t e; handleEvent(&e);
+		printf("k%%d=%%d,%%d,%%d\n", sc, (int)s_dualQuiet, g_stock, g_dual);
+	}
+	// вікно паузи: після клавіші 1 с екран режиму, потім стоковий (режим чекає); набраний номер тримає екран режиму
+	scenario = 5; s_dualQuiet = false; g_menu = UI_CHANNEL_MODE; g_en = 1; g_run = 0; uiDataGlobal.Scan.active = 0; directChannelNumber = 0; g_now = 7000U; s_dualKeyMs = 0U;
+	uiEvent_t e2; handleEvent(&e2);
+	g_stock = g_dual = 0; g_now = 7500U; uiChannelModeUpdateScreen(0); int a1 = g_dual;
+	g_now = 8100U; uiChannelModeUpdateScreen(0); int a2 = g_stock;
+	directChannelNumber = 3; g_dual = 0; uiChannelModeUpdateScreen(0); int a3 = g_dual;
+	g_en = 0; directChannelNumber = 0; g_now = 7500U; g_stock = 0; uiChannelModeUpdateScreen(0); int a4 = g_stock;
+	g_en = 1; uiDataGlobal.displayChannelSettings = 1; g_stock = 0; g_dual = 0; uiChannelModeUpdateScreen(0); int a5 = g_stock;
+	printf("w=%%d,%%d,%%d,%%d,%%d\n", a1, a2, a3, a4, a5);
+	return 0;
+}
+"""
+
+
+def test_fix5_z1(incs, cf):
+    src = rd(os.path.join(APP, "source", "user_interface", "uiChannelMode.c"))
+    t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
+    check(t is not None, "FIX5 З1: uiChannelMode.c препроцесується в DUALCH")
+    if t is None:
+        return
+    # ---- структура ----
+    ia = src.find("static void handleEventCore(uiEvent_t *ev)\n#else")
+    ib = src.find("if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))")
+    hk = src[ia:ib]
+    check(ia > 0 and "s_dualQuiet = true;" in hk and hk.find("dualSuspend();") < hk.find("s_dualQuiet = true;") < hk.find("dualTune(false);"),
+          "FIX5 З1: хук handleEventCore -- «тиша» вмикається після dualSuspend() і до будь-якої стокової обробки клавіші")
+    check(re.search(r"static void handleEvent\(uiEvent_t \*ev\)\s*\{\s*handleEventCore\(ev\);\s*dualQuietEnd\(\);\s*\}", src) is not None,
+          "FIX5 З1: handleEvent -- обгортка: handleEventCore + dualQuietEnd() (єдиний вихід, жодного return повз скидання)")
+    check(len(re.findall(r"\bhandleEvent\(ev\)", src)) == 1 and src.count("handleEventCore(ev);") == 1,
+          "FIX5 З1: handleEvent викликається з тих самих місць (1 виклик у uiChannelMode), обгортка викликає Core")
+    check(len(re.findall(r"s_dualQuiet = true;", src)) == 2 and len(re.findall(r"s_dualQuiet = false;", src)) == 2,
+          "FIX5 З1: «тиша» вмикається у двох місцях (ручка на A, хук), скидається у двох (ручка на A, dualQuietEnd)")
+    us = src[src.find("void uiChannelModeUpdateScreen(int txTimeSecs)\n{"):]
+    check(re.search(r"if \(\(dualIsRunning\(\) \|\| dualHoldScreen\(\)\) && \(uiDataGlobal\.displayChannelSettings == false\) && \(isTransmitting == false\)\)\s*\{\s*dualRenderScreen\(\);", us[:1400]) is not None,
+          "FIX5 З1: UpdateScreen малює екран режиму і в паузі після клавіші (dualHoldScreen), а не лише під час чергування")
+    qe = carve_fn(t, "static void dualQuietEnd(void)")
+    hs = carve_fn(t, "static _Bool dualHoldScreen(void)")
+    check(qe is not None and hs is not None, "FIX5 З1: знайдено dualQuietEnd / dualHoldScreen")
+    # ---- хост: обгортка + dualQuietEnd + dualHoldScreen (справжній код) ----
+    he = carve_fn(t, "static void handleEvent(uiEvent_t *ev)")
+    if qe and hs and he:
+        def mk(q, h, w):
+            return Q_HARNESS % {"fns": "\n".join([h, q, w])}
+        out = run_c(mk(qe, hs, he))
+        check(out is not None, "FIX5 З1: хостова збірка обгортки/dualQuietEnd/dualHoldScreen")
+        if out is not None:
+            o = dict(l.split("=", 1) for l in out.split())
+            exp = {"k0": "0,0,1", "k1": "0,0,0", "k2": "0,1,0", "k3": "0,0,0", "k4": "0,0,1", "k5": "0,0,1", "k6": "0,1,0"}
+            nm = {"k0": "обробник малює тричі -- стокового 0, екран режиму рівно 1", "k1": "відкрито інше меню -- нічого не малюється (екран належить меню)",
+                  "k2": "стартувало звичайне сканування -- один стоковий (екран сканування), екрана режиму нема",
+                  "k3": "малює і йде в меню -- нічого", "k4": "цифра (набір номера) -- екран режиму з номером, стокового нема",
+                  "k5": "обробник нічого не малює -- екран режиму перемальовано один раз", "k6": "обробник вимкнув режим -- один стоковий екран"}
+            for k in exp:
+                check(o.get(k) == exp[k], "FIX5 З1 клавіша %s (тиша,стокових,режиму): %s -- %s" % (k, nm[k], o.get(k)))
+            check(all(o.get(k, "x").startswith("0,") for k in exp), "FIX5 З1 інваріант: після будь-якої клавіші s_dualQuiet == false")
+            check(o.get("w") == "1,1,1,1,1", "FIX5 З1: пауза <1 с -- екран режиму; >1 с -- стоковий (режим чекає); набраний номер тримає екран режиму; режим вимкнено -- стоковий; деталі SK1 -- стоковий: %s" % o.get("w"))
+            muts = (("тишу не знято", qe.replace("s_dualQuiet = 0;", "")),
+                    ("екран наприкінці не малюється", qe.replace("uiChannelModeUpdateScreen(0);", "")),
+                    ("малюється і в іншому меню", qe.replace("if (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE)", "if (1)")))
+            for what, q2 in muts:
+                mo = run_c(mk(q2, hs, he))
+                mm = dict(l.split("=", 1) for l in mo.split()) if mo else {}
+                check(q2 != qe and any(mm.get(k) != o.get(k) for k in exp), "FIX5 З1 (мутант): %s -- ловиться тестами" % what)
+            mo = run_c(mk(qe, hs.replace("((directChannelNumber != 0) || ", "(0 || "), he))
+            mm = dict(l.split("=", 1) for l in mo.split()) if mo else {}
+            check(mm.get("w") != o.get("w") or mm.get("k4") != o.get("k4"), "FIX5 З1 (мутант): набраний номер не тримає екран режиму -- ловиться")
+
+
 def main():
     if not shutil.which("gcc"):
         print("ПРОПУСК: gcc нема"); return 0
@@ -823,6 +945,7 @@ def main():
     test_engine(incs, dict(cfgs))
     test_quickmenu_fix(incs, dict(cfgs))
     test_fix2(incs, dict(cfgs))
+    test_fix5_z1(incs, dict(cfgs))
     test_lang()
     test_cps()
     test_vs_base(incs, cfgs)
