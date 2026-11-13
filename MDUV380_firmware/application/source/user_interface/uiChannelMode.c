@@ -4056,11 +4056,8 @@ static bool dualHandleKey(uiEvent_t *ev)
 			return true;
 
 		case KEY_RED:
-			if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
-			{
-				dualDisable();   // вихід з режиму: на A -- лишається на A; на B -- лишається на B (R97-FIX3)
-				uiChannelModeUpdateScreen(0);
-			}
+			// R97-FIX4: червона режим НЕ вимикає (рішення власника): вимикають лише довге ▼ і пункт швидкого меню «Подв. прийом».
+			// Клавішу з'їдаємо без дій -- стокова червона на цьому екрані нічого корисного не робить, а чергування не переривається.
 			return true;
 
 		default:
