@@ -21,7 +21,7 @@ import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages")
 BASE = os.environ.get("R97_BASE", "7fa5fe8")
 FAILS = []; N = [0]
-DUAL_FIELDS = ["dual_rx", "dual_set_b", "dual_title", "dual_b_saved", "dual_err_no_b", "dual_err_b_gone", "dual_err_b_is_a", "dual_on", "dual_off"]
+DUAL_FIELDS = ["dual_rx", "dual_set_b", "dual_title", "dual_b_saved", "dual_err_no_b", "dual_err_b_gone", "dual_err_b_is_a", "dual_on", "dual_off", "dual_zone_all"]
 
 
 def check(c, m):
@@ -460,13 +460,23 @@ enum { SCAN_TYPE_NORMAL_STEP = 0, SCAN_TYPE_DUAL_CHANNEL = 2 };
 enum { QSO_DISPLAY_IDLE = 0, QSO_DISPLAY_DEFAULT_SCREEN, QSO_DISPLAY_CALLER_DATA, QSO_DISPLAY_CALLER_DATA_UPDATE };
 enum { RADIO_MODE_ANALOG = 1, RADIO_MODE_DIGITAL = 2 };
 enum { THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG };
+enum { CHANNEL_FLAG_BW_25K = 1, CHANNEL_FLAG_TIMESLOT_TWO = 2 };
 #define FONT_SIZE_3 3
+typedef struct { uint8_t chMode; uint8_t txColor; uint8_t flags; } CodeplugChannel_t;
+typedef struct { CodeplugChannel_t *ch; uint8_t mode; uint8_t bw25; uint8_t ts; uint8_t cc; } uiHeaderOverride_t;
 struct { struct { bool active; int scanType; int state; } Scan; int displayQSOState, displayQSOStatePrev; bool isDisplayingQSOData; uint32_t receivedPcId; } uiDataGlobal;
 struct { char dual_title[17]; } lang, *currentLanguage = &lang;
-static int hdrCalls = 0, hdrDW = -1, hdrSweep = -1, clears = 0, renders = 0, rows = 0, mode = RADIO_MODE_ANALOG;
+static int plain = 0, plainDW = -1, forCalls = 0, clears = 0, renders = 0, rows = 0, mode = RADIO_MODE_ANALOG, ptrB = 0, chA = 1, chB = 2, redraw = 0, rssi = 0;
+static uiHeaderOverride_t got; static CodeplugChannel_t chans[8];
 static void *LinkHead = 0;
 void displayClearBuf(void) { clears++; }
-void uiUtilityRenderHeader(bool dw, bool sweep, bool force) { (void)force; hdrCalls++; hdrDW = dw; hdrSweep = sweep; }
+void uiUtilityRenderHeader(bool dw, bool sweep, bool force) { (void)force; (void)sweep; plain++; plainDW = dw; }
+void uiUtilityRenderHeaderForChannel(const uiHeaderOverride_t *ov, bool force) { (void)force; forCalls++; got = *ov; got.ch = 0; got.mode = ov->mode; }
+void uiUtilityRedrawHeaderOnly(bool a, bool b, bool c) { (void)a; (void)b; (void)c; redraw++; }
+void uiUtilityDrawRSSIBarGraph(void) { rssi++; }
+bool codeplugAllChannelsIndexIsInUse(int ch) { return (ch >= 1) && (ch <= 7); }
+void codeplugChannelGetDataForIndex(int ch, CodeplugChannel_t *c) { *c = chans[ch]; }
+int codeplugChannelGetFlag(CodeplugChannel_t *c, int f) { return (c->flags & f) != 0; }
 uint32_t buttonsRead(void) { return 0; }
 int trxGetMode(void) { return mode; }
 uint32_t HRC6000GetReceivedTgOrPcId(void) { return 0; }
@@ -476,24 +486,99 @@ void displayThemeResetToDefault(void) {}
 void displayPrintCentered(int y, const char *t, int f) { (void)y; (void)t; (void)f; }
 void dualRenderRow(int y, bool isB, uint16_t ch, bool p, bool a) { (void)y; (void)isB; (void)ch; (void)p; (void)a; rows++; }
 void dualRenderCaller(void) {}
-uint16_t dualChannelA(void) { return 1; }
-uint16_t dcChannelB(void) { return 2; }
-bool dcPointerB(void) { return false; }
+uint16_t dualChannelA(void) { return chA; }
+uint16_t dcChannelB(void) { return chB; }
+bool dcPointerB(void) { return ptrB; }
 bool dcIsOnB(void) { return false; }
 void uiDrawAesEnabledIcon(void) {}
 void displayRender(void) { renders++; }
 %(fns)s
 int main(void)
 {
+	chans[1].chMode = RADIO_MODE_DIGITAL; chans[1].txColor = 5; chans[1].flags = CHANNEL_FLAG_TIMESLOT_TWO;
+	chans[2].chMode = RADIO_MODE_ANALOG; chans[2].txColor = 0; chans[2].flags = CHANNEL_FLAG_BW_25K;
 	for (int st = SCAN_STATE_SCANNING; st <= SCAN_STATE_PAUSED; st++)
 	{
-		hdrCalls = 0; hdrDW = -1; hdrSweep = -1; rows = 0; renders = 0;
-		uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = st;
-		dualRenderScreen();
-		printf("rs%%d=%%d,%%d,%%d,%%d,%%d,%%d\n", st, hdrCalls, hdrDW, hdrSweep, rows, renders, uiChannelModeDualHeaderStatic());
+		for (ptrB = 0; ptrB <= 1; ptrB++)
+		{
+			plain = 0; plainDW = -1; forCalls = 0; rows = 0; renders = 0; redraw = 0; rssi = 0; got.mode = got.bw25 = got.ts = got.cc = 0;
+			uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = st;
+			dualRenderScreen();
+			printf("rs%%d%%d=%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d\n", st, ptrB, plain, plainDW, forCalls, got.mode, got.bw25, got.ts, got.cc, rows, renders, redraw + rssi);
+		}
 	}
-	uiDataGlobal.Scan.state = SCAN_STATE_SCANNING; uiDataGlobal.Scan.active = false; printf("st_off=%%d\n", uiChannelModeDualHeaderStatic());
-	uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_NORMAL_STEP; printf("st_plain=%%d\n", uiChannelModeDualHeaderStatic());
+	/* uiChannelModeDualHeader (applicationMain): true лише при чергуванні без активності */
+	ptrB = 1; uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = SCAN_STATE_SCANNING; forCalls = 0;
+	int h1 = uiChannelModeDualHeader(false); int f1 = forCalls;
+	uiDataGlobal.Scan.state = SCAN_STATE_PAUSED; int h2 = uiChannelModeDualHeader(false);
+	uiDataGlobal.Scan.state = SCAN_STATE_SCANNING; uiDataGlobal.Scan.active = false; int h3 = uiChannelModeDualHeader(false);
+	uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.scanType = SCAN_TYPE_NORMAL_STEP; int h4 = uiChannelModeDualHeader(false);
+	printf("hd=%%d,%%d,%%d,%%d,%%d\n", h1, f1, h2, h3, h4);
+	/* B недійсний -- запасний варіант: справжня шапка */
+	uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.active = true; ptrB = 1; chB = 99; plain = 0; forCalls = 0; dualRenderScreen();
+	printf("bad=%%d,%%d\n", plain, forCalls);
+	return 0;
+}
+"""
+
+DIS_HARNESS = r"""
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#define DUAL_CHANNEL_HOST_TEST 1
+#include "functions/dual_channel.h"
+#include "%(dc)s"
+enum { SCAN_STATE_SCANNING = 0 };
+enum { SCAN_TYPE_NORMAL_STEP = 0, SCAN_TYPE_DUAL_CHANNEL = 2 };
+enum { QSO_DISPLAY_DEFAULT_SCREEN = 1 };
+enum { NOTIFICATION_TYPE_MESSAGE = 1, NOTIFICATION_ID_CARD = 2 };
+typedef struct { uint16_t channels[80]; int NOT_IN_CODEPLUGDATA_numChannelsInZone; int NOT_IN_CODEPLUGDATA_highestIndex; int NOT_IN_CODEPLUGDATA_indexNumber; } zone_t;
+static zone_t currentZone;
+struct { int16_t currentZone; } nonVolatileSettings;
+struct { char dual_zone_all[17]; } lang, *currentLanguage = &lang;
+struct { struct { bool active; int scanType; int state; } Scan; int displayQSOState; } uiDataGlobal;
+static int zoneSets = 0, notif = 0, loads = 0, suspends = 0, tunes = 0, initCalls = 0, lastZ = -99, lastV = -99, onB = 0, enabled = 1, holdClr = 0, scanNextChannelReady = 1; static uint16_t chB = 0;
+bool settingsSetBOOL(bool *p, bool v) { (void)p; (void)v; return 0; }
+bool settingsSetINT8(int8_t *p, int8_t v) { (void)p; (void)v; return 0; }
+bool settingsSetUINT8(uint8_t *p, uint8_t v) { (void)p; (void)v; return 0; }
+bool settingsSetINT16(int16_t *p, int16_t v) { *p = v; zoneSets++; return 1; }
+bool settingsSetUINT16(uint16_t *p, uint16_t v) { (void)p; (void)v; return 0; }
+bool settingsSetINT32(int32_t *p, int32_t v) { (void)p; (void)v; return 0; }
+bool settingsSetUINT32(uint32_t *p, uint32_t v) { (void)p; (void)v; return 0; }
+int codeplugZonesGetCount(void) { return 10; }
+void uiChannelInitializeCurrentZone(void) { initCalls++; memset(&currentZone, 0, sizeof(currentZone)); currentZone.NOT_IN_CODEPLUGDATA_indexNumber = -1; currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone = 5; currentZone.NOT_IN_CODEPLUGDATA_highestIndex = 1024; }
+int16_t codeplugSetLastUsedChannelInZone(int z, int16_t v) { lastZ = z; lastV = v; return v; }
+bool codeplugAllChannelsIndexIsInUse(int ch) { return (ch == 3 || ch == 7 || ch == 9 || ch == 12); }
+void uiNotificationShow(int t, int id, uint32_t ms, const char *msg, bool imm) { (void)t; (void)id; (void)ms; (void)msg; (void)imm; notif++; }
+void uiChannelModeLoadChannelData(bool mem, bool vp) { (void)vp; if (mem == 0) loads++; }
+void lastHeardClearLastID(void) {}
+bool dcIsOnB(void) { return onB; }
+void dcSetOnB(bool b) { onB = b; }
+uint16_t dcChannelB(void) { return chB; }
+void dcSetTxHold(bool h) { (void)h; holdClr++; }
+bool dcSetEnabled(bool on, bool now) { (void)now; enabled = on; return 1; }
+static bool dualIsRunning(void) { return uiDataGlobal.Scan.active && uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL; }
+static void dualSuspend(void) { suspends++; onB = 0; uiDataGlobal.Scan.active = false; }
+static void dualTune(bool toB) { tunes++; onB = toB; }
+%(fns)s
+static void setup(int zoneIdx, int n, int c0, int c1, int c2, uint16_t b, int run, int onb)
+{
+	memset(&currentZone, 0, sizeof(currentZone)); currentZone.NOT_IN_CODEPLUGDATA_indexNumber = zoneIdx; currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone = n;
+	currentZone.NOT_IN_CODEPLUGDATA_highestIndex = (zoneIdx < 0 ? 1024 : n); currentZone.channels[0] = c0; currentZone.channels[1] = c1; currentZone.channels[2] = c2;
+	chB = b; onB = onb; enabled = 1; zoneSets = notif = loads = suspends = tunes = initCalls = 0; lastZ = lastV = -99; scanNextChannelReady = 1;
+	nonVolatileSettings.currentZone = zoneIdx; uiDataGlobal.Scan.active = run; uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.state = 2;
+}
+static void rep(const char *n) { printf("%%s=%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d,%%d\n", n, lastZ, lastV, zoneSets, notif, loads, onB, enabled, uiDataGlobal.Scan.active, suspends, tunes, nonVolatileSettings.currentZone); }
+int main(void)
+{
+	setup(3, 3, 3, 7, 9, 7, 1, 1); dualDisable(); rep("d1");       /* B у поточній зоні (позиція 1) */
+	setup(3, 3, 3, 7, 9, 12, 1, 1); dualDisable(); rep("d2");      /* B не з поточної зони -> «Всі канали» */
+	setup(-1, 5, 0, 0, 0, 7, 1, 1); dualDisable(); rep("d3");      /* поточна зона «Всі канали» */
+	setup(3, 3, 3, 7, 9, 7, 1, 0); dualDisable(); rep("d4");       /* рація на A -- лишається на A */
+	setup(3, 3, 3, 7, 9, 8, 1, 1); dualDisable(); rep("d5");       /* B видалено -> як раніше, на A */
+	setup(3, 3, 3, 7, 9, 3, 0, 1); dualDisable(); rep("d6");       /* режим не чергує, рація на B (після TX): лишаємось на B, позиція 0 */
+	setup(3, 3, 3, 7, 9, 0, 0, 1); dualDisable(); rep("d7");       /* B не задано, рація на B (зіпсований стан) -> на A */
 	return 0;
 }
 """
@@ -580,32 +665,61 @@ def test_fix2(incs, cf):
     tick = tick[:tick.find("if (uiNotificationIsVisible())")]
     check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*if \(rxPowerSavingIsRxOn\(\) && \(\(dualIsRunning\(\) && \(uiDataGlobal\.Scan\.state == SCAN_STATE_SCANNING\)\) == false\)\)[^\n]*\n#else\s*if \(rxPowerSavingIsRxOn\(\)\)\s*#endif", tick) is not None,
           "п.1: RSSI-тік -- під час чергування (SCANNING) без S-метра й виводу на екран (під DUAL_CHANNEL_ENABLED, стоковий рядок збережено)")
-    check("uiChannelModeDualHeaderStatic()" in am and "headerRowIsDirty" in am and
-          re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)[^\n]*\n[^\n]*\n\s*uiUtilityRenderHeader\(\(uiVFOModeDualWatchIsScanning\(\) \|\| \(\(currentMenu == UI_CHANNEL_MODE\) && uiChannelModeDualHeaderStatic\(\)\)\)", am) is not None,
-          "п.1: applicationMain (headerRowIsDirty: батарея/CC) -- під час чергування шапка статична")
+    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)[^\n]*\n(?:\s*//[^\n]*\n)*\s*if \(\(currentMenu == UI_CHANNEL_MODE\) && uiChannelModeDualHeader\(\(buttons & BUTTON_SK1\) == BUTTON_SK1\)\)", am) is not None and "uiChannelModeDualHeaderStatic" not in am,
+          "R97-FIX3: applicationMain (headerRowIsDirty: батарея/CC) -- під час чергування без активності та сама шапка обраного каналу, що й на екрані режиму (статичне «[DW]» скасовано)")
+    check("uiChannelModeDualHeaderStatic" not in src and "uiUtilityRenderHeader((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)" not in src, "R97-FIX3: статичне «[DW]» (isVFODualWatchScanning=true) у dualRenderScreen/applicationMain скасовано")
+    # ---- R97-FIX3 п.2: ядро шапки (статично) ----
+    core = uu[uu.find("static void uiUtilityRenderHeaderCore("):uu.find("void uiUtilityRedrawHeaderOnly(")]
+    check("#define trxGetMode() ((ov != NULL)" in uu and "#undef trxGetMode" in uu and core.count("trxGetDMRColourCode()") >= 1 and "(ov == NULL)" in core and "currentChannelData = ov->ch;" in core and "currentChannelData = savedChannelData;" in core,
+          "R97-FIX3: ядро шапки читає режим/смугу/TS/CC з ov, тони/потужність -- з каналу ov, макроси діють лише в ядрі")
+    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*if \(\(isVFODualWatchScanning == false\) && \(ov == NULL\)\)[^\n]*\n#else\s*if \(isVFODualWatchScanning == false\)\s*#endif\s*\{\s*if \(isTransmittingIgnoringAPRSBeaconing\(\) == false\)\s*\{\s*if \(!isVFOSweepScanning\)\s*\{\s*uiUtilityDrawRSSIBarGraph\(\);", uu) is not None,
+          "R97-FIX3: з ov (обраний канал без активності) смуга S-метра НЕ малюється; без ov -- стоковий рядок")
+    check(re.search(r"static (bool|uint\w+_t|int\w*) s_hdr", uu) is None, "R97-FIX3: нових статичних змінних у шапці нема")
     if "DUALCH" not in cf:
         check(False, "конфігурація DUALCH є в syntax_check.sh"); return
     t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
     check(t is not None, "п.1-3: uiChannelMode.c препроцесується в DUALCH")
     if t is None:
         return
-    # ---- п.1: dualRenderScreen за станом ----
-    fns = [carve_fn(t, s) for s in ("_Bool uiChannelModeDualHeaderStatic(void)", "static void dualRenderScreen(void)")]
-    check(all(fns), "п.1: знайдено uiChannelModeDualHeaderStatic / dualRenderScreen")
+    # ---- R97-FIX3 п.2: dualRenderScreen/dualRenderHeader хостово ----
+    fns = [carve_fn(t, s_) for s_ in ("static void dualRenderHeader(_Bool force)", "_Bool uiChannelModeDualHeader(_Bool force)", "static void dualRenderScreen(void)")]
+    check(all(fns), "R97-FIX3: знайдено dualRenderHeader / uiChannelModeDualHeader / dualRenderScreen")
     if all(fns):
         pre = "static _Bool dualIsRunning(void) { return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)); }\n"
         out = run_c(RS_HARNESS % {"fns": pre + "\n".join(fns)})
-        check(out is not None, "п.1: хостова збірка dualRenderScreen")
+        check(out is not None, "R97-FIX3: хостова збірка шапки екрана режиму")
         if out is not None:
             o = dict(l.split("=", 1) for l in out.split())
-            check(o.get("rs0") == "1,1,0,2,1,1", "п.1 (а): SCANNING -- шапка «[DW]» (isVFODualWatchScanning=true), без свіпу, два рядки, один рендер; прапорець статичної шапки: %s" % o.get("rs0"))
-            check(o.get("rs1") == "1,0,0,2,1,0", "п.1 (б): SHORT_PAUSED (виклик) -- справжня шапка (isVFODualWatchScanning=false): %s" % o.get("rs1"))
-            check(o.get("rs2") == "1,0,0,2,1,0", "п.1 (в): PAUSED (утримання) -- справжня шапка: %s" % o.get("rs2"))
-            mut = [fns[0], fns[1].replace("uiUtilityRenderHeader((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING), 0,", "uiUtilityRenderHeader(0, 0,")]
+            # формат: звичайних шапок, isVFODualWatchScanning, шапок з кодплага, режим, bw25, ts, cc, рядків, рендерів, (RedrawHeaderOnly+S-метр)
+            check(o.get("rs00") == "0,-1,1,2,0,1,5,2,1,0", "п.2 (а): чергування, покажчик на A (DMR TS2 CC5): шапка з кодплага A, звичайної нема, S-метр/RedrawHeaderOnly не кличуться: %s" % o.get("rs00"))
+            check(o.get("rs01") == "0,-1,1,1,1,0,0,2,1,0", "п.2 (а): чергування, покажчик на B (FM 25 кГц): шапка з кодплага B: %s" % o.get("rs01"))
+            check(o.get("rs10") == "1,0,0,0,0,0,0,2,1,0" and o.get("rs11") == "1,0,0,0,0,0,0,2,1,0" and o.get("rs20") == "1,0,0,0,0,0,0,2,1,0" and o.get("rs21") == "1,0,0,0,0,0,0,2,1,0",
+                  "п.2 (б): виклик/утримання -- справжня шапка (isVFODualWatchScanning=false, не «[DW]»), покажчик значення не має: %s %s %s %s" % (o.get("rs10"), o.get("rs11"), o.get("rs20"), o.get("rs21")))
+            check(o.get("hd") == "1,1,0,0,0", "п.2 (в): uiChannelModeDualHeader (applicationMain) -- true лише при чергуванні без активності: %s" % o.get("hd"))
+            check(o.get("bad") == "1,0", "п.2 (г): недійсний канал -- запасна справжня шапка: %s" % o.get("bad"))
+            mut = [fns[0].replace("uiUtilityRenderHeaderForChannel(&ov, force);", "uiUtilityRenderHeader(0, 0, force);"), fns[1], fns[2]]
             mo = run_c(RS_HARNESS % {"fns": pre + "\n".join(mut)})
-            check(fns[1] != mut[1] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("rs0") != o.get("rs0"),
-                  "п.1 (мутант): стара шапка (завжди справжня) ловиться тестом (а)")
-            check(o.get("st_off") == "0" and o.get("st_plain") == "0", "п.1 (г): статична шапка лише коли режим чергує (не при зупиненому режимі й не при звичайному скануванні): %s/%s" % (o.get("st_off"), o.get("st_plain")))
+            check(fns[0] != mut[0] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("rs00") != o.get("rs00"), "п.2 (мутант): шапка з даних trx замість кодплага ловиться тестом (а)")
+    # ---- R97-FIX3 п.1: вимкнення на B ----
+    dsf = [carve_fn(t, s_) for s_ in ("static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static void dualLeaveOnB(void)", "static void dualDisable(void)")]
+    check(all(dsf), "R97-FIX3: знайдено dualZoneChannelAt / dualLeaveOnB / dualDisable")
+    if all(dsf):
+        out = run_c(DIS_HARNESS % {"dc": os.path.join(APP, "source", "functions", "dual_channel.c"), "fns": "static uint16_t dualZoneChannelAt(int pos, void *ctx);\n" + "\n".join(dsf[0:1] + dsf[1:])})
+        check(out is not None, "R97-FIX3: хостова збірка вимкнення на B")
+        if out is not None:
+            o = dict(l.split("=", 1) for l in out.split())
+            # формат: зона last-used, значення, змін зони, сповіщень, завантажень каналу, onB, увімкнено, Scan.active, suspend, tune, currentZone
+            exp = {"d1": "3,1,0,0,1,0,0,0,0,0,3", "d2": "-1,12,1,1,1,0,0,0,0,0,9", "d3": "-1,7,0,0,1,0,0,0,0,0,-1", "d4": "-99,-99,0,0,0,0,0,0,1,0,3",
+                   "d5": "-99,-99,0,0,0,0,0,0,1,0,3", "d6": "3,0,0,0,1,0,0,0,0,0,3", "d7": "-99,-99,0,0,0,0,0,0,0,1,3"}
+            names = {"d1": "на B, B у поточній зоні: last-used = позиція B, зона та сама, без сповіщення", "d2": "на B, B з іншої зони: зона «Всі канали» (9), last-used(-1) = номер B, сповіщення",
+                     "d3": "на B у зоні «Всі канали»: last-used(-1) = номер B, зона та сама", "d4": "на A: як раніше (dualSuspend), канал не перезавантажується",
+                     "d5": "на B, але B видалено: як раніше на A", "d6": "режим не чергує, рація на B (після TX): лишаємось на B, позиція 0", "d7": "рація на B без B (зіпсований стан): на A"}
+            for k in exp:
+                check(o.get(k) == exp[k], "п.1 %s -- %s: %s" % (k, names[k], o.get(k)))
+            bug = [dsf[0], dsf[1], dsf[2].replace("_Bool stayB = (dcIsOnB()", "_Bool stayB = (0 && dcIsOnB()")]
+            mo = run_c(DIS_HARNESS % {"dc": os.path.join(APP, "source", "functions", "dual_channel.c"), "fns": "static uint16_t dualZoneChannelAt(int pos, void *ctx);\n" + "\n".join(bug)})
+            check(bug[2] != dsf[2] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("d1") != o.get("d1"), "п.1 (мутант): старий dualDisable (завжди на A) ловиться тестом d1")
+    check(src.count("dualDisable()") >= 3 and "dualLeaveOnB();" in src, "R97-FIX3: dualDisable викликається з RED, dualSetMode(off) і dualAutoResume (помилка пари) -- усі через нову логіку")
     # ---- п.2: гаряча клавіша ----
     ev = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):src.find("static bool dualIsRunning(void)\n{")]
     hk = re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*else if \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) && \(KEYCHECK_LONGDOWN_REPEAT\(ev->keys, KEY_FRONT_DOWN\) == false\) &&\s*\(BUTTONCHECK_DOWN\(ev, BUTTON_SK2\) == 0\) && \(BUTTONCHECK_DOWN\(ev, BUTTON_SK1\) == 0\) && \(directChannelNumber == 0\)\)\s*\{[^}]*dualHotkeyToggle\(\);\s*return;\s*\}\s*#endif", ev)
