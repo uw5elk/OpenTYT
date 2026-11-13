@@ -80,6 +80,10 @@ bool dcTxOnB(bool activity, bool onB, bool pointerB);
  * Повертає нову позицію або -1, якщо придатної нема. */
 typedef uint16_t (*dcChanAt_t)(int pos, void *ctx);
 int dcStepPos(int n, int fromPos, int dir, uint16_t skip, dcChanAt_t at, void *ctx);
+/* R98: крок ручки на картці B по ЗАМКНЕНОМУ циклу «канали зони (позиції 0..n-1) -> VFO A (n) -> VFO B (n+1) -> перший канал».
+ * fromExt -- поточна позиція (канал: позиція в зоні; VFO A = n; VFO B = n+1; <0 або поза циклом -- старт від краю за напрямком).
+ * Непридатні позиції каналів (at() == 0) пропускаються; VFO придатні завжди. Повертає нову позицію (0..n+1) або -1 (лише якщо n < 0). */
+int dcStepExt(int n, int fromExt, int dir, dcChanAt_t at, void *ctx);
 /* Позиція каналу ch серед n позицій або -1. */
 int dcFindPos(int n, uint16_t ch, dcChanAt_t at, void *ctx);
 

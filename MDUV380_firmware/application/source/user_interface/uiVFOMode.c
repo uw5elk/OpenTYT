@@ -1354,6 +1354,84 @@ void uiVFOModeLoadChannelData(bool forceAPRSReset)
 	previousVFONumber = nonVolatileSettings.currentVFONumber;
 }
 
+#if defined(DUAL_CHANNEL_ENABLED)
+// R98 В2: налаштувати рацію на VFO vfo (0 = A, 1 = B) для «Подвійного прийому», НЕ перемикаючи стокові VFO/режим і не записуючи нічого нового.
+// Стокове завантаження VFO (uiVFOModeLoadChannelData) читає/пише глобальний стан, тож він ізольований: поточний VFO (currentVFONumber),
+// previousVFONumber і перекриття ТГ (overrideTG) зберігаються і ВІДНОВЛЮЮТЬСЯ після виклику (усе -- прямим присвоєнням, без settingsSet:
+// «брудного» прапорця немає). Недійсний контакт VFO стока лікує через settingsSet(overrideTG, 9) -- тут замість цього на час виклику
+// ставимо overrideTG = 9 (гілка стока «перекриття» дає той самий ТГ 9 і ТС за ручним перекриттям/прапорцем VFO), а після -- повертаємо як було.
+// freshTune -- перше налаштування на VFO (колір-код виставити примусово); false -- повернення з передачі/меню (як у стоку).
+// Викликач виставляє currentChannelData = &settingsVFOChannel[vfo] і номер вибраного каналу (CH_DETAILS_VFO_CHANNEL).
+void uiVFOModeDualLoad(uint8_t vfo, bool freshTune)
+{
+	uint8_t savedVfo = nonVolatileSettings.currentVFONumber;
+	uint8_t savedPrev = previousVFONumber;
+	uint32_t savedOverride = nonVolatileSettings.overrideTG;
+	CodeplugChannel_t *vfoData = &settingsVFOChannel[vfo];
+	CodeplugContact_t probe;
+
+	nonVolatileSettings.currentVFONumber = vfo;
+	previousVFONumber = (freshTune ? (uint8_t)(1U - vfo) : vfo);
+	currentChannelData = vfoData;
+	vfoData->libreDMR_Power = 0x00;   // як у стоку: VFO завжди на головній потужності
+
+	HRC6000ClearActiveDMRID();
+	radioSetTRxDevice(RADIO_DEVICE_PRIMARY);
+	trxSetFrequency(vfoData->rxFreq, vfoData->txFreq, (((vfoData->chMode == RADIO_MODE_DIGITAL) && codeplugChannelGetFlag(vfoData, CHANNEL_FLAG_FORCE_DMO)) ? DMR_MODE_DMO : DMR_MODE_AUTO));
+
+	// група прийому VFO -- як у стоку (uiVFOMode init)
+	if (vfoData->rxGroupList != 0)
+	{
+		if (vfoData->rxGroupList != lastLoadedRxGroup)
+		{
+			lastLoadedRxGroup = (codeplugRxGroupGetDataForIndex(vfoData->rxGroupList, &currentRxGroupData) ? vfoData->rxGroupList : -1);
+		}
+	}
+	else
+	{
+		memset(&currentRxGroupData, 0xFF, sizeof(CodeplugRxGroup_t));
+		lastLoadedRxGroup = -1;
+	}
+
+	if ((vfoData->chMode == RADIO_MODE_DIGITAL) && (savedOverride == 0U))
+	{
+		uiVFOLoadContact(&probe);
+
+		if ((probe.name[0] == 0) || (probe.tgNumber == 0) || (probe.tgNumber > 9999999))
+		{
+			nonVolatileSettings.overrideTG = 9U;   // як стокове лікування, але без settingsSet (див. вище)
+		}
+	}
+
+	uiVFOModeLoadChannelData(false);
+
+	nonVolatileSettings.overrideTG = savedOverride;
+	nonVolatileSettings.currentVFONumber = savedVfo;
+	previousVFONumber = savedPrev;
+}
+
+// R98 В8: крок частоти VFO vfo на картці B (SK2 + ручка). Стокова stepFrequency() (таблиця VFO_FREQ_STEP_TABLE, межі діапазонів, помилка на краю);
+// фокус -- приймач (частоти передачі йдуть слідом, як у стоку без блокування). Рація має бути вже налаштована на цей VFO (currentChannelData).
+// Збереження -- стокове: settingsSetVFODirty() (запис VFO разом з налаштуваннями, як у VFO-екрані).
+void uiVFOModeDualStep(uint8_t vfo, int dir)
+{
+	uint8_t savedVfo = nonVolatileSettings.currentVFONumber;
+	vfoSelectedFrequencyInput_t savedFocus = selectedFreq;
+	bool savedLock = uiDataGlobal.QuickMenu.tmpTxRxLockMode;
+
+	nonVolatileSettings.currentVFONumber = vfo;
+	selectedFreq = VFO_SELECTED_FREQUENCY_INPUT_RX;
+	uiDataGlobal.QuickMenu.tmpTxRxLockMode = settingsIsOptionBitSet(BIT_TX_RX_FREQ_LOCK);
+
+	stepFrequency(VFO_FREQ_STEP_TABLE[(settingsVFOChannel[vfo].VFOflag5 >> 4)] * dir);
+
+	uiDataGlobal.QuickMenu.tmpTxRxLockMode = savedLock;
+	selectedFreq = savedFocus;
+	nonVolatileSettings.currentVFONumber = savedVfo;
+	settingsSetVFODirty();
+}
+#endif
+
 static void checkAndFixIndexInRxGroup(void)
 {
 	if ((currentRxGroupData.NOT_IN_CODEPLUG_numTGsInGroup > 0) &&

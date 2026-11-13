@@ -122,6 +122,43 @@ int dcStepPos(int n, int fromPos, int dir, uint16_t skip, dcChanAt_t at, void *c
 	return -1;
 }
 
+int dcStepExt(int n, int fromExt, int dir, dcChanAt_t at, void *ctx)
+{
+	int total = n + 2;
+	int e = fromExt;
+
+	if ((n < 0) || ((dir != 1) && (dir != -1)))
+	{
+		return -1;
+	}
+
+	if ((e < 0) || (e >= total))
+	{
+		e = ((dir > 0) ? -1 : total);
+	}
+
+	for (int i = 0; i < total; i++)
+	{
+		e += dir;
+
+		if (e < 0)
+		{
+			e = total - 1;
+		}
+		else if (e >= total)
+		{
+			e = 0;
+		}
+
+		if ((e >= n) || (at(e, ctx) != 0U))
+		{
+			return e;
+		}
+	}
+
+	return -1;
+}
+
 int dcFindPos(int n, uint16_t ch, dcChanAt_t at, void *ctx)
 {
 	if ((ch == 0U) || (at == NULL))
