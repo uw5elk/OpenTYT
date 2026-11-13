@@ -133,6 +133,7 @@ static bool dualHandleKey(uiEvent_t *ev);
 static void dualRenderScreen(void);
 static void dualAutoResume(void);
 static void dualQuickMenuApply(bool setB);
+static void dualHotkeyToggle(void);
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
 #endif
@@ -1863,6 +1864,15 @@ static void handleEvent(uiEvent_t *ev)
 			handleUpKey(ev);
 			return;
 		}
+#if defined(DUAL_CHANNEL_ENABLED)
+		else if (KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN) && (KEYCHECK_LONGDOWN_REPEAT(ev->keys, KEY_FRONT_DOWN) == false) &&
+				(BUTTONCHECK_DOWN(ev, BUTTON_SK2) == 0) && (BUTTONCHECK_DOWN(ev, BUTTON_SK1) == 0) && (directChannelNumber == 0))
+		{
+			// R97-FIX2: гаряча клавіша -- довге ▼ перемикає «Подвійний прийом» (та сама логіка, що пункт швидкого меню); коротке ▼ -- як було
+			dualHotkeyToggle();
+			return;
+		}
+#endif
 		else if (KEYCHECK_LONGDOWN(ev->keys,
 #if defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 				KEY_FRONT_UP
@@ -3901,7 +3911,13 @@ static bool dualHandleKey(uiEvent_t *ev)
 	switch (ev->keys.key)
 	{
 		case KEY_FRONT_UP:     // покажчик на A
-		case KEY_FRONT_DOWN:   // покажчик на B
+		case KEY_FRONT_DOWN:   // покажчик на B; довге ▼ -- гаряча клавіша (вимкнути режим), автоповтор ігноруємо
+			if ((ev->keys.key == KEY_FRONT_DOWN) && KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN) && (KEYCHECK_LONGDOWN_REPEAT(ev->keys, KEY_FRONT_DOWN) == false))
+			{
+				dualHotkeyToggle();
+				return true;
+			}
+
 			if (KEYCHECK_SHORTUP(ev->keys, ev->keys.key))
 			{
 				dcSetPointerB(ev->keys.key == KEY_FRONT_DOWN);
@@ -3967,6 +3983,44 @@ static bool dualHandleKey(uiEvent_t *ev)
 	return false;
 }
 
+// Увімкнути/вимкнути режим -- ОДНА логіка для пункту швидкого меню й гарячої клавіші (довге ▼): перевірка пари (B не задано / канал B
+// видалено / B збігається з A -- сповіщення й сигнал помилки, режим не стартує), запис блоку, старт/зупинка чергування.
+// notify -- коротке сповіщення «вкл/вимк» (гаряча клавіша; у меню зміну видно і так).
+static void dualSetMode(bool on, bool notify)
+{
+	if (on)
+	{
+		dcPairCheck_t chk = dualCheckPair();
+
+		if (chk != DC_PAIR_OK)
+		{
+			dualShowPairError(chk);   // режим не стартує
+			return;
+		}
+
+		dcSetTxHold(false);
+		(void)dcSetEnabled(true, true);
+		s_dualKeyMs = 0U;
+		dualAutoResume();
+	}
+	else
+	{
+		dualDisable();
+		uiChannelModeUpdateScreen(0);
+	}
+
+	if (notify)
+	{
+		uiNotificationShowShort(1500U, (on ? currentLanguage->dual_on : currentLanguage->dual_off), true);
+	}
+}
+
+// Гаряча клавіша -- довге ▼ без SK2/SK1 на екрані каналу: перемкнути режим (ввімкнено -> вимкнути, інакше -> ввімкнути).
+static void dualHotkeyToggle(void)
+{
+	dualSetMode((dcIsEnabled() == false), true);
+}
+
 // Пункти швидкого меню (викликається вже на екрані каналу).
 static void dualQuickMenuApply(bool setB)
 {
@@ -3991,26 +4045,7 @@ static void dualQuickMenuApply(bool setB)
 		return;
 	}
 
-	if (dcMenuValue())
-	{
-		dcPairCheck_t chk = dualCheckPair();
-
-		if (chk != DC_PAIR_OK)
-		{
-			dualShowPairError(chk);   // режим не стартує
-			return;
-		}
-
-		dcSetTxHold(false);
-		(void)dcSetEnabled(true, true);
-		s_dualKeyMs = 0U;
-		dualAutoResume();
-	}
-	else
-	{
-		dualDisable();
-		uiChannelModeUpdateScreen(0);
-	}
+	dualSetMode(dcMenuValue(), false);
 }
 
 // PTT на екрані каналу під час чергування (applicationMain.c): канал передачі -- за станом (прийом/утримання -- де рація зараз,

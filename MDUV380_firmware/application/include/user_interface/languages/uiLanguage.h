@@ -463,6 +463,8 @@ typedef struct
    const char dual_err_no_b[LANGUAGE_TEXTS_LENGTH];
    const char dual_err_b_gone[LANGUAGE_TEXTS_LENGTH];
    const char dual_err_b_is_a[LANGUAGE_TEXTS_LENGTH];
+   const char dual_on[LANGUAGE_TEXTS_LENGTH];    // R97-FIX2: сповіщення гарячої клавіші (довге ▼)
+   const char dual_off[LANGUAGE_TEXTS_LENGTH];
 #endif
 #endif
 } stringsTable_t;

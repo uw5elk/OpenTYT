@@ -426,6 +426,8 @@ const stringsTable_t englishLanguage =
 .dual_err_no_b                           = "B not set", // MaxLen: 16
 .dual_err_b_gone                         = "B deleted", // MaxLen: 16
 .dual_err_b_is_a                         = "B equals A", // MaxLen: 16
+.dual_on                                 = "Dual watch on", // MaxLen: 16
+.dual_off                                = "Dual watch off", // MaxLen: 16
 #endif
 #endif
 };
