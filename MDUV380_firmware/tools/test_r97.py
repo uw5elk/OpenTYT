@@ -341,6 +341,8 @@ static void dualDisable(void) { disable++; enabled = 0; }
 static int running = 0, updCalls = 0;
 static bool dualIsRunning(void) { return running; }
 void uiChannelModeUpdateScreen(int x) { (void)x; updCalls++; }
+enum { UI_CHANNEL_MODE = 7 };
+int menuSystemGetCurrentMenuNumber(void) { return UI_CHANNEL_MODE; }   /* R98: dualSetMode не малює канальний екран, якщо вже на VFO-екрані */
 %(fn)s
 static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; onBq = 0; }
 int main(void)
@@ -437,6 +439,8 @@ static void dualDisable(void) { disable++; enabled = 0; }
 static int running = 0, updCalls = 0;
 static bool dualIsRunning(void) { return running; }
 void uiChannelModeUpdateScreen(int x) { (void)x; updCalls++; }
+enum { UI_CHANNEL_MODE = 7 };
+int menuSystemGetCurrentMenuNumber(void) { return UI_CHANNEL_MODE; }   /* R98: dualSetMode не малює канальний екран, якщо вже на VFO-екрані */
 %(fn)s
 static void reset(void) { chA = 0; inUse = 1; menuVal = 0; enabled = 0; setBcalls = 0; setBval = 0; notif = 0; beep = 0; enCalls = 0; enVal = -1; resume = 0; disable = 0; pairErr = 0; pair = DC_PAIR_OK; lastNotifOn = -1; onBq = 0; }
 int main(void)
@@ -472,10 +476,27 @@ enum { RADIO_MODE_ANALOG = 1, RADIO_MODE_DIGITAL = 2 };
 enum { THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG };
 enum { CHANNEL_FLAG_BW_25K = 1, CHANNEL_FLAG_TIMESLOT_TWO = 2 };
 #define FONT_SIZE_3 3
-typedef struct { uint8_t chMode; uint8_t txColor; uint8_t flags; } CodeplugChannel_t;
+typedef struct { uint8_t chMode; uint8_t txColor; uint8_t flags; uint8_t NOT_IN_CODEPLUG_flag; } CodeplugChannel_t;
 typedef struct { CodeplugChannel_t *ch; uint8_t mode; uint8_t bw25; uint8_t ts; uint8_t cc; } uiHeaderOverride_t;
 struct { struct { bool active; int scanType; int state; } Scan; int displayQSOState, displayQSOStatePrev; bool isDisplayingQSOData; uint32_t receivedPcId; } uiDataGlobal;
 struct { char dual_title[17]; } lang, *currentLanguage = &lang;
+struct { uint32_t overrideTG; } nonVolatileSettings;
+#define CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE 0x01
+#define CODEPLUG_CONTACT_FLAG_TS_OVERRIDE_TIMESLOT_MASK 0x02
+typedef int Channel_t;
+#define CHANNEL_CHANNEL 2
+#define CHANNEL_VFO_A 0
+#define CHANNEL_VFO_B 1
+static int gMan = 0, gOv = 0, gLastChan = -1; static uint8_t gTsFlags = 1;
+int8_t tsGetManualOverride(Channel_t c) { gLastChan = c; return gMan; }
+bool tsIsContactHasBeenOverridden(Channel_t c) { gLastChan = c; return gOv; }
+static int vtB = 0;   /* R98: тип B (0 канал, 1 VFO A, 2 VFO B) */
+static CodeplugChannel_t settingsVFOChannel[2];
+bool dcBIsVfo(void) { return vtB != 0; }
+uint8_t dcTypeB(void) { return (uint8_t)vtB; }
+bool dcSameTarget(uint8_t ta, uint16_t ia, uint8_t tb, uint16_t ib) { return (ta == tb) && ((ta == 0) ? (ia == ib) : true); }
+static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags);
+static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, bool *numOnly, uint8_t *tsFlags) { (void)ch; out[0] = 0; *numOnly = false; *tsFlags = gTsFlags; return 0; }
 static int plain = 0, plainDW = -1, forCalls = 0, clears = 0, renders = 0, rows = 0, mode = RADIO_MODE_ANALOG, ptrB = 0, chA = 1, chB = 2, redraw = 0, rssi = 0;
 static uiHeaderOverride_t got; static CodeplugChannel_t chans[8];
 static int dummyItem; static void *LinkHead = 0;
@@ -498,13 +519,13 @@ void displayThemeApply(int a, int b) { (void)a; (void)b; }
 void displayThemeResetToDefault(void) {}
 void displayPrintCentered(int y, const char *t, int f) { (void)y; (void)t; (void)f; }
 int onBflag = 0;
-int rowSel[2], rowAct[2], rowCal[2], en = 1, carrier = 0;
+int rowSel[2], rowAct[2], rowCal[2], en = 1, carrier = 0, gRowVt[2];
 #define DC_CH_MIN 1
 #define DC_CH_MAX 1024
 #define RADIO_DEVICE_PRIMARY 0
 bool dcIsEnabled(void) { return en; }
 bool trxCarrierDetected(int d) { (void)d; return carrier; }
-void dualRenderRow(int y, bool isB, uint16_t ch, bool sel, bool a, bool cal) { (void)y; (void)ch; rowSel[isB] = sel; rowAct[isB] = a; rowCal[isB] = cal; rows++; }
+void dualRenderRow(int y, bool isB, uint16_t ch, uint8_t vt, bool sel, bool a, bool cal) { (void)y; (void)ch; gRowVt[isB] = vt; rowSel[isB] = sel; rowAct[isB] = a; rowCal[isB] = cal; rows++; }
 bool dualSelectedIsB(void) { return (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING) ? (bool)onBflag : (bool)ptrB; }
 uint16_t dualChannelA(void) { return chA; }
 uint16_t dcChannelB(void) { return chB; }
@@ -551,6 +572,23 @@ int main(void)
 	/* B недійсний -- запасний варіант: справжня шапка */
 	uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.active = true; ptrB = 1; chB = 99; plain = 0; forCalls = 0; dualRenderScreen();
 	printf("bad=%%d,%%d\n", plain, forCalls);
+	/* R98 Д2: ТС у шапці обраного каналу -- ефективний (канал 1: ТС2 у записі) */
+	uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_CHANNEL; uiDataGlobal.Scan.active = true; uiDataGlobal.Scan.state = SCAN_STATE_SCANNING; ptrB = 0; chA = 1; chB = 2;
+	gMan = 0; gOv = 0; gTsFlags = 1; dualRenderScreen(); int e1 = got.ts;                            /* NO_TS: ТС каналу = 2 -> 1 (0-based) */
+	gTsFlags = 0; dualRenderScreen(); int e2 = got.ts;                                               /* контакт TS1 (маска 0) -> 0 */
+	gTsFlags = 2; dualRenderScreen(); int e3 = got.ts;                                               /* контакт TS2 -> 1 */
+	gTsFlags = 1; gMan = 1; dualRenderScreen(); int e4 = got.ts;                                     /* ручне ТС1 -> 0 */
+	gTsFlags = 0; gMan = 1; gOv = 1; dualRenderScreen(); int e5 = got.ts;                            /* контакт перекрито вручну на ТС1 -> 0 */
+	gOv = 0; gMan = 0; nonVolatileSettings.overrideTG = 91; gTsFlags = 0; dualRenderScreen(); int e6 = got.ts; nonVolatileSettings.overrideTG = 0;   /* перекриття ТГ -> ТС каналу 2 -> 1 */
+	printf("ets=%%d,%%d,%%d,%%d,%%d,%%d\n", e1, e2, e3, e4, e5, e6);
+	/* R98 В3: картка B = VFO -- шапка з запису VFO (режим/смуга/СС), ТС -- ефективний для ЦЬОГО VFO (CHANNEL_VFO_A/B), без звернення до каналу; рядок B несе тип */
+	settingsVFOChannel[0].chMode = RADIO_MODE_DIGITAL; settingsVFOChannel[0].txColor = 3; settingsVFOChannel[0].flags = 0; settingsVFOChannel[0].NOT_IN_CODEPLUG_flag = 0x01;
+	settingsVFOChannel[1].chMode = RADIO_MODE_ANALOG; settingsVFOChannel[1].txColor = 0; settingsVFOChannel[1].flags = CHANNEL_FLAG_BW_25K; settingsVFOChannel[1].NOT_IN_CODEPLUG_flag = 0x03;
+	ptrB = 1; vtB = 1; gTsFlags = 1; gMan = 0; gLastChan = -1; plain = 0; forCalls = 0; dualRenderScreen(); int v1m = got.mode, v1c = got.cc, v1t = got.ts, v1ch = gLastChan, v1p = plain, v1vt = gRowVt[1];
+	vtB = 2; gLastChan = -1; dualRenderScreen(); int v2m = got.mode, v2b = got.bw25, v2ch = gLastChan, v2vt = gRowVt[1];
+	vtB = 1; ptrB = 0; dualRenderScreen(); int v3m = got.mode, v3vt = gRowVt[0];
+	printf("vf=%%d,%%d,%%d,%%d,%%d,%%d|%%d,%%d,%%d,%%d|%%d,%%d\n", v1m, v1c, v1t, v1ch, v1p, v1vt, v2m, v2b, v2ch, v2vt, v3m, v3vt);
+	vtB = 0; ptrB = 1;
 	return 0;
 }
 """
@@ -595,6 +633,9 @@ void dcSetTxHold(bool h) { (void)h; holdClr++; }
 bool dcSetEnabled(bool on, bool now) { (void)now; enabled = on; return 1; }
 static bool dualIsRunning(void) { return uiDataGlobal.Scan.active && uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL; }
 static void dualTune(bool toB) { tunes++; onB = toB; }
+static int bVfo = 0, leaveVfo = 0;   /* R98: B = VFO; «лишитись на VFO» -- лічильник замість виходу в VFO-екран */
+bool dcBIsVfo(void) { return bVfo; }
+static void dualLeaveOnVfo(void) { leaveVfo++; onB = 0; }
 %(fns)s
 static void setup(int zoneIdx, int n, int c0, int c1, int c2, uint16_t b, int run, int onb, int ptr, int st)
 {
@@ -622,6 +663,13 @@ int main(void)
 	setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 0); dualSuspend(); printf("s2=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* чергування, покажчик B, рація на A -> B */
 	setup(3, 3, 3, 7, 9, 7, 1, 1, 0, 2); dualSuspend(); printf("s3=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* виклик на B -> лишається на B */
 	setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 2); dualSuspend(); printf("s4=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* виклик на A -> лишається на A */
+	/* R98 В6: B = VFO -- «лишитись на обраному» = вихід на VFO-екран (dualLeaveOnVfo), канальна гілка (dualLeaveOnB: зона, номер, завантаження) не чіпається */
+	bVfo = 1; setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 0); leaveVfo = 0; dualDisable(); printf("dv1=%%d,%%d,%%d,%%d,%%d\n", leaveVfo, enabled, loads, lastZ, uiDataGlobal.Scan.active);   /* чергування, покажчик на B (VFO) */
+	bVfo = 1; setup(3, 3, 3, 7, 9, 7, 1, 1, 0, 2); leaveVfo = 0; dualDisable(); printf("dv2=%%d,%%d,%%d,%%d,%%d\n", leaveVfo, enabled, loads, lastZ, uiDataGlobal.Scan.active);   /* виклик на B (VFO) */
+	bVfo = 1; setup(3, 3, 3, 7, 9, 7, 1, 0, 0, 0); leaveVfo = 0; dualDisable(); printf("dv3=%%d,%%d,%%d,%%d,%%d\n", leaveVfo, enabled, loads, lastZ, uiDataGlobal.Scan.active);   /* покажчик на A -- VFO-екран не відкривається */
+	bVfo = 1; setup(3, 3, 3, 7, 9, 7, 0, 1, 0, 0); leaveVfo = 0; dualDisable(); printf("dv4=%%d,%%d,%%d,%%d,%%d\n", leaveVfo, enabled, loads, lastZ, uiDataGlobal.Scan.active);   /* режим зупинено меню на B (VFO) */
+	bVfo = 1; setup(3, 3, 3, 7, 9, 7, 1, 0, 1, 0); dualSuspend(); printf("sv=%%d,%%d\n", onB, tunes);   /* dualSuspend на обраний B = VFO */
+	bVfo = 0;
 	setup(3, 3, 3, 7, 9, 8, 1, 0, 1, 0); dualSuspend(); printf("s5=%%d,%%d,%%d,%%d\n", onB, tunes, uiDataGlobal.Scan.active, uiDataGlobal.Scan.scanType);   /* покажчик на B, але B видалено -> A */
 	return 0;
 }
@@ -645,9 +693,14 @@ static bool dualIsRunning(void) { return running; }
 static void dualAutoResume(void) { resumes++; }
 static uint8_t codeplugAllChannelsCache[128];
 static uint16_t chB = 0;
+static int vt = 0;   /* R98: тип B (0 канал, 1 VFO A, 2 VFO B) */
 uint16_t dcChannelB(void) { return chB; }
-bool dcSetChannelB(uint16_t c, bool now) { (void)now; chB = c; return true; }
+bool dcSetChannelB(uint16_t c, bool now) { (void)now; chB = c; vt = 0; return true; }
+void dcSetTypeB(uint8_t t) { vt = t; }
+bool dcBIsVfo(void) { return vt != 0; }
+uint8_t dcTypeB(void) { return (uint8_t)vt; }
 bool dcIsOnB(void) { return false; }
+#define SEQ() (vt ? ((vt == 1) ? -1 : -2) : (int)chB)   /* канал -- номер; VFO A = -1, VFO B = -2 */
 enum { SCAN_STATE_SCANNING = 0 };
 struct { struct { int state; } Scan; } uiDataGlobal;
 static const int MELODY_ERROR_BEEP[1];
@@ -673,12 +726,17 @@ int main(void)
 	printf("a3=%%d\n", dcCheckPair(dualChannelA(), chB, codeplugAllChannelsIndexIsInUse(chB)));   /* OK=0 */
 	/* крок B валкодером від 7: 10, 1024, 1 (обхід через край), 2, 5 (A більше не пропускається), 7 */
 	int seq[8], k = 0;
-	for (k = 0; k < 6; k++) { dualStepB(1); seq[k] = chB; }
+	for (k = 0; k < 6; k++) { dualStepB(1); seq[k] = SEQ(); }
 	printf("s1=%%d,%%d,%%d,%%d,%%d,%%d\n", seq[0], seq[1], seq[2], seq[3], seq[4], seq[5]);
-	chB = 7; for (k = 0; k < 4; k++) { dualStepB(-1); seq[k] = chB; }
+	chB = 7; vt = 0; for (k = 0; k < 4; k++) { dualStepB(-1); seq[k] = SEQ(); }
 	printf("s2=%%d,%%d,%%d,%%d\n", seq[0], seq[1], seq[2], seq[3]);       /* 5 (A не пропускається), 2, 1, 1024 */
 	/* highestIndex < 1024: той самий обхід */
-	setUse(1024); codeplugAllChannelsCache[127] = 0; allZone(10); chB = 10; dualStepB(1); printf("s3=%%d\n", chB);   /* 1 */
+	setUse(1024); codeplugAllChannelsCache[127] = 0; allZone(10); chB = 10; vt = 0; dualStepB(1); printf("s3=%%d\n", SEQ());   /* VFO A (-1): після останнього каналу -- VFO */
+	dualStepB(1); dualStepB(1); printf("s3b=%%d,%%d\n", SEQ(), vt);   /* VFO B -> перший канал (1), тип «канал» */
+	vt = 2; dualStepB(-1); printf("s3c=%%d\n", SEQ());   /* від VFO B назад -- VFO A */
+	dualStepB(-1); printf("s3d=%%d\n", SEQ());   /* від VFO A назад -- останній канал (10) */
+	vt = 1; dualStepB(1); printf("s3e=%%d\n", SEQ());   /* від VFO A вперед -- VFO B */
+	vt = 0;
 	/* A збігається з B у «Всіх каналах» */
 	chB = 5; printf("p1=%%d\n", dcCheckPair(dualChannelA(), chB, codeplugAllChannelsIndexIsInUse(chB)));   /* R97-FIX6: B==A -- OK=0 */
 	/* B видалено (поза маскою) */
@@ -687,8 +745,8 @@ int main(void)
 	memset(&currentZone, 0, sizeof(currentZone)); currentZone.NOT_IN_CODEPLUGDATA_indexNumber = 3; currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone = 3; currentZone.NOT_IN_CODEPLUGDATA_highestIndex = 3;
 	currentZone.channels[0] = 2; currentZone.channels[1] = 7; currentZone.channels[2] = 10;
 	codeplugSetLastUsedChannelInZone(3, 1); printf("z1=%%d\n", dualChannelA());           /* 7 */
-	chB = 10; dualStepB(1); printf("z2=%%d\n", chB);                                       /* 2 (з 10 -> 2; A=7 пропущено не потрібно) */
-	chB = 2; dualStepB(1); printf("z3=%%d\n", chB);                                       /* 7 (A не пропускається) */
+	chB = 10; vt = 0; dualStepB(1); printf("z2=%%d\n", SEQ());                                       /* VFO A (з 10 вперед -- VFO, потім 2) */
+	chB = 2; vt = 0; dualStepB(1); printf("z3=%%d\n", SEQ());                                       /* 7 (A не пропускається) */
 	/* R97-FIX6: чергування не йде (A==B): після кроку B викликається dualAutoResume() і s_dualKeyMs скидається */
 	allZone(1024); setUse(1024); codeplugSetLastUsedChannelInZone(-1, 5); chB = 5; running = 0; resumes = 0; s_dualKeyMs = 5; dualStepB(1);
 	printf("n1=%%d,%%d,%%d\n", chB, resumes, (int)s_dualKeyMs); running = 1;
@@ -733,7 +791,7 @@ def test_fix2(incs, cf):
     if t is None:
         return
     # ---- R97-FIX3 п.2: dualRenderScreen/dualRenderHeader хостово ----
-    fns = [carve_fn(t, s_) for s_ in ("static void dualRenderHeader(_Bool force)", "_Bool uiChannelModeDualHeader(_Bool force)", "static void dualRenderScreen(void)", "static _Bool dualActivity(_Bool *cardB)", "static _Bool dualSingle(void)")]
+    fns = [carve_fn(t, s_) for s_ in ("static Channel_t dualChanOf(const CodeplugChannel_t *ch)", "static uint8_t dualVfoIdx(void)", "static _Bool dualBSameAsA(void)", "static void dualRenderHeader(_Bool force)", "_Bool uiChannelModeDualHeader(_Bool force)", "static void dualRenderScreen(void)", "static _Bool dualActivity(_Bool *cardB)", "static _Bool dualSingle(void)", "static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)")]
     check(all(fns), "R97-FIX3: знайдено dualRenderHeader / uiChannelModeDualHeader / dualRenderScreen / dualActivity / dualSingle")
     if all(fns):
         pre = "static int directChannelNumber = 0;\nstatic _Bool dualIsRunning(void) { return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)); }\n"
@@ -748,6 +806,8 @@ def test_fix2(incs, cf):
                   "п.2 (б): виклик/утримання -- справжня шапка (isVFODualWatchScanning=false, не «[DW]»), покажчик значення не має: %s %s %s %s" % (o.get("rs10"), o.get("rs11"), o.get("rs20"), o.get("rs21")))
             check(o.get("hd") == "1,1,0,0,0", "п.2 (в): uiChannelModeDualHeader (applicationMain) -- true лише при чергуванні без активності: %s" % o.get("hd"))
             check(o.get("bad") == "1,0", "п.2 (г): недійсний канал -- запасна справжня шапка: %s" % o.get("bad"))
+            check(o.get("ets") == "1,0,1,0,0,1", "R98 Д2: ТС у шапці обраного каналу -- ефективний (контакт, ручне перекриття, перекриття ТГ), а не ТС запису каналу: %s" % o.get("ets"))
+            check(o.get("vf") == "2,3,0,0,0,1|1,1,1,2|2,0", "R98 В3: картка B = VFO -- шапка з запису VFO (режим/смуга/CC), ефективний ТС питає ПРАВИЛЬНИЙ VFO (A=0, B=1), звичайної шапки нема, тип іде в рядок: %s" % o.get("vf"))
             check(o.get("rr00") == "1,0,0,0" and o.get("rr01") == "0,0,1,0", "FIX5/6 З2: чергування -- обраний (покажчик) інвертований, RX-мітки нема: %s / %s" % (o.get("rr00"), o.get("rr01")))
             check(o.get("rr20") == "1,1,0,0" and o.get("rr21") == "1,1,0,0", "FIX5/6 З2: активність на A -- мітка RX і S-метр на A (обраний = де активність, покажчик не важить): %s / %s" % (o.get("rr20"), o.get("rr21")))
             check(o.get("rr10") == o.get("rr20") and o.get("rr11") == o.get("rr21"), "FIX5/6 З2: коротка пауза вважається активністю: %s" % o.get("rr10"))
@@ -755,11 +815,11 @@ def test_fix2(incs, cf):
             check(o.get("sg1") == "1,0,0,0" and o.get("sg2") == "0,0,1,1", "FIX6 З1/З2: A==B -- обраний за покажчиком, активність (несуча) -- на картці покажчика: %s / %s" % (o.get("sg1"), o.get("sg2")))
             check(o.get("sg3") == "1,1,1,0,0,0", "FIX6 З1/З2: A==B, виклик DMR -- активність і абонент на картці покажчика: %s" % o.get("sg3"))
             check(o.get("sg4") == "0,0", "FIX6 З1: режим вимкнено -- екран режиму без активності: %s" % o.get("sg4"))
-            mut = [fns[0].replace("uiUtilityRenderHeaderForChannel(&ov, force);", "uiUtilityRenderHeader(0, 0, force);"), fns[1], fns[2], fns[3], fns[4]]
+            mut = [fns[0], fns[1], fns[2], fns[3].replace("uiUtilityRenderHeaderForChannel(&ov, force);", "uiUtilityRenderHeader(0, 0, force);"), fns[4], fns[5], fns[6], fns[7], fns[8]]
             mo = run_c(RS_HARNESS % {"fns": pre + "\n".join(mut)})
-            check(fns[0] != mut[0] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("rs00") != o.get("rs00"), "п.2 (мутант): шапка з даних trx замість кодплага ловиться тестом (а)")
+            check(fns[3] != mut[3] and mo is not None and dict(l.split("=", 1) for l in mo.split()).get("rs00") != o.get("rs00"), "п.2 (мутант): шапка з даних trx замість кодплага ловиться тестом (а)")
     # ---- R97-FIX3 п.1: вимкнення на B ----
-    dsf = [carve_fn(t, s_) for s_ in ("static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static _Bool dualSelectedIsB(void)", "static void dualSuspend(void)",
+    dsf = [carve_fn(t, s_) for s_ in ("static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static _Bool dualBExists(void)", "static _Bool dualSelectedIsB(void)", "static void dualSuspend(void)",
                                       "static void dualLeaveOnB(void)", "static void dualDisable(void)")]
     check(all(dsf), "R97-FIX3/4: знайдено dualZoneChannelAt / dualSelectedIsB / dualSuspend / dualLeaveOnB / dualDisable")
     if all(dsf):
@@ -787,12 +847,15 @@ def test_fix2(incs, cf):
                   "s4": "виклик на A -> лишається на A", "s5": "покажчик на B, але B видалено -> A"}
             for k in sx:
                 check(o.get(k) == sx[k], "FIX4 dualSuspend %s -- %s (onB,tunes,active,scanType): %s" % (k, sn[k], o.get(k)))
-            for what, mut in (("«завжди A»", dsf[4].replace("_Bool stayB = dualSelectedIsB();", "_Bool stayB = 0;")),
-                              ("«за станом рації замість обраного»", dsf[1].replace("dcPointerB()", "dcIsOnB()"))):
-                fl = list(dsf); fl[4 if "stayB" in mut else 1] = mut
+            vx = {"dv1": "1,0,0,-99,0", "dv2": "1,0,0,-99,0", "dv3": "0,0,0,-99,0", "dv4": "1,0,0,-99,0", "sv": "1,1"}
+            for k in vx:
+                check(o.get(k) == vx[k], "R98 В6 (B = VFO) %s -- вихід на VFO-екран при обраному VFO, без канальної гілки (лічильник, увімкнено, завантажень, зона, active) / dualSuspend налаштовує VFO: %s" % (k, o.get(k)))
+            for what, mut in (("«завжди A»", dsf[5].replace("_Bool stayB = dualSelectedIsB();", "_Bool stayB = 0;")),
+                              ("«за станом рації замість обраного»", dsf[2].replace("dcPointerB()", "dcIsOnB()"))):
+                fl = list(dsf); fl[5 if "stayB" in mut else 2] = mut
                 mo = run_c(mk(fl))
                 mm = dict(l.split("=", 1) for l in mo.split()) if mo else {}
-                check(mut != (dsf[4] if "stayB" in mut else dsf[1]) and any(mm.get(k) != o.get(k) for k in list(exp) + list(sx)), "FIX4 (мутант): %s ловиться тестами" % what)
+                check(mut != (dsf[5] if "stayB" in mut else dsf[2]) and any(mm.get(k) != o.get(k) for k in list(exp) + list(sx) + list(vx)), "FIX4 (мутант): %s ловиться тестами" % what)
     check(src.count("dualDisable()") >= 2 and "dualLeaveOnB();" in src, "R97-FIX3: dualDisable викликається з dualSetMode(off) і dualAutoResume (помилка пари) -- через логіку обраного")
     m_red = re.search(r"case KEY_RED:(.*?)return true;", dk if False else src[src.find("static bool dualHandleKey(uiEvent_t *ev)\n{"):], re.S)
     check(m_red is not None and "dualDisable" not in m_red.group(1) and "dualSuspend" not in m_red.group(1) and "UpdateScreen" not in m_red.group(1),
@@ -838,7 +901,7 @@ def test_fix2(incs, cf):
             check(o.get("h6") == "1,1,0,2", "п.2: два довгі ▼ підряд -- вмикає, потім вимикає: %s" % o.get("h6"))
     # ---- п.3: «Всі канали» (-1) ----
     cp = pp(FW, incs, cf["DUALCH"], "application/source/functions/codeplug.c")
-    zf = [carve_fn(t, s) for s in ("static uint16_t dualChannelA(void)", "static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static void dualStepB(int dir)")]
+    zf = [carve_fn(t, s) for s in ("static uint16_t dualChannelA(void)", "static uint16_t dualZoneChannelAt(int pos, void *ctx)", "static uint8_t dualVfoIdx(void)", "static void dualStepB(int dir)")]
     cf2 = [carve_fn(cp or "", s) for s in ("int16_t codeplugGetLastUsedChannelInZone(int zoneNum)", "int16_t codeplugGetLastUsedChannelNumberInCurrentZone(void)",
                                           "int16_t codeplugSetLastUsedChannelInZone(int zoneNum, int16_t channelNum)", "_Bool codeplugAllChannelsIndexIsInUse(int index)")]
     check(all(zf) and all(cf2), "п.3: знайдено dualChannelA/dualZoneChannelAt/dualStepB (uiChannelMode.c) і codeplug*LastUsed*/codeplugAllChannelsIndexIsInUse (codeplug.c)")
@@ -849,11 +912,12 @@ def test_fix2(incs, cf):
             o = dict(l.split("=", 1) for l in out.split())
             check(o.get("a1") == "5" and o.get("a2") == "1024", "п.3: «Всі канали» -- A = номер каналу з «останнього каналу зони» (справжні codeplug*LastUsed*): %s/%s" % (o.get("a1"), o.get("a2")))
             check(o.get("a3") == "0", "п.3: «Всі канали» -- пара A=5, B=7 валідна: %s" % o.get("a3"))
-            check(o.get("s1") == "10,1024,1,2,5,7", "п.3 (R97-FIX6): «Всі канали» -- валкодер B вгору: 10,1024,1,2,5(=A, не пропускається),7: %s" % o.get("s1"))
-            check(o.get("s2") == "5,2,1,1024", "п.3 (R97-FIX6): «Всі канали» -- валкодер B вниз від 7: 5(=A),2,1,1024: %s" % o.get("s2"))
-            check(o.get("s3") == "1", "п.3: «Всі канали», найвищий канал 10: обхід через край на 1: %s" % o.get("s3"))
+            check(o.get("s1") == "10,1024,-1,-2,1,2", "п.3 (R98 В8): «Всі канали» -- ручка B вгору: 10,1024,VFO A(-1),VFO B(-2),1,2 (замкнений цикл): %s" % o.get("s1"))
+            check(o.get("s2") == "5,2,1,-2", "п.3 (R98 В8): «Всі канали» -- ручка B вниз від 7: 5(=A),2,1,а далі VFO B(-2) (в обидва боки): %s" % o.get("s2"))
+            check(o.get("s3") == "-1" and o.get("s3b") == "1,0" and o.get("s3c") == "-1" and o.get("s3d") == "10" and o.get("s3e") == "-2",
+                  "п.3 (R98 В8): після останнього каналу VFO A, далі VFO B, далі перший канал (тип «канал»); назад -- навпаки: %s,%s,%s,%s,%s" % (o.get("s3"), o.get("s3b"), o.get("s3c"), o.get("s3d"), o.get("s3e")))
             check(o.get("p1") == "0" and o.get("p2") == "2" and o.get("n1") == "7,1,0", "п.3 (R97-FIX6): «Всі канали» -- B=A не помилка (OK), видалений B -- помилка; зміна B без чергування викликає dualAutoResume і скидає s_dualKeyMs: %s/%s/%s" % (o.get("p1"), o.get("p2"), o.get("n1")))
-            check(o.get("z1") == "7" and o.get("z2") == "2" and o.get("z3") == "7", "п.3: звичайна зона -- A=channels[індекс], B по каналах зони: %s,%s,%s" % (o.get("z1"), o.get("z2"), o.get("z3")))
+            check(o.get("z1") == "7" and o.get("z2") == "-1" and o.get("z3") == "7", "п.3: звичайна зона -- A=channels[індекс], B по каналах зони: %s,%s,%s" % (o.get("z1"), o.get("z2"), o.get("z3")))
             check(o.get("e1") == "0", "п.3: порожня зона -- A=0 (режим не стартує): %s" % o.get("e1"))
             check(o.get("m1") == "7,2", "п.3: «останній канал» зони -1 і звичайної зони -- різні комірки: %s" % o.get("m1"))
 
@@ -877,6 +941,10 @@ static int g_chA = 1, g_chB = 2;
 static uint16_t dcChannelB(void) { return (uint16_t)g_chB; }
 static uint16_t dualChannelA(void) { return (uint16_t)g_chA; }
 static bool codeplugAllChannelsIndexIsInUse(int c) { (void)c; return true; }
+static int g_bVfo = 0;   /* R98: тип B (0 канал, 1/2 VFO) */
+static bool dcBIsVfo(void) { return g_bVfo != 0; }
+static uint8_t dcTypeB(void) { return (uint8_t)g_bVfo; }
+static bool dcSameTarget(uint8_t ta, uint16_t ia, uint8_t tb, uint16_t ib) { return (ta == tb) && ((ta == 0) ? (ia == ib) : true); }
 static bool dualSingle(void);
 static bool dcIsEnabled(void) { return g_en; }
 static bool dualIsRunning(void) { return g_run; }
@@ -928,7 +996,8 @@ int main(void)
 	g_en = 0; directChannelNumber = 0; g_now = 7500U; g_stock = 0; uiChannelModeUpdateScreen(0); int a4 = g_stock;
 	g_en = 1; uiDataGlobal.displayChannelSettings = 1; g_stock = 0; g_dual = 0; uiChannelModeUpdateScreen(0); int a5 = g_stock;
 	g_en = 1; uiDataGlobal.displayChannelSettings = 0; g_chB = g_chA; g_now = 9000U; g_dual = 0; uiChannelModeUpdateScreen(0); int a6 = g_dual; g_chB = 2;   /* A==B: екран режиму й поза вікном паузи */
-	printf("w=%%d,%%d,%%d,%%d,%%d,%%d\n", a1, a2, a3, a4, a5, a6);
+	g_bVfo = 1; g_chB = g_chA; g_now = 9000U; g_dual = 0; g_stock = 0; uiChannelModeUpdateScreen(0); int a7 = g_stock; g_bVfo = 0; g_chB = 2;   /* R98 В4: канал A і VFO на B -- НЕ «однакові» (навіть з тим самим номером у запасі) */
+	printf("w=%%d,%%d,%%d,%%d,%%d,%%d,%%d\n", a1, a2, a3, a4, a5, a6, a7);
 	return 0;
 }
 """
@@ -960,9 +1029,10 @@ def test_fix5_z1(incs, cf):
     check(qe is not None and hs is not None, "FIX5 З1: знайдено dualQuietEnd / dualHoldScreen")
     # ---- хост: обгортка + dualQuietEnd + dualHoldScreen (справжній код) ----
     he = carve_fn(t, "static void handleEvent(uiEvent_t *ev)")
-    if qe and hs and he:
+    bsa = carve_fn(t, "static _Bool dualBSameAsA(void)") or ""
+    if qe and hs and he and bsa:
         def mk(q, h, w):
-            return Q_HARNESS % {"fns": "\n".join([h, q, w])}
+            return Q_HARNESS % {"fns": "\n".join([bsa, h, q, w])}
         out = run_c(mk(qe, hs, he))
         check(out is not None, "FIX5 З1: хостова збірка обгортки/dualQuietEnd/dualHoldScreen")
         if out is not None:
@@ -975,7 +1045,7 @@ def test_fix5_z1(incs, cf):
             for k in exp:
                 check(o.get(k) == exp[k], "FIX5 З1 клавіша %s (тиша,стокових,режиму): %s -- %s" % (k, nm[k], o.get(k)))
             check(all(o.get(k, "x").startswith("0,") for k in exp), "FIX5 З1 інваріант: після будь-якої клавіші s_dualQuiet == false")
-            check(o.get("w") == "1,1,1,1,1,1", "FIX5/6 З1: пауза <1 с -- екран режиму; >1 с -- стоковий (режим чекає); набраний номер тримає екран режиму; режим вимкнено -- стоковий; деталі SK1 -- стоковий; A==B -- екран режиму без вікна паузи: %s" % o.get("w"))
+            check(o.get("w") == "1,1,1,1,1,1,1", "FIX5/6 З1: пауза <1 с -- екран режиму; >1 с -- стоковий (режим чекає); набраний номер тримає екран режиму; режим вимкнено -- стоковий; деталі SK1 -- стоковий; A==B -- екран режиму без вікна паузи: %s" % o.get("w"))
             muts = (("тишу не знято", qe.replace("s_dualQuiet = 0;", "")),
                     ("екран наприкінці не малюється", qe.replace("uiChannelModeUpdateScreen(0);", "")),
                     ("малюється і в іншому меню", qe.replace("if (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE)", "if (1)")))
@@ -1012,15 +1082,32 @@ enum { CONTACT_CALLTYPE_TG = 0, CONTACT_CALLTYPE_PC };
 #define PC_CALL_FLAG 0x03
 #define ALL_CALL_VALUE 16777215
 #define SETTINGS_CHANNEL_MODE 0
+#define SETTINGS_VFO_A_MODE 1
+#define DC_TYPE_CHANNEL 0U
+#define DC_TYPE_VFO_A 1U
+#define DC_TYPE_VFO_B 2U
 typedef int ContactCalltype_t;
 typedef int CodeplugCSSTypes_t;
 #define CSS_TYPE_NONE 1
 #define CSS_TYPE_CTCSS 2
 #define CSS_TYPE_DCS 0x8000
-typedef struct { char name[16]; uint32_t rxFreq; uint8_t chMode; uint16_t contact; uint8_t txColor; uint16_t rxTone; uint8_t flags; uint8_t encrypt; uint8_t rxGroupList; } CodeplugChannel_t;
-typedef struct { char name[16]; uint32_t tgNumber; uint8_t callType; } CodeplugContact_t;
+typedef struct { char name[16]; uint32_t rxFreq; uint8_t chMode; uint16_t contact; uint8_t txColor; uint16_t rxTone; uint8_t flags; uint8_t encrypt; uint8_t rxGroupList; uint8_t NOT_IN_CODEPLUG_flag; } CodeplugChannel_t;
+typedef struct { char name[16]; uint32_t tgNumber; uint8_t callType; uint8_t reserve1; } CodeplugContact_t;
+#define CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE 0x01
+#define CODEPLUG_CONTACT_FLAG_TS_OVERRIDE_TIMESLOT_MASK 0x02
+typedef int Channel_t;
+#define CHANNEL_CHANNEL 2
+#define CHANNEL_VFO_A 0
+#define CHANNEL_VFO_B 1
+static int gMan = 0, gOv = 0, gUnD = 0, gUnA = 0, lines = 0, gLastChan = -1, gGetData = 0;
+static void chkp(int x, int y);
+int8_t tsGetManualOverride(Channel_t c) { gLastChan = c; return gMan; }
+bool tsIsContactHasBeenOverridden(Channel_t c) { gLastChan = c; return gOv; }
+static CodeplugChannel_t settingsVFOChannel[2];
+unsigned uiUnreadCount(char k) { return (k == 'D') ? gUnD : ((k == 'A') ? gUnA : 0U); }
+void displayDrawLine(int a, int b, int c, int d, bool inv) { (void)inv; chkp(a, b); chkp(c, d); lines++; }
 typedef struct { char contact[32]; char talkerAlias[32]; char talkgroup[17]; } LinkItem_t;
-struct { int contactDisplayPriority; uint32_t overrideTG; int currentIndexInTRxGroupList[2]; } nonVolatileSettings;
+struct { int contactDisplayPriority; uint32_t overrideTG; int currentIndexInTRxGroupList[3]; } nonVolatileSettings;
 struct { char tg[8]; char pc[8]; char all_call[12]; } lang, *currentLanguage = &lang;
 static LinkItem_t item; static LinkItem_t *LinkHead = &item;
 static int rssi = -200, bad = 0, locks = 0, lockX = 0, lockY = 0;
@@ -1028,10 +1115,11 @@ static CodeplugChannel_t chans[1100]; static char used[1100]; static CodeplugCon
 static int cx0 = 0, cy0 = 0, cx1 = 159, cy1 = 127;
 static char texts[40][40]; static int nt = 0, ntri = 0, litSeg = 0, outSeg = 0;
 static void chk(int x, int y, int w, int h) { if (x < cx0 || y < cy0 || x + w - 1 > cx1 || y + h - 1 > cy1) bad++; }
+static void chkp(int x, int y) { chk(x, y, 1, 1); }
 bool codeplugAllChannelsIndexIsInUse(int ch) { return used[ch]; }
-void codeplugChannelGetDataForIndex(int ch, CodeplugChannel_t *c) { *c = chans[ch]; }
+void codeplugChannelGetDataForIndex(int ch, CodeplugChannel_t *c) { gGetData++; *c = chans[ch]; }
 int codeplugChannelGetFlag(CodeplugChannel_t *c, int f) { return (c->flags & f) != 0; }
-bool codeplugContactGetDataForIndex(int i, CodeplugContact_t *c) { if (i <= 0 || i >= 8 || i == 7) { memset(c, 0, sizeof(*c)); memcpy(c->name, "TG 9            ", 16); c->tgNumber = 9; c->callType = CONTACT_CALLTYPE_TG; return false; } *c = cts[i]; return true; }
+bool codeplugContactGetDataForIndex(int i, CodeplugContact_t *c) { if (i <= 0 || i >= 8 || i == 7) { memset(c, 0, sizeof(*c)); memcpy(c->name, "TG 9            ", 16); c->tgNumber = 9; c->callType = CONTACT_CALLTYPE_TG; c->reserve1 = 0xff; return false; } *c = cts[i]; return true; }
 uint32_t codeplugContactGetPackedId(CodeplugContact_t *c) { return (c->callType == CONTACT_CALLTYPE_PC) ? (c->tgNumber | ((uint32_t)PC_CALL_FLAG << 24)) : c->tgNumber; }
 int codeplugRxGroupGetContactAt(int idx, int pos, int *num)
 {
@@ -1040,7 +1128,7 @@ int codeplugRxGroupGetContactAt(int idx, int pos, int *num)
 	if (idx == 1) { *num = 2; return g1[(pos < 0 || pos >= 2) ? 0 : pos]; }
 	return 0;   /* 0 -- списку нема; 2 -- порожній */
 }
-int codeplugContactIndexByTGorPC(uint32_t id, ContactCalltype_t t, CodeplugContact_t *c, uint8_t ts) { (void)ts; if (id == 91 && t == CONTACT_CALLTYPE_TG) { memset(c, 0, sizeof(*c)); memcpy(c->name, "TG Ukraine      ", 16); return 1; } return -1; }
+int codeplugContactIndexByTGorPC(uint32_t id, ContactCalltype_t t, CodeplugContact_t *c, uint8_t ts) { (void)ts; if (id == 91 && t == CONTACT_CALLTYPE_TG) { memset(c, 0, sizeof(*c)); memcpy(c->name, "TG Ukraine      ", 16); c->reserve1 = 0; return 1; } return -1; }
 void codeplugUtilConvertBufToDisplayString(char *in, char *out, int len) { memcpy(out, in, len); out[len] = 0; for (int i = len - 1; i >= 0 && out[i] == ' '; i--) out[i] = 0; }
 int codeplugGetCSSType(uint16_t t) { return (t == 0xFFFF) ? CSS_TYPE_NONE : ((t & 0x8000) ? CSS_TYPE_DCS : CSS_TYPE_CTCSS); }
 size_t dcsPrintf(char *d, size_t m, char *prefix, uint16_t tone) { (void)prefix; (void)tone; return (size_t)snprintf(d, m, "D023N"); }
@@ -1062,7 +1150,7 @@ int displayPrintCore(int x, int y, const char *t, int f, int al, bool inv)
 }
 int trxGetRSSIdBm(int d) { (void)d; return rssi; }
 %(fns)s
-static void reset(void) { nt = ntri = bad = litSeg = outSeg = locks = 0; }
+static void reset(void) { nt = ntri = bad = litSeg = outSeg = locks = lines = 0; }
 static void full(int y) { cx0 = 1; cy0 = y; cx1 = 158; cy1 = y + 56; }
 int main(void)
 {
@@ -1079,42 +1167,98 @@ int main(void)
 	chans[12].encrypt = 1;
 	chans[13].chMode = RADIO_MODE_DIGITAL; chans[13].contact = 2; chans[13].rxGroupList = 1; chans[13].txColor = 1;   /* список прийому: [3, 2] */
 	chans[14].chMode = RADIO_MODE_DIGITAL; chans[14].contact = 2; chans[14].rxGroupList = 2; chans[14].txColor = 1;   /* порожній список -> контакт каналу */
-	cts[2].tgNumber = 255; cts[3].callType = CONTACT_CALLTYPE_TG; strcpy(lang.all_call, "All call");
+	cts[2].tgNumber = 255; cts[2].reserve1 = CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE; cts[3].reserve1 = CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE;
+	chans[15].chMode = RADIO_MODE_DIGITAL; chans[15].contact = 5; chans[15].txColor = 1; cts[5].tgNumber = 5; memcpy(cts[5].name, "TS2 contact     ", 16); cts[5].reserve1 = CODEPLUG_CONTACT_FLAG_TS_OVERRIDE_TIMESLOT_MASK;   /* канал TS1, контакт -> TS2 */
+	chans[16].chMode = RADIO_MODE_DIGITAL; chans[16].contact = 6; chans[16].txColor = 1; chans[16].flags = CHANNEL_FLAG_TIMESLOT_TWO; cts[6].tgNumber = 6; memcpy(cts[6].name, "TS1 contact     ", 16); cts[6].reserve1 = 0;   /* канал TS2, контакт -> TS1 */ cts[3].callType = CONTACT_CALLTYPE_TG; strcpy(lang.all_call, "All call");
 	/* r1: A, FM, 4-значний номер, 16-символьна назва, CTCSS 67.0, 25k; обраний + активний */
-	full(11); reset(); dualRenderRow(11, false, 1024, true, true, false);
+	full(11); reset(); dualRenderRow(11, false, 1024, 0, true, true, false);
 	printf("r1=%%d,%%d,%%d|%%s|%%s|%%s|%%s|%%d,%%d\n", bad, ntri, nt, texts[1], texts[2], texts[3], texts[4], litSeg, outSeg);
-	full(71); reset(); dualRenderRow(71, true, 5, false, false, false);
+	full(71); reset(); dualRenderRow(71, true, 5, 0, false, false, false);
 	printf("r2=%%d,%%d,%%d|%%s|%%s|%%s\n", bad, ntri, nt, texts[1], texts[2], texts[3]);
 	strcpy(item.contact, "ID:1234567"); strcpy(item.talkerAlias, "ABCDEFGHIJKLMNOP"); strcpy(item.talkgroup, "TG 9123456789012"); nonVolatileSettings.contactDisplayPriority = CONTACT_DISPLAY_PRIO_TA_CC_DB;
-	reset(); dualRenderRow(71, true, 5, true, true, true);
+	reset(); dualRenderRow(71, true, 5, 0, true, true, true);
 	printf("r3=%%d,%%d|%%s|%%s\n", bad, nt, texts[2], texts[3]);
-	reset(); dualRenderRow(71, true, 1025, false, false, false);
+	reset(); dualRenderRow(71, true, 1025, 0, false, false, false);
 	printf("r4=%%d|%%s|%%s|%%s\n", bad, texts[1], texts[2], texts[3]);
-	reset(); dualRenderRow(71, true, 6, false, false, false); printf("r5=%%d|%%s\n", bad, texts[2]);
-	reset(); dualRenderRow(71, true, 8, false, false, false); printf("r6=%%d|%%s\n", bad, texts[2]);
-	reset(); dualRenderRow(71, true, 9, false, false, false); printf("r7=%%d|%%s\n", bad, texts[2]);
-	reset(); dualRenderRow(71, true, 10, false, false, false); printf("r8=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
-	reset(); dualRenderRow(71, true, 11, false, false, false); printf("r9=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
-	reset(); dualRenderRow(71, true, 3, false, false, false); printf("r10=%%d|%%s\n", bad, texts[3]);
-	nonVolatileSettings.currentIndexInTRxGroupList[0] = 0; reset(); dualRenderRow(71, true, 13, false, false, false); printf("g0=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
-	nonVolatileSettings.currentIndexInTRxGroupList[0] = 1; reset(); dualRenderRow(71, true, 13, false, false, false); printf("g1=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
-	nonVolatileSettings.currentIndexInTRxGroupList[0] = 9; reset(); dualRenderRow(71, true, 13, false, false, false); printf("g9=%%d|%%s\n", bad, texts[2]);
-	nonVolatileSettings.currentIndexInTRxGroupList[0] = 0; reset(); dualRenderRow(71, true, 14, false, false, false); printf("g2=%%d|%%s\n", bad, texts[2]);
-	nonVolatileSettings.overrideTG = 91; reset(); dualRenderRow(71, true, 5, true, false, false); printf("o1=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
-	reset(); dualRenderRow(71, true, 5, false, false, false); printf("o2=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
-	nonVolatileSettings.overrideTG = ((uint32_t)PC_CALL_FLAG << 24) | 2550213U; reset(); dualRenderRow(71, true, 5, true, false, false); printf("o3=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
-	nonVolatileSettings.overrideTG = ALL_CALL_VALUE; reset(); dualRenderRow(71, true, 5, true, false, false); printf("o4=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	reset(); dualRenderRow(71, true, 6, 0, false, false, false); printf("r5=%%d|%%s\n", bad, texts[2]);
+	reset(); dualRenderRow(71, true, 8, 0, false, false, false); printf("r6=%%d|%%s\n", bad, texts[2]);
+	reset(); dualRenderRow(71, true, 9, 0, false, false, false); printf("r7=%%d|%%s\n", bad, texts[2]);
+	reset(); dualRenderRow(71, true, 10, 0, false, false, false); printf("r8=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	reset(); dualRenderRow(71, true, 11, 0, false, false, false); printf("r9=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	reset(); dualRenderRow(71, true, 3, 0, false, false, false); printf("r10=%%d|%%s\n", bad, texts[3]);
+	nonVolatileSettings.currentIndexInTRxGroupList[0] = 0; reset(); dualRenderRow(71, true, 13, 0, false, false, false); printf("g0=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	nonVolatileSettings.currentIndexInTRxGroupList[0] = 1; reset(); dualRenderRow(71, true, 13, 0, false, false, false); printf("g1=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	nonVolatileSettings.currentIndexInTRxGroupList[0] = 9; reset(); dualRenderRow(71, true, 13, 0, false, false, false); printf("g9=%%d|%%s\n", bad, texts[2]);
+	nonVolatileSettings.currentIndexInTRxGroupList[0] = 0; reset(); dualRenderRow(71, true, 14, 0, false, false, false); printf("g2=%%d|%%s\n", bad, texts[2]);
+	nonVolatileSettings.overrideTG = 91; reset(); dualRenderRow(71, true, 5, 0, true, false, false); printf("o1=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	reset(); dualRenderRow(71, true, 5, 0, false, false, false); printf("o2=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	nonVolatileSettings.overrideTG = ((uint32_t)PC_CALL_FLAG << 24) | 2550213U; reset(); dualRenderRow(71, true, 5, 0, true, false, false); printf("o3=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
+	nonVolatileSettings.overrideTG = ALL_CALL_VALUE; reset(); dualRenderRow(71, true, 5, 0, true, false, false); printf("o4=%%d|%%s|%%s\n", bad, texts[2], texts[3]);
 	nonVolatileSettings.overrideTG = 0;
-	reset(); dualRenderRow(71, true, 12, false, false, false); printf("k1=%%d,%%d,%%d,%%d\n", bad, locks, lockX, lockY);
-	reset(); dualRenderRow(71, true, 3, false, false, false); printf("k2=%%d\n", locks);
+	/* Д3: хост-модель PTT -- стокове завантаження каналу (uiChannelModeLoadChannelData ~844-863) окремо від dualDestination: пакований ТГ/ПК, що піде в ефір */
+	{
+		int mism = 0, total = 0;
+		int chs[8] = { 5, 6, 8, 9, 10, 13, 14, 15 };
+		uint32_t ovs[3] = { 0, 91, ((uint32_t)PC_CALL_FLAG << 24) | 2550213U };
+		for (int ci = 0; ci < 8; ci++)
+			for (int oi = 0; oi < 3; oi++)
+				for (int idx = 0; idx < 3; idx++)
+				{
+					CodeplugChannel_t *c = &chans[chs[ci]];
+					CodeplugContact_t k;
+					int num, gc = codeplugRxGroupGetContactAt(c->rxGroupList, idx, &num);
+					uint32_t want, got; char nm[17]; bool no; uint8_t fl;
+					nonVolatileSettings.currentIndexInTRxGroupList[0] = idx;
+					nonVolatileSettings.overrideTG = ovs[oi];
+					if (gc != 0 && idx < num) (void)codeplugContactGetDataForIndex(gc, &k);   /* стоково: група дійсна й індекс у списку -- контакт групи (поза списком load скидає індекс у 0) */
+					else if (gc != 0) (void)codeplugContactGetDataForIndex(gc, &k);
+					else (void)codeplugContactGetDataForIndex(c->contact, &k);
+					want = (ovs[oi] != 0) ? ovs[oi] : codeplugContactGetPackedId(&k);
+					got = dualDestination(c, nm, &no, &fl);
+					total++; if (want != got) mism++;
+				}
+		nonVolatileSettings.overrideTG = 0; nonVolatileSettings.currentIndexInTRxGroupList[0] = 0;
+		printf("ptt=%%d,%%d\n", mism, total);
+	}
+	/* Д2: ефективний ТС */
+	reset(); dualRenderRow(71, true, 15, 0, false, false, false); printf("t1=%%s\n", texts[3]);   /* контакт TS2, канал TS1 */
+	reset(); dualRenderRow(71, true, 16, 0, false, false, false); printf("t2=%%s\n", texts[3]);   /* контакт TS1, канал TS2 */
+	reset(); dualRenderRow(71, true, 5, 0, false, false, false); printf("t3=%%s\n", texts[3]);    /* NO_TS_OVERRIDE: ТС каналу (TS2) */
+	gMan = 1; gOv = 0; reset(); dualRenderRow(71, true, 5, 0, false, false, false); printf("t4=%%s\n", texts[3]);   /* ручне перекриття ТС каналу -> TS1 */
+	gMan = 1; gOv = 1; reset(); dualRenderRow(71, true, 15, 0, false, false, false); printf("t5=%%s\n", texts[3]);   /* контакт перекрито вручну -> TS1 */
+	gMan = 0; gOv = 1; reset(); dualRenderRow(71, true, 15, 0, false, false, false); printf("t6=%%s\n", texts[3]);   /* прапор «перекрито» без значення -> за контактом TS2 */
+	gMan = 0; gOv = 0; nonVolatileSettings.overrideTG = 91; reset(); dualRenderRow(71, true, 15, 0, false, false, false); printf("t7=%%s\n", texts[3]); nonVolatileSettings.overrideTG = 0;   /* перекриття ТГ: ТС контакту не діє -> ТС каналу TS1 */
+	/* Д1: конверт непрочитаних у квадраті літери */
+	full(11); gUnD = 3; reset(); dualRenderRow(11, false, 3, 0, false, false, false); printf("u1=%%d,%%d,%%d,%%s\n", bad, lines, outSeg, texts[nt - 1]);
+	gUnD = 0; gUnA = 12; reset(); dualRenderRow(11, false, 3, 0, true, false, false); printf("u2=%%d,%%d\n", bad, lines);   /* A -- лише на картці B */
+	full(71); reset(); dualRenderRow(71, true, 3, 0, true, false, false); printf("u3=%%d,%%d,%%s\n", bad, lines, texts[nt - 1]);
+	gUnA = 0; reset(); dualRenderRow(71, true, 3, 0, false, false, false); printf("u4=%%d,%%d\n", bad, lines);
+	reset(); dualRenderRow(71, true, 12, 0, false, false, false); printf("k1=%%d,%%d,%%d,%%d\n", bad, locks, lockX, lockY);
+	reset(); dualRenderRow(71, true, 3, 0, false, false, false); printf("k2=%%d\n", locks);
+	/* R98 В3: картка B = VFO -- «VFO A»/«VFO B», дані прямо із запису VFO (без читання кодплага), ТГ за списком VFO (SETTINGS_VFO_A_MODE+VFO), ТС -- VFO */
+	memset(&settingsVFOChannel[0], 0, sizeof(CodeplugChannel_t)); memset(&settingsVFOChannel[1], 0, sizeof(CodeplugChannel_t));
+	settingsVFOChannel[0].chMode = RADIO_MODE_DIGITAL; settingsVFOChannel[0].rxFreq = 43012500U; settingsVFOChannel[0].rxGroupList = 1; settingsVFOChannel[0].contact = 5; settingsVFOChannel[0].txColor = 7; settingsVFOChannel[0].NOT_IN_CODEPLUG_flag = 0x01; settingsVFOChannel[0].encrypt = 1;
+	settingsVFOChannel[1].chMode = RADIO_MODE_ANALOG; settingsVFOChannel[1].rxFreq = 14550000U; settingsVFOChannel[1].rxTone = 0xFFFF; settingsVFOChannel[1].NOT_IN_CODEPLUG_flag = 0x03; settingsVFOChannel[1].flags = CHANNEL_FLAG_BW_25K;
+	nonVolatileSettings.currentIndexInTRxGroupList[1] = 1; nonVolatileSettings.currentIndexInTRxGroupList[2] = 0; nonVolatileSettings.currentIndexInTRxGroupList[0] = 0;
+	full(71); gGetData = 0; gLastChan = -1; locks = 0; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_A, true, false, false);
+	printf("va=%%d,%%d,%%d,%%d|%%s|%%s|%%s\n", bad, gGetData, gLastChan, locks, texts[1], texts[2], texts[3]);   /* ТГ -- 2-й у групі VFO A (контакт 2 = «TG Ukraine 255», NO_TS_OVERRIDE -> TS1 з запису VFO) */
+	nonVolatileSettings.currentIndexInTRxGroupList[1] = 0; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_A, false, false, false);
+	printf("vb=%%d|%%s|%%s\n", bad, texts[2], texts[3]);   /* перший у групі: контакт 3 («TG 91»; NO_TS_OVERRIDE) */
+	nonVolatileSettings.currentIndexInTRxGroupList[1] = 1; gLastChan = -1; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_B, false, false, false);
+	printf("vc=%%d,%%d|%%s|%%s|%%s\n", bad, gLastChan, texts[1], texts[2], texts[3]);   /* VFO B -- FM: «VFO B», частота в рядку 2, смуга 25k, без прочерків */
+	settingsVFOChannel[1].rxTone = 670; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_B, false, false, false);
+	printf("vd=%%d|%%s\n", bad, texts[3]);   /* CTCSS + смуга */
+	gMan = 2; gOv = 0; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_A, false, false, false);
+	printf("ve=%%s\n", texts[3]); gMan = 0;   /* ручне перекриття ТС цього VFO -> TS2 */
+	nonVolatileSettings.currentIndexInTRxGroupList[1] = 0;
 	/* S-метр активної картки: (виходів,залито,контурних) */
 	for (int k = 0; k < 6; k++)
 	{
 		int v[6] = { -200, -130, -125, -109, -93, -20 };
-		rssi = v[k]; full(11); reset(); dualRenderRow(11, false, 3, false, true, false);
+		rssi = v[k]; full(11); reset(); dualRenderRow(11, false, 3, 0, false, true, false);
 		printf("m%%d=%%d,%%d,%%d\n", k, bad, litSeg, outSeg);
 	}
-	reset(); dualRenderRow(11, false, 3, false, false, false); printf("m9=%%d,%%d,%%d\n", bad, litSeg, outSeg);   /* неактивна -- без смуги */
+	reset(); dualRenderRow(11, false, 3, 0, false, false, false); printf("m9=%%d,%%d,%%d\n", bad, litSeg, outSeg);   /* неактивна -- без смуги */
 	return 0;
 }
 """
@@ -1175,7 +1319,7 @@ def test_fix5_z2(incs, cf):
             D[m.group(1)] = int(eval(re.sub(r"\b(DW_\w+|DISPLAY_Y_POS_BAR)", lambda x: str(D[x.group(1)]), m.group(2).strip())))
         except Exception:
             pass
-    need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_SQ_X", "DW_SQ_W", "DW_SQ_DY", "DW_SQ_H", "DW_LETTER_X", "DW_LETTER_DY", "DW_ARROW_DY", "DW_TXT_X",
+    need = ["DW_UN_DY", "DW_UN_LETTER_X", "DW_UN_ENV_X", "DW_UN_NUM_X", "DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_SQ_X", "DW_SQ_W", "DW_SQ_DY", "DW_SQ_H", "DW_LETTER_X", "DW_LETTER_DY", "DW_ARROW_DY", "DW_TXT_X",
             "DW_LINE1_DY", "DW_LINE2_DY", "DW_LINE3_DY", "DW_LINE3_MAX", "DW_LOCK_X", "DW_LOCK_DY", "DW_METER_DY", "DW_METER_H", "DW_TAG_W", "DW_METER_X", "DW_METER_SEG_W", "DW_METER_STEP", "DW_METER_SEGS"]
     check(all(k in D for k in need), "FIX6 З2: усі геометричні константи DW_* знайдено й обчислено")
     if not all(k in D for k in need):
@@ -1201,8 +1345,8 @@ def test_fix5_z2(incs, cf):
           "FIX6 З2: нижній рядок і роздільник прибрано (dual_rx_on/dual_wait у коді не використовуються)")
     check("uiDrawAesEnabledIcon();" not in src[src.find("static void dualRenderScreen(void)\n{"):], "FIX6 З2: замок AES шапки (x=147,y=14) у dualRenderScreen не малюється -- він у картці")
     # ---- хост: справжні dualRenderRow / dualMeterRow / dualCallerText ----
-    fn = [carve_fn(t, s_) for s_ in ("static void dualCallerText(char *text17)", "static void dualMeterRow(int16_t y)", "static uint32_t dualDestination(const CodeplugChannel_t *ch, _Bool selected, char *out, _Bool *numOnly)",
-                                     "static void dualRenderRow(int16_t y, _Bool isB, uint16_t ch, _Bool selected, _Bool active, _Bool callerHere)")]
+    fn = [carve_fn(t, s_) for s_ in ("static Channel_t dualChanOf(const CodeplugChannel_t *ch)", "static void dualCallerText(char *text17)", "static void dualMeterRow(int16_t y)", "static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, _Bool *numOnly, uint8_t *tsFlags)", "static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)",
+                                     "static void dualRenderRow(int16_t y, _Bool isB, uint16_t ch, uint8_t vfoType, _Bool selected, _Bool active, _Bool callerHere)")]
     check(all(fn), "FIX6 З3: знайдено dualCallerText / dualMeterRow / dualDestination / dualRenderRow")
     if not all(fn):
         return
@@ -1233,10 +1377,24 @@ def test_fix5_z2(incs, cf):
     check(f("r10") == ["0", "12.5k"], "FIX7 А3: FM без тону -- лише смуга «12.5k», без прочерка: %s" % o.get("r10"))
     check(f("g0") == ["0", "TG 91", "TS1 CC1"] and f("g1") == ["0", "TG Ukraine 255", "TS1 CC1 TG255"] and f("g9") == ["0", "TG 91"] and f("g2") == ["0", "TG Ukraine 255"],
           "FIX7 А2: список прийому каналу -- контакт на позиції індексу ТГ (поза списком -> перший); порожній список -> контакт каналу: %s %s %s %s" % (o.get("g0"), o.get("g1"), o.get("g9"), o.get("g2")))
-    check(f("o1") == ["0", "TG Ukraine", "TS2 CC15 TG91"] and f("o2") == ["0", "TG Ukraine 255", "TS2 CC15 TG255"],
-          "FIX7 А2: перекриття ТГ діє на ОБРАНІЙ картці, необрана -- з кодплага: %s / %s" % (o.get("o1"), o.get("o2")))
+    check(f("o1") == ["0", "TG Ukraine", "TS2 CC15 TG91"] and f("o2") == ["0", "TG Ukraine", "TS2 CC15 TG91"],
+          "R98 Д3: перекриття ТГ глобальне -- PTT з будь-якої картки піде з ним, тож обидві DMR-картки його показують: %s / %s" % (o.get("o1"), o.get("o2")))
     check(f("o3") == ["0", "PC 2550213", "TS2 CC15"] and f("o4") == ["0", "All call", "TS2 CC15 TG16777215"],
           "FIX7 А2: перекриття -- приватний без імені «PC 2550213» (без дубля числа), «All call» і число вміщується рівно в 19 символів: %s / %s" % (o.get("o3"), o.get("o4")))
+    check(o.get("ptt") == "0,72", "R98 Д3: показ збігається з реальним призначенням PTT (модель стокового завантаження каналу): канали з контактом/списком/без контакту x перекриття ТГ (немає/ТГ/ПК) x індекс ТГ: %s" % o.get("ptt"))
+    check(f("t1") == ["TS2 CC1 TG5"] and f("t2") == ["TS1 CC1 TG6"] and f("t3") == ["TS2 CC15 TG255"],
+          "R98 Д2: ефективний ТС -- контакт TS2 при каналі TS1, контакт TS1 при каналі TS2, NO_TS_OVERRIDE -> ТС каналу: %s %s %s" % (o.get("t1"), o.get("t2"), o.get("t3")))
+    check(f("t4") == ["TS1 CC15 TG255"] and f("t5") == ["TS1 CC1 TG5"] and f("t6") == ["TS2 CC1 TG5"] and f("t7") == ["TS1 CC1 TG91"],
+          "R98 Д2: ручне перекриття ТС (канал / контакт), прапор без значення, перекриття ТГ скасовує ТС контакту: %s %s %s %s" % (o.get("t4"), o.get("t5"), o.get("t6"), o.get("t7")))
+    check(o.get("u1") == "0,2,0,3" and o.get("u2") == "0,0" and o.get("u3") == "0,2,+" and o.get("u4") == "0,0",
+          "R98 Д1: індикатор непрочитаних -- у квадраті літери (D на A, A на B), в межах картки, без лічильника -- нічого; понад 9 -- «+»: %s %s %s %s" % (o.get("u1"), o.get("u2"), o.get("u3"), o.get("u4")))
+    check(g.DW_UN_LETTER_X >= g.DW_SQ_X + 1 and g.DW_UN_NUM_X + 6 - 1 <= g.DW_SQ_X + g.DW_SQ_W - 2 and g.DW_UN_ENV_X + 8 + 1 <= g.DW_UN_NUM_X and g.DW_UN_LETTER_X + 6 + 1 <= g.DW_UN_ENV_X
+          and g.DW_UN_DY > g.DW_ARROW_DY + 4 and g.DW_UN_DY + 8 <= g.DW_SQ_DY + g.DW_SQ_H - 1,
+          "R98 Д1: індикатор у квадраті: літера x=4..9, конверт 8x6 x=11..18, число x=20..25 (≤ x=25 -- внутрішня межа квадрата), під ▸ й над нижньою рамкою")
+    check(f("va") == ["0,0,0,0", "VFO A 430.12500", "TG Ukraine 255", "TS1 CC7 TG255"] and f("vb") == ["0", "TG 91", "TS1 CC7"],
+          "R98 В3: картка VFO A (DMR) -- рядок 1 «VFO A» + частота, ТГ за списком VFO (SETTINGS_VFO_A_MODE+VFO), ефективний ТС/CC, без читання кодплага, ТС питає CHANNEL_VFO_A, замка нема: %s / %s" % (o.get("va"), o.get("vb")))
+    check(f("vc") == ["0,-1", "VFO B", "FM 145.50000", "25k"] and f("vd") == ["0", "CTCSS 67.0 25k"] and o.get("ve") == "TS2 CC7 TG255",
+          "R98 В3: картка VFO B (FM) -- «VFO B», частота в рядку 2, смуга/CTCSS без прочерків; ручне перекриття ТС цього VFO враховано: %s / %s / %s" % (o.get("vc"), o.get("vd"), o.get("ve")))
     check(o.get("k1") == "0,1,145,104" and o.get("k2") == "0", "FIX6 З2: замок AES -- лише на картці каналу з ключем, у (145, y+33), у межах картки: %s / %s" % (o.get("k1"), o.get("k2")))
     exp = {"m0": "0,0,9", "m1": "0,0,9", "m2": "0,1,8", "m3": "0,5,4", "m4": "0,9,0", "m5": "0,9,0"}
     for k in exp:
@@ -1244,20 +1402,23 @@ def test_fix5_z2(incs, cf):
     check(o.get("m9") == "0,0,0", "FIX6 З2: неактивна картка -- без смуги й S-метра: %s" % o.get("m9"))
     # ---- мутанти ----
     base = out
-    rr = fn[3]
-    mutd = (("перекриття ТГ ігнорується", fn[2].replace("selected && (nonVolatileSettings.overrideTG != 0)", "0")), ("список прийому ігнорується", fn[2].replace("if (ci == 0)", "if (1)")))
-    muts = (("замок AES завжди", rr.replace("uiChannelDataHasAes(&tmp)", "1")),
+    rr = fn[5]
+    mutd = (("перекриття ТГ ігнорується", fn[3].replace("nonVolatileSettings.overrideTG != 0", "0"), fn[4]), ("список прийому ігнорується", fn[3].replace("if (ci == 0)", "if (1)"), fn[4]),
+            ("ТС контакту ігнорується", fn[3], re.sub(r"\(tsFlags & 0x01\)\s*==\s*0x00", "0", fn[4])),
+            ("ТС каналу замість ефективного", fn[3], "static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags) { (void)tsFlags; return (codeplugChannelGetFlag((CodeplugChannel_t *)ch, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2U : 1U; }"))
+    muts = (("VFO-тип ігнорується (картка VFO читається як канал)", re.sub(r"_Bool isVfo = \(vfoType != [^)]*\);", "_Bool isVfo = 0;", rr)),
+            ("замок AES завжди", rr.replace("uiChannelDataHasAes(&tmp)", "1")), ("конверт завжди", rr.replace("if (un > 0U)", "if (1)")),
             ("S-метр завжди", re.sub(r"if \(active\)(\s*\{\s*dualMeterRow)", r"if (1)\1", rr, count=1)))
     for what, mf in muts:
         if mf == rr:
             check(False, "FIX6 (мутант) %s: заміна не відбулась" % what); continue
-        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], mf])})
+        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], fn[3], fn[4], mf])})
         check(mo is not None and mo != base, "FIX6 (мутант): %s -- ловиться тестами" % what)
-    for what, md in mutd:
-        if md == fn[2]:
-            check(False, "FIX7 (мутант) %s: заміна не відбулась" % what); continue
-        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], md, rr])})
-        check(mo is not None and mo != base, "FIX7 (мутант): %s -- ловиться тестами" % what)
+    for what, md, me in mutd:
+        if md == fn[3] and me == fn[4]:
+            check(False, "R98 (мутант) %s: заміна не відбулась" % what); continue
+        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], md, me, rr])})
+        check(mo is not None and mo != base, "R98 (мутант): %s -- ловиться тестами" % what)
     # А3: у dual-коді не лишилось рядків-прочерків
     blk = src[src.find("static uint32_t dualDestination"):src.find("bool uiChannelModeDualScreenShown")]
     check(re.search(r'"-{2,}"', blk) is None and re.search(r'"-{2,}"', src[src.find("static void dualRenderScreen"):src.find("void uiChannelModeColdStart")]) is None, "FIX7 А3: у коді карток нема рядків-прочерків («--», «---»)")

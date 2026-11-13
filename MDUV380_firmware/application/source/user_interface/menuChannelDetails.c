@@ -171,7 +171,12 @@ menuStatus_t menuChannelDetails(uiEvent_t *ev, bool isFirstRun)
 
 		if ((uiDataGlobal.currentSelectedChannelNumber == CH_DETAILS_VFO_CHANNEL) && (namePos == 0)) // In VFO, and VFO has no name in the codeplug
 		{
+#if defined(DUAL_CHANNEL_ENABLED)
+			// R98: «Подвійний прийом» може тримати на екрані VFO, що не збігається з поточним VFO налаштувань -- назва за записом, який редагуємо
+			snprintf(channelName, SCREEN_LINE_BUFFER_SIZE, "VFO %s", (((currentChannelData->NOT_IN_CODEPLUG_flag & 0x02) == 0x02) ? "B" : "A"));
+#else
 			snprintf(channelName, SCREEN_LINE_BUFFER_SIZE, "VFO %s", (nonVolatileSettings.currentVFONumber == 0 ? "A" : "B"));
+#endif
 			namePos = 5;
 		}
 
