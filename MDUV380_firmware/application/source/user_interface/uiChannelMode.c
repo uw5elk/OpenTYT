@@ -137,8 +137,8 @@ static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
 static void dualTune(bool toB);
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
-static bool     s_dualQuiet;   // R97-FIX4: придушити uiChannelModeUpdateScreen() на час кроку каналу ручкою на A (S-метр звичайного екрана не спалахує)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
+static bool     s_dualQuiet;   // R97-FIX4: придушити uiChannelModeUpdateScreen() на час кроку каналу ручкою на A (S-метр звичайного екрана не спалахує)
 #endif
 
 static char currentZoneName[SCREEN_LINE_BUFFER_SIZE];
