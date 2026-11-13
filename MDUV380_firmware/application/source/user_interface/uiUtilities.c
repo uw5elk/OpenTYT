@@ -2171,8 +2171,28 @@ void uiUtilityDrawAprsTxLabel(void)
 }
 #endif
 
+#if defined(DUAL_CHANNEL_ENABLED)
+/* R97-FIX3: шапка екрана «Подвійного прийому» без активності показує ОБРАНИЙ канал (дані з кодплага: режим, смуга, TS, CC, тони, прапорці),
+ * а не те, на що рація налаштована цієї миті. ov != NULL -- значення, що інакше беруться з trx*(), читаються з ov; блок S-метра не малюється.
+ * Макроси діють лише всередині цієї функції (#undef нижче); у ній ov -- параметр. Нових статичних змінних нема. */
+#define trxGetMode() ((ov != NULL) ? (int)ov->mode : trxGetMode())
+#define trxGetBandwidthIs25kHz() ((ov != NULL) ? (ov->bw25 != 0U) : trxGetBandwidthIs25kHz())
+#define trxGetDMRTimeSlot() ((ov != NULL) ? (int)ov->ts : trxGetDMRTimeSlot())
+#define trxGetDMRColourCode() ((ov != NULL) ? (uint8_t)ov->cc : trxGetDMRColourCode())
+#define tsGetManualOverrideFromCurrentChannel() ((ov != NULL) ? 0 : tsGetManualOverrideFromCurrentChannel())
+static void uiUtilityRenderHeaderCore(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay, const uiHeaderOverride_t *ov)
+#else
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
+#endif
 {
+#if defined(DUAL_CHANNEL_ENABLED)
+	CodeplugChannel_t *savedChannelData = currentChannelData;   // тимчасово: тони/потужність/прапорці читаються з обраного каналу
+
+	if (ov != NULL)
+	{
+		currentChannelData = ov->ch;
+	}
+#endif
 	const int MODE_TEXT_X_OFFSET = 1;
 #if defined(PLATFORM_MD9600)
 	const int FILTER_TEXT_X_CENTER = 35;
@@ -2240,7 +2260,11 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		}
 	}
 
+#if defined(DUAL_CHANNEL_ENABLED)
+	if ((isVFODualWatchScanning == false) && (ov == NULL))   // з ov (обраний канал без активності) S-метр не малюється: рація слухає не обов'язково його
+#else
 	if (isVFODualWatchScanning == false)
+#endif
 	{
 		if (isTransmittingIgnoringAPRSBeaconing() == false)
 		{
@@ -2391,7 +2415,12 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		case RADIO_MODE_DIGITAL:
 			if (settingsUsbMode != USB_MODE_HOTSPOT)
 			{
+#if defined(DUAL_CHANNEL_ENABLED)
+				// з ov -- ТС каналу з кодплага (контакт, який зараз завантажено, до обраного каналу не належить)
+				bool contactTSActive = ((ov == NULL) && (nonVolatileSettings.overrideTG == 0) && ((currentContactData.reserve1 & CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE) == 0x00));
+#else
 				bool contactTSActive = ((nonVolatileSettings.overrideTG == 0) && ((currentContactData.reserve1 & CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE) == 0x00));
+#endif
 				bool tsManOverride = false;
 
 				if (nonVolatileSettings.extendedInfosOnScreen & (INFO_ON_SCREEN_TS & INFO_ON_SCREEN_BOTH))
@@ -2634,7 +2663,28 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 #endif
 
 	displayThemeResetToDefault();
+#if defined(DUAL_CHANNEL_ENABLED)
+	currentChannelData = savedChannelData;
+#endif
 }
+
+#if defined(DUAL_CHANNEL_ENABLED)
+#undef trxGetMode
+#undef trxGetBandwidthIs25kHz
+#undef trxGetDMRTimeSlot
+#undef trxGetDMRColourCode
+#undef tsGetManualOverrideFromCurrentChannel
+
+void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
+{
+	uiUtilityRenderHeaderCore(isVFODualWatchScanning, isVFOSweepScanning, forceBatteryDisplay, NULL);
+}
+
+void uiUtilityRenderHeaderForChannel(const uiHeaderOverride_t *ov, bool forceBatteryDisplay)
+{
+	uiUtilityRenderHeaderCore(false, false, forceBatteryDisplay, ov);
+}
+#endif
 
 void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
 {

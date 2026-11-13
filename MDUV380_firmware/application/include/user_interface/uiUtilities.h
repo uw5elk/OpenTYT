@@ -208,6 +208,18 @@ void uiDrawAesEnabledIcon(void);    /* малює позначку замка, �
 #endif
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
 void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
+#if defined(DUAL_CHANNEL_ENABLED)
+/* R97-FIX3: шапка обраного каналу з даних кодплага (екран «Подвійного прийому» без активності); без S-метра. ch -- на стеку викликача. */
+typedef struct
+{
+	CodeplugChannel_t *ch;   /* дані каналу з кодплага (тони, потужність, прапорці) */
+	uint8_t mode;            /* RADIO_MODE_ANALOG / RADIO_MODE_DIGITAL */
+	uint8_t bw25;            /* FM: 25 кГц (інакше FMN) */
+	uint8_t ts;              /* DMR: 0 = TS1, 1 = TS2 */
+	uint8_t cc;              /* DMR: колірний код */
+} uiHeaderOverride_t;
+void uiUtilityRenderHeaderForChannel(const uiHeaderOverride_t *ov, bool forceBatteryDisplay);
+#endif
 LinkItem_t *lastHeardFindInList(uint32_t id);
 void lastHeardInitList(void);
 void lastHeardClearWorkingTAData(void);

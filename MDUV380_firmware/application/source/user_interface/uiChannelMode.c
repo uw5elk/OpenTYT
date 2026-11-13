@@ -131,6 +131,7 @@ static void dualSuspend(void);
 static void dualScanning(void);
 static bool dualHandleKey(uiEvent_t *ev);
 static void dualRenderScreen(void);
+static uint16_t dualChannelA(void);
 static void dualAutoResume(void);
 static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
@@ -3592,10 +3593,46 @@ static bool dualIsRunning(void)
 	return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL));
 }
 
-// Чи шапка зараз статична «[DW]» (чергування A/B без виклику/утримання); для applicationMain.c (headerRowIsDirty).
-bool uiChannelModeDualHeaderStatic(void)
+// R97-FIX3: шапка екрана режиму. Виклик/утримання (state != SCANNING) -- справжня шапка (рація на цьому каналі, S-метр). Чергування без
+// активності -- СТАТИЧНА шапка ОБРАНОГО каналу (покажчик: A або B): режим, смуга, TS, CC, тони, потужність беруться з даних кодплага
+// цього каналу (стек, без RAM-кешу), а не з налаштування радіо, яке чергується; S-метра нема. Перемикання A<->B шапку не чіпає.
+static void dualRenderHeader(bool force)
 {
-	return (dualIsRunning() && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING));
+	if (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING)
+	{
+		uiUtilityRenderHeader(false, false, force);
+		return;
+	}
+
+	CodeplugChannel_t tmp;
+	uiHeaderOverride_t ov;
+	uint16_t ch = (dcPointerB() ? dcChannelB() : dualChannelA());
+
+	if ((ch < DC_CH_MIN) || (codeplugAllChannelsIndexIsInUse(ch) == false))
+	{
+		uiUtilityRenderHeader(false, false, force);   // не мало б траплятись (пару перевірено при старті)
+		return;
+	}
+
+	codeplugChannelGetDataForIndex(ch, &tmp);
+	ov.ch = &tmp;
+	ov.mode = (uint8_t)tmp.chMode;
+	ov.bw25 = (uint8_t)(codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_BW_25K) != 0);
+	ov.ts = (uint8_t)(codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_TIMESLOT_TWO) != 0);
+	ov.cc = tmp.txColor;
+	uiUtilityRenderHeaderForChannel(&ov, force);
+}
+
+// Для applicationMain.c (headerRowIsDirty: заряд, зміна CC): true -- шапку намалювано тут (режим чергує без активності).
+bool uiChannelModeDualHeader(bool force)
+{
+	if ((dualIsRunning() == false) || (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING))
+	{
+		return false;
+	}
+
+	dualRenderHeader(force);
+	return true;
 }
 
 // Витримка на каналі -- той самий розрахунок, що в scanApplyNextChannel() (DMR slow/fast, FM).
@@ -4201,9 +4238,8 @@ static void dualRenderScreen(void)
 			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL));
 
 	displayClearBuf();
-	// R97-FIX2: SCANNING -- статична шапка «[DW]» (без TS/фільтра/CC/S-метра); виклик/утримання (state != SCANNING) -- справжня шапка
-	// каналу, що приймає (режим, TS, CC, S-метр). Передача сюди не потрапляє (dualSuspend() -> звичайний екран).
-	uiUtilityRenderHeader((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING), false, ((buttonsRead() & BUTTON_SK1) == BUTTON_SK1));
+	// R97-FIX3: чергування -- статична шапка ОБРАНОГО каналу з кодплага; виклик/утримання -- справжня шапка. Передача сюди не потрапляє.
+	dualRenderHeader((buttonsRead() & BUTTON_SK1) == BUTTON_SK1);
 
 	if (caller)
 	{

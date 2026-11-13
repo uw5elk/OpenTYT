@@ -951,8 +951,15 @@ void applicationMainTask(void)
 				}
 
 #if defined(DUAL_CHANNEL_ENABLED)
-				// R97-FIX2: під час чергування A/B шапка статична «[DW]»; звичайна (з TS/CC/S-метром) тут давала б мерехтіння при зміні CC/заряду
-				uiUtilityRenderHeader((uiVFOModeDualWatchIsScanning() || ((currentMenu == UI_CHANNEL_MODE) && uiChannelModeDualHeaderStatic())), sweeping, ((buttons & BUTTON_SK1) == BUTTON_SK1));
+				// R97-FIX3: чергування без активності -- шапка обраного каналу з кодплага (як на екрані режиму); інакше стокова
+				if ((currentMenu == UI_CHANNEL_MODE) && uiChannelModeDualHeader((buttons & BUTTON_SK1) == BUTTON_SK1))
+				{
+					// намальовано
+				}
+				else
+				{
+					uiUtilityRenderHeader(uiVFOModeDualWatchIsScanning(), sweeping, ((buttons & BUTTON_SK1) == BUTTON_SK1));
+				}
 #else
 				uiUtilityRenderHeader(uiVFOModeDualWatchIsScanning(), sweeping, ((buttons & BUTTON_SK1) == BUTTON_SK1));
 #endif

@@ -247,7 +247,7 @@ void uiChannelModeStopScanning(void);
 bool uiChannelModeIsScanning(void);
 #if defined(DUAL_CHANNEL_ENABLED)
 bool uiChannelModeDualPrepareTx(void);   /* R97: PTT під час «Подвійного прийому» (uiChannelMode.c) */
-bool uiChannelModeDualHeaderStatic(void);   /* R97-FIX2: триває чергування A/B -- шапка статична «[DW]» (applicationMain.c) */
+bool uiChannelModeDualHeader(bool forceBattery);   /* R97-FIX3: чергування без активності -- шапка обраного каналу з кодплага; true = намальовано (applicationMain.c) */
 #endif
 void uiChannelInitializeCurrentZone(void);
 
