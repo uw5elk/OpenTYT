@@ -120,6 +120,31 @@ void uiDrawAesEnabledIcon(void)
 		displayDrawXBitmap(DISPLAY_SIZE_X - UI_AES_PADLOCK_W - 3, 14, uiAesPadlockBitmap, UI_AES_PADLOCK_W, UI_AES_PADLOCK_H, true);
 	}
 }
+#if defined(DUAL_CHANNEL_ENABLED)
+// R97-FIX6: той самий вибір ключа, що в uiChannelHasAesEnabled(), але для переданого запису каналу (картка екрана «Подвійного прийому»)
+int uiChannelDataHasAes(CodeplugChannel_t *ch)
+{
+	uint8_t keyId = dmrAesTxKeyId();
+	uint8_t chEnc = codeplugChannelGetAesKeySlot(ch);
+
+	if (chEnc == 0xFF)
+	{
+		keyId = 0;
+	}
+	else if ((chEnc >= 1) && (chEnc < DMR_AES_MAX_KEYS))
+	{
+		keyId = chEnc;
+	}
+
+	return (keyId != 0);
+}
+
+// Замок 10x9 у заданому місці (колір -- поточний displayThemeApply)
+void uiDrawAesIconAt(int16_t x, int16_t y)
+{
+	displayDrawXBitmap(x, y, uiAesPadlockBitmap, UI_AES_PADLOCK_W, UI_AES_PADLOCK_H, true);
+}
+#endif
 #endif
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 #include "interfaces/batteryAndPowerManagement.h"

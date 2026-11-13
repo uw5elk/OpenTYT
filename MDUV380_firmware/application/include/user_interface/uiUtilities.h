@@ -205,6 +205,10 @@ void uiUtilityRenderQSOData(void);
 #if defined(ENABLE_AES)
 int uiChannelHasAesEnabled(void);   /* 1, якщо ВИБРАНИЙ канал резолвиться в TX-ключ (див. uiUtilities.c) */
 void uiDrawAesEnabledIcon(void);    /* малює позначку замка, якщо uiChannelHasAesEnabled() (див. uiUtilities.c) */
+#if defined(DUAL_CHANNEL_ENABLED)
+int uiChannelDataHasAes(CodeplugChannel_t *ch);   /* R97-FIX6: те саме для запису каналу з кодплага (картка «Подвійного прийому») */
+void uiDrawAesIconAt(int16_t x, int16_t y);       /* R97-FIX6: замок 10x9 у заданому місці */
+#endif
 #endif
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
 void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);

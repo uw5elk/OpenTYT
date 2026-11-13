@@ -54,10 +54,7 @@ dcPairCheck_t dcCheckPair(uint16_t chA, uint16_t chB, bool bInUse)
 		return DC_PAIR_B_DELETED;
 	}
 
-	if (chB == chA)
-	{
-		return DC_PAIR_B_IS_A;
-	}
+	(void)chA;   // R97-FIX6: A == B -- не помилка (режим ввімкнено, чергування не крутиться); chA лишено для сталого інтерфейсу
 
 	return DC_PAIR_OK;
 }

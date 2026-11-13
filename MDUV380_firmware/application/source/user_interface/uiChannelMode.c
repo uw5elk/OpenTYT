@@ -134,7 +134,8 @@ static void dualRenderScreen(void);
 static uint16_t dualChannelA(void);
 static void dualAutoResume(void);
 static bool dualHoldScreen(void);
-static void dualRenderMeter(void);
+static bool dualSingle(void);
+static bool dualRenderMeter(void);
 static void dualQuietEnd(void);
 static void dualQuickMenuApply(bool setB);
 static void dualHotkeyToggle(void);
@@ -372,10 +373,17 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 					{
 						if (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED))
 						{
+#if defined(DUAL_CHANNEL_ENABLED)
+							if (uiChannelModeDualScreenShown() == false)   // R97-FIX6: картки починаються з y=11 -- рядки 0..2 (y<24) очищати не можна; шапка сама очищає y=0..9
+							{
+#endif
 #if defined(PLATFORM_RD5R)
 							displayClearRows(0, 1, false);
 #else
 							displayClearRows(0, 2, false);
+#endif
+#if defined(DUAL_CHANNEL_ENABLED)
+							}
 #endif
 							uiUtilityRenderHeader(false, false, ((ev->buttons & BUTTON_SK1) == BUTTON_SK1));
 						}
@@ -385,15 +393,19 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 						}
 
 #if defined(DUAL_CHANNEL_ENABLED)
-						if (dualIsRunning())
+						if (uiChannelModeDualScreenShown())
 						{
-							dualRenderMeter();   // R97-FIX5: S-метр режиму -- сегментований, у нижньому рядку екрана режиму (стоковий блок вимкнено)
-						}
+							// R97-FIX6: екран режиму -- S-метр у смузі активної картки (стоковий блок вимкнено); один displayRender, лише коли щось змінено
+							bool meterDrawn = dualRenderMeter();
 
-						if (uiNotificationIsVisible() || dualIsRunning())
-#else
-						if (uiNotificationIsVisible())
+							if (meterDrawn || uiNotificationIsVisible() || (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED)))
+							{
+								displayRender();
+							}
+						}
+						else
 #endif
+						if (uiNotificationIsVisible())
 						{
 							displayRender();
 						}
@@ -1248,7 +1260,9 @@ static void handleEvent(uiEvent_t *ev)
 	{
 		s_dualKeyMs = ticksGetMillis();
 
-		if (dualIsRunning())
+		bool dwRunning = dualIsRunning();
+
+		if (dwRunning || dualSingle())
 		{
 			if (dualHandleKey(ev))
 			{
@@ -1256,7 +1270,10 @@ static void handleEvent(uiEvent_t *ev)
 			}
 
 			// R97: решта клавіш -- як без режиму: чергування зупиняється, клавіша обробляється нижче, режим лишається ввімкненим
-			dualSuspend();
+			if (dwRunning)
+			{
+				dualSuspend();
+			}
 		}
 
 		if (dcIsEnabled())
@@ -3756,8 +3773,8 @@ static dcPairCheck_t dualCheckPair(void)
 
 static void dualShowPairError(dcPairCheck_t err)
 {
-	const char *msg = ((err == DC_PAIR_NO_B) ? currentLanguage->dual_err_no_b :
-			((err == DC_PAIR_B_DELETED) ? currentLanguage->dual_err_b_gone : currentLanguage->dual_err_b_is_a));
+	// R97-FIX6: A==B -- не помилка (dual_err_b_is_a у коді не використовується, поле мови лишено для сталої розкладки)
+	const char *msg = ((err == DC_PAIR_NO_B) ? currentLanguage->dual_err_no_b : currentLanguage->dual_err_b_gone);
 
 	soundSetMelody(MELODY_ERROR_BEEP);
 	uiNotificationShowShort(2000U, msg, true);
@@ -3907,20 +3924,20 @@ static void dualAutoResume(void)
 
 	dcPairCheck_t chk = dualCheckPair();
 
-	if (chk == DC_PAIR_B_IS_A)
-	{
-		// Поточний канал і є B (щойно «Встановити як B» або валкодер/зона привели A на B): режим чекає, доки A стане іншим каналом,
-		// без сповіщень (інакше щотіка).
-		dcSetTxHold(false);
-		return;
-	}
-
 	if (chk != DC_PAIR_OK)
 	{
 		dcSetTxHold(false);
 		dualDisable();
 		dualShowPairError(chk);
 		uiChannelModeUpdateScreen(0);
+		return;
+	}
+
+	if (dualChannelA() == dcChannelB())
+	{
+		// R97-FIX6: A == B -- не помилка: режим лишається ввімкненим, чергування не крутиться (той самий канал), екран режиму показано,
+		// рація стоїть на каналі. Щойно A і B стануть різними -- наступний виклик запустить чергування саме; без сповіщень.
+		dcSetTxHold(false);
 		return;
 	}
 
@@ -3940,7 +3957,15 @@ static bool dualHoldScreen(void)
 #if defined(APRS_RX)
 			(aprsModeIsActive() == false) &&
 #endif
-			((directChannelNumber != 0) || ((ticksGetMillis() - s_dualKeyMs) < DUAL_RESUME_QUIET_MS)));
+			((directChannelNumber != 0) || ((ticksGetMillis() - s_dualKeyMs) < DUAL_RESUME_QUIET_MS) || dualSingle()));
+}
+
+// R97-FIX6: режим ввімкнено, пара коректна, але A == B: чергування не потрібне (один канал); екран режиму лишається, ручка/▲▼ працюють за правилами обраного.
+static bool dualSingle(void)
+{
+	uint16_t b = dcChannelB();
+
+	return (dcIsEnabled() && (dualIsRunning() == false) && (b >= DC_CH_MIN) && (b <= DC_CH_MAX) && (b == dualChannelA()) && codeplugAllChannelsIndexIsInUse(b));
 }
 
 // R97-FIX5: кінець обробника клавіші: «тишу» знято безумовно (інваріант), екран каналу перемальовано рівно один раз
@@ -4056,7 +4081,7 @@ static void dualStepB(int dir)
 		from = dcFindPos(n, chA, dualZoneChannelAt, NULL);   // B не з цієї зони -- крок від A
 	}
 
-	int pos = dcStepPos(n, from, dir, chA, dualZoneChannelAt, NULL);
+	int pos = dcStepPos(n, from, dir, 0U, dualZoneChannelAt, NULL);   // R97-FIX6: B може збігатися з A -- жодного каналу не пропускаємо
 
 	if (pos < 0)
 	{
@@ -4066,7 +4091,12 @@ static void dualStepB(int dir)
 
 	(void)dcSetChannelB(dualZoneChannelAt(pos, NULL), false);   // відкладений запис (3 с без змін)
 
-	if (dcIsOnB())
+	if (dualIsRunning() == false)
+	{
+		s_dualKeyMs = 0U;   // R97-FIX6: був A==B -- після зміни B чергування стартує саме (або лишається A==B)
+		dualAutoResume();
+	}
+	else if (dcIsOnB())
 	{
 		uiDataGlobal.Scan.state = SCAN_STATE_SCANNING;
 		dualTune(true);
@@ -4122,21 +4152,14 @@ static bool dualHandleKey(uiEvent_t *ev)
 
 					s_dualQuiet = true;   // R97-FIX4: стокове перемальовування (з S-метром) на час кроку каналу придушено -- екран малює лише dualRenderScreen
 
-					for (int i = 0; i < 2; i++)
+					// R97-FIX6: A може стати B -- тоді чергування тихо зупиняється (режим лишається ввімкненим, A==B)
+					if (dir > 0)
 					{
-						if (dir > 0)
-						{
-							handleUpKey(ev);
-						}
-						else
-						{
-							handleDownKey(ev);
-						}
-
-						if (dualChannelA() != dcChannelB())
-						{
-							break;
-						}
+						handleUpKey(ev);
+					}
+					else
+					{
+						handleDownKey(ev);
 					}
 
 					s_dualQuiet = false;
@@ -4179,7 +4202,7 @@ static void dualSetMode(bool on, bool notify)
 
 		if (chk != DC_PAIR_OK)
 		{
-			dualShowPairError(chk);   // режим не стартує
+			dualShowPairError(chk);   // режим не стартує (B не задано / видалено); A==B -- не помилка (R97-FIX6)
 			return;
 		}
 
@@ -4187,6 +4210,11 @@ static void dualSetMode(bool on, bool notify)
 		(void)dcSetEnabled(true, true);
 		s_dualKeyMs = 0U;
 		dualAutoResume();
+
+		if (dualIsRunning() == false)
+		{
+			uiChannelModeUpdateScreen(0);   // A==B: чергування не стартує, але екран режиму потрібен одразу
+		}
 	}
 	else
 	{
@@ -4255,33 +4283,34 @@ bool uiChannelModeDualPrepareTx(void)
 	return true;
 }
 
-// ---- екран режиму (R97-FIX5): шапка, дві картки A/B, роздільник, нижній статусний рядок. Екран 160x128 ----
-// Координати (таблиця -- у звіті r97-fix5-result.md); висоти шрифтів: FONT_SIZE_1 = 8, FONT_SIZE_3 = 16, FONT_SIZE_4 = 32 (16 px завширшки).
-#define DW_CARD_X        1                       // картка: рамка x=1..158
+// ---- екран режиму (R97-FIX6): шапка (y=0..9), дві картки A/B на весь простір під нею. Екран 160x128 ----
+// Висоти шрифтів: FONT_SIZE_1 = 8 (6 px завширшки), FONT_SIZE_3 = 16 (8 px), FONT_SIZE_4 = 32 (16 px). Шапка займає y=0..DISPLAY_Y_POS_BAR-1 (=0..9).
+// Таблиця координат -- у звіті r97-fix6-result.md.
+#define DW_CARD_X        1                                 // картка: рамка x=1..158
 #define DW_CARD_W        158
-#define DW_CARD_H        42                      // y..y+41
-#define DW_CARD_A_Y      24                      // нижче шапки (AES-замок шапки: x=147..156, y=14..22)
-#define DW_CARD_B_Y      (DW_CARD_A_Y + DW_CARD_H + 2)   // 68; картка B закінчується на y=109
-#define DW_SQ_X          3                       // ліве квадратне поле з літерою A/B
+#define DW_CARD_H        57                                // y..y+56
+#define DW_CARD_A_Y      (DISPLAY_Y_POS_BAR + 1)           // 11: одразу під рядком шапки
+#define DW_CARD_B_Y      (DW_CARD_A_Y + DW_CARD_H + 3)     // 71; картка B закінчується на y=127 (останній рядок екрана)
+#define DW_SQ_X          3                                 // ліве квадратне поле з літерою A/B
 #define DW_SQ_W          24
-#define DW_SQ_DY         2
-#define DW_SQ_H          38
-#define DW_LETTER_X      (DW_SQ_X + ((DW_SQ_W - 16) / 2))   // літера FONT_SIZE_4: 16x32
-#define DW_LETTER_DY     3
-#define DW_TXT_X         30                      // текст праворуч від поля; до x=157 -- 128 px (16 символів FONT_SIZE_3)
-#define DW_LINE1_DY      3                       // рядок 1: номер + назва, FONT_SIZE_1 (до 21 символу = 126 px)
-#define DW_LINE2_DY      13                      // рядок 2: абонент/ТГ/«FM»+частота, FONT_SIZE_3 (до 16 символів = 128 px)
-#define DW_TAG_DY        30                      // мітка «RX»: 14x10, y+30..39
-#define DW_TAG_W         14
-#define DW_TAG_H         10
-#define DW_SEP_Y         111                     // роздільник (1 px) і початок нижнього рядка
-#define DW_STATUS_Y      112                     // текст FONT_SIZE_3: y=112..127
-#define DW_STATUS_X      2
-#define DW_METER_X       94                      // сегментований S-метр: 9 сегментів 6x10 із кроком 7 px = x=94..155
-#define DW_METER_Y       115
-#define DW_METER_SEG_W   6
-#define DW_METER_SEG_H   10
-#define DW_METER_STEP    7
+#define DW_SQ_DY         3
+#define DW_SQ_H          51                                // y+3..53
+#define DW_LETTER_X      (DW_SQ_X + ((DW_SQ_W - 16) / 2))  // літера FONT_SIZE_4: 16x32
+#define DW_LETTER_DY     5
+#define DW_ARROW_DY      40                                // ▸ під літерою: y+40..44
+#define DW_TXT_X         30                                // текст праворуч від поля; до x=157 -- 128 px
+#define DW_LINE1_DY      4                                 // рядок 1: номер + назва, FONT_SIZE_1 (до 21 символу = 126 px)
+#define DW_LINE2_DY      15                                // рядок 2 (основний): абонент / ТГ / «FM»+частота, FONT_SIZE_3 (до 16 символів = 128 px)
+#define DW_LINE3_DY      34                                // рядок 3 (службовий): TS/CC/ТГ або тон/смуга, FONT_SIZE_1 (до 19 символів = 114 px, x ≤ 143)
+#define DW_LINE3_MAX     19
+#define DW_LOCK_X        145                               // замок AES 10x9: x=145..154, y+33..41 (праворуч від рядка 3)
+#define DW_LOCK_DY       33
+#define DW_METER_DY      44                                // смуга активності: мітка RX + S-метр, y+44..53
+#define DW_METER_H       10
+#define DW_TAG_W         14                                // мітка «RX» 14x10, x=30..43
+#define DW_METER_X       48                                // 9 сегментів 10x10 із кроком 12 px = x=48..153
+#define DW_METER_SEG_W   10
+#define DW_METER_STEP    12
 #define DW_METER_SEGS    9
 
 // Текст абонента за тим самим правилом, що «останній абонент» звичайного екрана (contactDisplayPriority).
@@ -4305,20 +4334,55 @@ static void dualCallerText(char *text17)
 	(void)chomp(text17);
 }
 
-// Одна картка каналу: рамка, квадрат з літерою (обраний -- інвертований, під літерою ▸), номер+назва, абонент/ТГ/FM, мітка RX.
-// Усе -- на стеку, з кодплага; імена в RAM не кешуються.
+// Смуга активності картки: мітка «RX» + сегментований S-метр (9 сегментів). Лише для активної картки; перемальовує тільки свою ділянку.
+static void dualMeterRow(int16_t y)
+{
+	int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);
+	int16_t my = (y + DW_METER_DY);
+
+	displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
+	displayFillRect(DW_TXT_X, my, ((DW_CARD_X + DW_CARD_W - 1) - DW_TXT_X), DW_METER_H, true);
+
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+	displayFillRect(DW_TXT_X, my, DW_TAG_W, DW_METER_H, false);
+	displayPrintCore((DW_TXT_X + 1), (my + 1), "RX", FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+
+	for (int i = 1; i <= DW_METER_SEGS; i++)
+	{
+		int16_t sx = (DW_METER_X + ((i - 1) * DW_METER_STEP));
+
+		if (rssi >= (SMETER_S0 + (i * 4)))   // та сама шкала, що в стоковому блоці: 4 дБ на S-одиницю
+		{
+			displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG);
+			displayFillRect(sx, my, DW_METER_SEG_W, DW_METER_H, false);
+		}
+		else
+		{
+			displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
+			displayDrawRect(sx, my, DW_METER_SEG_W, DW_METER_H, true);
+		}
+	}
+
+	displayThemeResetToDefault();
+}
+
+// Одна картка каналу: рамка, квадрат з літерою (обраний -- інвертований, під літерою ▸), рядок 1 (номер+назва), рядок 2 (абонент / контакт-ТГ / FM+частота),
+// рядок 3 (TS/CC/ТГ виклику або тон/смуга FM), замок AES, смуга активності (RX + S-метр). Усе на стеку, з кодплага; імена в RAM не кешуються.
 static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool active, bool callerHere)
 {
 	CodeplugChannel_t tmp;
 	char name[17];
 	char l1[24];
 	char l2[17];
+	char l3[DW_LINE3_MAX + 1];
 	char letter[2];
+	bool known = ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch));
 
 	name[0] = 0;
 	l2[0] = 0;
+	l3[0] = 0;
 
-	if ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch))
+	if (known)
 	{
 		codeplugChannelGetDataForIndex(ch, &tmp);
 		codeplugUtilConvertBufToDisplayString(tmp.name, name, 16);
@@ -4330,13 +4394,51 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 			if ((tmp.contact != 0) && codeplugContactGetDataForIndex(tmp.contact, &ct))
 			{
 				codeplugUtilConvertBufToDisplayString(ct.name, l2, 16);   // ТГ/контакт каналу з кодплага
+
+				if (l2[0] == 0)
+				{
+					snprintf(l2, sizeof(l2), "%s %u", ((ct.callType == CONTACT_CALLTYPE_PC) ? currentLanguage->pc : currentLanguage->tg), (unsigned)ct.tgNumber);   // ім'я порожнє -- «TG 91»
+				}
+			}
+
+			if (l2[0] == 0)
+			{
+				snprintf(l2, sizeof(l2), "--");   // контакт не заданий
+			}
+
+			snprintf(l3, sizeof(l3), "TS%d CC%d", ((codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2 : 1), (int)tmp.txColor);
+
+			if (callerHere && (LinkHead != NULL))
+			{
+				size_t n = strlen(l3);
+
+				snprintf((l3 + n), (sizeof(l3) - n), " %.11s", LinkHead->talkgroup);   // ТГ/ID призначення виклику, що триває
 			}
 		}
 		else
 		{
 			int mhz = (int)(tmp.rxFreq / 100000U);
+			size_t n;
+			CodeplugCSSTypes_t type = codeplugGetCSSType(tmp.rxTone);
 
 			snprintf(l2, sizeof(l2), "FM %d.%05d", mhz, (int)(tmp.rxFreq - ((uint32_t)mhz * 100000U)));
+
+			if (type == CSS_TYPE_CTCSS)
+			{
+				snprintf(l3, sizeof(l3), "CTCSS %d.%d", (tmp.rxTone / 10), (tmp.rxTone % 10));
+			}
+			else if (type & CSS_TYPE_DCS)
+			{
+				n = (size_t)snprintf(l3, sizeof(l3), "DCS ");
+				(void)dcsPrintf((l3 + n), (sizeof(l3) - n), NULL, tmp.rxTone);
+			}
+			else
+			{
+				snprintf(l3, sizeof(l3), "--");
+			}
+
+			n = strlen(l3);
+			snprintf((l3 + n), (sizeof(l3) - n), " %s", ((codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_BW_25K) != 0) ? "25k" : "12.5k"));   // смуга -- якщо влазить (обрізається snprintf)
 		}
 	}
 	else
@@ -4373,7 +4475,7 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 	{
 		int16_t cx = (DW_SQ_X + (DW_SQ_W / 2));
 
-		displayFillTriangle((cx - 2), (y + 35), (cx - 2), (y + 39), (cx + 2), (y + 37), false);   // ▸ під літерою
+		displayFillTriangle((cx - 2), (y + DW_ARROW_DY), (cx - 2), (y + DW_ARROW_DY + 4), (cx + 2), (y + DW_ARROW_DY + 2), false);   // ▸ під літерою
 	}
 
 	snprintf(l1, sizeof(l1), "%u %s", (unsigned)ch, name);
@@ -4382,71 +4484,49 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 	displayThemeApply((callerHere ? THEME_ITEM_FG_CHANNEL_CONTACT_INFO : THEME_ITEM_FG_CHANNEL_CONTACT), THEME_ITEM_BG);
 	displayPrintCore(DW_TXT_X, (y + DW_LINE2_DY), l2, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
 
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+	displayPrintCore(DW_TXT_X, (y + DW_LINE3_DY), l3, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+
+#if defined(ENABLE_AES)
+	if (known && uiChannelDataHasAes(&tmp))
+	{
+		uiDrawAesIconAt(DW_LOCK_X, (y + DW_LOCK_DY));   // замок -- на картці каналу, що має ключ (не в шапці: там тепер картки)
+	}
+#endif
+
 	if (active)
 	{
-		displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
-		displayFillRect(DW_TXT_X, (y + DW_TAG_DY), DW_TAG_W, DW_TAG_H, false);
-		displayPrintCore((DW_TXT_X + 1), (y + DW_TAG_DY + 1), "RX", FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+		dualMeterRow(y);
 	}
 
 	displayThemeResetToDefault();
 }
 
-// Нижній рядок: «Прийом на A» + сегментований S-метр (лише під час активності) / «Очікування» (без S-метра) / набраний номер.
-static void dualRenderStatus(bool active, bool onB)
+// Активність на екрані режиму: чергування -- state != SCANNING на картці, де рація (dcIsOnB()); A==B (режим не чергує) -- несуча на каналі, картка за покажчиком.
+static bool dualActivity(bool *cardB)
 {
-	char line[20];
-
-	displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
-	displayFillRect(0, DW_SEP_Y, DISPLAY_SIZE_X, (DISPLAY_SIZE_Y - DW_SEP_Y), true);
-	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
-	displayDrawFastHLine(0, DW_SEP_Y, DISPLAY_SIZE_X, true);
-
-	if (directChannelNumber != 0)
+	if (dualIsRunning())
 	{
-		snprintf(line, sizeof(line), "# %d", directChannelNumber);   // набір номера (пауза режиму)
-		active = false;
-	}
-	else if (active)
-	{
-		snprintf(line, sizeof(line), "%s %c", currentLanguage->dual_rx_on, (onB ? 'B' : 'A'));
-	}
-	else
-	{
-		snprintf(line, sizeof(line), "%s", currentLanguage->dual_wait);
+		*cardB = dcIsOnB();
+		return (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING);
 	}
 
-	displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_BG);
-	displayPrintCore(DW_STATUS_X, DW_STATUS_Y, line, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
-
-	if (active)
-	{
-		int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);
-
-		for (int i = 1; i <= DW_METER_SEGS; i++)
-		{
-			int16_t sx = (DW_METER_X + ((i - 1) * DW_METER_STEP));
-
-			if (rssi >= (SMETER_S0 + (i * 4)))
-			{
-				displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG);
-				displayFillRect(sx, DW_METER_Y, DW_METER_SEG_W, DW_METER_SEG_H, false);
-			}
-			else
-			{
-				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
-				displayDrawRect(sx, DW_METER_Y, DW_METER_SEG_W, DW_METER_SEG_H, true);
-			}
-		}
-	}
-
-	displayThemeResetToDefault();
+	*cardB = (dualSingle() ? dcPointerB() : dcIsOnB());
+	return (dualSingle() && trxCarrierDetected(RADIO_DEVICE_PRIMARY));
 }
 
-// Оновлення S-метра в тіку (applicationMain/uiChannelMode): перемальовується лише нижній рядок у буфері, виштовхує тік.
-static void dualRenderMeter(void)
+// Оновлення S-метра в тіку: перемальовується лише смуга активної картки; true -- щось змінено в буфері (тік виконає один displayRender).
+static bool dualRenderMeter(void)
 {
-	dualRenderStatus((uiDataGlobal.Scan.state != SCAN_STATE_SCANNING), dcIsOnB());
+	bool cardB = false;
+
+	if (dualActivity(&cardB) == false)
+	{
+		return false;
+	}
+
+	dualMeterRow(cardB ? DW_CARD_B_Y : DW_CARD_A_Y);
+	return true;
 }
 
 bool uiChannelModeDualScreenShown(void)
@@ -4456,11 +4536,16 @@ bool uiChannelModeDualScreenShown(void)
 
 static void dualRenderScreen(void)
 {
-	bool active = (uiDataGlobal.Scan.state != SCAN_STATE_SCANNING);
+	bool cardB = false;
+	bool active = dualActivity(&cardB);
 	bool caller = (((uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA) || (uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA_UPDATE)) &&
 			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL) && (directChannelNumber == 0));
-	bool selB = dualSelectedIsB();
-	bool onB = dcIsOnB();
+	bool selB = (dualSingle() ? dcPointerB() : dualSelectedIsB());
+
+	if (caller && dualSingle())
+	{
+		active = true;   // A==B: виклик DMR, що триває, вважається активністю
+	}
 
 	displayClearBuf();
 	// R97-FIX3: чергування -- статична шапка ОБРАНОГО каналу з кодплага; виклик/утримання -- справжня шапка. Передача сюди не потрапляє.
@@ -4479,13 +4564,8 @@ static void dualRenderScreen(void)
 		uiDataGlobal.receivedPcId = 0x00;
 	}
 
-	dualRenderRow(DW_CARD_A_Y, false, dualChannelA(), (selB == false), (active && (onB == false)), (caller && (onB == false)));
-	dualRenderRow(DW_CARD_B_Y, true, dcChannelB(), selB, (active && onB), (caller && onB));
-	dualRenderStatus(active, onB);
-
-#if defined(ENABLE_AES)
-	uiDrawAesEnabledIcon();
-#endif
+	dualRenderRow(DW_CARD_A_Y, false, dualChannelA(), (selB == false), (active && (cardB == false)), (caller && (cardB == false)));
+	dualRenderRow(DW_CARD_B_Y, true, dcChannelB(), selB, (active && cardB), (caller && cardB));
 	displayRender();
 }
 #endif // DUAL_CHANNEL_ENABLED

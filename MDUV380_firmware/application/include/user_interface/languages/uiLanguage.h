@@ -462,12 +462,12 @@ typedef struct
    const char dual_b_saved[LANGUAGE_TEXTS_LENGTH];
    const char dual_err_no_b[LANGUAGE_TEXTS_LENGTH];
    const char dual_err_b_gone[LANGUAGE_TEXTS_LENGTH];
-   const char dual_err_b_is_a[LANGUAGE_TEXTS_LENGTH];
+   const char dual_err_b_is_a[LANGUAGE_TEXTS_LENGTH];   // R97-FIX6: у коді не використовується (A==B дозволено); поле лишено -- розкладка мовних файлів не змінюється
    const char dual_on[LANGUAGE_TEXTS_LENGTH];    // R97-FIX2: сповіщення гарячої клавіші (довге ▼)
    const char dual_off[LANGUAGE_TEXTS_LENGTH];
    const char dual_zone_all[LANGUAGE_TEXTS_LENGTH];   // R97-FIX3: сповіщення -- режим вимкнено на B з іншої зони, відкрито «Всі канали»
-   const char dual_rx_on[LANGUAGE_TEXTS_LENGTH];     // R97-FIX5: нижній рядок екрана режиму: «Прийом на» + літера каналу
-   const char dual_wait[LANGUAGE_TEXTS_LENGTH];      // R97-FIX5: нижній рядок екрана режиму без активності («Очікування»)
+   const char dual_rx_on[LANGUAGE_TEXTS_LENGTH];     // R97-FIX5: у коді не використовується з R97-FIX6 (нижній рядок прибрано); поле лишено
+   const char dual_wait[LANGUAGE_TEXTS_LENGTH];      // R97-FIX5: у коді не використовується з R97-FIX6 (нижній рядок прибрано); поле лишено
 #endif
 #endif
 } stringsTable_t;
