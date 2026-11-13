@@ -3657,6 +3657,9 @@ static bool dualIsRunning(void)
 	return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL));
 }
 
+static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, bool *numOnly, uint8_t *tsFlags);
+static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags);
+
 // R97-FIX3: шапка екрана режиму. Виклик/утримання (state != SCANNING) -- справжня шапка (рація на цьому каналі, S-метр). Чергування без
 // активності -- СТАТИЧНА шапка ОБРАНОГО каналу (покажчик: A або B): режим, смуга, TS, CC, тони, потужність беруться з даних кодплага
 // цього каналу (стек, без RAM-кешу), а не з налаштування радіо, яке чергується; S-метра нема. Перемикання A<->B шапку не чіпає.
@@ -3682,7 +3685,15 @@ static void dualRenderHeader(bool force)
 	ov.ch = &tmp;
 	ov.mode = (uint8_t)tmp.chMode;
 	ov.bw25 = (uint8_t)(codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_BW_25K) != 0);
-	ov.ts = (uint8_t)(codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_TIMESLOT_TWO) != 0);
+	{
+		// R98 Д2: ЕФЕКТИВНИЙ ТС передачі за правилом trxUpdateTsForCurrentChannelWithSpecifiedContact() (лише читання), а не ТС запису каналу
+		char nm[17];
+		bool numOnly;
+		uint8_t tsFlags;
+
+		(void)dualDestination(&tmp, nm, &numOnly, &tsFlags);
+		ov.ts = (uint8_t)(dualEffectiveTs(&tmp, tsFlags) - 1U);
+	}
 	ov.cc = tmp.txColor;
 	uiUtilityRenderHeaderForChannel(&ov, force);
 }
@@ -4309,6 +4320,10 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_LINE2_DY      15                                // рядок 2 (основний): абонент / ТГ / «FM»+частота, FONT_SIZE_3 (до 16 символів = 128 px)
 #define DW_LINE3_DY      34                                // рядок 3 (службовий): TS/CC/ТГ або тон/смуга, FONT_SIZE_1 (до 19 символів = 114 px, x ≤ 143)
 #define DW_LINE3_MAX     19
+#define DW_UN_DY         45                                // R98 Д1: індикатор непрочитаних у нижній частині квадрата з літерою: y+45..52 (під ▸ y+40..44)
+#define DW_UN_LETTER_X   4                                 // літера D/A (6 px): x=4..9
+#define DW_UN_ENV_X      11                                // конверт 8x6: x=11..18, y+46..51
+#define DW_UN_NUM_X      20                                // число (одна цифра) або «+» (понад 9): x=20..25; усе в x=4..25 (внутрішня ширина квадрата)
 #define DW_LOCK_X        145                               // замок AES 10x9: x=145..154, y+33..41 (праворуч від рядка 3)
 #define DW_LOCK_DY       33
 #define DW_METER_DY      44                                // смуга активності: мітка RX + S-метр, y+44..53
@@ -4320,10 +4335,6 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_METER_SEGS    9
 
 // Текст абонента за тим самим правилом, що «останній абонент» звичайного екрана (contactDisplayPriority).
-#define DW_UN_DY         45                                // R98 Д1: індикатор непрочитаних у нижній частині квадрата з літерою: y+45..52 (під ▸ y+40..44)
-#define DW_UN_LETTER_X   4                                 // літера D/A (6 px): x=4..9
-#define DW_UN_ENV_X      11                                // конверт 8x6: x=11..18, y+46..51
-#define DW_UN_NUM_X      20                                // число (одна цифра) або «+» (понад 9): x=20..25; усе в x=4..25 (внутрішня ширина квадрата)
 static void dualCallerText(char *text17)
 {
 	LinkItem_t *item = LinkHead;
@@ -4377,12 +4388,14 @@ static void dualMeterRow(int16_t y)
 }
 
 // Призначення передачі (PTT) для картки каналу -- ті самі правила, що в стоковому завантаженні каналу (uiChannelModeLoadChannelData) і updateTrxID():
-//  1) перекриття ТГ (nonVolatileSettings.overrideTG != 0; ставиться клавішею «*»/меню/ТГ-списком) -- діє на ОБРАНІЙ картці (куди піде PTT);
+//  1) перекриття ТГ (nonVolatileSettings.overrideTG != 0; ставиться SK2 під час прийому, вибором контакту/ПК, «Копіювати у VFO») -- ГЛОБАЛЬНЕ: стокове
+//     завантаження каналу застосовує його до БУДЬ-ЯКОГО каналу, а при зміні каналу ручкою не скидається (скидають лише клавіші ТГ ◀/▶, зміна зони,
+//     меню кодплага), тож PTT з будь-якої картки піде з ним -- показуємо його на ОБОХ DMR-картках (R98 Д3);
 //  2) список прийому каналу (rxGroupList): контакт на позиції currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE] (поза списком -> перший);
 //  3) інакше контакт самого каналу. codeplugContactGetDataForIndex() для 0/недійсного індексу ПОВЕРТАЄ «TG 9» -- саме так рація й передає (ТГ 9),
 //     тож «контакт не заданий» показуємо чесно як ТГ 9, а не прочерком.
 // out -- до 16 символів (ім'я контакту або «TG n»/«PC n»); *numOnly -- true, якщо ім'я порожнє й показано лише тип+номер. Повертає ID: (прапорець<<24)|номер.
-static uint32_t dualDestination(const CodeplugChannel_t *ch, bool selected, char *out, bool *numOnly)
+static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, bool *numOnly, uint8_t *tsFlags)
 {
 	CodeplugContact_t ct;
 	uint32_t packed;
@@ -4390,8 +4403,9 @@ static uint32_t dualDestination(const CodeplugChannel_t *ch, bool selected, char
 
 	out[0] = 0;
 	*numOnly = false;
+	*tsFlags = CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE;   // перекриття ТГ -- ТС контакту не діє (trx.c)
 
-	if (selected && (nonVolatileSettings.overrideTG != 0))
+	if (nonVolatileSettings.overrideTG != 0)
 	{
 		packed = nonVolatileSettings.overrideTG;
 		pc = ((packed >> 24) != TG_CALL_FLAG);   // як uiUtilityBuildTgOrPCDisplayName(): не ТГ -- приватний
@@ -4419,6 +4433,7 @@ static uint32_t dualDestination(const CodeplugChannel_t *ch, bool selected, char
 		}
 
 		(void)codeplugContactGetDataForIndex(ci, &ct);   // недійсний -> «TG 9» (як на PTT)
+		*tsFlags = ct.reserve1;
 		packed = codeplugContactGetPackedId(&ct);
 		pc = (ct.callType == CONTACT_CALLTYPE_PC);
 		codeplugUtilConvertBufToDisplayString(ct.name, out, 16);
@@ -4431,6 +4446,29 @@ static uint32_t dualDestination(const CodeplugChannel_t *ch, bool selected, char
 	}
 
 	return packed;
+}
+
+// R98 Д2: ЕФЕКТИВНИЙ ТС передачі (1/2) -- те саме правило, що trxUpdateTsForCurrentChannelWithSpecifiedContact() (trx.c), але ЛИШЕ читання:
+//  - немає перекриття ТГ і контакт не має NO_TS_OVERRIDE: ТС ручного вибору, якщо користувач перемкнув його після вибору контакту (tsIsContactHasBeenOverridden),
+//    інакше ТС контакту (біт TS_OVERRIDE_TIMESLOT_MASK);
+//  - інакше: ручне перекриття ТС каналу (tsGetManualOverride), інакше ТС запису каналу.
+// tsFlags -- reserve1 контакту призначення (dualDestination). Канал -- CHANNEL_CHANNEL (картки каналів).
+static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)
+{
+	int8_t man = tsGetManualOverride(CHANNEL_CHANNEL);
+	uint8_t chTs = ((codeplugChannelGetFlag((CodeplugChannel_t *)ch, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2U : 1U);
+
+	if ((nonVolatileSettings.overrideTG == 0) && ((tsFlags & CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE) == 0x00))
+	{
+		if (tsIsContactHasBeenOverridden(CHANNEL_CHANNEL) && (man != 0))
+		{
+			return (uint8_t)man;
+		}
+
+		return (((tsFlags & CODEPLUG_CONTACT_FLAG_TS_OVERRIDE_TIMESLOT_MASK) != 0) ? 2U : 1U);
+	}
+
+	return ((man != 0) ? (uint8_t)man : chTs);
 }
 
 // Одна картка каналу: рамка, квадрат з літерою (обраний -- інвертований, під літерою ▸), рядок 1 (номер+назва), рядок 2 (абонент / контакт-ТГ / FM+частота),
@@ -4457,10 +4495,11 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 		if (tmp.chMode == RADIO_MODE_DIGITAL)
 		{
 			bool numOnly;
-			uint32_t dest = dualDestination(&tmp, selected, l2, &numOnly);   // куди піде виклик (PTT)
+			uint8_t tsFlags;
+			uint32_t dest = dualDestination(&tmp, l2, &numOnly, &tsFlags);   // куди піде виклик (PTT)
 			size_t n;
 
-			snprintf(l3, sizeof(l3), "TS%d CC%d", ((codeplugChannelGetFlag(&tmp, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2 : 1), (int)tmp.txColor);
+			snprintf(l3, sizeof(l3), "TS%d CC%d", (int)dualEffectiveTs(&tmp, tsFlags), (int)tmp.txColor);   // ефективний ТС передачі (Д2)
 			n = strlen(l3);
 
 			if (callerHere && (LinkHead != NULL))
@@ -4558,6 +4597,29 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, bool selected, bool 
 	}
 #endif
 
+	{
+		// R98 Д1: індикатор непрочитаних -- у квадраті з літерою (стокове місце в шапці, y=16, налазило на картку A). Картка A -- SMS DMR («D»),
+		// картка B -- APRS («A»); умова показу -- лічильник > 0, як у стоку. Обраний квадрат залитий -- малюємо кольором фону.
+		unsigned un = uiUnreadCount(isB ? 'A' : 'D');
+
+		if (un > 0U)
+		{
+			char kind[2];
+			char num[2];
+
+			kind[0] = (isB ? 'A' : 'D');
+			kind[1] = 0;
+			num[0] = ((un > 9U) ? '+' : (char)('0' + un));
+			num[1] = 0;
+			displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+			displayPrintCore(DW_UN_LETTER_X, (y + DW_UN_DY), kind, FONT_SIZE_1, TEXT_ALIGN_LEFT, selected);
+			displayDrawRect(DW_UN_ENV_X, (y + DW_UN_DY + 1), 8, 6, (selected == false));
+			displayDrawLine(DW_UN_ENV_X, (y + DW_UN_DY + 1), (DW_UN_ENV_X + 4), (y + DW_UN_DY + 4), (selected == false));
+			displayDrawLine((DW_UN_ENV_X + 7), (y + DW_UN_DY + 1), (DW_UN_ENV_X + 4), (y + DW_UN_DY + 4), (selected == false));
+			displayPrintCore(DW_UN_NUM_X, (y + DW_UN_DY), num, FONT_SIZE_1, TEXT_ALIGN_LEFT, selected);
+		}
+	}
+
 	if (active)
 	{
 		dualMeterRow(y);
@@ -4597,29 +4659,6 @@ bool uiChannelModeDualScreenShown(void)
 {
 	return (dualIsRunning() || dualHoldScreen());
 }
-	{
-		// R98 Д1: індикатор непрочитаних -- у квадраті з літерою (стокове місце в шапці, y=16, налазило на картку A). Картка A -- SMS DMR («D»),
-		// картка B -- APRS («A»); умова показу -- лічильник > 0, як у стоку. Обраний квадрат залитий -- малюємо кольором фону.
-		unsigned un = uiUnreadCount(isB ? 'A' : 'D');
-
-		if (un > 0U)
-		{
-			char kind[2];
-			char num[2];
-
-			kind[0] = (isB ? 'A' : 'D');
-			kind[1] = 0;
-			num[0] = ((un > 9U) ? '+' : (char)('0' + un));
-			num[1] = 0;
-			displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
-			displayPrintCore(DW_UN_LETTER_X, (y + DW_UN_DY), kind, FONT_SIZE_1, TEXT_ALIGN_LEFT, selected);
-			displayDrawRect(DW_UN_ENV_X, (y + DW_UN_DY + 1), 8, 6, (selected == false));
-			displayDrawLine(DW_UN_ENV_X, (y + DW_UN_DY + 1), (DW_UN_ENV_X + 4), (y + DW_UN_DY + 4), (selected == false));
-			displayDrawLine((DW_UN_ENV_X + 7), (y + DW_UN_DY + 1), (DW_UN_ENV_X + 4), (y + DW_UN_DY + 4), (selected == false));
-			displayPrintCore(DW_UN_NUM_X, (y + DW_UN_DY), num, FONT_SIZE_1, TEXT_ALIGN_LEFT, selected);
-		}
-	}
-
 
 static void dualRenderScreen(void)
 {
