@@ -1430,6 +1430,32 @@ void uiVFOModeDualStep(uint8_t vfo, int dir)
 	nonVolatileSettings.currentVFONumber = savedVfo;
 	settingsSetVFODirty();
 }
+
+// R98-FIX3 А3: ручне введення частоти на картці VFO режиму -- стокова updateFrequency() (фокус -- приймач: передача зсувається на ту саму різницю, тобто
+// зсув/рознесення лишається; якщо частота передачі виходить за діапазони -- передача = прийом і звук помилки; підтвердження, підказка, menuPrivateCallClear(),
+// settingsSetVFODirty()) + скидання синхронізації колір-коду, як у стоковому підтвердженні зеленою. Поза діапазонами -- звук помилки, нічого не змінюється.
+// Ізоляція як у uiVFOModeDualStep(): поточний VFO стока й фокус RX/TX відновлюються. Рація має бути вже налаштована на цей VFO (currentChannelData).
+bool uiVFOModeDualFreqEnter(uint8_t vfo, int frequency)
+{
+	if (trxGetBandFromFrequency(frequency) == FREQUENCY_OUT_OF_BAND)
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);
+		return false;
+	}
+
+	uint8_t savedVfo = nonVolatileSettings.currentVFONumber;
+	vfoSelectedFrequencyInput_t savedFocus = selectedFreq;
+
+	nonVolatileSettings.currentVFONumber = vfo;
+	selectedFreq = VFO_SELECTED_FREQUENCY_INPUT_RX;
+
+	updateFrequency(frequency, PROMPT_THRESHOLD_3);
+	HRC6000ClearColorCodeSynchronisation();
+
+	selectedFreq = savedFocus;
+	nonVolatileSettings.currentVFONumber = savedVfo;
+	return true;
+}
 #endif
 
 static void checkAndFixIndexInRxGroup(void)

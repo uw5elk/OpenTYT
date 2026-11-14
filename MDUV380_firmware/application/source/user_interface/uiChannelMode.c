@@ -146,9 +146,14 @@ static void dualHotkeyToggle(void);
 static void dualTune(bool toB);
 static bool dualBExists(void);
 static uint8_t dualVfoIdx(void);
+static uint8_t  s_dualSqlB;    // R98-FIX3 Б: поріг шумодава FM, змінений на картці B = канал (0 -- нема): B щоразу перечитується з кодплага, зміна накладається після читання; скидається при зміні B. Оголошено ПЕРЕД рештою: gcc кладе ці змінні в .bss у зворотному порядку, тож байт стає в кінець групи (у вирівнювання), а не між 1- і 2-байтовими
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
 static bool     s_dualQuiet;   // R97-FIX4/5: придушити uiChannelModeUpdateScreen() на час обробки клавіші в режимі (S-метр звичайного екрана не спалахує); скидається наприкінці handleEvent()
+static bool dualEntryKey(uiEvent_t *ev);
+static bool dualIsSquelchKey(const uiEvent_t *ev);
+static void dualSquelchStep(int dir);
+static void dualEntryText(char *l2, size_t size);
 #endif
 
 static char currentZoneName[SCREEN_LINE_BUFFER_SIZE];
@@ -1257,6 +1262,38 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 	uiDataGlobal.displayQSOState = QSO_DISPLAY_IDLE;
 }
 
+// R98-FIX3 Б: крок порогу шумодава FM поточного каналу (currentChannelData) -- стокова логіка ▲/▼ екрана каналу, винесена без змін: старт від типового для
+// діапазону, якщо sql == 0; межі CODEPLUG_MIN/MAX_VARIABLE_SQUELCH; голосова підказка, сповіщення NOTIFICATION_ID_SQUELCH, перемальовування. always_inline --
+// у кожному місці виклику код той самий, що стоковий (збірка без прапорця не змінюється). dir > 0 -- вище, інакше нижче.
+static inline __attribute__((always_inline)) void channelSquelchStep(int dir)
+{
+	if(currentChannelData->sql == 0)			//If we were using default squelch level
+	{
+		currentChannelData->sql = nonVolatileSettings.squelchDefaults[currentRadioDevice->trxCurrentBand[TRX_RX_FREQ_BAND]];			//start the adjustment from that point.
+	}
+
+	if (dir > 0)
+	{
+		if (currentChannelData->sql < CODEPLUG_MAX_VARIABLE_SQUELCH)
+		{
+			currentChannelData->sql++;
+		}
+	}
+	else
+	{
+		if (currentChannelData->sql > CODEPLUG_MIN_VARIABLE_SQUELCH)
+		{
+			currentChannelData->sql--;
+		}
+	}
+
+	announceItem(PROMPT_SQUENCE_SQUELCH, PROMPT_THRESHOLD_3);
+
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+	uiNotificationShow(NOTIFICATION_TYPE_SQUELCH, NOTIFICATION_ID_SQUELCH, 1000, NULL, false);
+	uiChannelModeUpdateScreen(0);
+}
+
 #if defined(DUAL_CHANNEL_ENABLED)
 static void handleEventCore(uiEvent_t *ev);
 
@@ -1282,9 +1319,15 @@ static void handleEvent(uiEvent_t *ev)
 	{
 		s_dualKeyMs = ticksGetMillis();
 
+		// R98-FIX3 А: цифри -- набір для картки з покажчиком (номер каналу / частота VFO); поки триває набір, ВСІ клавіші йдуть сюди
+		if (dualEntryKey(ev))
+		{
+			return;
+		}
+
 		bool dwRunning = dualIsRunning();
 
-		if (dwRunning || dualSingle() || dualIsVfoStepKey(ev))
+		if (dwRunning || dualSingle() || dualIsVfoStepKey(ev) || dualIsSquelchKey(ev))
 		{
 			if (dualHandleKey(ev))
 			{
@@ -1719,21 +1762,7 @@ static void handleEvent(uiEvent_t *ev)
 					}
 					else
 					{
-						if(currentChannelData->sql == 0)			//If we were using default squelch level
-						{
-							currentChannelData->sql = nonVolatileSettings.squelchDefaults[currentRadioDevice->trxCurrentBand[TRX_RX_FREQ_BAND]];			//start the adjustment from that point.
-						}
-
-						if (currentChannelData->sql < CODEPLUG_MAX_VARIABLE_SQUELCH)
-						{
-							currentChannelData->sql++;
-						}
-
-						announceItem(PROMPT_SQUENCE_SQUELCH, PROMPT_THRESHOLD_3);
-
-						uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
-						uiNotificationShow(NOTIFICATION_TYPE_SQUELCH, NOTIFICATION_ID_SQUELCH, 1000, NULL, false);
-						uiChannelModeUpdateScreen(0);
+						channelSquelchStep(1);   // R98-FIX3 Б: та сама логіка, спільна з «Подвійним прийомом» (SK1 + ручка)
 					}
 				}
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380)
@@ -1791,21 +1820,7 @@ static void handleEvent(uiEvent_t *ev)
 				}
 				else
 				{
-					if(currentChannelData->sql == 0)			//If we were using default squelch level
-					{
-						currentChannelData->sql = nonVolatileSettings.squelchDefaults[currentRadioDevice->trxCurrentBand[TRX_RX_FREQ_BAND]];			//start the adjustment from that point.
-					}
-
-					if (currentChannelData->sql > CODEPLUG_MIN_VARIABLE_SQUELCH)
-					{
-						currentChannelData->sql--;
-					}
-
-					announceItem(PROMPT_SQUENCE_SQUELCH, PROMPT_THRESHOLD_3);
-
-					uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
-					uiNotificationShow(NOTIFICATION_TYPE_SQUELCH, NOTIFICATION_ID_SQUELCH, 1000, NULL, false);
-					uiChannelModeUpdateScreen(0);
+					channelSquelchStep(-1);   // R98-FIX3 Б
 				}
 
 			}
@@ -3857,6 +3872,12 @@ static void dualTune(bool toB)
 
 			currentChannelData = &channelScreenChannelData;
 			codeplugChannelGetDataForIndex(dcChannelB(), &channelScreenChannelData);
+
+			if (s_dualSqlB != 0U)
+			{
+				channelScreenChannelData.sql = s_dualSqlB;   // R98-FIX3 Б: шумодав, змінений на картці B, не губиться на наступному циклі (кодплаг не пишеться)
+			}
+
 			uiChannelModeLoadChannelData(true, false);
 		}
 	}
@@ -4277,6 +4298,8 @@ static void dualStepB(int dir)
 		return;
 	}
 
+	s_dualSqlB = 0U;   // R98-FIX3 Б: новий B -- шумодав з кодплага
+
 	if (pos >= n)
 	{
 		dcSetTypeB((pos == n) ? DC_TYPE_VFO_A : DC_TYPE_VFO_B);   // відкладений запис (3 с без змін), номер каналу B лишається
@@ -4330,6 +4353,16 @@ static bool dualHandleKey(uiEvent_t *ev)
 
 			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
 			uiChannelModeUpdateScreen(0);
+		}
+		return true;
+	}
+
+	if (dualIsSquelchKey(ev))
+	{
+		// R98-FIX3 Б: SK1 + ручка -- поріг шумодава FM картки з покажчиком (у стоку ▲/▼; у режимі ▲/▼ -- покажчик)
+		if (KEYCHECK_SHORTUP(ev->keys, ev->keys.key))
+		{
+			dualSquelchStep((ev->keys.key == KEY_ROTARY_INCREMENT) ? 1 : -1);
 		}
 		return true;
 	}
@@ -4418,6 +4451,293 @@ static bool dualHandleKey(uiEvent_t *ev)
 	return false;
 }
 
+// ---- R98-FIX3 А: набір цифр у режимі ----------------------------------------------------------------------------------------------------------------------
+// Причина «неадекватності» до R98-FIX3 (А0): цифри йшли в стоковий набір прямого номера (directChannelNumber -- ПОЗИЦІЯ в зоні, не номер з рядка 1 картки),
+// handleEvent() перед цим повертав рацію на A (dualTune(false)), тож обраною ставала картка A, хоч покажчик був на B; набране ніде не показувалось (нижній
+// рядок «# n» прибрано у FIX6), чергування не поновлювалось (dualAutoResume() чекає directChannelNumber == 0), а ручка/▲▼ поза чергуванням ішли в стокові
+// обробники (ручка -- зміна каналу A, ▲/▼ -- ТГ/шумодав), а не в покажчик. Тепер набір -- власний стан режиму на тих самих змінних (нових нема):
+//   directChannelNumber > 0   -- набирається НОМЕР КАНАЛУ (абсолютний, як у рядку 1 картки) для картки з покажчиком;
+//   directChannelNumber == -1 -- набирається ЧАСТОТА для картки VFO (цифри -- у стоковому uiDataGlobal.FreqEnter, правила стокового екрана VFO).
+// Поки набір триває: цифри доповнюють, ▼ стирає останню (як у стоковому введенні частоти), зелена підтверджує, червона скасовує (виняток із «червона в режимі
+// нічого не робить»), решта клавіш (ручка, ▲, довге ▼, SK1/SK2 + ...) з'їдається -- картки й канали не перемикаються. Довге 0 / довге 8 -- як у стоку
+// (без звуку, відкриття пеленга): набір скасовується, клавіша йде стоковому обробнику. Тайм-ауту нема (у стоку його теж нема). PTT набору не чіпає: передача --
+// на каналі, де рація стоїть (набране не застосовано). Після підтвердження/скасування -- dualAutoResume().
+#define DUAL_ENTRY_FREQ    (-1)
+#define DUAL_ENTRY_FREQ_N  8     // цифр частоти, як у стоковому екрані VFO (8 -- підтвердження саме)
+
+static void dualEntryEnd(void)
+{
+	directChannelNumber = 0;
+	freqEnterReset();
+	s_dualKeyMs = 0U;   // чергування -- одразу, без паузи тиші
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+	dualAutoResume();
+}
+
+// Номер каналу для картки A (лише якщо він є в поточній зоні; у «Всіх каналах» -- будь-який використаний) або B (будь-який використаний).
+static bool dualEntryApplyChannel(int num)
+{
+	if ((num < (int)DC_CH_MIN) || (num > (int)DC_CH_MAX) || (codeplugAllChannelsIndexIsInUse(num) == false))
+	{
+		return false;
+	}
+
+	if (dcPointerB())
+	{
+		s_dualSqlB = 0U;   // R98-FIX3 Б: новий B -- шумодав з кодплага
+		(void)dcSetChannelB((uint16_t)num, false);   // відкладений запис (3 с без змін), як ручкою
+
+		if (dcIsOnB())
+		{
+			dualTune(true);   // рація стоїть на B -- одразу на новий B
+		}
+		return true;
+	}
+
+	bool allCh = CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone);
+	int pos = (allCh ? num : dcFindPos(currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone, (uint16_t)num, dualZoneChannelAt, NULL));
+
+	if (pos < 0)
+	{
+		return false;   // A -- лише канал поточної зони
+	}
+
+	if (dcIsOnB())
+	{
+		dualTune(false);
+	}
+
+	codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, (int16_t)pos);   // як стоковий прямий номер (позиція / абсолютний номер)
+	uiChannelModeLoadChannelData(false, true);
+	return true;
+}
+
+// Частота з набраних цифр -- для VFO на картці B (рація спершу налаштовується на цей VFO, як для SK2 + ручка).
+static bool dualEntryApplyFreq(void)
+{
+	if (dcIsOnB() == false)
+	{
+		dualTune(true);
+	}
+
+	return (dcIsOnB() && dcBIsVfo() && uiVFOModeDualFreqEnter(dualVfoIdx(), freqEnterRead(0, DUAL_ENTRY_FREQ_N, false)));
+}
+
+static void dualEntryDigit(int keyval)
+{
+	if (directChannelNumber == DUAL_ENTRY_FREQ)
+	{
+		if (uiDataGlobal.FreqEnter.index >= DUAL_ENTRY_FREQ_N)
+		{
+			return;
+		}
+
+		voicePromptsInit();
+		voicePromptsAppendPrompt(PROMPT_0 + keyval);
+
+		if (uiDataGlobal.FreqEnter.index == 2)
+		{
+			voicePromptsAppendPrompt(PROMPT_POINT);
+		}
+
+		voicePromptsPlay();
+		uiDataGlobal.FreqEnter.digits[uiDataGlobal.FreqEnter.index] = (char)('0' + keyval);
+		uiDataGlobal.FreqEnter.index++;
+
+		if (uiDataGlobal.FreqEnter.index == DUAL_ENTRY_FREQ_N)
+		{
+			// стоково: восьма цифра -- підтвердження; недопустима частота -- остання цифра стирається, звук помилки (у dualEntryApplyFreq)
+			if (dualEntryApplyFreq())
+			{
+				dualEntryEnd();
+			}
+			else
+			{
+				uiDataGlobal.FreqEnter.index--;
+				uiDataGlobal.FreqEnter.digits[uiDataGlobal.FreqEnter.index] = '-';
+			}
+		}
+		return;
+	}
+
+	int n = ((directChannelNumber * 10) + keyval);
+
+	if (n > (int)DC_CH_MAX)
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);   // номерів більше 1024 нема -- цифру не беремо
+		return;
+	}
+
+	directChannelNumber = n;
+	voicePromptsInit();
+	voicePromptsAppendPrompt(PROMPT_0 + keyval);
+	voicePromptsPlay();
+}
+
+// true -- клавішу оброблено (набір почато / триває / завершено).
+static bool dualEntryKey(uiEvent_t *ev)
+{
+	if ((dcIsEnabled() == false) || (menuSystemGetCurrentMenuNumber() != UI_CHANNEL_MODE) || uiDataGlobal.displayChannelSettings)
+	{
+		return false;
+	}
+
+	bool sk = (BUTTONCHECK_DOWN(ev, BUTTON_SK1) || BUTTONCHECK_DOWN(ev, BUTTON_SK2));
+	int keyval = (sk ? 99 : menuGetKeypadKeyValue(ev, true));
+
+	if (directChannelNumber == 0)
+	{
+		if (keyval >= 10)
+		{
+			return false;
+		}
+
+		bool freq = (dcPointerB() && dcBIsVfo());
+
+		if (keyval == 0)
+		{
+			return true;   // перша цифра 0: номерів каналів з 0 нема, частот < 100 МГц -- теж (як у стоку); довге 0 (без звуку) прийде окремою подією
+		}
+
+		dualSuspend();   // чергування стоп (як для будь-якої клавіші), режим лишається
+
+		if (freq)
+		{
+			freqEnterReset();
+			directChannelNumber = DUAL_ENTRY_FREQ;
+		}
+
+		dualEntryDigit(keyval);
+		uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+		return true;
+	}
+
+	// набір триває
+	if ((KEYCHECK_LONGDOWN(ev->keys, KEY_0) || KEYCHECK_LONGDOWN(ev->keys, KEY_8)) && (sk == false))
+	{
+		directChannelNumber = 0;   // стоково довге 0/8 теж скидає набір; далі -- стокова дія (без звуку / пеленг)
+		freqEnterReset();
+		return false;
+	}
+
+	if (keyval < 10)
+	{
+		dualEntryDigit(keyval);
+	}
+	else if ((sk == false) && KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		bool ok = ((directChannelNumber == DUAL_ENTRY_FREQ) ? dualEntryApplyFreq() : dualEntryApplyChannel(directChannelNumber));
+
+		if (ok || (directChannelNumber != DUAL_ENTRY_FREQ))
+		{
+			if (ok == false)
+			{
+				soundSetMelody(MELODY_ERROR_BEEP);   // номер не використовується / канал A не з поточної зони -- нічого не змінюється
+			}
+			dualEntryEnd();
+		}
+		// недопустима частота -- як у стоку: цифри лишаються (звук помилки дав uiVFOModeDualFreqEnter)
+	}
+	else if ((sk == false) && KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		if (directChannelNumber == DUAL_ENTRY_FREQ)
+		{
+			soundSetMelody(MELODY_NACK_BEEP);   // як скасування введення частоти в стоковому екрані VFO
+		}
+		dualEntryEnd();
+	}
+	else if ((sk == false) && KEYCHECK_PRESS(ev->keys, KEY_FRONT_DOWN))
+	{
+		// ▼ -- стерти останню цифру (як KEY_DECREASE у стоковому введенні частоти); стерли все -- набір завершено
+		if (directChannelNumber == DUAL_ENTRY_FREQ)
+		{
+			if (uiDataGlobal.FreqEnter.index > 0)
+			{
+				uiDataGlobal.FreqEnter.index--;
+				uiDataGlobal.FreqEnter.digits[uiDataGlobal.FreqEnter.index] = '-';
+			}
+
+			if (uiDataGlobal.FreqEnter.index == 0)
+			{
+				dualEntryEnd();
+			}
+		}
+		else
+		{
+			directChannelNumber /= 10;
+
+			if (directChannelNumber == 0)
+			{
+				dualEntryEnd();
+			}
+		}
+	}
+	// решта (ручка, ▲, довге ▼, SK1/SK2 + ..., *, #) -- з'їдається: картки й канали під час набору не перемикаються
+
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+	return true;
+}
+
+// Рядок 2 картки під час набору: «До 12_» (номер каналу) або «435.12---» (частота, як у стоковому екрані VFO: 3 цифри МГц, крапка, 5 цифр).
+static void dualEntryText(char *l2, size_t size)
+{
+	if (directChannelNumber == DUAL_ENTRY_FREQ)
+	{
+		const char *d = uiDataGlobal.FreqEnter.digits;
+
+		snprintf(l2, size, "%c%c%c.%c%c%c%c%c", d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+	}
+	else
+	{
+		snprintf(l2, size, "%.8s %d_", currentLanguage->gotoChannel, directChannelNumber);
+	}
+}
+
+// ---- R98-FIX3 Б: шумодав FM з режиму -- SK1 + ручка (у стоку на екрані каналу SK1 + ручка -- та сама зміна каналу, що й без SK1; у режимі канал вибирає
+// ручка без SK1, тож комбінація вільна). Утримання SK1 показує стокову панель деталей -- вона не заважає: сповіщення шумодава малюється поверх неї, після
+// відпускання SK1 панель ховається, як завжди.
+static bool dualIsSquelchKey(const uiEvent_t *ev)
+{
+	return (dcIsEnabled() && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && (directChannelNumber == 0) &&
+			BUTTONCHECK_DOWN(ev, BUTTON_SK1) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == false) &&
+			((ev->keys.key == KEY_ROTARY_INCREMENT) || (ev->keys.key == KEY_ROTARY_DECREMENT)));
+}
+
+// Картка з покажчиком (A == B -- це один канал, A): рація стає на неї (чергування -- пауза, як після будь-якої клавіші), далі -- стоковий крок шумодава над
+// currentChannelData. FM -- крок; DMR -- звук помилки (шумодава FM там нема). Збереження: A -- у канальному буфері (як у стоку; з копією R98-FIX2 Є не губиться на
+// заходах на B); B = канал -- s_dualSqlB (накладається після кожного перечитування B з кодплага, у кодплаг не пишеться); B = VFO -- запис VFO + settingsSetVFODirty().
+static void dualSquelchStep(int dir)
+{
+	bool toB = (dcPointerB() && (dualSingle() == false));
+
+	dualSuspend();
+
+	if (toB != dcIsOnB())
+	{
+		dualTune(toB);
+	}
+
+	if (currentChannelData->chMode != RADIO_MODE_ANALOG)
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);
+		return;
+	}
+
+	channelSquelchStep(dir);
+
+	if (dcIsOnB())
+	{
+		if (dcBIsVfo())
+		{
+			settingsSetVFODirty();
+		}
+		else
+		{
+			s_dualSqlB = currentChannelData->sql;
+		}
+	}
+}
+
 // Увімкнути/вимкнути режим -- ОДНА логіка для пункту швидкого меню й гарячої клавіші (довге ▼): перевірка пари (B не задано / канал B
 // видалено / B збігається з A -- сповіщення й сигнал помилки, режим не стартує), запис блоку, старт/зупинка чергування.
 // notify -- коротке сповіщення «вкл/вимк» (гаряча клавіша; у меню зміну видно і так).
@@ -4436,6 +4756,7 @@ static void dualSetMode(bool on, bool notify)
 
 			if ((chA >= DC_CH_MIN) && (chA <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(chA))
 			{
+				s_dualSqlB = 0U;   // R98-FIX3 Б
 				(void)dcSetChannelB(chA, true);
 				chk = dualCheckPair();
 			}
@@ -4549,6 +4870,7 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_METER_SEG_W   10
 #define DW_METER_STEP    12
 #define DW_METER_SEGS    9
+#define DW_METER_HOT     2                                 // R98-FIX3 В: скільки останніх сегментів -- кольором «понад S9» (червоні)
 
 // Текст абонента за тим самим правилом, що «останній абонент» звичайного екрана (contactDisplayPriority).
 static void dualCallerText(char *text17)
@@ -4590,7 +4912,8 @@ static void dualMeterRow(int16_t y)
 
 		if (rssi >= (SMETER_S0 + (i * 4)))   // та сама шкала, що в стоковому блоці: 4 дБ на S-одиницю
 		{
-			displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG);
+			// R98-FIX3 В: два останні сегменти (з 9) -- колір смуги «понад S9» тієї самої теми (THEME_ITEM_FG_RSSI_BAR_S9P), решта -- звичайний колір смуги
+			displayThemeApply(((i > (DW_METER_SEGS - DW_METER_HOT)) ? THEME_ITEM_FG_RSSI_BAR_S9P : THEME_ITEM_FG_RSSI_BAR), THEME_ITEM_BG);
 			displayFillRect(sx, my, DW_METER_SEG_W, DW_METER_H, false);
 		}
 		else
@@ -4826,6 +5149,11 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	if (callerHere)
 	{
 		dualCallerText(l2);   // хто зараз говорить -- замість ТГ каналу
+	}
+
+	if ((directChannelNumber != 0) && (isB == dcPointerB()))
+	{
+		dualEntryText(l2, sizeof(l2));   // R98-FIX3 А1: набір цифр для цієї картки -- поле введення в рядку 2
 	}
 
 	// рамка картки
