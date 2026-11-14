@@ -180,7 +180,7 @@ def test_part_a(t):
             ("під час набору ручка не з'їдається", src.replace(" uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;\n return 1;\n}", " uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;\n return (keyval < 10) || (ev->keys.key == 13) || (ev->keys.key == 27) || (ev->keys.key == 10);\n}")),
             ("червона не скасовує", re.sub(r"else if \(\(sk == 0\) && \(\(ev->keys\.key == 27\)[^\n]*\n\s*\{", "else if (0)\n {", src, count=1)),
             ("B без перевірки «використовується»", src.replace("|| (codeplugAllChannelsIndexIsInUse(num) == 0)", "")),
-            ("VFO: підтвердження без налаштування на VFO", src.replace("if (dcIsOnB() == 0)\n {\n  dualTune(1);\n }", "")))
+            ("VFO: підтвердження без налаштування на VFO", src.replace("if (dcIsOnB() != dcPointerB())\n {\n  dualTune(dcPointerB());\n }", "")))
     for what, m in muts:
         mo = run_c(ENTRY_STUBS.replace("@@FNS@@", m)) if m != src else None
         mk = kv(mo)

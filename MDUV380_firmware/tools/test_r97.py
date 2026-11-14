@@ -41,6 +41,56 @@ def pp(root, incs, defs, rel):
     return None
 
 
+# R98-FIX4: A може бути VFO (тип A у RAM/блоці 18). Старі тести (R97..R98-FIX3) моделюють A = канал: у вирізаних функціях нові помічники типу A
+# замінюються їхнім значенням для A = канал (dcTypeA() = 0), тож гарнеси попередніх ітерацій лишаються чинними. tools/test_r98fix4.py вимикає це
+# (COMPAT_A_CHANNEL = False) і перевіряє справжні функції з A = VFO.
+COMPAT_A_CHANNEL = True
+_PAREN = r"((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)"
+
+
+def _compat_enable_inline(text):
+    """Тіло dualEnable() з typeCur = канал -- як було в dualSetMode(true) до R98-FIX4 (без «A для повернення», без авто B = VFO)."""
+    i = -1
+    for m in re.finditer(re.escape("static _Bool dualEnable(uint8_t typeCur)"), text):
+        if text[m.end():].lstrip().startswith("{"):
+            i = m.start(); break
+    if i < 0:
+        return None
+    j = text.index("{", i); d = 0
+    for k in range(j, len(text)):
+        if text[k] == "{": d += 1
+        elif text[k] == "}":
+            d -= 1
+            if d == 0:
+                body = text[j + 1:k]; break
+    body = body.replace("uint16_t idxCur = ((typeCur == 0U) ? dualChannelA() : 0U);", "uint16_t idxCur = dualChannelA();")
+    body = body.replace(" dcSetTypeA(typeCur);\n", "").replace(" dcSetOnB(0);\n", "")
+    body = re.sub(r"if \(typeCur != 0U\)\s*\{[^{}]*\}\s*else if", "if", body)
+    body = re.sub(r"uint8_t rt;\s*uint16_t ri;\s*if \(dcSameTarget\(typeCur, idxCur, dcTypeB\(\), dcChannelB\(\)\) && dcGetReturnA\(&rt, &ri\)\)\s*\{[^{}]*\}", "", body)
+    body = body.replace("(dualIsRunning() == 0) && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE)", "dualIsRunning() == 0")
+    body = body.replace("return 0;", "return;").replace("return 1;", "")
+    return "{" + body + "}"
+
+
+def compat_a_channel(f, text=None):
+    if text is not None and "if (dualEnable((uint8_t)0U) == 0)" in f:
+        inl = _compat_enable_inline(text)
+        if inl:
+            f = re.sub(r"if \(dualEnable\(\(uint8_t\)0U\) == 0\)\s*\{\s*return;\s*\}", lambda m: inl, f)
+    f = re.sub(r"uint16_t retIdx = \(dcAIsVfo\(\) \? 0U : dualChannelA\(\)\);", "uint16_t retIdx = 0U;", f)
+    f = f.replace("dualBSameAsA() && dualBExists()", "dualBSameAsA() && (dcBIsVfo() || ((dcChannelB() >= 1U) && (dcChannelB() <= 1024U) && codeplugAllChannelsIndexIsInUse(dcChannelB())))")
+    f = f.replace("(dcIsOnB() || dcAIsVfo())", "dcIsOnB()")
+    f = f.replace("dualOnVfoNow()", "(dcIsEnabled() && dcIsOnB() && dcBIsVfo())")
+    f = re.sub(r"dualCardIsVfo\(" + _PAREN + r"\)", r"((\1) ? dcBIsVfo() : 0)", f)
+    f = re.sub(r"dualCardVfo\(" + _PAREN + r"\)", r"((\1) ? dualVfoIdx() : 0)", f)
+    f = re.sub(r"dualLeaveOnVfo\(" + _PAREN + r"\);", "dualLeaveOnVfo();", f)
+    f = re.sub(r"\(void\)dcDisableWithReturnA\(" + _PAREN + r"\);", "(void)dcSetEnabled(0, 1);", f)
+    f = f.replace("channelScreenChannelData.rxFreq = 0U;", ";").replace("channelScreenChannelData.rxFreq = 0;", ";")
+    f = f.replace("dcAIsVfo()", "0").replace("dcTypeA()", "0").replace("dualIsAKey(ev)", "0")
+    f = re.sub(r"dcSetTypeA\(" + _PAREN + r"\);", ";", f)
+    return f
+
+
 def carve_fn(text, sig):
     """Функція від сигнатури sig до парної закривальної дужки (лічба { })."""
     i = -1
@@ -55,7 +105,7 @@ def carve_fn(text, sig):
         elif text[k] == "}":
             depth -= 1
             if depth == 0:
-                return text[i:k + 1]
+                return compat_a_channel(text[i:k + 1], text) if COMPAT_A_CHANNEL else text[i:k + 1]
     return None
 
 

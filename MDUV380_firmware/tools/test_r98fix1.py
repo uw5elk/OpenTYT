@@ -152,9 +152,9 @@ def test_part_a(incs, cf):
     check(o.get("e6") == "B42,set1/42,err0/0,beep0,en2,res2", "А2: повторні вмикання (з іншим A) B не міняють: %s" % o.get("e6"))
     check(o.get("e7") == "B42,set1/42,err0/0,beep0,en2,res2", "А2: вдруге увімкнути -- запис лише раз: %s" % o.get("e7"))
     check(o.get("e8") == "B0,set0/0,err1/0,beep1,en0,res0", "А2: номер A поза 1..1024 -- не вмикаємо: %s" % o.get("e8"))
-    muts = (("B не записується", fn.replace("(void)dcSetChannelB(chA, 1);", "")),
+    muts = (("B не записується", fn.replace("(void)dcSetChannelB(idxCur, 1);", "")),
             ("після авто B пара не перевіряється (помилка лишається)", re.sub(r"(?m)^\s+chk = dualCheckPair\(\);", "", fn)),
-            ("авто B без перевірки використання A", fn.replace(" && codeplugAllChannelsIndexIsInUse(chA)", "")),
+            ("авто B без перевірки використання A", fn.replace(" && codeplugAllChannelsIndexIsInUse(idxCur)", "")),
             ("авто B і при заданому B (перезапис)", fn.replace("if (chk == DC_PAIR_NO_B)", "if (1)")),
             ("авто B і при «B видалено»", fn.replace("if (chk == DC_PAIR_NO_B)", "if (chk != DC_PAIR_OK)")))
     for what, mut in muts:
@@ -460,7 +460,7 @@ def test_part_v(incs, cf):
         mut = fn.replace("if (dcIsEnabled() && dcIsOnB())", "if (0)")
         mo = run_in(STOP_HARNESS.replace("@@FN@@", mut)) if mut != fn else None
         check(mut != fn and mo is not None and mo != out, "В3 (мутант): без гілки обраного B -- стрибок на A ловиться")
-    check("useChannelDataInMemory && dcIsOnB() && dcBIsVfo()" in src and "useChannelDataInMemory && dcIsOnB())" in src,
+    check(("useChannelDataInMemory && dcIsOnB() && dcBIsVfo()" in src or "useChannelDataInMemory && dualOnVfoNow()" in src) and "useChannelDataInMemory && dcIsOnB())" in src,   # R98-FIX4: гілка VFO -- для A теж
           "В3: uiChannelModeLoadChannelData із пам'яті зберігає обраний B: гілка VFO (uiVFOModeDualLoad) і гілка каналу B")
 
 
@@ -526,7 +526,7 @@ def test_part_g(incs, cf):
     o = kv(out)
     check(o.get("a") == "1" and o.get("b") == "0", "Г2: ТС-перекриття на обраному VFO B/VFO A іде у відро VFO B (1) / VFO A (0), НЕ в канальне (2): %s %s" % (o.get("a"), o.get("b")))
     check(o.get("c") == "2" and o.get("d") == "2" and o.get("e") == "2", "Г2: B = канал / рація на A / режим вимкнено -- канальне відро, як у R97: %s %s %s" % (o.get("c"), o.get("d"), o.get("e")))
-    mut = fn.replace("(int)(CHANNEL_VFO_A + dualVfoIdx())", "(int)CHANNEL_CHANNEL")
+    mut = fn.replace("(int)(CHANNEL_VFO_A + ((dcIsOnB()) ? dualVfoIdx() : 0))", "(int)CHANNEL_CHANNEL").replace("(int)(CHANNEL_VFO_A + dualVfoIdx())", "(int)CHANNEL_CHANNEL")
     mo = run_in(BUCKET_HARNESS.replace("@@FN@@", mut)) if mut != fn else None
     check(mut != fn and mo is not None and mo != out, "Г2 (мутант): перекриття знову в канальне відро -- ловиться")
 

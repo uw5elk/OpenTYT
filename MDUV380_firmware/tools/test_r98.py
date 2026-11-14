@@ -86,8 +86,8 @@ def test_encoding_and_cycle():
     check(o.get("old") == "1,1,1,308,0,0", "В1: старий запис R97 (резерв = нулі) читається як «B -- канал», решта полів без змін: %s" % o.get("old"))
     check(o.get("t1") == "1,308" and o.get("t2") == "2,308", "В1: типи 1 (VFO A) і 2 (VFO B) читаються, номер каналу B зберігається: %s %s" % (o.get("t1"), o.get("t2")))
     check(o.get("t3") == "0" and o.get("t4") == "0", "В1: невідомий тип -> 0 (канал): %s %s" % (o.get("t3"), o.get("t4")))
-    check(o.get("a1") == "1,0" and o.get("a2") == "0", "В1: тип A (reserved[1]) ненульовий -> 0, розбір без помилки: %s %s" % (o.get("a1"), o.get("a2")))
-    check(o.get("b1") == "8,1,3,44,1,2,0,0,0", "В1: збирання -- 8 байт, версія 1, прапорці, номер B (300), тип B у [4], тип A у [5] завжди 0, [6..7] нулі: %s" % o.get("b1"))
+    check(o.get("a1") == "1,1" and o.get("a2") == "2", "В1 / R98-FIX4 Б7: тип A (reserved[1], біти 0..1) розбирається (1 = VFO A, 2 = VFO B), розбір без помилки: %s %s" % (o.get("a1"), o.get("a2")))
+    check(o.get("b1") == "8,1,3,44,1,2,1,0,0", "В1 / R98-FIX4 Б7: збирання -- 8 байт, версія 1, прапорці, номер B (300), тип B у [4], тип A у [5] (біти 0..1), [6..7] нулі: %s" % o.get("b1"))
     check(o.get("b2") == "0,7", "В1: тип поза 0..2 при збиранні -> 0: %s" % o.get("b2"))
     check(o.get("c1") == "1,0", "В1: старий збирач дає той самий запис, що Ex з типами 0 (байт-у-байт, резерв нулі): %s" % o.get("c1"))
     check(o.get("rt") == "1", "В1: збирання -> розбір для типів 0/1/2 зберігає все")
@@ -316,15 +316,15 @@ def test_sk2(incs, cf):
             o = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
             check(o.get("a") == "1,1,0,0" and o.get("b") == "0,0" and o.get("c") == "0" and o.get("d") == "0" and o.get("e") == "0" and o.get("f") == "0",
                   "В8: SK2 + ручка -- крок частоти ЛИШЕ при ввімкненому режимі, покажчику на B, B = VFO, екрані каналу, без SK1: %s" % out.replace("\n", " "))
-            for what, mut in (("тип B не перевіряється", fn.replace("dcBIsVfo() && ", "")), ("покажчик не перевіряється", fn.replace("dcPointerB() && ", "")), ("SK2 не перевіряється", fn.replace("(((ev)->buttons & 0x00000020)) &&", ""))):
+            for what, mut in (("тип B не перевіряється", fn.replace("((dcPointerB()) ? dcBIsVfo() : 0)", "dcPointerB()")), ("покажчик не перевіряється", fn.replace("((dcPointerB()) ? dcBIsVfo() : 0)", "dcBIsVfo()")), ("SK2 не перевіряється", fn.replace("(((ev)->buttons & 0x00000020)) &&", ""))):
                 mo = T.run_c(KEY_HARNESS % mut)
                 check(mut != fn and mo is not None and mo != out, "В8 (мутант): %s -- ловиться" % what)
     # статика: ручка/SK2 на VFO-картці
     hk = src[src.find("static bool dualHandleKey(uiEvent_t *ev)\n{"):]
     hk = hk[:hk.find("// Увімкнути/вимкнути режим")]
-    check(hk.find("dualIsVfoStepKey(ev)") < hk.find("BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1)") and "uiVFOModeDualStep(dualVfoIdx()" in hk,
+    check(hk.find("dualIsVfoStepKey(ev)") < hk.find("BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1)") and ("uiVFOModeDualStep(dualVfoIdx()" in hk or "uiVFOModeDualStep(dualCardVfo(dcIsOnB())" in hk),   # R98-FIX4 Б3: VFO картки з покажчиком
           "В8: у dualHandleKey SK2+ручка на картці VFO обробляється ДО загального «SK2/SK1 -- не наші» і викликає uiVFOModeDualStep")
-    check(re.search(r"if \(dwRunning \|\| dualSingle\(\) \|\| dualIsVfoStepKey\(ev\)( \|\| dualIsSquelchKey\(ev\))?\)", src) is not None,   # R98-FIX3 Б: + SK1+ручка
+    check(re.search(r"if \(dwRunning \|\| dualSingle\(\) \|\| dualIsVfoStepKey\(ev\)( \|\| dualIsSquelchKey\(ev\))?( \|\| dualIsAKey\(ev\))?\)", src) is not None,   # R98-FIX3 Б: + SK1+ручка
           "В8: хук handleEvent пропускає SK2+ручку на VFO-картці в dualHandleKey навіть коли чергування вже зупинене паузою")
     vs = T.rd(os.path.join(UI, "uiVFOMode.c"))
     st = vs[vs.find("void uiVFOModeDualStep("):]
@@ -342,19 +342,19 @@ def test_static():
     # В2/В5: повернення з екрана передачі/меню на B = VFO -- ізольоване налаштування, до канальних гілок
     ld = src[src.find("void uiChannelModeLoadChannelData("):]
     ld = ld[:ld.find("HRC6000ClearActiveDMRID();")]
-    ia = ld.find("dcIsOnB() && dcBIsVfo()"); ib = ld.find("if (useChannelDataInMemory && dcIsOnB())")
-    check(0 < ia < ib and "uiVFOModeDualLoad(dualVfoIdx(), false);\n\t\treturn;" in ld and "CH_DETAILS_VFO_CHANNEL" in ld,
+    ia = ld.find("useChannelDataInMemory && dualOnVfoNow()"); ib = ld.find("if (useChannelDataInMemory && dcIsOnB())")   # R98-FIX4 Б3: картка VFO -- A або B
+    check(0 < ia < ib and "uiVFOModeDualLoad(dualCardVfo(dcIsOnB()), false);\n\t\treturn;" in ld and "CH_DETAILS_VFO_CHANNEL" in ld,
           "В5: повернення з передачі/меню на B = VFO -- uiChannelModeLoadChannelData налаштовує VFO ізольовано і виходить ДО канальних гілок (номер каналу B для VFO не береться)")
     check("dcSetTxHold(true);" in src[src.find("bool uiChannelModeDualPrepareTx(void)"):src.find("bool uiChannelModeDualPrepareTx(void)") + 900] and "dualTune(toB);" in src[src.find("bool uiChannelModeDualPrepareTx(void)"):src.find("bool uiChannelModeDualPrepareTx(void)") + 900],
           "В5: PTT з картки VFO -- той самий шлях PrepareTx: dualTune(toB) (VFO налаштовується), утримання «Затр. скан.» після передачі")
-    check("snprintf(nameBuf, NAME_BUFFER_LEN, \"VFO %c\", (char)('A' + dualVfoIdx()));" in src, "В5: екран передачі з картки VFO показує «VFO A/B» (стокове ім'я VFO порожнє)")
+    check("snprintf(nameBuf, NAME_BUFFER_LEN, \"VFO %c\", (char)('A' + dualCardVfo(dcIsOnB())));" in src, "В5: екран передачі з картки VFO показує «VFO A/B» (стокове ім'я VFO порожнє)")
     check("codeplugChannelSaveDataForIndex(" not in src[src.find("static void dualTune(bool toB)"):src.find("static uint16_t dualChannelA(void)")], "В2: dualTune не пише запис каналу (VFO ніколи не потрапляє в канал)")
     # В6: вихід на обраному VFO
     dd = src[src.find("static void dualDisable(void)"):]
     dd = dd[:dd.find("\n}\n")]
-    check(dd.find("(void)dcSetEnabled(false, true);") < dd.find("dualLeaveOnVfo();") and "if (dcBIsVfo())" in dd,
+    check(0 < dd.find("(void)dcDisableWithReturnA(retType, retIdx);") < dd.find("dualLeaveOnVfo(dualVfoIdx());") and "if (dcBIsVfo())" in dd,   # R98-FIX4 А1: вимкнення + «A для повернення» одним записом
           "В6: вихід (довге ▼) при обраному VFO -- режим вимикається ДО переходу на VFO-екран, далі dualLeaveOnVfo()")
-    lv = src[src.find("static void dualLeaveOnVfo(void)"):]
+    lv = src[src.find("static void dualLeaveOnVfo(uint8_t v)"):]
     lv = lv[:lv.find("\n}\n")]
     check("settingsSet(nonVolatileSettings.currentVFONumber, v);" in lv and "menuSystemPopAllAndDisplaySpecificRootMenu(UI_VFO_MODE, true);" in lv and "dcSetOnB(false);" in lv and "codeplugSetLastUsedChannelInZone" not in lv,
           "В6: «лишитись на VFO» -- стокове перемикання поточного VFO + стоковий вхід у VFO-екран; «останній канал зони»/зона не змінюються")
@@ -366,7 +366,7 @@ def test_static():
     qk = qk[:qk.find("switch(menuDataGlobal.currentItemIndex)\n\t\t\t{\n\t\t\t\tcase CH_SCREEN_QUICK_MENU_COPY2VFO:")]
     for item in ("COPY2VFO", "COPY_FROM_VFO", "TALKAROUND", "DELETE", "ZONE_REMOVE"):
         check("case CH_SCREEN_QUICK_MENU_%s:" % item in qk, "В6: пункт швидкого меню «%s» на обраному VFO -- сигнал помилки, стан не змінюється" % item)
-    check("dcIsEnabled() && dcIsOnB() && dcBIsVfo()" in qk and "MELODY_ERROR_BEEP" in qk and "return;" in qk, "В6: захист пунктів меню діє лише коли рація на B = VFO, піп помилки, вихід без дій")
+    check("if (dualOnVfoNow())" in qk and "MELODY_ERROR_BEEP" in qk and "return;" in qk, "В6: захист пунктів меню діє лише коли рація на B = VFO, піп помилки, вихід без дій")
     # В7: червона/VFO-екран під час режиму (UV380: перехід у VFO -- стокова КОРОТКА червона)
     hk = src[src.find("static bool dualHandleKey(uiEvent_t *ev)\n{"):]
     hk = hk[:hk.find("// Увімкнути/вимкнути режим")]
@@ -381,7 +381,7 @@ def test_static():
     cp = src[src.find("static dcPairCheck_t dualCheckPair(void)"):]
     cp = cp[:cp.find("\n}\n")]
     check("if (dcBIsVfo())" in cp and "return DC_PAIR_OK;" in cp, "В4: B = VFO -- пара завжди дійсна (VFO існує), без номера каналу")
-    check("dcSameTarget((uint8_t)DC_TYPE_CHANNEL, dualChannelA(), dcTypeB(), dcChannelB())" in src, "В4: рівність A/B -- за ключем (тип, індекс), не за «-1»")
+    check("dcSameTarget(dcTypeA(), dualChannelA(), dcTypeB(), dcChannelB())" in src, "В4: рівність A/B -- за ключем (тип, індекс), не за «-1»")
     # В9: пам'ять
     dcc = T.rd(os.path.join(APP, "source", "functions", "dual_channel.c"))
     sd = dcc[dcc.find("static struct\n{"):dcc.find("} s_dc;")]

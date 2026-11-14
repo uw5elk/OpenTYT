@@ -549,7 +549,7 @@ def test_part_ye(incs, cf):
     muts = (("A не зберігається перед B", fn.replace("memcpy(&scanNextChannelData, &channelScreenChannelData, sizeof(CodeplugChannel_t));", "")),
             ("A не відновлюється при поверненні", fn.replace("memcpy(&channelScreenChannelData, &scanNextChannelData, sizeof(CodeplugChannel_t));", "")),
             ("A перечитується з кодплага (стара поведінка)", fn.replace("uiChannelModeLoadChannelData((channelScreenChannelData.rxFreq != 0U), 0);", "uiChannelModeLoadChannelData(0, 0);")),
-            ("копія A перезаписується при кроці B", fn.replace("if (bufHoldsB == 0)", "if (1)")))
+            ("копія A перезаписується при кроці B", fn.replace("if ((bufHoldsB == 0) && (0 == 0))", "if (1)").replace("if (bufHoldsB == 0)", "if (1)")))
     for what, m in muts:
         mo = run_in(TUNE_HARNESS.replace("@@FN@@", bh + "\n" + m)) if m != fn else None
         mk = kv(mo) if mo else {}
