@@ -437,10 +437,13 @@ def chevron_geom(cx, cy, length, bearing_deg):
     dx, dy = math.sin(b), -math.cos(b)
     px, py = -dy, dx
     hw, nd = 0.8 * length, 0.72 * length
-    tip = (_iround(cx + dx * length), _iround(cy + dy * length))
-    lft = (_iround(cx - dx * length - px * hw), _iround(cy - dy * length - py * hw))
-    rgt = (_iround(cx - dx * length + px * hw), _iround(cy - dy * length + py * hw))
-    notch = (_iround(cx - dx * nd), _iround(cy - dy * nd))
+    # R98-FIX3 Д: (cx, cy) -- центр описаного кола (як у прошивці): середина осі на 0.16*length попереду
+    sh = 0.16 * length
+    ox, oy = cx + dx * sh, cy + dy * sh
+    tip = (_iround(ox + dx * length), _iround(oy + dy * length))
+    lft = (_iround(ox - dx * length - px * hw), _iround(oy - dy * length - py * hw))
+    rgt = (_iround(ox - dx * length + px * hw), _iround(oy - dy * length + py * hw))
+    notch = (_iround(ox - dx * nd), _iround(oy - dy * nd))
     return tip, lft, rgt, notch
 
 

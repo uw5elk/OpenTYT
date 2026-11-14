@@ -21,16 +21,22 @@ void aprsChevronGeom(aprsChevron_t *c, int16_t cx, int16_t cy, int16_t len, uint
 	const double py = dx;
 	const double L = (double)len;
 	const double hw = 0.8 * L;        /* півширина основи */
-	const double nd = 0.72 * L;       /* виїмка: позаду центру */
+	const double nd = 0.72 * L;       /* виїмка: позаду середини осі */
+	/* R98-FIX3 Д: (cx,cy) -- центр ОПИСАНОГО кола фігури, а не середина осі. Вістря (u = +L) і кутові точки (u = -L, ±0.8L) рівновіддалені від точки u = -0.16L
+	 * (радіус 1.16L): (L + 0.16L)^2 = (L - 0.16L)^2 + (0.8L)^2. Тож середину осі зсуваємо на 0.16L уперед від (cx,cy) -- у колі (кільце APRS, голка «пеленг») фігура
+	 * стоїть рівно при будь-якому азимуті; розмір і форма ті самі. */
+	const double sh = 0.16 * L;
+	const double ox = (double)cx + (dx * sh);
+	const double oy = (double)cy + (dy * sh);
 
-	c->tx = (int16_t)iround((double)cx + (dx * L));
-	c->ty = (int16_t)iround((double)cy + (dy * L));
-	c->lx = (int16_t)iround((double)cx + (-dx * L) - (px * hw));
-	c->ly = (int16_t)iround((double)cy + (-dy * L) - (py * hw));
-	c->rx = (int16_t)iround((double)cx + (-dx * L) + (px * hw));
-	c->ry = (int16_t)iround((double)cy + (-dy * L) + (py * hw));
-	c->nx = (int16_t)iround((double)cx + (-dx * nd));
-	c->ny = (int16_t)iround((double)cy + (-dy * nd));
+	c->tx = (int16_t)iround(ox + (dx * L));
+	c->ty = (int16_t)iround(oy + (dy * L));
+	c->lx = (int16_t)iround(ox + (-dx * L) - (px * hw));
+	c->ly = (int16_t)iround(oy + (-dy * L) - (py * hw));
+	c->rx = (int16_t)iround(ox + (-dx * L) + (px * hw));
+	c->ry = (int16_t)iround(oy + (-dy * L) + (py * hw));
+	c->nx = (int16_t)iround(ox + (-dx * nd));
+	c->ny = (int16_t)iround(oy + (-dy * nd));
 }
 
 #endif /* APRS_RX */
