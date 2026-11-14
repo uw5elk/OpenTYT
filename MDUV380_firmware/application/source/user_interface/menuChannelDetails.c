@@ -35,6 +35,12 @@
 #include "user_interface/uiLocalisation.h"
 #include "interfaces/gps.h"
 #include "user_interface/uiNameEditor.h"   /* R65A: nameEdFitLabel() */
+#include "user_interface/uiSmsKeys.h"      /* R98-FIX2 Л: підказка літер клавіші при наборі назви (лише українська збірка) */
+#include "io/keyboard.h"
+#if defined(LANGUAGE_BUILD_UKRAINIAN) && ((defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)) || defined(APRS_RX))
+#define CH_NAME_KEY_HINT 1
+#define CH_NAME_HINT_Y   (DISPLAY_SIZE_Y - 12)   /* нижній рядок екрана: заміщує останній (7-й) пункт списку, поки виділено «Назва» */
+#endif
 #include "functions/aes_key_name.h"   /* R64C: ім'я ключа в «Деталях каналу» (лише з ENABLE_AES_KEY_NAMES) */
 #if defined(AES_KEY_NAMES_ENABLED)
 #include "user_interface/languages/aeskeys_ua.h"
@@ -385,8 +391,19 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 	{
 		keypadAlphaEnable = (menuDataGlobal.currentItemIndex == CH_DETAILS_NAME);
 
+#if defined(CH_NAME_KEY_HINT)
+		// R98-FIX2 Л: поки набираємо «Назву» -- нижній рядок екрана займає підказка літер; останній пункт списку на цей час не малюється (щоб не накладались)
+		bool nameHint = ((settingOption == false) && (menuDataGlobal.currentItemIndex == CH_DETAILS_NAME) && (uiDataGlobal.currentSelectedChannelNumber != CH_DETAILS_VFO_CHANNEL));
+#endif
+
 		for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
 		{
+#if defined(CH_NAME_KEY_HINT)
+			if (nameHint && (i == MENU_END_ITERATION_VALUE))
+			{
+				continue;
+			}
+#endif
 			if ((settingOption == false) || (i == 0))
 			{
 				mNum = menuGetMenuOffset(NUM_CH_DETAILS_ITEMS, i);
@@ -958,6 +975,27 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 			}
 		}
 	}
+
+#if defined(CH_NAME_KEY_HINT)
+	if ((settingOption == false) && (uiDataGlobal.FreqEnter.index == 0) && (menuDataGlobal.currentItemIndex == CH_DETAILS_NAME) && (uiDataGlobal.currentSelectedChannelNumber != CH_DETAILS_VFO_CHANNEL))
+	{
+		int alphaIdx = 0;
+		const char *alphaMap = keypadAlphaPreviewMap(&alphaIdx);
+
+		displayThemeApply(THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+
+		if (alphaMap != NULL)
+		{
+			uiSmsKeyHintMap(alphaMap, alphaIdx, 2, CH_NAME_HINT_Y);   // літери клавіші, що гортається (та сама відмальовка, що й у повідомленнях)
+		}
+		else
+		{
+			displayPrintCore(2, CH_NAME_HINT_Y, "1=.,@ 2=abc ... 9=wxyz", FONT_SIZE_1, TEXT_ALIGN_LEFT, false);   // до першого натискання -- загальна підказка (ASCII, без таблиць)
+		}
+
+		displayThemeResetToDefault();
+	}
+#endif
 
 	displayRender();
 }

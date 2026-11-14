@@ -14,7 +14,13 @@
 
 void uiSmsKeyHint(uint8_t mode, char key, uint8_t idx, int16_t x, int16_t y)
 {
-	const char *map = smsMtKeyMap(mode, key);
+	uiSmsKeyHintMap(smsMtKeyMap(mode, key), (int)idx, x, y);
+}
+
+/* R98-FIX2 Л: та сама відмальовка, що й раніше (ui7), але для вже відомого рядка символів (map) -- спільна для multitap-екранів повідомлень/APRS і для набору назви каналу
+ * (стокова клавіатура keyboard.c). idx < 0 -- поточного символу ще нема (нічого не виділяється). */
+void uiSmsKeyHintMap(const char *map, int idx, int16_t x, int16_t y)
+{
 	if (map == NULL) { return; }
 	int n = (int)strlen(map);
 	int cells = (DISPLAY_SIZE_X - x) / 8;
@@ -22,7 +28,7 @@ void uiSmsKeyHint(uint8_t mode, char key, uint8_t idx, int16_t x, int16_t y)
 	int start = 0;
 	if ((step == 1) && (n > cells))
 	{
-		start = (int)idx - cells / 2;
+		start = idx - cells / 2;
 		if (start > n - cells) { start = n - cells; }
 		if (start < 0) { start = 0; }
 	}
@@ -30,7 +36,7 @@ void uiSmsKeyHint(uint8_t mode, char key, uint8_t idx, int16_t x, int16_t y)
 	{
 		char one[2] = { (map[k] == ' ') ? '_' : map[k], 0 };
 		int16_t cx = (int16_t)(x + (k - start) * step * 8);
-		if (k == (int)idx)
+		if (k == idx)
 		{
 			displayFillRect(cx, y, 8, 8, false);
 			displayPrintCore(cx, y, one, FONT_SIZE_2, TEXT_ALIGN_LEFT, true);

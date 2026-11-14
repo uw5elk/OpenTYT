@@ -124,6 +124,9 @@
 
 extern volatile bool keypadLocked;
 extern volatile bool keypadAlphaEnable;
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+const char *keypadAlphaPreviewMap(int *idx);   /* R98-FIX2 Л: символи клавіші, що гортається у стоковому наборі, і позиція; NULL -- нічого */
+#endif
 
 typedef struct keyboardCode
 {

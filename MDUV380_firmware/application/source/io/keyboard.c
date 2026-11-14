@@ -110,6 +110,21 @@ static const char keypadAlphaMap[11][31] = {
 		"*"
 };
 
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+/* R98-FIX2 Л: рядок символів клавіші, що зараз гортається у стоковому наборі (keypadAlphaEnable), і позиція в ньому (може бути -1 одразу після натискання
+ * іншої клавіші). NULL -- нічого не гортається. Таблицю не дублюємо: підказка екрана набору назви бере її звідси. */
+const char *keypadAlphaPreviewMap(int *idx)
+{
+	if (keypadAlphaEnable && (keypadAlphaKey != 0))
+	{
+		*idx = keypadAlphaIndex;
+		return keypadAlphaMap[keypadAlphaKey - 1];
+	}
+
+	return NULL;
+}
+#endif
+
 #define KEYBOARD_KEYS_PER_ROW  8U
 
 static const struct
