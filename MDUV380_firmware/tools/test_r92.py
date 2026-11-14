@@ -283,8 +283,8 @@ def test_geometry(exe, label):
             return False
         for a, l in zip(ANGLES, out):
             tx, ty, lx, ly, rx, ry, nx, ny, cx, cy = map(int, l.split()[1:])
-            ex = cx + 4 * math.sin(math.radians(a))
-            ey = cy - 4 * math.cos(math.radians(a))
+            ex = cx + 4.64 * math.sin(math.radians(a))   # R98-FIX3 Д: (cx,cy) -- центр описаного кола, вістря на 1.16*len
+            ey = cy - 4.64 * math.cos(math.radians(a))
             good = abs(tx - ex) <= 1.0 and abs(ty - ey) <= 1.0 and cx == 152 and cy == rowY + rowH // 2
             # виїмка на осі позаду центру (0.72*4 = 2.9 px): відстань від осі <= 1 px, позаду
             ux, uy = math.sin(math.radians(a)), -math.cos(math.radians(a))
@@ -293,7 +293,7 @@ def test_geometry(exe, label):
             for qx, qy, sg in ((lx, ly, -1), (rx, ry, 1)):
                 back = -((qx - cx) * ux + (qy - cy) * uy)
                 side = sg * ((qx - cx) * (-uy) + (qy - cy) * ux)
-                good = good and abs(back - 4.0) <= 1.5 and abs(side - 3.2) <= 1.5
+                good = good and abs(back - 3.36) <= 1.5 and abs(side - 3.2) <= 1.5
             # усі точки в комірці 10x10 і в межах рядка
             xs, ys = [tx, lx, rx, nx], [ty, ly, ry, ny]
             good = good and min(xs) >= cx - 5 and max(xs) <= cx + 5 and min(ys) >= rowY and max(ys) < rowY + rowH
@@ -469,31 +469,33 @@ def test_cases(exe, label):
             # два залиті трикутники (вістря, ліва, виїмка) і (вістря, права, виїмка) + 4 лінії контуру
             (tx, ty, lx, ly, nx, ny), (t2x, t2y, rx, ry, n2x, n2y) = tris
             _, brg = ref_dist_bearing(MY[0], MY[1], la, lo)
-            rowH0 = 32 if dbl else 16
-            lab_y0 = [y for y, f, t in prints if "[" in t and re.search(r"\d(\u043c|\u043a\u043c)\]", t)]
-            rs0 = 64 if (lab_y0 and lab_y0[0] == 64) else 96
-            cx, cy = 152, rs0 + rowH0 // 2
-            ex, ey = cx + 4 * math.sin(math.radians(brg)), cy - 4 * math.cos(math.radians(brg))
+            # R98-FIX3 Г: комірка 10x10 одразу ПІСЛЯ рядка з підписом (+2 px), по вертикалі -- середина рядка (рядок 6x8 -- від верху вниз); не далі краю
+            labp = [(y, f, t) for y, f, t in prints if "[" in t and re.search(r"\d(\u043c|\u043a\u043c)\]", t)]
+            ly0, lf, lt = labp[-1] if labp else (96, 3, "")
+            lw = 8 if lf == 3 else 6
+            lh = (16 if lf == 3 else 8) * (2 if dbl else 1)
+            ln_ = min(len(lt), 160 // lw)
+            x1 = ((160 - lw * ln_) >> 1) + lw * ln_
+            left = min(x1 + 2, 160 - 10)
+            cx, cy = left + 5, ly0 + max(lh, 10) // 2
+            ex, ey = cx + 4.64 * math.sin(math.radians(brg)), cy - 4.64 * math.cos(math.radians(brg))
             if not (abs(tx - ex) <= 1.0 and abs(ty - ey) <= 1.0 and (t2x, t2y) == (tx, ty) and (n2x, n2y) == (nx, ny)):
                 ok = False
-                check(False, "%s: напрям стрілки не збігається з азимутом %.1f° (вістря (%d,%d), очікувано (%.1f,%.1f))" % (where, brg, tx, ty, ex, ey))
-            bx, by = nx, ny
-            rowH = 32 if dbl else 16
-            # у якому рядку надруковано підпис?
-            lab_y = [y for y, f, t in prints if "[" in t and re.search(r"\d(м|км)\]", t)]
-            row_start = 64 if (lab_y and lab_y[0] == 64) else 96
+                check(False, "%s: напрям/місце стрілки (вістря (%d,%d), очікувано (%.1f,%.1f) -- комірка після [%s])" % (where, tx, ty, ex, ey, lt))
             xs, ys = [nx, tx, lx, rx], [ny, ty, ly, ry]
-            if not (min(ys) >= row_start and max(ys) < row_start + rowH):
+            if not (min(ys) >= ly0 and max(ys) <= ly0 + max(lh, 10) and max(xs) <= 159):   # наконечник +-5 px (радіус 4.64 з округленням)
                 ok = False
-                check(False, "%s: стрілка (y %d..%d) не в рядку підпису (початок %d, висота %d)" % (where, min(ys), max(ys), row_start, rowH))
-            # комірка не перекриває жоден надрукований рядок цього ж рядка екрана
+                check(False, "%s: стрілка (x %d..%d, y %d..%d) не в рядку підпису (y %d, висота %d) або за екраном" % (where, min(xs), max(xs), min(ys), max(ys), ly0, lh))
+            # не перекриває жоден надрукований рядок
             for y, f, t in prints:
-                same_row = (row_start <= y < row_start + rowH)
-                w = len(t) * (8 if f == 3 else 6)
-                right = (160 + w) // 2
-                if same_row and min(xs) <= right:
+                w = 8 if f == 3 else 6
+                h = (16 if f == 3 else 8) * (2 if (dbl and f == 3) else 1)
+                n_ = min(len(t), 160 // w)
+                px0 = (160 - w * n_) >> 1
+                px1 = px0 + w * n_
+                if not (max(ys) < y or min(ys) >= y + h) and not (max(xs) < px0 or min(xs) >= px1):
                     ok = False
-                    check(False, "%s: комірка стрілки (x від %d) перекриває рядок [%s] (правий край %d)" % (where, min(xs), t, right))
+                    check(False, "%s: стрілка (x %d..%d) перекриває рядок [%s] (x %d..%d)" % (where, min(xs), max(xs), t, px0, px1 - 1))
         # ширина кожного надрукованого рядка в межах екрана: шрифт 3 -- <= 16, шрифт 1 -- <= 21 (стокові межі displaySplitOrSpanText); підпис їх не збільшує
         for y, f, t in prints:
             if f == 3 and len(t) > 16 and y in (64, 96) and t not in (name,) and "[" in t and re.search(r"\d(м|км)\]", t):
@@ -559,6 +561,7 @@ def main():
     mut("проти годинникової (360-кут)", lc_c.replace("aprsChevronGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, bearingDeg);", "aprsChevronGeom(&a->g, a->cx, a->cy, LC_ARROW_LEN, (uint16_t)((360U - (bearingDeg % 360U)) %% 360U));".replace("%%", "%")))
     mut("без порогу 50 м", lc_c.replace("*bearingKnown = aprsBearingKnown(distM);", "*bearingKnown = true;"))
     mut("комірка в тексті (поле 40 px)", lc_c.replace("a->cx = (int16_t)(screenW - LC_ARROW_MARGIN);", "a->cx = (int16_t)(screenW - 40);"))
+    mut("R98-FIX3 Г: комірка заходить на текст підпису", lc_c.replace("int16_t left = (int16_t)(tail->x1 + LC_ARROW_GAP);", "int16_t left = (int16_t)(tail->x1 - 12);"))
     mut("завжди другий рядок", lc_c.replace("return (textLen <= 16U) ? LC_ROW_FIRST : LC_ROW_NONE;", "return LC_ROW_SECOND;"))
     mut("центр не в середині рядка", lc_c.replace("a->cy = (int16_t)(rowY + (rowH / 2));", "a->cy = (int16_t)(rowY + rowH);"))
     mut("без перевірки власної позиції", ui_text=ui.replace("(LinkHead->locationLat <= 90) && settingsLocationIsValid() &&", "(LinkHead->locationLat <= 90) &&"), which="cases")

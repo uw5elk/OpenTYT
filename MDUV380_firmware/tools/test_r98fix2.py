@@ -87,6 +87,7 @@ def build_peerb(sms_src_text):
 ONB_HARNESS = r'''
 #include <stdio.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 static int en, onB, same;
 static bool dcIsEnabled(void) { return en; }
 static bool dcIsOnB(void) { return onB; }
@@ -107,6 +108,7 @@ int main(void)
 CARD_HARNESS = r'''
 #include <stdio.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 static int total, onb;
 static int dmrSmsUnreadCount(void) { return total; }
 static int dmrSmsUnreadCountB(void) { return onb; }
@@ -308,6 +310,7 @@ TONE_HARNESS = r'''
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 typedef enum { CSS_TYPE_NONE = 1, CSS_TYPE_CTCSS = 2, CSS_TYPE_DCS = 0x8000, CSS_TYPE_DCS_INVERTED = 0x4000, CSS_TYPE_DCS_MASK = 0xC000 } CodeplugCSSTypes_t;
 static CodeplugCSSTypes_t codeplugGetCSSType(uint16_t tone)
 {
@@ -350,6 +353,7 @@ DIST_HARNESS = r'''
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #define LC_DIST_LABEL_SIZE 16
 #define DW_LINE3_MAX 19
 typedef struct { double locationLat, locationLon; } LinkItem_t;
@@ -481,7 +485,8 @@ TUNE_HARNESS = r'''
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-typedef struct { uint32_t rxFreq; uint8_t power; char tag; } CodeplugChannel_t;
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
+typedef struct { uint32_t rxFreq; uint8_t power; uint8_t sql; char tag; } CodeplugChannel_t;
 static CodeplugChannel_t channelScreenChannelData, scanNextChannelData, settingsVFOChannel[2];
 static CodeplugChannel_t *currentChannelData;
 static struct { int currentSelectedChannelNumber; } uiDataGlobal;
@@ -613,6 +618,7 @@ HINT_HARNESS = r'''
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #define DISPLAY_SIZE_X 160
 typedef enum { FONT_SIZE_2 = 2 } ucFont_t;
 typedef enum { TEXT_ALIGN_LEFT = 0 } ucTextAlign_t;
@@ -650,6 +656,7 @@ TRACE_HARNESS = r'''
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #define DISPLAY_SIZE_X 160
 typedef enum { FONT_SIZE_2 = 2 } ucFont_t;
 typedef enum { TEXT_ALIGN_LEFT = 0 } ucTextAlign_t;

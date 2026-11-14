@@ -69,6 +69,7 @@ AUTOB_HARNESS = r'''
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
 #include "@@DC@@"
@@ -166,6 +167,7 @@ ALL_HARNESS = r'''
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <string.h>
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
@@ -335,6 +337,7 @@ def test_part_b(incs, cf):
 QSO_HARNESS = r'''
 #include <stdio.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 enum { UI_CHANNEL_MODE = 3, UI_VFO_MODE = 4 };
 static int menu = UI_CHANNEL_MODE, dwShown, stockDraws, dwDraws, avail = 1;
 static int menuSystemGetCurrentMenuNumber(void) { return menu; }
@@ -358,6 +361,7 @@ int main(void)
 STOP_HARNESS = r'''
 #include <stdio.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <stdint.h>
 enum { QSO_DISPLAY_DEFAULT_SCREEN = 1, AUDIO_PROMPT_MODE_VOICE_THRESHOLD = 2, ROAMING_OFF = 0, ROAMING_5KM = 3 };
 static struct { struct { int active; } Scan; int displayQSOState; uint32_t lastDistanceMillis; double lastDistanceSortLocationLat, lastDistanceSortLocationLon; } uiDataGlobal;
@@ -394,6 +398,7 @@ int main(void)
 DETAILS_HARNESS = r'''
 #include <stdio.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 enum { UI_CHANNEL_MODE = 3, UI_VFO_MODE = 4 };
 static int menu = UI_CHANNEL_MODE, enabled, details;
 static struct { int displayChannelSettings; } uiDataGlobal;
@@ -463,6 +468,7 @@ def test_part_v(incs, cf):
 BUCKET_HARNESS = r'''
 #include <stdio.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <stdint.h>
 enum { CHANNEL_VFO_A = 0, CHANNEL_VFO_B, CHANNEL_CHANNEL };
 static int en, onB, vfo, typeB;

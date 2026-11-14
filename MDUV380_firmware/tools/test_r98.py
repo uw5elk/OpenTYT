@@ -103,6 +103,7 @@ ISO_HARNESS = r'''
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <string.h>
 enum { RADIO_MODE_ANALOG = 1, RADIO_MODE_DIGITAL = 2 };
 enum { CHANNEL_FLAG_FORCE_DMO = 1 };
@@ -191,10 +192,11 @@ TUNE_HARNESS = r'''
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <string.h>
 #define CH_DETAILS_VFO_CHANNEL -1
 #define SETTINGS_CHANNEL_MODE 0
-typedef struct { uint32_t rxFreq; uint8_t chMode; } CodeplugChannel_t;
+typedef struct { uint32_t rxFreq; uint8_t chMode; uint8_t sql; } CodeplugChannel_t;
 struct { int16_t currentIndexInTRxGroupList[3]; } nonVolatileSettings;
 struct { int currentSelectedChannelNumber; } uiDataGlobal;
 static CodeplugChannel_t channelScreenChannelData, settingsVFOChannel[2], *currentChannelData;
@@ -275,6 +277,7 @@ KEY_HARNESS = r'''
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #define BUTTON_SK1 1
 #define BUTTON_SK2 2
 #define BUTTONCHECK_DOWN(e, sk) (((e)->buttons & sk))
@@ -321,7 +324,8 @@ def test_sk2(incs, cf):
     hk = hk[:hk.find("// Увімкнути/вимкнути режим")]
     check(hk.find("dualIsVfoStepKey(ev)") < hk.find("BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1)") and "uiVFOModeDualStep(dualVfoIdx()" in hk,
           "В8: у dualHandleKey SK2+ручка на картці VFO обробляється ДО загального «SK2/SK1 -- не наші» і викликає uiVFOModeDualStep")
-    check(re.search(r"if \(dwRunning \|\| dualSingle\(\) \|\| dualIsVfoStepKey\(ev\)\)", src) is not None, "В8: хук handleEvent пропускає SK2+ручку на VFO-картці в dualHandleKey навіть коли чергування вже зупинене паузою")
+    check(re.search(r"if \(dwRunning \|\| dualSingle\(\) \|\| dualIsVfoStepKey\(ev\)( \|\| dualIsSquelchKey\(ev\))?\)", src) is not None,   # R98-FIX3 Б: + SK1+ручка
+          "В8: хук handleEvent пропускає SK2+ручку на VFO-картці в dualHandleKey навіть коли чергування вже зупинене паузою")
     vs = T.rd(os.path.join(UI, "uiVFOMode.c"))
     st = vs[vs.find("void uiVFOModeDualStep("):]
     st = st[:st.find("\n}\n")]

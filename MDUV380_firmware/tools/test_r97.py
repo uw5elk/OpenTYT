@@ -126,6 +126,7 @@ HARNESS = r'''
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <string.h>
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
@@ -261,7 +262,7 @@ def test_vs_base(incs, cfgs):
         bad = []
         for rel in ("application/source/user_interface/uiChannelMode.c", "application/source/applicationMain.c", "application/source/functions/dual_channel.c",
                     "application/source/functions/rxPowerSaving.c", "application/source/functions/wake_hop.c"):
-            if (pp(FW, incs, cf["DUALCHEN"], rel) or "").split() != (pp(root, incs, cf["DUALCHEN"], (rel if os.path.exists(os.path.join(root, rel)) else empty)) or "").split():
+            if strip_r96((pp(FW, incs, cf["DUALCHEN"], rel) or "").encode()).split() != strip_r96((pp(root, incs, cf["DUALCHEN"], (rel if os.path.exists(os.path.join(root, rel)) else empty)) or "").encode()).split():
                 bad.append(rel)
         check(bad == [], "DUALCHEN (англійська з прапорцем): код режиму мертвий, токени як у базі: %r" % bad)
     finally:
@@ -322,6 +323,7 @@ QM_HARNESS = r"""
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
 enum { NOTIFICATION_TYPE_MESSAGE = 1, NOTIFICATION_ID_CARD = 2 };
@@ -410,6 +412,7 @@ HK_HARNESS = r"""
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
 enum { NOTIFICATION_TYPE_MESSAGE = 1, NOTIFICATION_ID_CARD = 2 };
@@ -462,6 +465,7 @@ RS_HARNESS = r"""
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 enum { SCAN_STATE_SCANNING = 0, SCAN_STATE_SHORT_PAUSED, SCAN_STATE_PAUSED };
 enum { SCAN_TYPE_NORMAL_STEP = 0, SCAN_TYPE_DUAL_CHANNEL = 2 };
 enum { QSO_DISPLAY_IDLE = 0, QSO_DISPLAY_DEFAULT_SCREEN, QSO_DISPLAY_CALLER_DATA, QSO_DISPLAY_CALLER_DATA_UPDATE };
@@ -590,6 +594,7 @@ DIS_HARNESS = r"""
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <string.h>
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
@@ -672,6 +677,7 @@ ZONE_HARNESS = r"""
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <string.h>
 #define DUAL_CHANNEL_HOST_TEST 1
 #include "functions/dual_channel.h"
@@ -917,6 +923,7 @@ def test_fix2(incs, cf):
 Q_HARNESS = r"""
 #include <stdio.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <stdint.h>
 typedef struct { int dummy; } uiEvent_t;
 enum { UI_CHANNEL_MODE = 5, UI_OTHER = 9 };
@@ -1054,6 +1061,7 @@ ROW_HARNESS = r"""
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+static unsigned char s_dualSqlB;   /* R98-FIX3 Б: перекриття шумодава B (dualTune/dualStepB/dualSetMode) */
 #include <string.h>
 #define DISPLAY_SIZE_X 160
 #define DISPLAY_SIZE_Y 128
@@ -1067,7 +1075,10 @@ ROW_HARNESS = r"""
 enum { RADIO_MODE_ANALOG = 1, RADIO_MODE_DIGITAL = 2 };
 enum { FONT_SIZE_1 = 1, FONT_SIZE_3 = 3, FONT_SIZE_4 = 4 };
 enum { TEXT_ALIGN_LEFT = 0 };
-enum { THEME_ITEM_FG_DECORATION, THEME_ITEM_BG, THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_FG_DEFAULT, THEME_ITEM_FG_RSSI_BAR };
+enum { THEME_ITEM_FG_DECORATION, THEME_ITEM_BG, THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_FG_CHANNEL_CONTACT, THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_FG_DEFAULT, THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_FG_RSSI_BAR_S9P };
+static int directChannelNumber;   /* R98-FIX3 А: набору нема */
+static void dualEntryText(char *l2, size_t n) { (void)l2; (void)n; }
+static bool dcPointerB(void) { return false; }   /* R98-FIX3 А: покажчик для показу набору (набору тут нема) */
 enum { CONTACT_DISPLAY_PRIO_CC_DB_TA, CONTACT_DISPLAY_PRIO_DB_CC_TA, CONTACT_DISPLAY_PRIO_TA_CC_DB };
 enum { CONTACT_CALLTYPE_TG = 0, CONTACT_CALLTYPE_PC };
 #define TG_CALL_FLAG 0x00

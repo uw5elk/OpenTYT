@@ -99,7 +99,8 @@ def ref_points(ln, b):
     def rot(u, v):
         # азимут a від півночі за годинниковою: вісь = (sin a, -cos a), права рука = (cos a, sin a)
         return (100 + u * math.sin(a) + v * math.cos(a), 60 - u * math.cos(a) + v * math.sin(a))
-    return {"tip": rot(ln, 0), "left": rot(-ln, -0.8 * ln), "right": rot(-ln, 0.8 * ln), "notch": rot(-0.72 * ln, 0)}
+    sh = 0.16 * ln   # R98-FIX3 Д: (cx,cy) -- центр описаного кола; середина осі на 0.16*ln попереду
+    return {"tip": rot(sh + ln, 0), "left": rot(sh - ln, -0.8 * ln), "right": rot(sh - ln, 0.8 * ln), "notch": rot(sh - 0.72 * ln, 0)}
 
 
 def test_geom(exe, label):
@@ -147,7 +148,8 @@ def test_geom(exe, label):
         for b in (0, 90, 180, 270):
             v = rows[b]
             dx, dy = v[0] - 100, v[1] - 60
-            exp = {0: (0, -ln), 90: (ln, 0), 180: (0, ln), 270: (-ln, 0)}[b]
+            t = int(1.16 * ln + 0.5)   # R98-FIX3 Д: вістря на 1.16*ln від центру описаного кола
+            exp = {0: (0, -t), 90: (t, 0), 180: (0, t), 270: (-t, 0)}[b]
             if (dx, dy) != exp:
                 ok = False
                 check(False, "%s: len %d кут %d: вістря зсунуте на (%d,%d), очікувано %s" % (label, ln, b, dx, dy, exp))
@@ -226,8 +228,9 @@ def main():
     mut("дзеркально (проти годинникової)", parse_c.replace(ch, ch.replace("(double)(bearingDeg % 360U) * rad", "(double)((360U - (bearingDeg % 360U)) % 360U) * rad")))
     mut("без виїмки (виїмка = центр основи)", parse_c.replace(ch, ch.replace("const double nd = 0.72 * L;", "const double nd = 1.0 * L;")))
     mut("інша ширина (1.4*len)", parse_c.replace(ch, ch.replace("const double hw = 0.8 * L;", "const double hw = 1.4 * L;")))
-    mut("праве й ліве переплутані", parse_c.replace(ch, ch.replace("c->lx = (int16_t)iround((double)cx + (-dx * L) - (px * hw));", "c->lx = (int16_t)iround((double)cx + (-dx * L) + (px * hw));")))
-    mut("виїмка попереду", parse_c.replace(ch, ch.replace("(double)cx + (-dx * nd)", "(double)cx + (dx * nd)").replace("(double)cy + (-dy * nd)", "(double)cy + (dy * nd)")))
+    mut("праве й ліве переплутані", parse_c.replace(ch, ch.replace("c->lx = (int16_t)iround(ox + (-dx * L) - (px * hw));", "c->lx = (int16_t)iround(ox + (-dx * L) + (px * hw));")))
+    mut("виїмка попереду", parse_c.replace(ch, ch.replace("ox + (-dx * nd)", "ox + (dx * nd)").replace("oy + (-dy * nd)", "oy + (dy * nd)")))
+    mut("старий центр (середина осі, R93)", parse_c.replace(ch, ch.replace("const double sh = 0.16 * L;", "const double sh = 0.0 * L;")))   # R98-FIX3 Д
     # паритет: передпоказ з іншою пропорцією
     import screen_views as sv
     orig = sv.chevron_geom
