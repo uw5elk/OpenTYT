@@ -1812,8 +1812,17 @@ static bool qsoShowNameWithDistance(const char *name)
 			const int16_t rowH = FONT_SIZE_3_HEIGHT;
 #endif
 			lcDistArrow_t a;
+			lcDistSpan_t  tail;
+			lcDistSpan_t  above;
 
-			lcDistArrowGeom(&a, DISPLAY_SIZE_X, ((row == LC_ROW_FIRST) ? uiUtilityChannelFirstLineY() : DISPLAY_Y_POS_CHANNEL_SECOND_LINE), rowH, bearing);
+			// R98-FIX3 Г: стрілка одразу після «[відстань]» у тому самому рядку (раніше -- праве поле рядка, x=147..156)
+			if (lcDistLabelTail(text, (nonVolatileSettings.splitContact == SPLIT_CONTACT_SINGLE_LINE_ONLY), (nonVolatileSettings.splitContact == SPLIT_CONTACT_AUTO),
+					(rowH > FONT_SIZE_3_HEIGHT), DISPLAY_SIZE_X, uiUtilityChannelFirstLineY(), DISPLAY_Y_POS_CHANNEL_SECOND_LINE, &tail, &above) == false)
+			{
+				return true;
+			}
+
+			lcDistArrowAfter(&a, &tail, &above, DISPLAY_SIZE_X, bearing);
 
 			displayThemeApply(THEME_ITEM_FG_CHANNEL_CONTACT_INFO, THEME_ITEM_BG);
 			displayFillTriangle(a.g.tx, a.g.ty, a.g.lx, a.g.ly, a.g.nx, a.g.ny, true);   // наконечник (R93): два залиті трикутники з виїмкою

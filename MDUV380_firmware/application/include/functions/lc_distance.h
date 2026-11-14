@@ -67,5 +67,22 @@ typedef struct
 } lcDistArrow_t;
 void lcDistArrowGeom(lcDistArrow_t *a, int16_t screenW, int16_t rowY, int16_t rowH, uint16_t bearingDeg);
 
+/* ---- R98-FIX3 Г: стрілка ОДРАЗУ ПІСЛЯ «[відстань]» ------------------------------------------------------------------------------------------------------
+ * lcDistLabelTail() -- де на екрані опиниться рядок (підрядок) з кінцем тексту «ім'я [відстань]» після displayContactTextInfos(text, ..., true): дзеркало її правил і
+ * правил displaySplitOrSpanText() (той самий chomp, пошук першого пробілу, ліміти 16/21/42 символи, шрифти 8x16 / 6x8, центрування (W - w*n) >> 1, обрізання
+ * w*n > W). tail -- цей рядок (x0..x1-1, y, висота h); above -- підрядок над ним, якщо підпис у другому з двох підрядків 6x8 (інакше above->h = 0).
+ * false -- підпису не видно (стрілку не малювати; ті самі випадки, що LC_ROW_NONE).
+ * lcDistArrowAfter() -- комірка 10x10 стрілки: ліворуч на LC_ARROW_GAP px праворуч від кінця тексту (і від кінця підрядка над, якщо комірка заходить на нього по
+ * вертикалі), по вертикалі -- середина рядка; якщо до краю екрана не влазить -- притиснута до правого краю (x <= W-1). Форма й розмір -- як у R93 (LC_ARROW_LEN). */
+#define LC_ARROW_GAP     2
+#define LC_ARROW_CELL    10
+typedef struct
+{
+	int16_t x0, x1;     /* x1 -- перший стовпчик ПІСЛЯ тексту */
+	int16_t y, h;
+} lcDistSpan_t;
+bool lcDistLabelTail(const char *text, bool singleLineOnly, bool autoSplit, bool dblHeight, int16_t screenW, int16_t firstY, int16_t secondY, lcDistSpan_t *tail, lcDistSpan_t *above);
+void lcDistArrowAfter(lcDistArrow_t *a, const lcDistSpan_t *tail, const lcDistSpan_t *above, int16_t screenW, uint16_t bearingDeg);
+
 #endif /* ENABLE_LC_DISTANCE && APRS_RX */
 #endif /* LC_DISTANCE_H_ */
