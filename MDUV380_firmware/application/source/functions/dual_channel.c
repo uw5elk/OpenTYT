@@ -177,54 +177,9 @@ int dcFindPos(int n, uint16_t ch, dcChanAt_t at, void *ctx)
 	return -1;
 }
 
-void dcUnreadCountsNote(uint8_t cnt[2], bool cardB)
-{
-	uint8_t *c = &cnt[cardB ? 1 : 0];
-
-	if (*c < 255U)
-	{
-		(*c)++;
-	}
-}
-
-void dcUnreadCountsSplit(uint8_t cnt[2], unsigned total, unsigned *cardA, unsigned *cardB)
-{
-	unsigned a;
-	unsigned b;
-
-	if (total == 0U)
-	{
-		cnt[0] = 0U;
-		cnt[1] = 0U;
-		*cardA = 0U;
-		*cardB = 0U;
-		return;
-	}
-
-	a = ((cnt[0] < total) ? cnt[0] : total);
-	b = ((cnt[1] < (total - a)) ? cnt[1] : (total - a));
-	cnt[0] = (uint8_t)a;
-	cnt[1] = (uint8_t)b;
-	*cardA = (total - b);
-	*cardB = b;
-}
-
 #endif /* DUAL_CHANNEL_ENABLED || DUAL_CHANNEL_HOST_TEST */
 
 #if defined(DUAL_CHANNEL_ENABLED)
-
-/* R98-FIX1 Д: два лічильники «непрочитані SMS, прийняті на A / на B» (2 байти звичайної RAM, .bss). Формат сховища SMS у флеші не змінено. */
-static uint8_t s_dcUnread[2];
-
-void dcUnreadNote(bool cardB)
-{
-	dcUnreadCountsNote(s_dcUnread, cardB);
-}
-
-void dcUnreadCards(unsigned total, unsigned *cardA, unsigned *cardB)
-{
-	dcUnreadCountsSplit(s_dcUnread, total, cardA, cardB);
-}
 
 #include "functions/codeplug.h"
 

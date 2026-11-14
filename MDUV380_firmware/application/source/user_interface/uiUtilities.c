@@ -2197,17 +2197,21 @@ static bool dualEnvelopeInCards(void)
 	return ((menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown());
 }
 
-// R98-FIX1 Д: непрочитані SMS DMR для картки (за джерелом прийому). Загальне число веде сховище SMS (dmrSmsUnreadCount); тут його лише
-// розкладено на картки (dcUnreadCards: clamp, неприв'язана різниця -- на A). Без AES/DMR-даних -- 0.
+// R98-FIX2 Д: непрочитані SMS DMR для картки за ДЖЕРЕЛОМ прийому: B -- записи з бітом 31 peerId (dmrSmsUnreadCountB), A -- решта від загального
+// dmrSmsUnreadCount(). Один прохід по сховищу, лічильників у RAM нема. Без AES/DMR-даних -- 0.
 unsigned uiUnreadCountCard(bool cardB)
 {
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-	unsigned a;
-	unsigned b;
-	int unread = dmrSmsUnreadCount();
+	int total = dmrSmsUnreadCount();
+#if defined(DUAL_CHANNEL_ENABLED)
+	int onB = dmrSmsUnreadCountB();
+#else
+	int onB = 0;   // без режиму все на A
+#endif
 
-	dcUnreadCards(((unread > 0) ? (unsigned)unread : 0U), &a, &b);
-	return (cardB ? b : a);
+	if (total < 0) { total = 0; }
+	if (onB > total) { onB = total; }
+	return (unsigned)(cardB ? onB : (total - onB));
 #else
 	(void)cardB;
 	return 0U;

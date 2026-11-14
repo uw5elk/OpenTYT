@@ -1182,6 +1182,24 @@ int dmrAesRxIsSilence(const uint8_t *blk27, const uint8_t *silence27)
 /* Виставляється HR-C6000.c перед codecDecode блоку й знімається одразу після нього (той самий потік, ISR сюди не пише). */
 void dmrAesRxSilentBlock(int silent) { s_rxSilentBlk = silent ? 1 : 0; }
 void dmrAesRxEnd(void) { s_rxActive = 0; s_rxBurstEnc = 0; s_rxPendValid = 0; }
+
+/* R98-FIX2 Е: перенастроювання приймача на ІНШИЙ канал (картки A <-> B режиму «Подвійний прийом»). Окрім кінця виклику (dmrAesRxEnd) скидає стан, що міг лишитись
+ * від попереднього каналу й вплинути на наступний: s_rxKeyId (ключ останнього успішного виклику -- запасний варіант bootstrap із late entry на каналі БЕЗ власного слота),
+ * кандидат PI (s_rxPendMi / s_rxPendKeyId) і діагностику «відмовлено». Ключ ФІЛЬТРА каналу тут не зберігається -- він читається з currentChannelData
+ * у момент кожного PI/late entry (rxChannelKeyFilter), тож іде за каналом сам. Нових змінних нема. Лише зі збіркою ENABLE_DUAL_CHANNEL. */
+#if defined(ENABLE_DUAL_CHANNEL) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = DUAL_CHANNEL_ENABLED (functions/dual_channel.h) */
+void dmrAesRxRetune(void)
+{
+    s_rxActive = 0;
+    s_rxBurstEnc = 0;
+    s_rxPendValid = 0;
+    s_rxKeyId = 0;
+    s_rxPendMi = 0;
+    s_rxPendKeyId = 0;
+    s_rxDeniedKeyId = 0;
+    s_rxDeniedWhy = 0;
+}
+#endif
 /* 1, поки триває розшифрування поточного виклику (дзеркально до s_txActive/dmrAesTxActive).
  * Лише для UI: menuAESKeys/uiUtilities опитують це, щоб показати живу позначку "виклик зашифровано". */
 int dmrAesRxActive(void) { return s_rxActive; }

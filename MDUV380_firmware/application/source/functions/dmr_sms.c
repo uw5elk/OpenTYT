@@ -28,6 +28,16 @@
 #include "functions/sms_format.h"        /* ui6: SMS_TIME_VALID_MIN -- годинник не виставлено */
 #include "user_interface/uiUtilities.h"  /* ui6: getRtcTime_custom() -- час запису */
 #include <string.h>
+/* R98-FIX2 Д: читання/запис слова peerId сховища. З режимом «Подвійний прийом» (DUAL_CHANNEL_ENABLED) читачі отримують чистий 24-бітний ID
+ * (dmrSmsPeerClean знімає біт картки й увесь старший байт), а у сховище йде ID + біт «прийнято на B». Без режиму біт ніколи не пишеться,
+ * і макроси розгортаються в той самий текст, що й до R98-FIX2 (токени збірок без прапорця не змінюються). */
+#if defined(DUAL_CHANNEL_ENABLED)
+#define SMS_PEER_CLEAN(p)   dmrSmsPeerClean(p)
+#define SMS_STORE_PEER      peerStore
+#else
+#define SMS_PEER_CLEAN(p)   p
+#define SMS_STORE_PEER      peer
+#endif
 
 /* cleanup1 (2026-10-05): уся діагностика SMS (екрани «Діагностика» 2-4, перемикачі, знімок PDU,
  * лічильники s_dg... і s_diag..., розклад затримки квитанції, USB 0x93/0x94/0x95/0x97/0xB2/0xB3) --
@@ -251,8 +261,8 @@ const dmrSmsMessage_t *dmrSmsGet(int outgoing, int idx)
 	s_scratch.flags   = (uint8_t)(s_store.data[o] | DMR_SMS_FLAG_USED);
 	s_scratch.textLen = s_store.data[o + 1];
 	s_scratch.seq     = entry_seq(o);
-	s_scratch.peerId  = (uint32_t)s_store.data[o + 4] | ((uint32_t)s_store.data[o + 5] << 8) |
-	                    ((uint32_t)s_store.data[o + 6] << 16) | ((uint32_t)s_store.data[o + 7] << 24);
+	s_scratch.peerId  = SMS_PEER_CLEAN((uint32_t)s_store.data[o + 4] | ((uint32_t)s_store.data[o + 5] << 8) |
+	                    ((uint32_t)s_store.data[o + 6] << 16) | ((uint32_t)s_store.data[o + 7] << 24));   /* R98-FIX2 Д: без біта картки */
 	int tl = s_scratch.textLen; if (tl > DMR_SMS_TEXT_MAX) { tl = DMR_SMS_TEXT_MAX; }
 	memcpy(s_scratch.text, &s_store.data[o + SMS_ENTRY_HDR], tl);
 	return &s_scratch;
@@ -285,6 +295,9 @@ static uint32_t smsNowForStore(void)
  * Без цього показане повідомлення ще не в сховищі, і «-1» у банері віднімав його вдруге (поле:
  * 10 SMS -> «ще 8»). Тепер відкладене непрочитане вхідне рахується одразу. */
 static int  pendInboxUnread(void);
+#if defined(DUAL_CHANNEL_ENABLED)
+static int  pendInboxUnreadB(void);   /* R98-FIX2 Д */
+#endif
 static void pendInboxMarkRead(void);
 
 int dmrSmsUnreadCount(void)
@@ -302,6 +315,27 @@ int dmrSmsUnreadCount(void)
 	}
 	return n + pendInboxUnread();
 }
+
+/* R98-FIX2 Д: непрочитані вхідні, прийняті на картці B (біт 31 слова peerId). Та сама вибірка, що й dmrSmsUnreadCount() (без APRS, без «Надісланих»),
+ * плюс відкладене вхідне. Масивів нема: усе береться зі сховища. Лише зі збіркою ENABLE_DUAL_CHANNEL. */
+#if defined(DUAL_CHANNEL_ENABLED)
+int dmrSmsUnreadCountB(void)
+{
+	store_ensure();
+	int n = 0;
+	for (int o = 0; o + SMS_ENTRY_HDR <= (int)s_store.used; o += entry_size(o))
+	{
+#if defined(ENABLE_APRS_RX)
+		if (s_store.data[o] & DMR_SMS_FLAG_APRS) { continue; }
+#endif
+		if (((s_store.data[o] & DMR_SMS_FLAG_OUTGOING) == 0) && (s_store.data[o] & DMR_SMS_FLAG_UNREAD) && (s_store.data[o + 7] & 0x80))
+		{
+			n++;
+		}
+	}
+	return n + pendInboxUnreadB();
+}
+#endif
 
 void dmrSmsMarkRead(int outgoing, int idx)
 {
@@ -1116,6 +1150,14 @@ static int pendInboxUnread(void)
 			(s_pendInboxFlags & DMR_SMS_FLAG_UNREAD)) ? 1 : 0;
 }
 
+#if defined(DUAL_CHANNEL_ENABLED)
+/* R98-FIX2 Д: відкладене вхідне, непрочитане й прийняте на картці B */
+static int pendInboxUnreadB(void)
+{
+	return (pendInboxUnread() && (s_pendInboxPeer & DMR_SMS_PEER_ON_B)) ? 1 : 0;
+}
+#endif
+
 static void pendInboxMarkRead(void)
 {
 	if (s_pendInbox) { s_pendInboxFlags &= (uint8_t)~DMR_SMS_FLAG_UNREAD; }
@@ -1131,7 +1173,7 @@ const dmrSmsMessage_t *dmrSmsNewestInbox(uint32_t *timeOut)
 		memset(&s_scratch, 0, sizeof s_scratch);
 		s_scratch.flags   = (uint8_t)(s_pendInboxFlags | DMR_SMS_FLAG_USED);
 		s_scratch.textLen = (uint8_t)tl;
-		s_scratch.peerId  = s_pendInboxPeer;
+		s_scratch.peerId  = SMS_PEER_CLEAN(s_pendInboxPeer);   /* R98-FIX2 Д: без біта картки */
 		memcpy(s_scratch.text, s_pendInboxText, (size_t)tl);
 		if (timeOut) { *timeOut = smsNowForStore(); }
 		return &s_scratch;
@@ -2107,6 +2149,10 @@ void dmrSmsRxTick(void)
 		uint8_t flags = (uint8_t)(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0) |
 				(forUs ? 0 : DMR_SMS_FLAG_FOREIGN));
 		s_lastRxDst = dst;   /* ui6: для банера «ВІД -> КОМУ» */
+#if defined(DUAL_CHANNEL_ENABLED)
+		uint32_t peerStore = peer;   /* R98-FIX2 Д: у сховище -- ID + біт картки B (peer для квитанції/дедупа лишається чистим) */
+		if (uiChannelModeDualOnCardB()) { peerStore |= DMR_SMS_PEER_ON_B; }
+#endif
 		if (ackedNow)
 		{
 			/* Квитанція ЗАРАЗ у польоті. store_add() -- блокуючий erase+write SPI-флеша на
@@ -2123,20 +2169,17 @@ void dmrSmsRxTick(void)
 			}
 			s_pendInbox = 1;
 			s_pendInboxFlags = flags;
-			s_pendInboxPeer = peer;
+			s_pendInboxPeer = SMS_STORE_PEER;
 			s_pendInboxLen = got;
 			memcpy(s_pendInboxText, text, (size_t)got);
 			s_pendInboxText[got] = 0;
 		}
 		else
 		{
-			store_add(flags, peer, text, got);
+			store_add(flags, SMS_STORE_PEER, text, got);
 		}
 	}
 	SMS_DG(s_diagMsg++);
-#if defined(DUAL_CHANNEL_ENABLED)
-	uiChannelModeDualSmsReceived();   /* R98-FIX1 Д: картка-джерело (A/B) нового непрочитаного SMS для екрана «Подвійного прийому» */
-#endif
 
 	/* notify the user: visual banner (existing) + audible alert (new — раніше цей шлях був
 	 * німим, і вхідне SMS можна було пропустити, якщо не дивитись на екран саме в цю мить).

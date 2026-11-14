@@ -48,6 +48,9 @@
 #include "interfaces/gps.h"
 #if defined(ENABLE_DUAL_CHANNEL)
 #include "functions/dual_channel.h"   // R97: «Подвійний прийом»
+#if defined(DUAL_CHANNEL_ENABLED)
+#include "crypto/dmr_aes_hook.h"      // R98-FIX2 Е: dmrAesRxRetune() (без ENABLE_AES -- порожня заглушка); лише коли режим справді збирається
+#endif
 #if defined(ENABLE_LC_DISTANCE)
 #include "functions/lc_distance.h"    // R97: відстань R92 у рядку абонента режиму
 #endif
@@ -3805,11 +3808,23 @@ static void dualSetDwell(void)
 
 // Налаштувати рацію на A (поточний канал зони) або B, НЕ змінюючи «останній канал зони», зону й налаштування (на відміну від
 // scanApplyNextChannel()). Для B -- гілка R97 у uiChannelModeLoadChannelData() (номер каналу = B, як у роумінгу R59).
+// R98-FIX2 Є: незбережені правки каналу A (потужність/ТС/CC/«без репітера» зі швидкого меню) живуть ЛИШЕ в channelScreenChannelData (канальний буфер екрана).
+// Канал B (не VFO) раніше вантажився в той самий буфер, а повернення на A перечитувало A з кодплага -- правки губились при кожному заході на B (а чергування
+// ходить A<->B безперервно). Тепер: поки B -- канал, копію A тримає наявний статичний scanNextChannelData (його використовує лише стокове сканування, яке
+// режим не запускає; нових буферів у RAM нема), і повернення на A відновлює її з пам'яті (uiChannelModeLoadChannelData(true,...)), нічого не пишучи в кодплаг.
+// Ознака «буфер зараз містить B»: рація на B і currentChannelData -- канальний буфер (для B = VFO запис VFO лежить в settingsVFOChannel, буфер -- це A).
+static bool dualBufHoldsB(void)
+{
+	return (dcIsOnB() && (currentChannelData == &channelScreenChannelData));
+}
+
 static void dualTune(bool toB)
 {
 	bool wasOnB = dcIsOnB();
+	bool bufHoldsB = dualBufHoldsB();   // R98-FIX2 Є: до зміни currentChannelData
 
 	lastHeardClearLastID();
+	dmrAesRxRetune();   // R98-FIX2 Е: стан RX AES попереднього каналу (ключ останнього виклику, кандидат PI) не переходить на наступний -- різні ключі на A і B
 
 	if (toB)
 	{
@@ -3824,12 +3839,22 @@ static void dualTune(bool toB)
 		{
 			// R98 В2: B = VFO. Запис VFO лишається в settingsVFOChannel (канальний буфер channelScreenChannelData не чіпаємо -- там A);
 			// стан стока (overrideTG, currentVFONumber, previousVFONumber) ізольований у uiVFOModeDualLoad().
+			if (bufHoldsB)
+			{
+				memcpy(&channelScreenChannelData, &scanNextChannelData, sizeof(CodeplugChannel_t));   // R98-FIX2 Є: B (канал) -> B (VFO): A знову в канальному буфері
+			}
+
 			currentChannelData = &settingsVFOChannel[dualVfoIdx()];
 			uiDataGlobal.currentSelectedChannelNumber = CH_DETAILS_VFO_CHANNEL;
 			uiVFOModeDualLoad(dualVfoIdx(), true);
 		}
 		else
 		{
+			if (bufHoldsB == false)
+			{
+				memcpy(&scanNextChannelData, &channelScreenChannelData, sizeof(CodeplugChannel_t));   // R98-FIX2 Є: зберегти A (з незбереженими правками) перед завантаженням B у той самий буфер
+			}
+
 			currentChannelData = &channelScreenChannelData;
 			codeplugChannelGetDataForIndex(dcChannelB(), &channelScreenChannelData);
 			uiChannelModeLoadChannelData(true, false);
@@ -3846,7 +3871,12 @@ static void dualTune(bool toB)
 			settingsSet(nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE], s_dualTgIdxA);
 		}
 
-		uiChannelModeLoadChannelData(false, false);
+		if (bufHoldsB)
+		{
+			memcpy(&channelScreenChannelData, &scanNextChannelData, sizeof(CodeplugChannel_t));   // R98-FIX2 Є: A -- з копії (правки збережено)
+		}
+
+		uiChannelModeLoadChannelData((channelScreenChannelData.rxFreq != 0U), false);   // R98-FIX2 Є: A уже в пам'яті (канальний буфер) -- не перечитувати з кодплага; rxFreq == 0 (меню зон/кодплага скинули буфер) -- читаємо зону, як стока
 	}
 }
 
@@ -4505,6 +4535,11 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_UN_LETTER_X   4                                 // літера D/A (6 px): x=4..9
 #define DW_UN_ENV_X      11                                // конверт 8x6: x=11..18, y+46..51
 #define DW_UN_NUM_X      20                                // число (одна цифра) або «+» (понад 9): x=20..25; усе в x=4..25 (внутрішня ширина квадрата)
+#define DW_AP_X          143                               // R98-FIX2 Д3: маркер APRS (інвертований бокс «A»+число 14x9): x=143..156, y+3..11 -- правий край рядка 1 картки B
+#define DW_AP_W          14
+#define DW_AP_DY         3
+#define DW_AP_H          9
+#define DW_L1_MAX_AP     18                                // рядок 1 при маркері APRS: до 18 символів (x=30..137), щоб не налізти на бокс
 #define DW_LOCK_X        145                               // замок AES 10x9: x=145..154, y+33..41 (праворуч від рядка 3)
 #define DW_LOCK_DY       33
 #define DW_METER_DY      44                                // смуга активності: мітка RX + S-метр, y+44..53
@@ -4654,6 +4689,67 @@ static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)
 	return ((man != 0) ? (uint8_t)man : chTs);
 }
 
+#if defined(LC_DISTANCE)
+// R98-FIX2 К1: відстань до кореспондента активного виклику -- в кінець рядка 3 картки, ЯКЩО влазить у DW_LINE3_MAX. Умови ті самі, що в підписі «[відстань]»
+// шапки виклику (qsoShowNameWithDistance, uiUtilities.c): своя позиція задана; координати LC 0x08 прийнято в ЦЬОМУ виклику (locationLat <= 90: NaN = нема);
+// пара придатна (не (0,0)); формат «123м»/«1.2км», азимут -- лише від APRS_BEARING_MIN_M (стрілка тут не малюється: у картці нема вільної комірки 10x10).
+static void dualAppendDistance(char *l3)
+{
+	char     label[LC_DIST_LABEL_SIZE];
+	uint16_t bearing = 0;
+	bool     bearingKnown = false;
+	size_t   n = strlen(l3);
+
+	if ((LinkHead != NULL) && (LinkHead->locationLat <= 90) && settingsLocationIsValid() &&
+			lcDistLabel(label, sizeof(label), true, settingsLocationGetLatitude(), settingsLocationGetLongitude(), LinkHead->locationLat, LinkHead->locationLon, &bearing, &bearingKnown) &&
+			((n + 1U + strlen(label)) <= DW_LINE3_MAX))
+	{
+		snprintf((l3 + n), (DW_LINE3_MAX + 1U - n), " %s", label);
+	}
+}
+#endif
+
+// R98-FIX2 К2: один тон для рядка 3 картки FM: CTCSS «67.0» або DCS у стоковому форматі «D023N»/«D023I» (dcsPrintf); mark -- префікс «R»/«T» або порожній.
+// Без тону -- порожньо (0). Повертає довжину.
+static size_t dualToneOne(char *dst, size_t size, const char *mark, uint16_t tone)
+{
+	CodeplugCSSTypes_t type = codeplugGetCSSType(tone);
+
+	dst[0] = 0;
+
+	if (type == CSS_TYPE_CTCSS)
+	{
+		return (size_t)snprintf(dst, size, "%s%d.%d", mark, (tone / 10), (tone % 10));
+	}
+
+	if (type & CSS_TYPE_DCS)
+	{
+		size_t n = (size_t)snprintf(dst, size, "%s", mark);
+
+		return (n + dcsPrintf((dst + n), (size - n), NULL, tone));
+	}
+
+	return 0U;
+}
+
+// R98-FIX2 К2: рядок 3 картки FM -- тони прийому і передачі та смуга, до DW_LINE3_MAX (19) символів: однакові -- «67.0 25k»; різні -- «R67.0 T88.5 25k»;
+// лише один -- з позначкою «R»/«T»; без тонів -- лише смуга. Найдовший випадок «R254.1 T254.1 12.5k» = 19 символів.
+static void dualFmToneLine(char *l3, size_t size, uint16_t rxTone, uint16_t txTone, bool bw25)
+{
+	char r[10];
+	char t[10];
+	bool same = (rxTone == txTone);
+	size_t nr = dualToneOne(r, sizeof(r), (same ? "" : "R"), rxTone);
+	size_t nt = (same ? 0U : dualToneOne(t, sizeof(t), "T", txTone));
+
+	if (same || (nt == 0U))
+	{
+		t[0] = 0;
+	}
+
+	snprintf(l3, size, "%s%s%s%s%s", r, (((nr != 0U) && (nt != 0U)) ? " " : ""), t, (((nr != 0U) || (nt != 0U)) ? " " : ""), (bw25 ? "25k" : "12.5k"));
+}
+
 // Одна картка каналу: рамка, квадрат з літерою (обраний -- інвертований, під літерою ▸), рядок 1 (номер+назва), рядок 2 (абонент / контакт-ТГ / FM+частота),
 // рядок 3 (TS/CC/ТГ виклику або тон/смуга FM), замок AES, смуга активності (RX + S-метр). Усе на стеку, з кодплага; імена в RAM не кешуються.
 static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, bool selected, bool active, bool callerHere)
@@ -4709,27 +4805,20 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 					snprintf((l3 + n), (sizeof(l3) - n), " %s", num);
 				}
 			}
+
+#if defined(LC_DISTANCE)
+			if (callerHere)
+			{
+				dualAppendDistance(l3);   // R98-FIX2 К1
+			}
+#endif
 		}
 		else
 		{
 			int mhz = (int)(rec->rxFreq / 100000U);
-			size_t n;
-			CodeplugCSSTypes_t type = codeplugGetCSSType(rec->rxTone);
 
 			snprintf(l2, sizeof(l2), "FM %d.%05d", mhz, (int)(rec->rxFreq - ((uint32_t)mhz * 100000U)));
-
-			if (type == CSS_TYPE_CTCSS)
-			{
-				snprintf(l3, sizeof(l3), "CTCSS %d.%d", (rec->rxTone / 10), (rec->rxTone % 10));
-			}
-			else if (type & CSS_TYPE_DCS)
-			{
-				n = (size_t)snprintf(l3, sizeof(l3), "DCS ");
-				(void)dcsPrintf((l3 + n), (sizeof(l3) - n), NULL, rec->rxTone);
-			}
-
-			n = strlen(l3);   // без тону -- лише смуга (без прочерків)
-			snprintf((l3 + n), (sizeof(l3) - n), "%s%s", ((n != 0U) ? " " : ""), ((codeplugChannelGetFlag((CodeplugChannel_t *)rec, CHANNEL_FLAG_BW_25K) != 0) ? "25k" : "12.5k"));   // смуга -- якщо влазить (обрізається snprintf)
+			dualFmToneLine(l3, sizeof(l3), rec->rxTone, rec->txTone, (codeplugChannelGetFlag((CodeplugChannel_t *)rec, CHANNEL_FLAG_BW_25K) != 0));   // R98-FIX2 К2
 		}
 	}
 	// каналу нема (не задано/видалено) -- назва порожня (без прочерків)
@@ -4788,7 +4877,26 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	{
 		l1[0] = 0;
 	}
+	// R98-FIX2 Д3: APRS -- не прив'язане до каналу, окремий маркер на картці B (правий край рядка 1), одночасно з «D» у квадраті; ніколи не ховається
+	unsigned aprsUn = (isB ? uiUnreadCount('A') : 0U);
+
+	if ((aprsUn > 0U) && (strlen(l1) > DW_L1_MAX_AP))
+	{
+		l1[DW_L1_MAX_AP] = 0;
+	}
 	displayPrintCore(DW_TXT_X, (y + DW_LINE1_DY), l1, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+
+	if (aprsUn > 0U)
+	{
+		char ap[3];
+
+		ap[0] = 'A';
+		ap[1] = ((aprsUn > 9U) ? '+' : (char)('0' + aprsUn));
+		ap[2] = 0;
+		displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+		displayFillRect(DW_AP_X, (y + DW_AP_DY), DW_AP_W, DW_AP_H, false);
+		displayPrintCore((DW_AP_X + 1), (y + DW_AP_DY + 1), ap, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+	}
 
 	displayThemeApply((callerHere ? THEME_ITEM_FG_CHANNEL_CONTACT_INFO : THEME_ITEM_FG_CHANNEL_CONTACT), THEME_ITEM_BG);
 	displayPrintCore(DW_TXT_X, (y + DW_LINE2_DY), l2, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
@@ -4804,18 +4912,10 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 #endif
 
 	{
-		// R98 Д1: індикатор непрочитаних -- у квадраті з літерою (стокове місце в шапці, y=16, налазило на картку A). R98-FIX1: «D» -- на картці-джерелі SMS,
-		// «A» (APRS) -- на картці B; умова показу -- лічильник > 0, як у стоку. Обраний квадрат залитий -- малюємо кольором фону.
-		// R98-FIX1 Д: SMS DMR -- за ДЖЕРЕЛОМ (картка A/B, uiUnreadCountCard); APRS -- без прив'язки до каналу (приймач на час режиму призупинено),
-		// лишається на картці B, коли в неї нема власних непрочитаних SMS (слот індикатора один).
+		// R98 Д1: індикатор «D» (SMS DMR) -- у квадраті з літерою, на картці-ДЖЕРЕЛІ (R98-FIX2: біт 31 peerId, uiUnreadCountCard); умова показу -- лічильник > 0.
+		// APRS «A» -- окремий маркер у правому краї рядка 1 картки B (вище), одночасно. Обраний квадрат залитий -- малюємо кольором фону.
 		char kindCh = 'D';
 		unsigned un = uiUnreadCountCard(isB);
-
-		if (isB && (un == 0U))
-		{
-			un = uiUnreadCount('A');
-			kindCh = 'A';
-		}
 
 		if (un > 0U)
 		{
@@ -4883,14 +4983,10 @@ bool uiChannelModeDualDetailsShown(void)
 	return (dcIsEnabled() && uiDataGlobal.displayChannelSettings && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE));
 }
 
-// R98-FIX1 Д: нове непрочитане SMS DMR прийнято. Картка-джерело: режим ввімкнено -- де стоїть рація (B лише якщо B != A), інакше -- без прив'язки
-// (різниця до загального числа на екрані йде на картку A).
-void uiChannelModeDualSmsReceived(void)
+// R98-FIX2 Д: вхідне SMS DMR прийнято на картці B? Так лише коли режим ввімкнено, рація стоїть на B і B != A (A == B -> картка A; режим вимкнено -> 0).
+bool uiChannelModeDualOnCardB(void)
 {
-	if (dcIsEnabled())
-	{
-		dcUnreadNote(dcIsOnB() && (dualBSameAsA() == false));
-	}
+	return (dcIsEnabled() && dcIsOnB() && (dualBSameAsA() == false));
 }
 
 // R98-FIX1 Г: рація на B = VFO при ввімкненому режимі. Меню відкриваються з кореня «екран каналу», тож стокова логіка вважає, що діє на канал.

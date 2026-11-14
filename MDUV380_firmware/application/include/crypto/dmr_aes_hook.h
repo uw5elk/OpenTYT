@@ -28,6 +28,9 @@ void dmrAesRxBurst(int seq);                       /* per voice burst (seq 1..6)
 void dmrAesRxLateEntry(int seq, const uint8_t *ambe27); /* read Late-Entry MI bits from a burst */
 void dmrAesRxCodecFrame(uint16_t *b49, int idxInBurst); /* per decoded AMBE frame (idx 0..2) */
 void dmrAesRxEnd(void);
+#if defined(ENABLE_DUAL_CHANNEL) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = DUAL_CHANNEL_ENABLED (functions/dual_channel.h) */
+void dmrAesRxRetune(void);                         /* R98-FIX2 Е: перенастроювання на інший канал (A<->B режиму): скинути стан RX AES попереднього каналу */
+#endif
 int  dmrAesRxActive(void);                         /* 1, поки триває розшифрування поточного виклику (індикатор UI) */
 /* TX */
 void dmrAesTxStart(uint8_t keyId, uint32_t miSeed);
@@ -84,6 +87,9 @@ static inline void dmrAesRxBurst(int s){ (void)s; }
 static inline void dmrAesRxLateEntry(int s, const uint8_t *a){ (void)s; (void)a; }
 static inline void dmrAesRxCodecFrame(uint16_t *b, int i){ (void)b; (void)i; }
 static inline void dmrAesRxEnd(void){ }
+#if defined(ENABLE_DUAL_CHANNEL) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = DUAL_CHANNEL_ENABLED (functions/dual_channel.h) */
+static inline void dmrAesRxRetune(void){ }
+#endif
 static inline int  dmrAesRxActive(void){ return 0; }
 static inline void dmrAesTxStart(uint8_t k, uint32_t m){ (void)k; (void)m; }
 static inline int  dmrAesTxBuildPI(uint8_t *p){ (void)p; return 0; }

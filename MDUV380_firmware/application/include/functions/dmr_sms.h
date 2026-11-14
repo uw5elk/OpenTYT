@@ -52,7 +52,7 @@ typedef struct
 	uint8_t  flags;
 	uint8_t  textLen;
 	uint16_t seq;                 /* monotonically increasing -> newest = highest seq */
-	uint32_t peerId;              /* inbox: source ID; sent: destination ID/TG         */
+	uint32_t peerId;              /* inbox: source ID; sent: destination ID/TG. ЧИСТИЙ (24 біти): dmrSmsGet()/dmrSmsNewestInbox() вже зняли біт картки */
 	char     text[DMR_SMS_TEXT_MAX];
 } dmrSmsMessage_t;
 
@@ -73,6 +73,16 @@ int  dmrSmsCount(int outgoing);
 const dmrSmsMessage_t *dmrSmsGet(int outgoing, int idx);
 /* Total unread (Inbox) messages — for the idle-screen indicator. */
 int  dmrSmsUnreadCount(void);
+/* R98-FIX2 Д: у ЗБЕРЕЖЕНОМУ слові peerId записів сховища (байти 4..7 запису) біт 31 = «вхідне прийнято на картці B» режиму «Подвійний прийом».
+ * Адреси DMR 24-бітні, тож старший байт слова був завжди 0. Читаємо лише через dmrSmsPeerClean() -- він знімає ВЕСЬ старший байт (0x00FFFFFF),
+ * а не лише біт 31: так будь-який «сміттєвий» старший байт (запис іншої прошивки) не потрапить у ID. Формат і довжину запису не змінено.
+ * Біт ставиться лише на ВХІДНИХ, прийнятих при ввімкненому режимі на B (A == B -> A; режим вимкнено -> 0); на «Надісланих» і старих записах -- 0. */
+#define DMR_SMS_PEER_ON_B      0x80000000u
+#define DMR_SMS_PEER_ID_MASK   0x00FFFFFFu
+#define dmrSmsPeerClean(p)     ((uint32_t)(p) & DMR_SMS_PEER_ID_MASK)
+#if defined(ENABLE_DUAL_CHANNEL) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = DUAL_CHANNEL_ENABLED (functions/dual_channel.h) */
+int  dmrSmsUnreadCountB(void);   /* R98-FIX2 Д: скільки з непрочитаних вхідних прийнято на картці B (один прохід по сховищу, без лічильників у RAM) */
+#endif
 /* ui6: час запису (секунди UTC; 0 = невідомо / годинник не був виставлений). Читається прямо
  * зі сховища (запис v3), у dmrSmsMessage_t поля немає -- RAM не росте. */
 uint32_t dmrSmsGetTime(int outgoing, int idx);

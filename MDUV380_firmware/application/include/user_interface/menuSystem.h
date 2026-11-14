@@ -252,7 +252,7 @@ bool uiChannelModeDualPrepareTx(void);   /* R97: PTT під час «Подві�
 bool uiChannelModeDualHeader(bool forceBattery);   /* R97-FIX3: чергування без активності -- шапка обраного каналу з кодплага; true = намальовано (applicationMain.c) */
 void uiChannelModeDualRenderHeader(bool forceBattery);   /* R97-FIX7: шапка екрана режиму (чергування -- з кодплага, пауза -- справжня); висота лише рядок шапки */
 bool uiChannelModeDualScreenShown(void);   /* R97-FIX5: екран «Подвійного прийому» на дисплеї (чергування або пауза після клавіші) -- стоковий S-метр шапки не малюється (uiUtilities.c) */
-void uiChannelModeDualSmsReceived(void);   /* R98-FIX1 Д: прийнято нове непрочитане SMS DMR (dmr_sms.c) -- записати картку-джерело (A/B) */
+bool uiChannelModeDualOnCardB(void);   /* R98-FIX2 Д: режим ввімкнено і рація стоїть на B != A -- вхідне SMS DMR отримує біт «прийнято на B» (dmr_sms.c) */
 bool uiChannelModeDualOnVfo(void);   /* R98-FIX1 Г: режим ввімкнено і обраний (рація стоїть на) B = VFO -- меню з кореня екрана каналу мають діяти на VFO, а не на канальний буфер */
 int uiChannelModeDualTsBucket(void);   /* R98-FIX1 Г: «відро» ТС-перекриття для меню контактів/«Останні»: VFO A/B обраного VFO, інакше CHANNEL_CHANNEL */
 bool uiChannelModeDualDetailsShown(void);   /* R98-FIX1 В2: режим ввімкнено і показано панель деталей (SK1) -- стоковий екран деталей обраного каналу без S-метра шапки (uiUtilities.c) */
