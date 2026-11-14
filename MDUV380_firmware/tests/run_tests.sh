@@ -49,6 +49,7 @@ declare -A SRCS=(
 	[test_dmr_sms_replay]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # diag5: СПРАВЖНІЙ збирач SMS, залізо -- заглушки в тесті
 	[test_dmr_sms_shift]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui5: кирилиця від Z3DMR (зсув старших байтів UTF-16)
 	[test_dmr_sms_store]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # ui6: сховище v3 і перетворення v2 -> v3
+	[test_dmr_sms_peerb]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # R98-FIX2 Д: біт 31 peerId (картка B), СПРАВЖНІЙ збирач і сховище
 	[test_channel_vox]=""   # ui8: умова VOX на APRS-каналі (лише заголовок)
 	[test_sms_format]="$APP/source/functions/sms_format.c"   # ui6: перенесення за словами, форма слова, час
 	[test_sms_multitap]="$APP/source/functions/sms_multitap.c"   # ui4: розкладки й логіка multitap набору SMS
@@ -79,6 +80,7 @@ declare -A SRCS=(
 	[test_aes_txphase]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix2: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- фаза шифрування TX за ефіром при тихих burst-ах (SILENCE_AUDIO), межа 18 кадрів, B3 тиша на RX; черга кодувальника й залізо -- модель у тесті
 	[test_aes_rawdiag]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix3: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- розкладка дампу сирих LC/EMB, дедуп, блок «наші байти»
 	[test_aes_pifilter]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # AES-fix6: СПРАВЖНІЙ dmr_aes_hook.c (#include, -DDMR_AES_DIAG_RX) -- класифікація PI-burst-ів до стокового фільтра, кільця, режими G2
+	[test_aes_retune]="$APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # R98-FIX2 Е: СПРАВЖНІЙ dmr_aes_hook.c (#include) -- скидання стану RX AES при перенастроюванні A<->B
 	[test_wake_diag]="$APP/source/functions/wake_diag.c"   # R58: СПРАВЖНІЙ wake_diag.c -- журнал сеансів пробудження (кільце, prev, HOP_START, насичення, дамп 0xB7, рядки екрана); укр. варіант -- довжина рядків
 	[test_wake_hop]="$APP/source/functions/wake_hop_sel.c"   # R59: СПРАВЖНІЙ wake_hop_sel.c -- придатність каналу, випробувані (rx,tx,cc), ліміт стрибків, кільце по списку, один оберт
 	[test_aes_key_name]="$APP/source/crypto/aes_key_name.c"   # R64C: СПРАВЖНІЙ aes_key_name.c -- cp1251 <-> UTF-16LE для імен слотів AES-ключів (повна звірка з Python -- tools/test_aes_key_name.py)
@@ -130,7 +132,9 @@ declare -A XFLAGS=(
 	[test_aes_txphase]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix2
 	[test_aes_rawdiag]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix3
 	[test_aes_pifilter]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"   # AES-fix6
+	[test_aes_retune]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_DUAL_CHANNEL -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"
 	[test_dmr_sms_store]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
+	[test_dmr_sms_peerb]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_DUAL_CHANNEL -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 )
 
 # cleanup1 (2026-10-05): тести, які ще раз збираються з -DENABLE_SMS_DIAG (окремий бінарник
@@ -373,7 +377,7 @@ if [ -z "${FONTCONFIG_FILE:-}" ] && [ -d /usr/share/fonts/truetype/dejavu ] && [
 	printf '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><dir>/usr/share/fonts/truetype/dejavu</dir><dir>/usr/share/fonts/truetype/liberation</dir><cachedir>%s/cache</cachedir></fontconfig>\n' "$FCDIR" > "$FCDIR/fonts.conf"
 	export FONTCONFIG_FILE="$FCDIR/fonts.conf"
 fi
-for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65 test_r65b test_r66 test_r70 test_r71 test_r73 test_r74 test_r75 test_r76 test_r77a test_r78 test_r81 test_r79 test_r88 test_r91a test_r91b test_r91c test_r92 test_r93 test_r82 test_r94a test_r94b test_r94d test_r95 test_r96 test_r97 test_r98 test_r98fix1; do
+for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65 test_r65b test_r66 test_r70 test_r71 test_r73 test_r74 test_r75 test_r76 test_r77a test_r78 test_r81 test_r79 test_r88 test_r91a test_r91b test_r91c test_r92 test_r93 test_r82 test_r94a test_r94b test_r94d test_r95 test_r96 test_r97 test_r98 test_r98fix1 test_r98fix2; do
 	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
 		PYTK=""
 		for cand in python3 python3.12 python3.11 python3.10 python3.13; do

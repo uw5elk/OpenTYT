@@ -2,7 +2,9 @@
 """R96: фільтр токенів для тестів, що порівнюють препроцесований текст із комітами-базами (test_r46, test_r47, test_r78).
 Вирізає лише законні R96-вставки (мертвий код у не-UA збірках / код під LANGUAGE_BUILD_UKRAINIAN), щоб решта порівнянь лишилась строгою:
   - прототип uiDrawTickMark (uiUtilities.h, ENABLE_AES; функція в образ не потрапляє -- sha AES-збірки не змінився);
-  - QUICKKEY_SLOT_UNWRITTEN у quickkeyIsEmpty() (codeplug.c) і в диспетчері швидких клавіш (applicationMain.c): у не-UA збірці це `(0)`, в UA -- перевірка 0xFFFF."""
+  - QUICKKEY_SLOT_UNWRITTEN у quickkeyIsEmpty() (codeplug.c) і в диспетчері швидких клавіш (applicationMain.c): у не-UA збірці це `(0)`, в UA -- перевірка 0xFFFF.
+R98-FIX2 Л (той самий принцип -- лише прототипи, без коду в чужих файлах):
+  - keypadAlphaPreviewMap (keyboard.h, LANGUAGE_BUILD_UKRAINIAN) і uiSmsKeyHintMap (uiSmsKeys.h) -- підказка літер у назві каналу."""
 import re
 
 _PATS = (
@@ -12,6 +14,8 @@ _PATS = (
     (b"(data == 0x8000) || ((data) == 0xFFFF) ||", b"(data == 0x8000) ||"),
     (b"if ((0)) { keyFunction = 0; }", b""),
     (b"if (((keyFunction) == 0xFFFF)) { keyFunction = 0; }", b""),
+    (b"const char *keypadAlphaPreviewMap(int *idx);", b""),
+    (b"void uiSmsKeyHintMap(const char *map, int idx, int16_t x, int16_t y);", b""),
 )
 
 

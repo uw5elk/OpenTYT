@@ -200,6 +200,8 @@ struct { int currentSelectedChannelNumber; } uiDataGlobal;
 static CodeplugChannel_t channelScreenChannelData, settingsVFOChannel[2], *currentChannelData;
 static int onB = 0, bVfo = 0, vfoIdx = 0, getData = 0, loadsMem = 0, loadsNo = 0, vfoLoads = 0, vfoFresh = 0, vfoLast = -1, tgSets = 0, clears = 0; static uint16_t chB = 7;
 static int16_t s_dualTgIdxA;
+static CodeplugChannel_t scanNextChannelData;
+void dmrAesRxRetune(void) { }
 bool settingsSetBOOL(bool *p, bool v) { (void)p; (void)v; return 0; }
 bool settingsSetINT8(int8_t *p, int8_t v) { (void)p; (void)v; return 0; }
 bool settingsSetUINT8(uint8_t *p, uint8_t v) { (void)p; (void)v; return 0; }
@@ -245,6 +247,9 @@ def test_tune(incs, cf):
     check(fn is not None, "В2: dualTune знайдено")
     if fn is None:
         return
+    bh = T.carve_fn(t or "", "static _Bool dualBufHoldsB(void)")   # R98-FIX2 Є: dualTune користується dualBufHoldsB
+    check(bh is not None, "В2: dualBufHoldsB знайдено")
+    fn = (bh or "") + "\n" + fn
     out = T.run_c(TUNE_HARNESS % fn)
     check(out is not None, "В2: хостова збірка dualTune")
     if out is None:
@@ -252,10 +257,10 @@ def test_tune(incs, cf):
     o = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
     check(o.get("t1") == "1,1,-1,0,0,1,1" and o.get("t1b") == "12345,1",
           "В2: B = VFO B -- рація на B, currentChannelData = запис VFO B, номер вибраного = CH_DETAILS_VFO_CHANNEL, канальний буфер і канальне завантаження НЕ чіпаються, VFO налаштовано ізольовано (свіже): %s %s" % (o.get("t1"), o.get("t1b")))
-    check(o.get("t2") == "0,1,5,1,1,9" or o.get("t2") == "0,1,5,1,1,4",
-          "В2: назад на A -- currentChannelData знову канальний буфер, канал A завантажується звичайним шляхом (номер 5), VFO-завантажень не додалось: %s" % o.get("t2"))
+    check(o.get("t2") == "0,1,7,0,1,9" or o.get("t2") == "0,1,7,0,1,4",
+          "В2: назад на A -- currentChannelData знову канальний буфер, канал A завантажується З ПАМ'ЯТІ (R98-FIX2 Є: незбережені правки A не губляться; заглушка ставить номер 7), VFO-завантажень не додалось: %s" % o.get("t2"))
     check(o.get("t3") == "0,1,0", "В2: B = VFO A -- VFO 0, без читання каналу: %s" % o.get("t3"))
-    check(o.get("t4") == "1,1,0,7,1", "В2: B = канал -- старий шлях (читає запис каналу, номер B), VFO не налаштовується: %s" % o.get("t4"))
+    check(o.get("t4") == "1,1,0,7,3", "В2: B = канал -- старий шлях (читає запис каналу, номер B), VFO не налаштовується: %s" % o.get("t4"))
     k = fn.rfind("currentChannelData = &channelScreenChannelData;")
     mut = fn[:k] + fn[k + len("currentChannelData = &channelScreenChannelData;"):]
     mo = T.run_c(TUNE_HARNESS % mut)
@@ -377,7 +382,7 @@ def test_static():
     dcc = T.rd(os.path.join(APP, "source", "functions", "dual_channel.c"))
     sd = dcc[dcc.find("static struct\n{"):dcc.find("} s_dc;")]
     check("uint8_t  typeB;" in sd and sd.count("[") == 0, "В9: тип B -- байт у колишньому вирівнюванні s_dc (8 байт), масивів/нових змінних нема")
-    check([m for m in re.findall(r"^static [a-z_0-9]+ ([a-zA-Z_0-9]+)\[", dcc, re.M) if m != "s_dcUnread"] == [], "В9: у dual_channel.c нових статичних масивів нема (R98-FIX1 Д: єдиний виняток -- s_dcUnread[2], 2 байти)")
+    check(re.findall(r"^static [a-z_0-9]+ ([a-zA-Z_0-9]+)\[", dcc, re.M) == [], "В9: у dual_channel.c нових статичних масивів нема (R98-FIX2 Д2: лічильників у RAM нема)")
     # Д1: конверт
     check("static bool dualEnvelopeInCards(void)" in uu and uu.count("if (dualEnvelopeInCards())") == 2, "Д1: конверт непрочитаних у шапці вимкнено на екрані карток (SMS і APRS), на інших екранах -- як було")
     rowb = src[src.find("static void dualRenderRow("):src.find("static bool dualActivity(")]

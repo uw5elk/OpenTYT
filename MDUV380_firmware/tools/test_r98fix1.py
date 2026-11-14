@@ -525,103 +525,7 @@ def test_part_g(incs, cf):
     check(mut != fn and mo is not None and mo != out, "Г2 (мутант): перекриття знову в канальне відро -- ловиться")
 
 
-# ------------------------------------------------------------------------------------------------ Д
-CNT_HARNESS = r'''
-#include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
-#define DUAL_CHANNEL_HOST_TEST 1
-#include "functions/dual_channel.h"
-#include "@@DC@@"
-static uint8_t c[2];
-static void show(const char *n, unsigned total) { unsigned a, b; dcUnreadCountsSplit(c, total, &a, &b); printf("%s=%u,%u|%u,%u\n", n, a, b, c[0], c[1]); }
-int main(void)
-{
-	dcUnreadCountsNote(c, false); dcUnreadCountsNote(c, false); show("t1", 2);                         /* прийом на A x2 */
-	dcUnreadCountsNote(c, true); show("t2", 3);                                                       /* + на B */
-	dcUnreadCountsNote(c, false); dcUnreadCountsNote(c, true); show("t3", 5);                         /* чергування: прив'язка прийнятого не міняється */
-	show("t4", 0);                                                                                    /* усе прочитано -> 0/0, лічильники скинуто */
-	dcUnreadCountsNote(c, true); show("t5", 1);                                                       /* нове на B після читання */
-	c[0] = 2; c[1] = 1; show("t6", 2);                                                                /* прочитано частину: A=min(2,2)=2, B=min(1,0)=0 */
-	c[0] = 0; c[1] = 0; show("t7", 5);                                                                /* перезапуск: різниця на A */
-	c[0] = 1; c[1] = 1; show("t8", 4);                                                                /* 2 неприв'язані -> на A */
-	c[0] = 200; c[1] = 200; show("t9", 3);                                                            /* лічильники більші за загальне -> clamp */
-	c[0] = 254; dcUnreadCountsNote(c, false); dcUnreadCountsNote(c, false); dcUnreadCountsNote(c, false); printf("sat=%u\n", c[0]);
-	return 0;
-}
-'''
-
-HOOK_HARNESS = r'''
-#include <stdio.h>
-#include <stdbool.h>
-static int en, onB, same, noted = -1;
-static bool dcIsEnabled(void) { return en; }
-static bool dcIsOnB(void) { return onB; }
-static bool dualBSameAsA(void) { return same; }
-static void dcUnreadNote(bool b) { noted = b; }
-@@FN@@
-int main(void)
-{
-	en = 1; onB = 0; same = 0; noted = -1; uiChannelModeDualSmsReceived(); printf("a=%d\n", noted);     /* на A */
-	onB = 1; noted = -1; uiChannelModeDualSmsReceived(); printf("b=%d\n", noted);                     /* на B */
-	same = 1; noted = -1; uiChannelModeDualSmsReceived(); printf("c=%d\n", noted);                     /* A == B -> A */
-	same = 0; en = 0; noted = -1; uiChannelModeDualSmsReceived(); printf("d=%d\n", noted);              /* режим вимкнено -> без прив'язки */
-	return 0;
-}
-'''
-
-
-def test_part_d(incs, cf):
-    dc = os.path.join(FN, "dual_channel.c")
-    out = run_in(CNT_HARNESS.replace("@@DC@@", dc))
-    check(out is not None, "Д5: хостова збірка лічильників")
-    if out is None:
-        return
-    o = kv(out)
-    check(o.get("t1") == "2,0|2,0", "Д5: прийом на A -> картка A: %s" % o.get("t1"))
-    check(o.get("t2") == "2,1|2,1", "Д5: прийом на B -> картка B: %s" % o.get("t2"))
-    check(o.get("t3") == "3,2|3,2", "Д5: чергування не міняє прив'язку вже прийнятих (A 2+1, B 1+1): %s" % o.get("t3"))
-    check(o.get("t4") == "0,0|0,0", "Д5: прочитано все -> 0/0, лічильники скинуто: %s" % o.get("t4"))
-    check(o.get("t5") == "0,1|0,1", "Д5: після читання нове на B -> лише B: %s" % o.get("t5"))
-    check(o.get("t6") == "2,0|2,0", "Д5: прочитано частину -> clamp A=min(A,усього), B=min(B,усього-A): %s" % o.get("t6"))
-    check(o.get("t7") == "5,0|0,0", "Д5: перезапуск (лічильники 0) -> уся різниця на картці A: %s" % o.get("t7"))
-    check(o.get("t8") == "3,1|1,1", "Д5: неприв'язана різниця (4-1-1=2) додається до картки A: %s" % o.get("t8"))
-    check(o.get("t9") == "0,3|0,3" or o.get("t9") == "3,0|3,0", "Д5: лічильники більші за загальне число clamp-яться (не перевищують): %s" % o.get("t9"))
-    check(o.get("sat") == "255", "Д5: насичення лічильника на 255: %s" % o.get("sat"))
-    src = T.rd(dc)
-    muts = (("завжди A", src.replace("uint8_t *c = &cnt[cardB ? 1 : 0];", "uint8_t *c = &cnt[0];")),
-            ("не скидається при читанні (total==0)", src.replace("if (total == 0U)\n\t{\n\t\tcnt[0] = 0U;\n\t\tcnt[1] = 0U;", "if (total == 0U)\n\t{")),
-            ("перевищує загальне число (без clamp)", src.replace("a = ((cnt[0] < total) ? cnt[0] : total);", "a = cnt[0];")))
-    for what, m in muts:
-        d = tempfile.mkdtemp(prefix="r98f1m_")
-        try:
-            p = os.path.join(d, "dual_channel.c"); open(p, "w", encoding="utf-8").write(m)
-            mo = run_in(CNT_HARNESS.replace("@@DC@@", p))
-        finally:
-            shutil.rmtree(d, ignore_errors=True)
-        check(m != src and mo is not None and mo != out, "Д5 (мутант): %s -- ловиться" % what)
-    if "DUALCH" not in cf:
-        return
-    tc = T.pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
-    fn = T.carve_fn(tc or "", "void uiChannelModeDualSmsReceived(void)")
-    check(fn is not None, "Д1: хук прийому знайдено")
-    if fn is not None:
-        o = kv(run_in(HOOK_HARNESS.replace("@@FN@@", fn)))
-        check(o.get("a") == "0" and o.get("b") == "1" and o.get("c") == "0" and o.get("d") == "-1",
-              "Д1/Д5: джерело -- де стоїть рація (A=0, B=1), A==B -> A, режим вимкнено -> без прив'язки: %s %s %s %s" % (o.get("a"), o.get("b"), o.get("c"), o.get("d")))
-    # статика
-    sms = T.rd(os.path.join(FN, "dmr_sms.c"))
-    check(sms.count("uiChannelModeDualSmsReceived()") == 1 and "#if defined(DUAL_CHANNEL_ENABLED)\n\tuiChannelModeDualSmsReceived();" in sms,
-          "Д1: єдина точка прийому нового непрочитаного SMS (після збереження/відкладення) викликає хук, під DUAL_CHANNEL_ENABLED")
-    check("DMR_SMS_FLAG_UNREAD | (group" in sms, "Д1: хук -- у гілці прийому, де запис створюється з прапорцем UNREAD")
-    ucm = T.rd(os.path.join(UI, "uiChannelMode.c"))
-    k = ucm.find("unsigned un = uiUnreadCountCard(isB);")
-    check(k > 0 and "uiUnreadCount('A')" in ucm[k:k + 400], "Д3/Д4: картка: «D» за джерелом (uiUnreadCountCard), APRS «A» -- лише на B, коли в неї нема власних SMS; APRS не прив'язано до каналу")
-    uu = T.rd(os.path.join(UI, "uiUtilities.c"))
-    check("dcUnreadCards(" in uu and "dmrSmsUnreadCount()" in uu[uu.find("unsigned uiUnreadCountCard"):uu.find("unsigned uiUnreadCountCard") + 500],
-          "Д2: узгодження з реальним лічильником непрочитаних (dmrSmsUnreadCount) -- у uiUnreadCountCard")
-    h = T.rd(os.path.join(INC, "functions", "dual_channel.h"))
-    check("uint8_t cnt[2]" in h and "s_dcUnread[2]" in T.rd(dc), "Д2: рівно ДВА лічильники uint8 (2 байти RAM), без інших нових змінних")
+# Частину Д (лічильники на картках, хук прийому) замінено в R98-FIX2 (біт 31 peerId): див. tools/test_r98fix2.py та tests/test_dmr_sms_peerb.c
 
 
 def main():
@@ -633,7 +537,6 @@ def main():
     test_part_b(incs, cf)
     test_part_v(incs, cf)
     test_part_g(incs, cf)
-    test_part_d(incs, cf)
     print("test_r98fix1: ПРОВАЛІВ: %d (з %d перевірок)" % (len(FAILS), N[0]))
     return 1 if FAILS else 0
 

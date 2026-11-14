@@ -244,11 +244,17 @@ def test_vs_base(incs, cfgs):
         # 4: усі .c без прапорця
         empty = os.path.join(root, "r97_empty.c"); open(empty, "w").write("\n")   # новий файл у базі відсутній: без прапорця він має давати порожню одиницю трансляції
         files = sorted(os.path.relpath(os.path.join(d, f), FW) for d, _s, fs in os.walk(os.path.join(APP, "source")) for f in fs if f.endswith(".c"))
+        # R98-FIX2 Л: підказка літер у назві каналу -- окрема українська можливість (не режим), її файли перевіряє tools/test_r98fix2.py;
+        # прототипи keypadAlphaPreviewMap/uiSmsKeyHintMap у заголовках вирізаються тим самим фільтром, що й R96-вставки (r96_tokfilter.py).
+        from r96_tokfilter import strip_r96
+        l_files = ("application/source/io/keyboard.c", "application/source/user_interface/uiSmsKeys.c", "application/source/user_interface/menuChannelDetails.c")
         for name in ("AES0", "ENDATA", "UA"):
             bad = []
             for rel in files:
+                if rel in l_files:
+                    continue
                 ta, tb = pp(FW, incs, cf[name], rel), pp(root, incs, cf[name], (rel if os.path.exists(os.path.join(root, rel)) else empty))
-                if (ta or "").split() != (tb or "").split():
+                if strip_r96((ta or "").encode()).split() != strip_r96((tb or "").encode()).split():
                     bad.append(rel)
             check(bad == [], "%s: токени всіх %d файлів .c як у базі %s (без прапорця R97 нічого не змінилось): %r" % (name, len(files), BASE, bad[:5]))
         # DUALCHEN: прапорець в англійській збірці мертвий
@@ -1077,7 +1083,7 @@ typedef int CodeplugCSSTypes_t;
 #define CSS_TYPE_NONE 1
 #define CSS_TYPE_CTCSS 2
 #define CSS_TYPE_DCS 0x8000
-typedef struct { char name[16]; uint32_t rxFreq; uint8_t chMode; uint16_t contact; uint8_t txColor; uint16_t rxTone; uint8_t flags; uint8_t encrypt; uint8_t rxGroupList; uint8_t NOT_IN_CODEPLUG_flag; } CodeplugChannel_t;
+typedef struct { char name[16]; uint32_t rxFreq; uint8_t chMode; uint16_t contact; uint8_t txColor; uint16_t rxTone; uint16_t txTone; uint8_t flags; uint8_t encrypt; uint8_t rxGroupList; uint8_t NOT_IN_CODEPLUG_flag; } CodeplugChannel_t;
 typedef struct { char name[16]; uint32_t tgNumber; uint8_t callType; uint8_t reserve1; } CodeplugContact_t;
 #define CODEPLUG_CONTACT_FLAG_NO_TS_OVERRIDE 0x01
 #define CODEPLUG_CONTACT_FLAG_TS_OVERRIDE_TIMESLOT_MASK 0x02
@@ -1093,7 +1099,12 @@ static CodeplugChannel_t settingsVFOChannel[2];
 unsigned uiUnreadCount(char k) { return (k == 'D') ? gUnD : ((k == 'A') ? gUnA : 0U); }
 unsigned uiUnreadCountCard(bool cardB) { return cardB ? 0U : (unsigned)gUnD; }   /* R98-FIX1 Д: SMS DMR за карткою; на B власних SMS нема -- показується APRS */
 void displayDrawLine(int a, int b, int c, int d, bool inv) { (void)inv; chkp(a, b); chkp(c, d); lines++; }
-typedef struct { char contact[32]; char talkerAlias[32]; char talkgroup[17]; } LinkItem_t;
+typedef struct { char contact[32]; char talkerAlias[32]; char talkgroup[17]; double locationLat, locationLon; } LinkItem_t;
+#define LC_DIST_LABEL_SIZE 16
+bool settingsLocationIsValid(void) { return false; }   /* R98-FIX2 К1: власної позиції нема -- відстань на картці не додається */
+double settingsLocationGetLatitude(void) { return 0.0; }
+double settingsLocationGetLongitude(void) { return 0.0; }
+bool lcDistLabel(char *b, size_t n, bool ok, double a, double c, double d, double e, uint16_t *br, bool *bk) { (void)b; (void)n; (void)ok; (void)a; (void)c; (void)d; (void)e; (void)br; (void)bk; return false; }
 struct { int contactDisplayPriority; uint32_t overrideTG; int currentIndexInTRxGroupList[3]; } nonVolatileSettings;
 struct { char tg[8]; char pc[8]; char all_call[12]; } lang, *currentLanguage = &lang;
 static LinkItem_t item; static LinkItem_t *LinkHead = &item;
@@ -1117,7 +1128,7 @@ int codeplugRxGroupGetContactAt(int idx, int pos, int *num)
 }
 int codeplugContactIndexByTGorPC(uint32_t id, ContactCalltype_t t, CodeplugContact_t *c, uint8_t ts) { (void)ts; if (id == 91 && t == CONTACT_CALLTYPE_TG) { memset(c, 0, sizeof(*c)); memcpy(c->name, "TG Ukraine      ", 16); c->reserve1 = 0; return 1; } return -1; }
 void codeplugUtilConvertBufToDisplayString(char *in, char *out, int len) { memcpy(out, in, len); out[len] = 0; for (int i = len - 1; i >= 0 && out[i] == ' '; i--) out[i] = 0; }
-int codeplugGetCSSType(uint16_t t) { return (t == 0xFFFF) ? CSS_TYPE_NONE : ((t & 0x8000) ? CSS_TYPE_DCS : CSS_TYPE_CTCSS); }
+int codeplugGetCSSType(uint16_t t) { return ((t == 0xFFFF) || (t == 0)) ? CSS_TYPE_NONE : ((t & 0x8000) ? CSS_TYPE_DCS : CSS_TYPE_CTCSS); }
 size_t dcsPrintf(char *d, size_t m, char *prefix, uint16_t tone) { (void)prefix; (void)tone; return (size_t)snprintf(d, m, "D023N"); }
 char *chomp(char *s) { int n = strlen(s); while (n > 0 && s[n-1] == ' ') s[--n] = 0; return s; }
 int uiChannelDataHasAes(CodeplugChannel_t *c) { return c->encrypt; }
@@ -1142,15 +1153,15 @@ static void full(int y) { cx0 = 1; cy0 = y; cx1 = 158; cy1 = y + 56; }
 int main(void)
 {
 	strcpy(lang.tg, "TG"); strcpy(lang.pc, "PC");
-	for (int i = 1; i < 1100; i++) { memset(chans[i].name, 'W', 16); used[i] = 1; chans[i].rxFreq = 14550000U; chans[i].chMode = RADIO_MODE_ANALOG; chans[i].rxTone = 0xFFFF; chans[i].txColor = 1; chans[i].flags = 0; chans[i].encrypt = 0; }
+	for (int i = 1; i < 1100; i++) { memset(chans[i].name, 'W', 16); used[i] = 1; chans[i].rxFreq = 14550000U; chans[i].chMode = RADIO_MODE_ANALOG; chans[i].rxTone = 0xFFFF; chans[i].txTone = 0xFFFF; chans[i].txColor = 1; chans[i].flags = 0; chans[i].encrypt = 0; }
 	used[1025] = 0;
-	chans[1024].rxFreq = 44612500U; chans[1024].rxTone = 670; chans[1024].flags = CHANNEL_FLAG_BW_25K;
+	chans[1024].rxFreq = 44612500U; chans[1024].rxTone = 670; chans[1024].txTone = 670; chans[1024].flags = CHANNEL_FLAG_BW_25K;
 	chans[5].chMode = RADIO_MODE_DIGITAL; chans[5].contact = 2; chans[5].txColor = 15; chans[5].flags = CHANNEL_FLAG_TIMESLOT_TWO; memcpy(cts[2].name, "TG Ukraine 255  ", 16);
 	chans[6].chMode = RADIO_MODE_DIGITAL; chans[6].contact = 7;                       /* контакт не читається */
 	chans[8].chMode = RADIO_MODE_DIGITAL; chans[8].contact = 3; memset(cts[3].name, ' ', 16); cts[3].tgNumber = 91;           /* ім'я порожнє -- «TG 91» */
 	chans[9].chMode = RADIO_MODE_DIGITAL; chans[9].contact = 4; memset(cts[4].name, ' ', 16); cts[4].tgNumber = 1234; cts[4].callType = CONTACT_CALLTYPE_PC;
 	chans[10].chMode = RADIO_MODE_DIGITAL; chans[10].contact = 0;                       /* контакт не заданий */
-	chans[11].rxTone = 0x8000 | 023; chans[11].flags = 0;                               /* FM DCS, 12.5k */
+	chans[11].rxTone = 0x8000 | 023; chans[11].txTone = 0x8000 | 023; chans[11].flags = 0;                               /* FM DCS, 12.5k */
 	chans[12].encrypt = 1;
 	chans[13].chMode = RADIO_MODE_DIGITAL; chans[13].contact = 2; chans[13].rxGroupList = 1; chans[13].txColor = 1;   /* список прийому: [3, 2] */
 	chans[14].chMode = RADIO_MODE_DIGITAL; chans[14].contact = 2; chans[14].rxGroupList = 2; chans[14].txColor = 1;   /* порожній список -> контакт каналу */
@@ -1218,14 +1229,14 @@ int main(void)
 	/* Д1: конверт непрочитаних у квадраті літери */
 	full(11); gUnD = 3; reset(); dualRenderRow(11, false, 3, 0, false, false, false); printf("u1=%%d,%%d,%%d,%%s\n", bad, lines, outSeg, texts[nt - 1]);
 	gUnD = 0; gUnA = 12; reset(); dualRenderRow(11, false, 3, 0, true, false, false); printf("u2=%%d,%%d\n", bad, lines);   /* A -- лише на картці B */
-	full(71); reset(); dualRenderRow(71, true, 3, 0, true, false, false); printf("u3=%%d,%%d,%%s\n", bad, lines, texts[nt - 1]);
+	full(71); reset(); dualRenderRow(71, true, 3, 0, true, false, false); { int ap = 0; for (int i = 0; i < nt; i++) { if (strcmp(texts[i], "A+") == 0) { ap = 1; } } printf("u3=%%d,%%d,%%d\n", bad, lines, ap); }   /* R98-FIX2 Д3: APRS -- інвертований значок «A»+число праворуч у рядку 1, без конверта */
 	gUnA = 0; reset(); dualRenderRow(71, true, 3, 0, false, false, false); printf("u4=%%d,%%d\n", bad, lines);
 	reset(); dualRenderRow(71, true, 12, 0, false, false, false); printf("k1=%%d,%%d,%%d,%%d\n", bad, locks, lockX, lockY);
 	reset(); dualRenderRow(71, true, 3, 0, false, false, false); printf("k2=%%d\n", locks);
 	/* R98 В3: картка B = VFO -- «VFO A»/«VFO B», дані прямо із запису VFO (без читання кодплага), ТГ за списком VFO (SETTINGS_VFO_A_MODE+VFO), ТС -- VFO */
 	memset(&settingsVFOChannel[0], 0, sizeof(CodeplugChannel_t)); memset(&settingsVFOChannel[1], 0, sizeof(CodeplugChannel_t));
 	settingsVFOChannel[0].chMode = RADIO_MODE_DIGITAL; settingsVFOChannel[0].rxFreq = 43012500U; settingsVFOChannel[0].rxGroupList = 1; settingsVFOChannel[0].contact = 5; settingsVFOChannel[0].txColor = 7; settingsVFOChannel[0].NOT_IN_CODEPLUG_flag = 0x01; settingsVFOChannel[0].encrypt = 1;
-	settingsVFOChannel[1].chMode = RADIO_MODE_ANALOG; settingsVFOChannel[1].rxFreq = 14550000U; settingsVFOChannel[1].rxTone = 0xFFFF; settingsVFOChannel[1].NOT_IN_CODEPLUG_flag = 0x03; settingsVFOChannel[1].flags = CHANNEL_FLAG_BW_25K;
+	settingsVFOChannel[1].chMode = RADIO_MODE_ANALOG; settingsVFOChannel[1].rxFreq = 14550000U; settingsVFOChannel[1].rxTone = 0xFFFF; settingsVFOChannel[1].txTone = 0xFFFF; settingsVFOChannel[1].NOT_IN_CODEPLUG_flag = 0x03; settingsVFOChannel[1].flags = CHANNEL_FLAG_BW_25K;
 	nonVolatileSettings.currentIndexInTRxGroupList[1] = 1; nonVolatileSettings.currentIndexInTRxGroupList[2] = 0; nonVolatileSettings.currentIndexInTRxGroupList[0] = 0;
 	full(71); gGetData = 0; gLastChan = -1; locks = 0; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_A, true, false, false);
 	printf("va=%%d,%%d,%%d,%%d|%%s|%%s|%%s\n", bad, gGetData, gLastChan, locks, texts[1], texts[2], texts[3]);   /* ТГ -- 2-й у групі VFO A (контакт 2 = «TG Ukraine 255», NO_TS_OVERRIDE -> TS1 з запису VFO) */
@@ -1233,7 +1244,7 @@ int main(void)
 	printf("vb=%%d|%%s|%%s\n", bad, texts[2], texts[3]);   /* перший у групі: контакт 3 («TG 91»; NO_TS_OVERRIDE) */
 	nonVolatileSettings.currentIndexInTRxGroupList[1] = 1; gLastChan = -1; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_B, false, false, false);
 	printf("vc=%%d,%%d|%%s|%%s|%%s\n", bad, gLastChan, texts[1], texts[2], texts[3]);   /* VFO B -- FM: «VFO B», частота в рядку 2, смуга 25k, без прочерків */
-	settingsVFOChannel[1].rxTone = 670; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_B, false, false, false);
+	settingsVFOChannel[1].rxTone = 670; settingsVFOChannel[1].txTone = 670; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_B, false, false, false);
 	printf("vd=%%d|%%s\n", bad, texts[3]);   /* CTCSS + смуга */
 	gMan = 2; gOv = 0; reset(); dualRenderRow(71, true, 5, DC_TYPE_VFO_A, false, false, false);
 	printf("ve=%%s\n", texts[3]); gMan = 0;   /* ручне перекриття ТС цього VFO -> TS2 */
@@ -1333,7 +1344,11 @@ def test_fix5_z2(incs, cf):
     check("uiDrawAesEnabledIcon();" not in src[src.find("static void dualRenderScreen(void)\n{"):], "FIX6 З2: замок AES шапки (x=147,y=14) у dualRenderScreen не малюється -- він у картці")
     # ---- хост: справжні dualRenderRow / dualMeterRow / dualCallerText ----
     fn = [carve_fn(t, s_) for s_ in ("static Channel_t dualChanOf(const CodeplugChannel_t *ch)", "static void dualCallerText(char *text17)", "static void dualMeterRow(int16_t y)", "static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, _Bool *numOnly, uint8_t *tsFlags)", "static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)",
+                                     "static size_t dualToneOne(char *dst, size_t size, const char *mark, uint16_t tone)", "static void dualFmToneLine(char *l3, size_t size, uint16_t rxTone, uint16_t txTone, _Bool bw25)",   # R98-FIX2 К2
                                      "static void dualRenderRow(int16_t y, _Bool isB, uint16_t ch, uint8_t vfoType, _Bool selected, _Bool active, _Bool callerHere)")]
+    fda = carve_fn(t, "static void dualAppendDistance(char *l3)")   # R98-FIX2 К1 (лише з LC_DISTANCE)
+    if fda:
+        fn.insert(-1, fda)
     check(all(fn), "FIX6 З3: знайдено dualCallerText / dualMeterRow / dualDestination / dualRenderRow")
     if not all(fn):
         return
@@ -1346,8 +1361,8 @@ def test_fix5_z2(incs, cf):
     o = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
     f = lambda k: o.get(k, "").split("|")
     r1 = f("r1")
-    check(r1[0].split(",")[:3] == ["0", "1", "5"] and r1[1] == "1024 " + "W" * 16 and r1[2] == "FM 446.12500" and r1[3] == "CTCSS 67.0 25k" and r1[4] == "RX",
-          "FIX6 З3 (r1): A=1024, 16-символьна назва, FM: ряд 1 «1024 WWWW…», ряд 2 «FM 446.12500», ряд 3 «CTCSS 67.0 25k», мітка RX, ▸ є, нічого не виходить за картку: %s" % o.get("r1"))
+    check(r1[0].split(",")[:3] == ["0", "1", "5"] and r1[1] == "1024 " + "W" * 16 and r1[2] == "FM 446.12500" and r1[3] == "67.0 25k" and r1[4] == "RX",
+          "FIX6 З3 (r1): A=1024, 16-символьна назва, FM: ряд 1 «1024 WWWW…», ряд 2 «FM 446.12500», ряд 3 «67.0 25k» (R98-FIX2 К2: однакові RX/TX -- один тон), мітка RX, ▸ є, нічого не виходить за картку: %s" % o.get("r1"))
     r2 = f("r2")
     check(r2[0].split(",")[:3] == ["0", "0", "4"] and r2[1] == "5 " + "W" * 16 and r2[2] == "TG Ukraine 255" and r2[3] == "TS2 CC15 TG255",
           "FIX6 З3 (r2): неактивна DMR-картка -- контакт каналу, «TS2 CC15 ТГ255», без ▸ і RX: %s" % o.get("r2"))
@@ -1360,7 +1375,7 @@ def test_fix5_z2(incs, cf):
     check(f("r6") == ["0", "TG 91"], "FIX7 А2: DMR, ім'я контакту порожнє -- «TG 91»: %s" % o.get("r6"))
     check(f("r7") == ["0", "PC 1234"], "FIX7 А2: DMR, контакт приватний без імені -- «PC 1234»: %s" % o.get("r7"))
     check(f("r8") == ["0", "TG 9", "TS1 CC1 TG9"], "FIX7 А2/А3: DMR, контакт не заданий -- «TG 9» (реальне призначення), рядок 3 «TS1 CC1 TG9», без «--»: %s" % o.get("r8"))
-    check(f("r9") == ["0", "FM 145.50000", "DCS D023N 12.5k"], "FIX6 З3 (r9): FM DCS -- «DCS D023N 12.5k»: %s" % o.get("r9"))
+    check(f("r9") == ["0", "FM 145.50000", "D023N 12.5k"], "FIX6 З3 (r9): FM DCS -- «D023N 12.5k» (R98-FIX2 К2): %s" % o.get("r9"))
     check(f("r10") == ["0", "12.5k"], "FIX7 А3: FM без тону -- лише смуга «12.5k», без прочерка: %s" % o.get("r10"))
     check(f("g0") == ["0", "TG 91", "TS1 CC1"] and f("g1") == ["0", "TG Ukraine 255", "TS1 CC1 TG255"] and f("g9") == ["0", "TG 91"] and f("g2") == ["0", "TG Ukraine 255"],
           "FIX7 А2: список прийому каналу -- контакт на позиції індексу ТГ (поза списком -> перший); порожній список -> контакт каналу: %s %s %s %s" % (o.get("g0"), o.get("g1"), o.get("g9"), o.get("g2")))
@@ -1373,14 +1388,14 @@ def test_fix5_z2(incs, cf):
           "R98 Д2: ефективний ТС -- контакт TS2 при каналі TS1, контакт TS1 при каналі TS2, NO_TS_OVERRIDE -> ТС каналу: %s %s %s" % (o.get("t1"), o.get("t2"), o.get("t3")))
     check(f("t4") == ["TS1 CC15 TG255"] and f("t5") == ["TS1 CC1 TG5"] and f("t6") == ["TS2 CC1 TG5"] and f("t7") == ["TS1 CC1 TG91"],
           "R98 Д2: ручне перекриття ТС (канал / контакт), прапор без значення, перекриття ТГ скасовує ТС контакту: %s %s %s %s" % (o.get("t4"), o.get("t5"), o.get("t6"), o.get("t7")))
-    check(o.get("u1") == "0,2,0,3" and o.get("u2") == "0,0" and o.get("u3") == "0,2,+" and o.get("u4") == "0,0",
-          "R98 Д1: індикатор непрочитаних -- у квадраті літери (D на A, A на B), в межах картки, без лічильника -- нічого; понад 9 -- «+»: %s %s %s %s" % (o.get("u1"), o.get("u2"), o.get("u3"), o.get("u4")))
+    check(o.get("u1") == "0,2,0,3" and o.get("u2") == "0,0" and o.get("u3") == "0,0,1" and o.get("u4") == "0,0",
+          "R98 Д1 / R98-FIX2 Д3: «D» -- у квадраті літери картки-джерела; APRS на B -- значок «A+» без конверта; в межах картки, без лічильника -- нічого; понад 9 -- «+»: %s %s %s %s" % (o.get("u1"), o.get("u2"), o.get("u3"), o.get("u4")))
     check(g.DW_UN_LETTER_X >= g.DW_SQ_X + 1 and g.DW_UN_NUM_X + 6 - 1 <= g.DW_SQ_X + g.DW_SQ_W - 2 and g.DW_UN_ENV_X + 8 + 1 <= g.DW_UN_NUM_X and g.DW_UN_LETTER_X + 6 + 1 <= g.DW_UN_ENV_X
           and g.DW_UN_DY > g.DW_ARROW_DY + 4 and g.DW_UN_DY + 8 <= g.DW_SQ_DY + g.DW_SQ_H - 1,
           "R98 Д1: індикатор у квадраті: літера x=4..9, конверт 8x6 x=11..18, число x=20..25 (≤ x=25 -- внутрішня межа квадрата), під ▸ й над нижньою рамкою")
     check(f("va") == ["0,0,0,0", "VFO A 430.12500", "TG Ukraine 255", "TS1 CC7 TG255"] and f("vb") == ["0", "TG 91", "TS1 CC7"],
           "R98 В3: картка VFO A (DMR) -- рядок 1 «VFO A» + частота, ТГ за списком VFO (SETTINGS_VFO_A_MODE+VFO), ефективний ТС/CC, без читання кодплага, ТС питає CHANNEL_VFO_A, замка нема: %s / %s" % (o.get("va"), o.get("vb")))
-    check(f("vc") == ["0,-1", "VFO B", "FM 145.50000", "25k"] and f("vd") == ["0", "CTCSS 67.0 25k"] and o.get("ve") == "TS2 CC7 TG255",
+    check(f("vc") == ["0,-1", "VFO B", "FM 145.50000", "25k"] and f("vd") == ["0", "67.0 25k"] and o.get("ve") == "TS2 CC7 TG255",
           "R98 В3: картка VFO B (FM) -- «VFO B», частота в рядку 2, смуга/CTCSS без прочерків; ручне перекриття ТС цього VFO враховано: %s / %s / %s" % (o.get("vc"), o.get("vd"), o.get("ve")))
     check(o.get("k1") == "0,1,145,104" and o.get("k2") == "0", "FIX6 З2: замок AES -- лише на картці каналу з ключем, у (145, y+33), у межах картки: %s / %s" % (o.get("k1"), o.get("k2")))
     exp = {"m0": "0,0,9", "m1": "0,0,9", "m2": "0,1,8", "m3": "0,5,4", "m4": "0,9,0", "m5": "0,9,0"}
@@ -1389,7 +1404,8 @@ def test_fix5_z2(incs, cf):
     check(o.get("m9") == "0,0,0", "FIX6 З2: неактивна картка -- без смуги й S-метра: %s" % o.get("m9"))
     # ---- мутанти ----
     base = out
-    rr = fn[5]
+    rr = fn[-1]   # R98-FIX2: між dualEffectiveTs і dualRenderRow -- функції тонів/відстані (fn[5:-1])
+    mid = fn[5:-1]
     mutd = (("перекриття ТГ ігнорується", fn[3].replace("nonVolatileSettings.overrideTG != 0", "0"), fn[4]), ("список прийому ігнорується", fn[3].replace("if (ci == 0)", "if (1)"), fn[4]),
             ("ТС контакту ігнорується", fn[3], re.sub(r"\(tsFlags & 0x01\)\s*==\s*0x00", "0", fn[4])),
             ("ТС каналу замість ефективного", fn[3], "static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags) { (void)tsFlags; return (codeplugChannelGetFlag((CodeplugChannel_t *)ch, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2U : 1U; }"))
@@ -1399,12 +1415,12 @@ def test_fix5_z2(incs, cf):
     for what, mf in muts:
         if mf == rr:
             check(False, "FIX6 (мутант) %s: заміна не відбулась" % what); continue
-        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], fn[3], fn[4], mf])})
+        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], fn[3], fn[4]] + mid + [mf])})
         check(mo is not None and mo != base, "FIX6 (мутант): %s -- ловиться тестами" % what)
     for what, md, me in mutd:
         if md == fn[3] and me == fn[4]:
             check(False, "R98 (мутант) %s: заміна не відбулась" % what); continue
-        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], md, me, rr])})
+        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], md, me] + mid + [rr])})
         check(mo is not None and mo != base, "R98 (мутант): %s -- ловиться тестами" % what)
     # А3: у dual-коді не лишилось рядків-прочерків
     blk = src[src.find("static uint32_t dualDestination"):src.find("bool uiChannelModeDualScreenShown")]
