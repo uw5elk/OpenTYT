@@ -36,7 +36,9 @@ bool dcCfgParseEx(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint
 	*enabled = ((raw->flags & DC_FLAG_ENABLED) != 0U);
 	*pointerB = ((raw->flags & DC_FLAG_POINTER_B) != 0U);
 	*typeB = ((raw->reserved[0] == DC_TYPE_VFO_A) || (raw->reserved[0] == DC_TYPE_VFO_B)) ? raw->reserved[0] : (uint8_t)DC_TYPE_CHANNEL;
-	/* тип A: підтримано лише «канал»; ненульове читаємо як 0 без помилки */
+	/* R98-FIX4 Б7: тип поточного A -- біти 0..1 reserved[1] (3 -> канал) */
+	*typeA = (uint8_t)(raw->reserved[1] & 0x03U);
+	*typeA = (((*typeA == DC_TYPE_VFO_A) || (*typeA == DC_TYPE_VFO_B)) ? *typeA : (uint8_t)DC_TYPE_CHANNEL);
 	return true;
 }
 
@@ -57,8 +59,6 @@ bool dcSameTarget(uint8_t typeA, uint16_t idxA, uint8_t typeB, uint16_t idxB)
 
 void dcCfgBuildEx(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB, uint8_t typeB, uint8_t typeA)
 {
-	(void)typeA;   /* тип A -- лише 0 */
-
 	if ((chB < DC_CH_MIN) || (chB > DC_CH_MAX))
 	{
 		chB = 0U;
@@ -70,6 +70,51 @@ void dcCfgBuildEx(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB
 	raw->chBLo = (uint8_t)(chB & 0xFFU);
 	raw->chBHi = (uint8_t)(chB >> 8);
 	raw->reserved[0] = (((typeB == DC_TYPE_VFO_A) || (typeB == DC_TYPE_VFO_B)) ? typeB : (uint8_t)DC_TYPE_CHANNEL);
+	raw->reserved[1] = (((typeA == DC_TYPE_VFO_A) || (typeA == DC_TYPE_VFO_B)) ? typeA : (uint8_t)DC_TYPE_CHANNEL);   /* R98-FIX4 Б7: біти 0..1; «A для повернення» -- окремо (dcCfgSetReturnA) */
+}
+
+/* R98-FIX4 А: «A для повернення» -- reserved[1] біти 2..3 (0 нема, 1 канал, 2 VFO A, 3 VFO B) + reserved[2..3] номер каналу */
+bool dcCfgGetReturnA(const dcOnFlashCfg_t *raw, uint8_t *type, uint16_t *idx)
+{
+	uint8_t code = (uint8_t)((raw->reserved[1] >> 2) & 0x03U);
+	uint16_t ch = (uint16_t)(raw->reserved[2] | ((uint16_t)raw->reserved[3] << 8));
+
+	*type = DC_TYPE_CHANNEL;
+	*idx = 0U;
+
+	if ((raw->version != DC_CFG_VERSION) || (code == 0U))
+	{
+		return false;
+	}
+
+	if (code == 1U)
+	{
+		if ((ch < DC_CH_MIN) || (ch > DC_CH_MAX))
+		{
+			return false;
+		}
+		*idx = ch;
+		return true;
+	}
+
+	*type = ((code == 2U) ? (uint8_t)DC_TYPE_VFO_A : (uint8_t)DC_TYPE_VFO_B);
+	return true;
+}
+
+void dcCfgSetReturnA(dcOnFlashCfg_t *raw, uint8_t type, uint16_t idx)
+{
+	uint8_t code = ((type == DC_TYPE_VFO_A) ? 2U : ((type == DC_TYPE_VFO_B) ? 3U : (((idx >= DC_CH_MIN) && (idx <= DC_CH_MAX)) ? 1U : 0U)));
+
+	raw->reserved[1] = (uint8_t)((raw->reserved[1] & 0x03U) | (code << 2));
+	raw->reserved[2] = (uint8_t)((code == 1U) ? (idx & 0xFFU) : 0U);
+	raw->reserved[3] = (uint8_t)((code == 1U) ? (idx >> 8) : 0U);
+}
+
+void dcCfgCopyReturnA(dcOnFlashCfg_t *dst, const dcOnFlashCfg_t *src)
+{
+	dst->reserved[1] = (uint8_t)((dst->reserved[1] & 0x03U) | (src->reserved[1] & 0x0CU));
+	dst->reserved[2] = src->reserved[2];
+	dst->reserved[3] = src->reserved[3];
 }
 
 dcPairCheck_t dcCheckPair(uint16_t chA, uint16_t chB, bool bInUse)
@@ -197,6 +242,7 @@ static struct
 	uint8_t  txHold   : 1;
 	uint8_t  dirty    : 1;
 	uint8_t  menuOn   : 1;
+	uint8_t  typeA    : 2;   /* R98-FIX4 Б: DC_TYPE_* поточного A -- у двох вільних бітах того самого байта (розмір структури той самий, 8 Б) */
 } s_dc;
 
 void dcLoad(void)
@@ -215,6 +261,7 @@ void dcLoad(void)
 
 	(void)dcCfgParseEx(&raw, &en, &ptr, &ch, &tb, &ta);
 	s_dc.typeB = tb;
+	s_dc.typeA = (ta & 0x03U);   /* R98-FIX4 Б7 */
 	s_dc.enabled = (en ? 1U : 0U);
 	s_dc.pointerB = (ptr ? 1U : 0U);
 	s_dc.chB = ch;
@@ -284,17 +331,51 @@ bool dcFlush(void)
 	dcOnFlashCfg_t cur;
 	dcOnFlashCfg_t want;
 
-	dcCfgBuildEx(&want, (s_dc.enabled != 0U), (s_dc.pointerB != 0U), s_dc.chB, s_dc.typeB, DC_TYPE_CHANNEL);
+	dcCfgBuildEx(&want, (s_dc.enabled != 0U), (s_dc.pointerB != 0U), s_dc.chB, s_dc.typeB, s_dc.typeA);   /* R98-FIX4 Б7: тип A -- теж */
 	memset(&cur, 0, sizeof(cur));
 	s_dc.dirty = 0U;
 
-	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG, (uint8_t *)&cur, (int)sizeof(cur)) &&
-			(memcmp(&cur, &want, sizeof(want)) == 0))
+	bool haveCur = codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG, (uint8_t *)&cur, (int)sizeof(cur));
+
+	if (haveCur && (cur.version == DC_CFG_VERSION))
+	{
+		dcCfgCopyReturnA(&want, &cur);   /* R98-FIX4 А: «A для повернення» не в RAM -- переносимо з того, що вже на флеші */
+	}
+
+	if (haveCur && (memcmp(&cur, &want, sizeof(want)) == 0))
 	{
 		return true;
 	}
 
 	return codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG, (uint8_t *)&want, (int)sizeof(want));
+}
+
+bool dcDisableWithReturnA(uint8_t typeRet, uint16_t idxRet)
+{
+	dcOnFlashCfg_t want;
+
+	s_dc.enabled = 0U;
+	s_dc.dirty = 0U;
+	dcCfgBuildEx(&want, false, (s_dc.pointerB != 0U), s_dc.chB, s_dc.typeB, s_dc.typeA);
+	dcCfgSetReturnA(&want, typeRet, idxRet);
+
+	return codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG, (uint8_t *)&want, (int)sizeof(want));
+}
+
+bool dcGetReturnA(uint8_t *typeRet, uint16_t *idxRet)
+{
+	dcOnFlashCfg_t cur;
+
+	memset(&cur, 0, sizeof(cur));
+
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG, (uint8_t *)&cur, (int)sizeof(cur)) == false)
+	{
+		*typeRet = DC_TYPE_CHANNEL;
+		*idxRet = 0U;
+		return false;
+	}
+
+	return dcCfgGetReturnA(&cur, typeRet, idxRet);
 }
 
 void dcFlushPending(void)
@@ -329,6 +410,27 @@ void dcSetPointerB(bool pointerB)
 	if ((s_dc.pointerB != 0U) != pointerB)
 	{
 		s_dc.pointerB = (pointerB ? 1U : 0U);
+		markDirty();
+	}
+}
+
+uint8_t dcTypeA(void)
+{
+	return (uint8_t)s_dc.typeA;
+}
+
+bool dcAIsVfo(void)
+{
+	return (s_dc.typeA != DC_TYPE_CHANNEL);
+}
+
+void dcSetTypeA(uint8_t typeA)
+{
+	typeA = (((typeA == DC_TYPE_VFO_A) || (typeA == DC_TYPE_VFO_B)) ? typeA : (uint8_t)DC_TYPE_CHANNEL);
+
+	if (s_dc.typeA != typeA)
+	{
+		s_dc.typeA = typeA;
 		markDirty();
 	}
 }

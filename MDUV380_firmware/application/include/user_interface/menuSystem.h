@@ -248,7 +248,8 @@ bool uiChannelModeIsScanning(void);
 #if defined(DUAL_CHANNEL_ENABLED)
 void uiVFOModeDualLoad(uint8_t vfo, bool freshTune);   /* R98 В2: налаштувати рацію на VFO для «Подвійного прийому» з ізоляцією стану (uiVFOMode.c) */
 void uiVFOModeDualStep(uint8_t vfo, int dir);          /* R98 В8: крок частоти VFO на картці B */
-bool uiVFOModeDualFreqEnter(uint8_t vfo, int frequency);   /* R98-FIX3 А3: введена цифрами частота (одиниці 10 Гц) для VFO на картці B -- стокова updateFrequency(); false -- поза діапазонами */
+bool uiVFOModeDualFreqEnter(uint8_t vfo, int frequency);
+bool uiChannelModeDualEnableFromVfo(uint8_t vfo);         /* R98-FIX4 Б1: увімкнути «Подвійний прийом» з екрана VFO (A = цей VFO), перейти на екран режиму */   /* R98-FIX3 А3: введена цифрами частота (одиниці 10 Гц) для VFO на картці B -- стокова updateFrequency(); false -- поза діапазонами */
 bool uiChannelModeDualPrepareTx(void);   /* R97: PTT під час «Подвійного прийому» (uiChannelMode.c) */
 bool uiChannelModeDualHeader(bool forceBattery);   /* R97-FIX3: чергування без активності -- шапка обраного каналу з кодплага; true = намальовано (applicationMain.c) */
 void uiChannelModeDualRenderHeader(bool forceBattery);   /* R97-FIX7: шапка екрана режиму (чергування -- з кодплага, пауза -- справжня); висота лише рядок шапки */
@@ -489,6 +490,9 @@ enum VFO_SCREEN_QUICK_MENU_ITEMS
 	VFO_SCREEN_QUICK_MENU_DUAL_SCAN,
 	VFO_SCREEN_QUICK_MENU_FREQ_BIND_MODE,
 	VFO_SCREEN_QUICK_MENU_AUDIO_MUTE,
+#if defined(DUAL_CHANNEL_ENABLED)
+	VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL,   /* R98-FIX4 Б2: «Подв. прийом» з екрана VFO -- В КІНЦІ, номери стокових пунктів (швидкі клавіші) не зсуваються */
+#endif
 	NUM_VFO_SCREEN_QUICK_MENU_ITEMS
 };
 

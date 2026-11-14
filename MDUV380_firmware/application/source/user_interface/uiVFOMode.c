@@ -1431,6 +1431,20 @@ void uiVFOModeDualStep(uint8_t vfo, int dir)
 	settingsSetVFODirty();
 }
 
+// R98-FIX4 Б2/Б15: увімкнути «Подвійний прийом» з екрана VFO. Стоковий «Dual Watch» (VFO A<->VFO B, VFO_SCREEN_OPERATION_DUAL_SCAN), сканування частот
+// і розгортка -- окремі стокові режими цього екрана: поки будь-який з них активний, наш не вмикається (звук помилки) -- спершу зупиніть стоковий
+// (червона / пункт меню), так обидва режими ніколи не працюють разом і вихід з нашого не лишає стоковий у проміжному стані.
+static void vfoDualStart(void)
+{
+	if ((screenOperationMode[nonVolatileSettings.currentVFONumber] != VFO_SCREEN_OPERATION_NORMAL) || uiDataGlobal.Scan.active)
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);
+		return;
+	}
+
+	(void)uiChannelModeDualEnableFromVfo(nonVolatileSettings.currentVFONumber);
+}
+
 // R98-FIX3 А3: ручне введення частоти на картці VFO режиму -- стокова updateFrequency() (фокус -- приймач: передача зсувається на ту саму різницю, тобто
 // зсув/рознесення лишається; якщо частота передачі виходить за діапазони -- передача = прийом і звук помилки; підтвердження, підказка, menuPrivateCallClear(),
 // settingsSetVFODirty()) + скидання синхронізації колір-коду, як у стоковому підтвердженні зеленою. Поза діапазонами -- звук помилки, нічого не змінюється.
@@ -2056,6 +2070,15 @@ static void handleEvent(uiEvent_t *ev)
 					uiVFOModeStopScanning();
 					return;
 				}
+#if defined(DUAL_CHANNEL_ENABLED)
+				// R98-FIX4 Б2: у стоку довге ▼ на екрані VFO діє лише в режимі сканування частот (зупинка, вище); у звичайному режимі -- вільне:
+				// вмикає «Подвійний прийом» (A = цей VFO), як довге ▼ на екрані каналів. Автоповтор і SK1/SK2 -- не наші.
+				else if ((KEYCHECK_LONGDOWN_REPEAT(ev->keys, KEY_FRONT_DOWN) == false) && (BUTTONCHECK_DOWN(ev, BUTTON_SK1) == 0) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == 0))
+				{
+					vfoDualStart();
+					return;
+				}
+#endif
 			}
 			else if (
 #if defined(PLATFORM_MDUV380) || defined(PLATFORM_MD380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
@@ -3724,6 +3747,11 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					leftSide = currentLanguage->mute;
 					rightSideConst = (uiDataGlobal.QuickMenu.tmpAudioMute ? currentLanguage->yes : currentLanguage->no);
 					break;
+#if defined(DUAL_CHANNEL_ENABLED)
+				case VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R98-FIX4 Б2: наш режим (стоковий «Dual Watch» -- окремий пункт вище)
+					rightSideConst = currentLanguage->dual_rx;
+					break;
+#endif
 				default:
 					strcpy(buf, "");
 					break;
@@ -3976,6 +4004,14 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 						uiDataGlobal.Scan.direction = 1;
 					}
 					break;
+
+#if defined(DUAL_CHANNEL_ENABLED)
+				case VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R98-FIX4 Б2: спершу назад на екран VFO, далі -- увімкнення (перехід на екран режиму)
+					menuDataGlobal.menuOptionsTimeout = 0;
+					menuSystemPopPreviousMenu();
+					vfoDualStart();
+					return;
+#endif
 
 				case VFO_SCREEN_QUICK_MENU_DUAL_SCAN:
 					uiDataGlobal.Scan.active = true;

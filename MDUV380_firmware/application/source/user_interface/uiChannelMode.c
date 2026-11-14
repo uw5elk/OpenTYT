@@ -146,12 +146,16 @@ static void dualHotkeyToggle(void);
 static void dualTune(bool toB);
 static bool dualBExists(void);
 static uint8_t dualVfoIdx(void);
+static bool dualCardIsVfo(bool isB);
+static uint8_t dualCardVfo(bool isB);
+static bool dualOnVfoNow(void);
 static uint8_t  s_dualSqlB;    // R98-FIX3 Б: поріг шумодава FM, змінений на картці B = канал (0 -- нема): B щоразу перечитується з кодплага, зміна накладається після читання; скидається при зміні B. Оголошено ПЕРЕД рештою: gcc кладе ці змінні в .bss у зворотному порядку, тож байт стає в кінець групи (у вирівнювання), а не між 1- і 2-байтовими
 static uint32_t s_dualKeyMs;   // час останньої клавіші на екрані каналу: чергування відновлюється через 1 с тиші (не між PRESS і SHORTUP)
 static int16_t  s_dualTgIdxA;  // вибраний ТГ у списку прийому каналу A: завантаження B може скинути спільний індекс, повертаємо його з A
 static bool     s_dualQuiet;   // R97-FIX4/5: придушити uiChannelModeUpdateScreen() на час обробки клавіші в режимі (S-метр звичайного екрана не спалахує); скидається наприкінці handleEvent()
 static bool dualEntryKey(uiEvent_t *ev);
 static bool dualIsSquelchKey(const uiEvent_t *ev);
+static bool dualIsAKey(const uiEvent_t *ev);
 static void dualSquelchStep(int dir);
 static void dualEntryText(char *l2, size_t size);
 #endif
@@ -232,6 +236,19 @@ static menuStatus_t uiChannelModeFirstRun(void)
 		uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_IDLE;
 		currentChannelData = &channelScreenChannelData;// Need to set this as currentChannelData is used by functions called by loadChannelData()
 
+#if defined(DUAL_CHANNEL_ENABLED)
+		if (dualOnVfoNow())
+		{
+			// R98-FIX4 Б1/Б3: режим ввімкнено, рація на картці VFO (A = VFO після вмикання з екрана VFO, або B = VFO) -- налаштовуємо цей VFO ізольовано
+			// (рання гілка uiChannelModeLoadChannelData), зону лише ініціалізуємо, якщо канальний буфер порожній (для подальших переходів ручкою).
+			if (channelScreenChannelData.rxFreq == 0U)
+			{
+				uiChannelInitializeCurrentZone();
+			}
+			uiChannelModeLoadChannelData(true, false);
+		}
+		else
+#endif
 		if (currentChannelData->rxFreq != 0U)
 		{
 			uiChannelModeLoadChannelData(true, false);
@@ -703,12 +720,12 @@ void uiChannelModeLoadChannelData(bool useChannelDataInMemory, bool loadVoicePro
 	int previousSelectedChannelNumber = uiDataGlobal.currentSelectedChannelNumber;
 
 #if defined(DUAL_CHANNEL_ENABLED)
-	if (useChannelDataInMemory && dcIsOnB() && dcBIsVfo())
+	if (useChannelDataInMemory && dualOnVfoNow())
 	{
-		// R98 В2: рація на B = VFO (повернення з екрана передачі/меню): у пам'яті -- запис VFO, налаштовуємо його ізольовано (uiVFOModeDualLoad):
-		// стокові канальні гілки нижче (група каналу, ТГ каналу, номер каналу) для VFO не годяться. Нічого не пишемо в налаштування.
+		// R98 В2: рація на картці VFO (B, а з R98-FIX4 Б3 -- і A) (повернення з екрана передачі/меню): у пам'яті -- запис VFO, налаштовуємо його ізольовано
+		// (uiVFOModeDualLoad): стокові канальні гілки нижче (група каналу, ТГ каналу, номер каналу) для VFO не годяться. Нічого не пишемо в налаштування.
 		uiDataGlobal.currentSelectedChannelNumber = CH_DETAILS_VFO_CHANNEL;
-		uiVFOModeDualLoad(dualVfoIdx(), false);
+		uiVFOModeDualLoad(dualCardVfo(dcIsOnB()), false);
 		return;
 	}
 	else
@@ -1119,9 +1136,9 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 				}
 
 #if defined(DUAL_CHANNEL_ENABLED)
-				if (dcIsOnB() && dcBIsVfo() && (currentChannelData == &settingsVFOChannel[dualVfoIdx()]))
+				if (dualOnVfoNow() && (currentChannelData == &settingsVFOChannel[dualCardVfo(dcIsOnB())]))
 				{
-					snprintf(nameBuf, NAME_BUFFER_LEN, "VFO %c", (char)('A' + dualVfoIdx()));   // R98: передача з картки VFO -- стокове ім'я VFO зазвичай порожнє
+					snprintf(nameBuf, NAME_BUFFER_LEN, "VFO %c", (char)('A' + dualCardVfo(dcIsOnB())));   // R98: передача з картки VFO -- стокове ім'я VFO зазвичай порожнє
 				}
 #endif
 
@@ -1327,7 +1344,7 @@ static void handleEvent(uiEvent_t *ev)
 
 		bool dwRunning = dualIsRunning();
 
-		if (dwRunning || dualSingle() || dualIsVfoStepKey(ev) || dualIsSquelchKey(ev))
+		if (dwRunning || dualSingle() || dualIsVfoStepKey(ev) || dualIsSquelchKey(ev) || dualIsAKey(ev))
 		{
 			if (dualHandleKey(ev))
 			{
@@ -2839,9 +2856,9 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 			quickKeyApply: // branching here when to quickkey was used.
 
 #if defined(DUAL_CHANNEL_ENABLED)
-			if (dcIsEnabled() && dcIsOnB() && dcBIsVfo())
+			if (dualOnVfoNow())
 			{
-				// R98 В6: обраний -- VFO (картка B). Пункти, що мають сенс лише для каналу кодплага, не виконуємо: сигнал помилки, меню лишається,
+				// R98 В6: обраний -- VFO (картка B; R98-FIX4 Б3 -- або A). Пункти, що мають сенс лише для каналу кодплага, не виконуємо: сигнал помилки, меню лишається,
 				// стан (канал/VFO/зона/B) не змінюється.
 				switch (menuDataGlobal.currentItemIndex)
 				{
@@ -3670,9 +3687,9 @@ void uiChannelModeStopScanning(void)
 	if (nonVolatileSettings.audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD)
 	{
 #if defined(DUAL_CHANNEL_ENABLED)
-		if (dcIsEnabled() && dcIsOnB())
+		if (dcIsEnabled() && (dcIsOnB() || dcAIsVfo()))
 		{
-			// R98-FIX1 В3: режим ввімкнено, зупинено на ОБРАНОМУ B (канал або VFO) -- перезавантажуємо саме його з пам'яті (ранні гілки
+			// R98-FIX4 Б3: те саме для A = VFO. R98-FIX1 В3: режим ввімкнено, зупинено на ОБРАНОМУ B (канал або VFO) -- перезавантажуємо саме його з пам'яті (ранні гілки
 			// uiChannelModeLoadChannelData), а не A з «останнього каналу зони»: без стрибка на A при виході з меню/старті швидкого меню.
 			uiChannelModeLoadChannelData(true, true);
 		}
@@ -3746,9 +3763,9 @@ static void dualRenderHeader(bool force)
 	uiHeaderOverride_t ov;
 	uint16_t ch = (dcPointerB() ? dcChannelB() : dualChannelA());
 
-	if (dcPointerB() && dcBIsVfo())
+	if (dualCardIsVfo(dcPointerB()))
 	{
-		rec = &settingsVFOChannel[dualVfoIdx()];   // R98: B = VFO -- дані прямо з запису VFO (без копії)
+		rec = &settingsVFOChannel[dualCardVfo(dcPointerB())];   // R98: картка VFO (B; R98-FIX4 -- або A) -- дані прямо з запису VFO (без копії)
 	}
 	else
 	{
@@ -3854,9 +3871,9 @@ static void dualTune(bool toB)
 		{
 			// R98 В2: B = VFO. Запис VFO лишається в settingsVFOChannel (канальний буфер channelScreenChannelData не чіпаємо -- там A);
 			// стан стока (overrideTG, currentVFONumber, previousVFONumber) ізольований у uiVFOModeDualLoad().
-			if (bufHoldsB)
+			if (bufHoldsB && (dcAIsVfo() == false))
 			{
-				memcpy(&channelScreenChannelData, &scanNextChannelData, sizeof(CodeplugChannel_t));   // R98-FIX2 Є: B (канал) -> B (VFO): A знову в канальному буфері
+				memcpy(&channelScreenChannelData, &scanNextChannelData, sizeof(CodeplugChannel_t));   // R98-FIX2 Є: B (канал) -> B (VFO): A знову в канальному буфері (R98-FIX4 Б11: лише якщо A -- канал)
 			}
 
 			currentChannelData = &settingsVFOChannel[dualVfoIdx()];
@@ -3865,9 +3882,9 @@ static void dualTune(bool toB)
 		}
 		else
 		{
-			if (bufHoldsB == false)
+			if ((bufHoldsB == false) && (dcAIsVfo() == false))
 			{
-				memcpy(&scanNextChannelData, &channelScreenChannelData, sizeof(CodeplugChannel_t));   // R98-FIX2 Є: зберегти A (з незбереженими правками) перед завантаженням B у той самий буфер
+				memcpy(&scanNextChannelData, &channelScreenChannelData, sizeof(CodeplugChannel_t));   // R98-FIX2 Є: зберегти A (з незбереженими правками) перед завантаженням B у той самий буфер (R98-FIX4 Б11: A = VFO живе в settingsVFOChannel -- не копіюємо)
 			}
 
 			currentChannelData = &channelScreenChannelData;
@@ -3884,13 +3901,24 @@ static void dualTune(bool toB)
 	else
 	{
 		dcSetOnB(false);
-		currentChannelData = &channelScreenChannelData;   // R98: після VFO на B -- знову канальний буфер (A)
 
 		if (wasOnB && (nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE] != s_dualTgIdxA))
 		{
 			// індекс ТГ спільний для всіх каналів (як у звичайному скануванні); B міг його скинути -- повернути вибір A
 			settingsSet(nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE], s_dualTgIdxA);
 		}
+
+		if (dcAIsVfo())
+		{
+			// R98-FIX4 Б3: A = VFO -- той самий шлях, що для B = VFO (R98 В2): запис VFO в settingsVFOChannel, ізоляція стока в uiVFOModeDualLoad();
+			// канальний буфер (там може бути B) не чіпаємо й копію A (scanNextChannelData) не відновлюємо (Б11).
+			currentChannelData = &settingsVFOChannel[dualCardVfo(false)];
+			uiDataGlobal.currentSelectedChannelNumber = CH_DETAILS_VFO_CHANNEL;
+			uiVFOModeDualLoad(dualCardVfo(false), true);
+			return;
+		}
+
+		currentChannelData = &channelScreenChannelData;   // R98: після VFO на B -- знову канальний буфер (A)
 
 		if (bufHoldsB)
 		{
@@ -3912,6 +3940,22 @@ static uint8_t dualVfoIdx(void)
 	return ((dcTypeB() == DC_TYPE_VFO_B) ? 1U : 0U);
 }
 
+// R98-FIX4 Б3: картка A або B -- VFO? Номер VFO картки (0 = A, 1 = B). Рація зараз на картці VFO (режим ввімкнено).
+static bool dualCardIsVfo(bool isB)
+{
+	return (isB ? dcBIsVfo() : dcAIsVfo());
+}
+
+static uint8_t dualCardVfo(bool isB)
+{
+	return (((isB ? dcTypeB() : dcTypeA()) == DC_TYPE_VFO_B) ? 1U : 0U);
+}
+
+static bool dualOnVfoNow(void)
+{
+	return (dcIsEnabled() && dualCardIsVfo(dcIsOnB()));
+}
+
 static bool dualBExists(void)
 {
 	uint16_t b = dcChannelB();
@@ -3922,7 +3966,7 @@ static bool dualBExists(void)
 // A (канал кодплага; тип A лише «канал») збігається з B: лише канал з тим самим номером; пара «канал A, VFO B» -- ніколи.
 static bool dualBSameAsA(void)
 {
-	return dcSameTarget((uint8_t)DC_TYPE_CHANNEL, dualChannelA(), dcTypeB(), dcChannelB());
+	return dcSameTarget(dcTypeA(), dualChannelA(), dcTypeB(), dcChannelB());   // R98-FIX4 Б5: ключ (тип, індекс) і для A
 }
 
 static dcPairCheck_t dualCheckPair(void)
@@ -4022,9 +4066,8 @@ static uint16_t dualZoneChannelAt(int pos, void *ctx);
 // Налаштування VFO не губляться (запис VFO -- той самий settingsVFOChannel). Перемикання поточного VFO -- стокове settingsSet(currentVFONumber).
 // Вихід у VFO-екран -- стоковою menuSystemPopAllAndDisplaySpecificRootMenu() (як «Канал -> VFO»): стек меню чистий, перша ініціалізація VFO-екрана
 // сама виставляє currentChannelData/номер вибраного. Канальний буфер (A) не чіпаємо -- повернення на канал працює як звичайно.
-static void dualLeaveOnVfo(void)
+static void dualLeaveOnVfo(uint8_t v)
 {
-	uint8_t v = dualVfoIdx();
 
 	dcSetOnB(false);
 	lastHeardClearLastID();
@@ -4072,6 +4115,8 @@ static void dualLeaveOnB(void)
 static void dualDisable(void)
 {
 	bool stayB = dualSelectedIsB();   // R97-FIX4: лишаємось на ОБРАНОМУ (активність -- де рація; чергування -- за покажчиком; з меню -- де стоїть)
+	uint8_t retType = dcTypeA();                                  // R98-FIX4 А1: «A для повернення» -- до будь-яких змін «останнього каналу зони»
+	uint16_t retIdx = (dcAIsVfo() ? 0U : dualChannelA());
 
 	if (stayB)
 	{
@@ -4084,13 +4129,18 @@ static void dualDisable(void)
 		{
 			// R98: режим вимкнено ДО виходу на VFO-екран (запис блоку 18 -- як раніше, одразу)
 			dcSetTxHold(false);
-			(void)dcSetEnabled(false, true);
-			dualLeaveOnVfo();
+			(void)dcDisableWithReturnA(retType, retIdx);   // R98-FIX4 А1: «A для повернення» -- тим самим записом
+			dualLeaveOnVfo(dualVfoIdx());
 		}
 		else
 		{
+			dcSetTxHold(false);
+			(void)dcDisableWithReturnA(retType, retIdx);   // R98-FIX4 А1: «A для повернення» (канал/VFO A) -- тим самим записом, що й вимкнення
 			dualLeaveOnB();
 		}
+
+		uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+		return;
 	}
 	else if (dualIsRunning())
 	{
@@ -4104,6 +4154,18 @@ static void dualDisable(void)
 	dcSetTxHold(false);
 	(void)dcSetEnabled(false, true);
 	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+
+	if (dcAIsVfo())
+	{
+		// R98-FIX4 Б6: обраний A = VFO -- вихід на екран VFO з цим VFO (як для B = VFO, R98 В6). Канальний буфер міг тримати B (картка B = канал) --
+		// позначаємо його порожнім: наступний вхід на екран каналів перечитає канал зони стоковим шляхом, а не покаже B як поточний.
+		if (dcBIsVfo() == false)
+		{
+			channelScreenChannelData.rxFreq = 0U;
+		}
+
+		dualLeaveOnVfo(dualCardVfo(false));
+	}
 }
 
 static void dualAutoResume(void)
@@ -4162,9 +4224,7 @@ static bool dualHoldScreen(void)
 // R97-FIX6: режим ввімкнено, пара коректна, але A == B: чергування не потрібне (один канал); екран режиму лишається, ручка/▲▼ працюють за правилами обраного.
 static bool dualSingle(void)
 {
-	uint16_t b = dcChannelB();
-
-	return (dcIsEnabled() && (dualIsRunning() == false) && (dcBIsVfo() == false) && (b >= DC_CH_MIN) && (b <= DC_CH_MAX) && dualBSameAsA() && codeplugAllChannelsIndexIsInUse(b));
+	return (dcIsEnabled() && (dualIsRunning() == false) && dualBSameAsA() && dualBExists());   // R98-FIX4 Б5: A==B за ключем (тип, індекс) -- і для двох однакових VFO
 }
 
 // R97-FIX5: кінець обробника клавіші: «тишу» знято безумовно (інваріант), екран каналу перемальовано рівно один раз
@@ -4322,10 +4382,79 @@ static void dualStepB(int dir)
 	}
 }
 
+// R98-FIX4 Б4: ручка на картці A -- те саме коло, що й для B (dcStepExt): позиції 0..n-1 -- канали ПОТОЧНОЇ зони, n -- VFO A, n+1 -- VFO B.
+// false -- звичайний крок каналу зони на каналі (стокові handleUpKey/handleDownKey, поведінка без змін); true -- оброблено тут (перехід на VFO, між VFO
+// або з VFO на канал зони: «останній канал зони» = цей канал, канал завантажується стоковим шляхом).
+static bool dualStepA(int dir)
+{
+	int n = (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? currentZone.NOT_IN_CODEPLUGDATA_highestIndex : currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone);
+	int from = (dcAIsVfo() ? (n + (int)dualCardVfo(false)) : dcFindPos(n, dualChannelA(), dualZoneChannelAt, NULL));
+
+	if (from < 0)
+	{
+		return false;   // A не з цієї зони (не мало б траплятись) -- стоковий крок
+	}
+
+	int pos = dcStepExt(n, from, dir, dualZoneChannelAt, NULL);
+
+	if ((dcAIsVfo() == false) && ((pos < 0) || (pos < n)))
+	{
+		return false;   // канал -> канал: стоковий шлях
+	}
+
+	if (pos < 0)
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);
+		return true;
+	}
+
+	dualSuspend();
+
+	if (pos >= n)
+	{
+		dcSetTypeA((pos == n) ? DC_TYPE_VFO_A : DC_TYPE_VFO_B);   // відкладений запис блоку 18 (тип поточного A, Б7)
+		dualTune(false);                                           // налаштувати на VFO (ізольовано; з B -- теж повернення індексу ТГ A); канальний буфер не чіпаємо
+	}
+	else
+	{
+		uint16_t ch = dualZoneChannelAt(pos, NULL);
+
+		if (dcIsOnB())
+		{
+			dualTune(false);   // з B -- спершу на A (індекс ТГ A, рація на A)
+		}
+
+		dcSetTypeA(DC_TYPE_CHANNEL);
+		codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, (int16_t)(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? (int)ch : pos));
+		currentChannelData = &channelScreenChannelData;
+		uiChannelModeLoadChannelData(false, true);   // свіжо з кодплага: стара копія A (R98-FIX2 Є) не відновлюється (Б11)
+	}
+
+	s_dualKeyMs = 0U;   // чергування -- одразу
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+	dualAutoResume();
+
+	if (dualIsRunning() == false)
+	{
+		uiChannelModeUpdateScreen(0);
+	}
+
+	return true;
+}
+
+// R98-FIX4 Б4: A = VFO -- ручка (без SK1/SK2) завжди йде в правила режиму (dualHandleKey), навіть коли чергування стоїть: стоковий крок каналу зони
+// тут налаштував би канал при currentChannelData = запис VFO.
+static bool dualIsAKey(const uiEvent_t *ev)
+{
+	return (dcIsEnabled() && dcAIsVfo() && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && (directChannelNumber == 0) &&
+			(BUTTONCHECK_DOWN(ev, BUTTON_SK1) == false) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == false) &&
+			((ev->keys.key == KEY_ROTARY_INCREMENT) || (ev->keys.key == KEY_ROTARY_DECREMENT)));
+}
+
 // R98 В8: SK2 + ручка при покажчику на B = VFO (режим ввімкнено, екран каналу) -- крок частоти цього VFO.
 static bool dualIsVfoStepKey(const uiEvent_t *ev)
 {
-	return (dcIsEnabled() && dcPointerB() && dcBIsVfo() && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) &&
+	return (dcIsEnabled() && dualCardIsVfo(dcPointerB()) && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) &&   // R98-FIX4 Б3: картка з покажчиком -- VFO (A або B)
 			BUTTONCHECK_DOWN(ev, BUTTON_SK2) && (BUTTONCHECK_DOWN(ev, BUTTON_SK1) == false) &&
 			((ev->keys.key == KEY_ROTARY_INCREMENT) || (ev->keys.key == KEY_ROTARY_DECREMENT)));
 }
@@ -4339,16 +4468,16 @@ static bool dualHandleKey(uiEvent_t *ev)
 		// Цифри/введення частоти -- лише у VFO-екрані. Чергування призупиняється на B (тиша DUAL_RESUME_QUIET_MS), далі -- як після будь-якої клавіші.
 		if (KEYCHECK_SHORTUP(ev->keys, ev->keys.key))
 		{
-			dualSuspend();   // чергування стоп; рація на обраному B (VFO)
+			dualSuspend();   // чергування стоп; рація на обраному
 
-			if (dcIsOnB() == false)
+			if (dcIsOnB() != dcPointerB())
 			{
-				dualTune(true);   // не чергувало, а рація на A -- на B (VFO); currentChannelData -- запис цього VFO
+				dualTune(dcPointerB());   // рація на картці з покажчиком (VFO); currentChannelData -- запис цього VFO
 			}
 
-			if (dcIsOnB() && dcBIsVfo())
+			if (dualOnVfoNow())
 			{
-				uiVFOModeDualStep(dualVfoIdx(), ((ev->keys.key == KEY_ROTARY_INCREMENT) ? 1 : -1));
+				uiVFOModeDualStep(dualCardVfo(dcIsOnB()), ((ev->keys.key == KEY_ROTARY_INCREMENT) ? 1 : -1));
 			}
 
 			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
@@ -4399,6 +4528,10 @@ static bool dualHandleKey(uiEvent_t *ev)
 				if (dcPointerB())
 				{
 					dualStepB(dir);
+				}
+				else if (dualStepA(dir))
+				{
+					return true;   // R98-FIX4 Б4: перехід A канал -> VFO A/B або VFO -> канал/VFO (коло «канали зони -> VFO A -> VFO B -> канали»)
 				}
 				else
 				{
@@ -4515,12 +4648,12 @@ static bool dualEntryApplyChannel(int num)
 // Частота з набраних цифр -- для VFO на картці B (рація спершу налаштовується на цей VFO, як для SK2 + ручка).
 static bool dualEntryApplyFreq(void)
 {
-	if (dcIsOnB() == false)
+	if (dcIsOnB() != dcPointerB())
 	{
-		dualTune(true);
+		dualTune(dcPointerB());   // R98-FIX4 Б3: картка VFO з покажчиком -- A або B
 	}
 
-	return (dcIsOnB() && dcBIsVfo() && uiVFOModeDualFreqEnter(dualVfoIdx(), freqEnterRead(0, DUAL_ENTRY_FREQ_N, false)));
+	return (dualOnVfoNow() && uiVFOModeDualFreqEnter(dualCardVfo(dcIsOnB()), freqEnterRead(0, DUAL_ENTRY_FREQ_N, false)));
 }
 
 static void dualEntryDigit(int keyval)
@@ -4592,7 +4725,7 @@ static bool dualEntryKey(uiEvent_t *ev)
 			return false;
 		}
 
-		bool freq = (dcPointerB() && dcBIsVfo());
+		bool freq = dualCardIsVfo(dcPointerB());   // R98-FIX4 Б3: картка VFO з покажчиком (A або B) -- введення частоти
 
 		if (keyval == 0)
 		{
@@ -4725,17 +4858,142 @@ static void dualSquelchStep(int dir)
 
 	channelSquelchStep(dir);
 
-	if (dcIsOnB())
+	if (dualOnVfoNow())
 	{
-		if (dcBIsVfo())
+		settingsSetVFODirty();   // картка VFO (A або B, R98-FIX4 Б3) -- запис VFO
+	}
+	else if (dcIsOnB())
+	{
+		s_dualSqlB = currentChannelData->sql;
+	}
+}
+
+// R98-FIX4 А2: «A для повернення» придатний (канал використовується й є в ПОТОЧНІЙ зоні -- зону не перемикаємо, А3; VFO -- завжди) і не збігається з B.
+// Тоді: A = він, покажчик на B, рація лишається на B (поточна ціль -- це B). Повертає true, якщо застосовано.
+static bool dualApplyReturnA(uint8_t rt, uint16_t ri)
+{
+	int pos = -1;
+
+	if (dcSameTarget(rt, ri, dcTypeB(), dcChannelB()))
+	{
+		return false;
+	}
+
+	if (rt == DC_TYPE_CHANNEL)
+	{
+		if (codeplugAllChannelsIndexIsInUse(ri) == false)
 		{
-			settingsSetVFODirty();
+			return false;   // колишній A видалено -- A = поточний
 		}
-		else
+
+		bool allCh = CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone);
+
+		pos = (allCh ? (int)ri : dcFindPos(currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone, ri, dualZoneChannelAt, NULL));
+
+		if (pos < 0)
 		{
-			s_dualSqlB = currentChannelData->sql;
+			return false;   // колишній A не в поточній зоні (зону змінили) -- A = поточний
 		}
 	}
+
+	bool bufHadB = (currentChannelData == &channelScreenChannelData);   // рація зараз на каналі == B (канал) -- канальний буфер тримає B
+
+	dcSetOnB(true);
+	dcSetPointerB(true);
+	dcSetTypeA(rt);
+
+	if (rt == DC_TYPE_CHANNEL)
+	{
+		codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, (int16_t)pos);   // як dualLeaveOnB/набір FIX3
+		// дані A -- туди, звідки їх візьме dualTune(false): буфер тримає B -> копія A (scanNextChannelData, R98-FIX2 Є); B = VFO -> сам канальний буфер
+		codeplugChannelGetDataForIndex(ri, (bufHadB ? &scanNextChannelData : &channelScreenChannelData));
+	}
+
+	return true;
+}
+
+// R98-FIX4: увімкнути режим з поточної цілі typeCur (канал зони з екрана каналів або VFO A/B з екрана VFO) -- одна логіка для пункту меню й гарячих
+// клавіш обох екранів. Перевірка пари (B не задано -> авто B = A; B видалено -> помилка), «A для повернення» (частина А), запис блоку 18 одразу.
+static bool dualEnable(uint8_t typeCur)
+{
+	uint16_t idxCur = ((typeCur == DC_TYPE_CHANNEL) ? dualChannelA() : 0U);
+
+	dcSetTypeA(typeCur);
+	dcSetOnB(false);
+
+	dcPairCheck_t chk = dualCheckPair();
+
+	if (chk == DC_PAIR_NO_B)
+	{
+		// R98-FIX1: B не задано -- автоматично B = поточна ціль A (канал: абсолютний індекс; R98-FIX4 Б1: VFO -- той самий VFO), запис блоку 18 одразу.
+		// Далі -- як A==B (R97-FIX6): помилки й звуку нема. Якщо в A немає допустимого абсолютного індексу -- нічого не вигадуємо:
+		// лишається «B не задано», режим не вмикається.
+		if (typeCur != DC_TYPE_CHANNEL)
+		{
+			s_dualSqlB = 0U;
+			dcSetTypeB(typeCur);
+			chk = dualCheckPair();
+		}
+		else if ((idxCur >= DC_CH_MIN) && (idxCur <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(idxCur))
+		{
+			s_dualSqlB = 0U;   // R98-FIX3 Б
+			(void)dcSetChannelB(idxCur, true);
+			chk = dualCheckPair();
+		}
+	}
+
+	if (chk != DC_PAIR_OK)
+	{
+		dualShowPairError(chk);   // режим не стартує (B не задано / видалено); A==B -- не помилка (R97-FIX6)
+		return false;
+	}
+
+	// R98-FIX4 А2: поточна ціль -- це B (вийшли з режиму на картці B) і є «A для повернення» -- картки як до виходу
+	uint8_t rt;
+	uint16_t ri;
+
+	if (dcSameTarget(typeCur, idxCur, dcTypeB(), dcChannelB()) && dcGetReturnA(&rt, &ri))
+	{
+		(void)dualApplyReturnA(rt, ri);
+	}
+
+	dcSetTxHold(false);
+	(void)dcSetEnabled(true, true);
+	s_dualKeyMs = 0U;
+	dualAutoResume();
+
+	if ((dualIsRunning() == false) && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE))
+	{
+		uiChannelModeUpdateScreen(0);   // A==B: чергування не стартує, але екран режиму потрібен одразу
+	}
+
+	return true;
+}
+
+// R98-FIX4 Б1: увімкнення з екрана VFO (довге ▼ або пункт швидкого меню VFO). Двигун і екран режиму -- у режимі каналів: A = поточний VFO, далі --
+// стоковий перехід на екран каналів (зона, канал, «останній канал зони» не змінюються; перший запуск екрана бачить A = VFO і налаштовує його ізольовано).
+bool uiChannelModeDualEnableFromVfo(uint8_t vfo)
+{
+	if (dualEnable((vfo == 1U) ? (uint8_t)DC_TYPE_VFO_B : (uint8_t)DC_TYPE_VFO_A) == false)
+	{
+		return false;
+	}
+
+	menuSystemPopAllAndDisplaySpecificRootMenu(UI_CHANNEL_MODE, true);   // перший запуск екрана каналів: рація на картці VFO -- рання гілка (без читання каналу зони)
+
+	if (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE)
+	{
+		s_dualKeyMs = 0U;
+		dualAutoResume();   // одразу екран режиму (без проміжного стокового екрана каналу)
+
+		if (dualIsRunning() == false)
+		{
+			uiChannelModeUpdateScreen(0);
+		}
+	}
+
+	uiNotificationShowShort(1500U, currentLanguage->dual_on, true);
+	return true;
 }
 
 // Увімкнути/вимкнути режим -- ОДНА логіка для пункту швидкого меню й гарячої клавіші (довге ▼): перевірка пари (B не задано / канал B
@@ -4745,37 +5003,9 @@ static void dualSetMode(bool on, bool notify)
 {
 	if (on)
 	{
-		dcPairCheck_t chk = dualCheckPair();
-
-		if (chk == DC_PAIR_NO_B)
+		if (dualEnable((uint8_t)DC_TYPE_CHANNEL) == false)   // R98-FIX4: з екрана каналів A -- канал зони
 		{
-			// R98-FIX1: B не задано -- автоматично B = поточний канал A (тип «канал», абсолютний індекс), запис блоку 18 одразу.
-			// Далі -- як A==B (R97-FIX6): помилки й звуку нема. Якщо в A немає допустимого абсолютного індексу -- нічого не вигадуємо:
-			// лишається «B не задано», режим не вмикається.
-			uint16_t chA = dualChannelA();
-
-			if ((chA >= DC_CH_MIN) && (chA <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(chA))
-			{
-				s_dualSqlB = 0U;   // R98-FIX3 Б
-				(void)dcSetChannelB(chA, true);
-				chk = dualCheckPair();
-			}
-		}
-
-		if (chk != DC_PAIR_OK)
-		{
-			dualShowPairError(chk);   // режим не стартує (B не задано / видалено); A==B -- не помилка (R97-FIX6)
 			return;
-		}
-
-		dcSetTxHold(false);
-		(void)dcSetEnabled(true, true);
-		s_dualKeyMs = 0U;
-		dualAutoResume();
-
-		if (dualIsRunning() == false)
-		{
-			uiChannelModeUpdateScreen(0);   // A==B: чергування не стартує, але екран режиму потрібен одразу
 		}
 	}
 	else
@@ -5320,13 +5550,13 @@ bool uiChannelModeDualOnCardB(void)
 // R98-FIX1 Г: рація на B = VFO при ввімкненому режимі. Меню відкриваються з кореня «екран каналу», тож стокова логіка вважає, що діє на канал.
 bool uiChannelModeDualOnVfo(void)
 {
-	return (dcIsEnabled() && dcIsOnB() && dcBIsVfo());
+	return dualOnVfoNow();   // R98-FIX4 Б3: картка VFO -- B або A
 }
 
 // «Відро» ТС-перекриття (tsSetManualOverride) -- ті самі біти, що вибирають відро в trxUpdateTsForCurrentChannelWithSpecifiedContact(): обраний VFO -- його відро.
 int uiChannelModeDualTsBucket(void)
 {
-	return (uiChannelModeDualOnVfo() ? (int)(CHANNEL_VFO_A + dualVfoIdx()) : (int)CHANNEL_CHANNEL);
+	return (uiChannelModeDualOnVfo() ? (int)(CHANNEL_VFO_A + dualCardVfo(dcIsOnB())) : (int)CHANNEL_CHANNEL);
 }
 
 static void dualRenderScreen(void)
@@ -5359,7 +5589,7 @@ static void dualRenderScreen(void)
 		uiDataGlobal.receivedPcId = 0x00;
 	}
 
-	dualRenderRow(DW_CARD_A_Y, false, dualChannelA(), (uint8_t)DC_TYPE_CHANNEL, (selB == false), (active && (cardB == false)), (caller && (cardB == false)));
+	dualRenderRow(DW_CARD_A_Y, false, dualChannelA(), dcTypeA(), (selB == false), (active && (cardB == false)), (caller && (cardB == false)));   // R98-FIX4 Б3: A -- канал або VFO
 	dualRenderRow(DW_CARD_B_Y, true, dcChannelB(), dcTypeB(), selB, (active && cardB), (caller && cardB));
 	displayRender();
 }

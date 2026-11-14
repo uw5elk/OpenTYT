@@ -54,12 +54,20 @@ typedef struct
 bool dcCfgParse(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint16_t *chB);
 /* Зібрати блок для запису (номер B поза 1..1024 -> 0). */
 void dcCfgBuild(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB);
-/* R98: те саме з типами A/B (reserved[1]/reserved[0]); тип поза 0..2 -> 0; тип A -- лише 0 (ненульове -> 0). Старі виклики = типи 0. */
+/* R98: те саме з типами A/B (reserved[0] -- тип B; reserved[1] біти 0..1 -- тип ПОТОЧНОГО A, R98-FIX4); тип поза 0..2 -> 0. Старі виклики = типи 0.
+ * R98-FIX4 А/Б7 -- розкладка reserved[1..3] (довжина блоку та сама, 8 Б):
+ *   reserved[1] біти 0..1 -- тип поточного A (0 канал, 1 VFO A, 2 VFO B; 3 -> 0);
+ *   reserved[1] біти 2..3 -- «A для повернення» (0 нема, 1 канал, 2 VFO A, 3 VFO B); reserved[2..3] -- його номер каналу (uint16 LE, 1..1024).
+ * Прошивки до R98-FIX4 reserved[1..3] не читають (тип A у них завжди 0) і при записі обнуляють. */
 bool dcCfgParseEx(const dcOnFlashCfg_t *raw, bool *enabled, bool *pointerB, uint16_t *chB, uint8_t *typeB, uint8_t *typeA);
 void dcCfgBuildEx(dcOnFlashCfg_t *raw, bool enabled, bool pointerB, uint16_t chB, uint8_t typeB, uint8_t typeA);
 /* R98: чи ціль (тип, індекс) A збігається з ціллю B. Ключ -- пара (тип, індекс): канали -- за номером, VFO -- за типом
  * (індекс ігнорується); пара «канал A, VFO B» ніколи не рівна, два різні VFO -- теж. Номер -1 як ключ не використовується. */
 bool dcSameTarget(uint8_t typeA, uint16_t idxA, uint8_t typeB, uint16_t idxB);
+/* R98-FIX4 А: «A для повернення» у блоці. Get: false -- нема (або номер поза 1..1024 для каналу); тип -- DC_TYPE_*. Set: тип DC_TYPE_*, idx -- лише для каналу. */
+bool dcCfgGetReturnA(const dcOnFlashCfg_t *raw, uint8_t *type, uint16_t *idx);
+void dcCfgSetReturnA(dcOnFlashCfg_t *raw, uint8_t type, uint16_t idx);
+void dcCfgCopyReturnA(dcOnFlashCfg_t *dst, const dcOnFlashCfg_t *src);
 
 typedef enum
 {
@@ -98,6 +106,9 @@ uint16_t dcChannelB(void);
 uint8_t  dcTypeB(void);                /* R98: DC_TYPE_* цілі B */
 bool     dcBIsVfo(void);
 void     dcSetTypeB(uint8_t typeB);     /* відкладений запис (як покажчик/B з валкодера) */
+uint8_t  dcTypeA(void);                /* R98-FIX4 Б: DC_TYPE_* поточного A (2 біти у вільних бітах стану -- RAM не росте) */
+bool     dcAIsVfo(void);
+void     dcSetTypeA(uint8_t typeA);     /* відкладений запис */
 bool     dcIsOnB(void);                /* рація ЗАРАЗ налаштована на B */
 void     dcSetOnB(bool onB);
 bool     dcTxHoldPending(void);        /* після власної передачі з режиму -- утримати той канал */
@@ -112,6 +123,10 @@ bool     dcSetChannelB(uint16_t chB, bool persistNow);
 void     dcSaveIfDue(uint32_t nowMs);
 bool     dcFlush(void);
 void     dcFlushPending(void);          /* записати, лише якщо є відкладені зміни (вимкнення рації) */
+/* R98-FIX4 А: вимкнути режим і ОДНИМ записом блоку зберегти «A для повернення» (лише при вимкненні на обраній картці B). */
+bool     dcDisableWithReturnA(uint8_t typeRet, uint16_t idxRet);
+/* R98-FIX4 А: прочитати «A для повернення» з блоку (одне читання при вмиканні). */
+bool     dcGetReturnA(uint8_t *typeRet, uint16_t *idxRet);
 #endif
 
 #endif /* FUNCTIONS_DUAL_CHANNEL_H_ */
