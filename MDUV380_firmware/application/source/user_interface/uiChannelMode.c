@@ -398,7 +398,7 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 				if ((ev->time - m) > RSSI_UPDATE_COUNTER_RELOAD)
 				{
 #if defined(DUAL_CHANNEL_ENABLED)
-					if (rxPowerSavingIsRxOn() && ((dualIsRunning() && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)) == false))   // R97-FIX2: чергування -- статична шапка «[DW]», S-метра й виводу на екран нема
+					if (rxPowerSavingIsRxOn() && ((dualIsRunning() && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)) == false))   // R97-FIX2: чергування без активності -- шапка режиму статична, S-метра й виводу на екран нема
 #else
 					if (rxPowerSavingIsRxOn())
 #endif
@@ -4093,7 +4093,7 @@ static bool dualSelectedIsB(void)
 }
 
 // Зупинити чергування, не вимикаючи режим: рація стає на ОБРАНИЙ канал (A або B; R97-FIX4 -- раніше завжди на A). Меню (швидке, головне,
-// «Режим APRS») працюють з обраним; «чужі» клавіші, небезпечні для B, повертають на A самі (handleEvent, ручка на A).
+// «Режим APRS») працюють з обраним; решта клавіш після цього переводить рацію на картку з покажчиком (handleEventCore, R98-FIX5 А5).
 static void dualSuspend(void)
 {
 	bool selB = dualSelectedIsB();
@@ -5507,7 +5507,7 @@ static size_t dualToneOne(char *dst, size_t size, const char *mark, uint16_t ton
 	return 0U;
 }
 
-// R98-FIX2 К2: рядок 3 картки FM -- тони прийому і передачі та смуга, до DW_LINE3_MAX (19) символів: однакові -- «67.0 25k»; різні -- «R67.0 T88.5 25k»;
+// R98-FIX2 К2: рядок 3 картки FM -- тони прийому і передачі та смуга (найдовший випадок -- 19 символів): однакові -- «67.0 25k»; різні -- «R67.0 T88.5 25k»;
 // лише один -- з позначкою «R»/«T»; без тонів -- лише смуга. Найдовший випадок «R254.1 T254.1 12.5k» = 19 символів.
 static void dualFmToneLine(char *l3, size_t size, uint16_t rxTone, uint16_t txTone, bool bw25)
 {

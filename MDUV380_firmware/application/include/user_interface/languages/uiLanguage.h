@@ -459,7 +459,7 @@ typedef struct
    const char dual_rx[LANGUAGE_TEXTS_LENGTH];
    const char dual_set_b[LANGUAGE_TEXTS_LENGTH];
    // R98-FIX1: dual_set_b у коді не використовується (пункт «Встановити як B» прибрано); поле лишено для сталої розкладки
-   const char dual_title[LANGUAGE_TEXTS_LENGTH];
+   const char dual_title[LANGUAGE_TEXTS_LENGTH];   // R98-FIX6 Д1: у коді не використовується; поле лишено -- розкладка мовних файлів не змінюється
    const char dual_b_saved[LANGUAGE_TEXTS_LENGTH];
    // R98-FIX1: dual_b_saved теж не використовується (було сповіщення після «Встановити як B»)
    const char dual_err_no_b[LANGUAGE_TEXTS_LENGTH];
