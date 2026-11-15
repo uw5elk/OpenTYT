@@ -2283,8 +2283,9 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 {
 #if defined(DUAL_CHANNEL_ENABLED)
 	CodeplugChannel_t *savedChannelData = currentChannelData;   // тимчасово: тони/потужність/прапорці читаються з обраного каналу
+	bool dwOnly = ((ov != NULL) && (ov->ch == NULL));            // R98-FIX5 Б1: шапка екрана режиму -- лише «DW», заряд, час (решта -- у картках)
 
-	if (ov != NULL)
+	if ((ov != NULL) && (dwOnly == false))
 	{
 		currentChannelData = ov->ch;
 	}
@@ -2400,6 +2401,14 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		scanBlinkPhase = false;
 	}
 
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (dwOnly)
+	{
+		displayPrintCore(MODE_TEXT_X_OFFSET, DISPLAY_Y_POS_HEADER, "DW", FONT_SIZE_1, TEXT_ALIGN_LEFT, false);   // R98-FIX5 Б1
+	}
+	else
+	{
+#endif
 	if (isVFOSweepScanning)
 	{
 #if defined(ENABLE_FAST_SCAN)
@@ -2655,6 +2664,9 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 
 		displayPrintCore(ccXPos, DISPLAY_Y_POS_HEADER, buffer, FONT_SIZE_1, TEXT_ALIGN_LEFT, isNotFilteringCC);
 	}
+#if defined(DUAL_CHANNEL_ENABLED)
+	}   // R98-FIX5 Б1: кінець частини, якої в шапці режиму нема (режим, тони/TS, APRS, потужність, CC)
+#endif
 
 #if defined(HAS_COLOURS) || defined(PLATFORM_MD9600)
 #if defined(ALTERNATES_TIME_AND_BATTERY_DISPLAY)
@@ -2677,7 +2689,11 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 
 #if defined(HAS_GPS)
 #if defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
+#if defined(DUAL_CHANNEL_ENABLED)
+	if ((SETTINGS_GPS_MODE_EFFECTIVE(nonVolatileSettings) >= GPS_MODE_ON) && (dwOnly == false))   // R98-FIX5 Б1: у шапці режиму GPS нема
+#else
 	if (SETTINGS_GPS_MODE_EFFECTIVE(nonVolatileSettings) >= GPS_MODE_ON)
+#endif
 	{
 		displayPrintCore(DISPLAY_SIZE_X - (50 + (displayTime ? 2 : 0)),
 				DISPLAY_Y_POS_HEADER, currentLanguage->gps, ((gpsData.Status & GPS_STATUS_HAS_FIX) ? FONT_SIZE_1_BOLD : FONT_SIZE_1), TEXT_ALIGN_LEFT, false);
@@ -2791,6 +2807,14 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 void uiUtilityRenderHeaderForChannel(const uiHeaderOverride_t *ov, bool forceBatteryDisplay)
 {
 	uiUtilityRenderHeaderCore(false, false, forceBatteryDisplay, ov);
+}
+
+// R98-FIX5 Б1: шапка екрана «Подвійного прийому» -- лише «DW» ліворуч, заряд і час праворуч (як у стоку); S-метра нема (він у картці).
+void uiUtilityRenderHeaderDw(bool forceBatteryDisplay)
+{
+	uiHeaderOverride_t ov = { .ch = NULL, .mode = 0U, .bw25 = 0U, .ts = 0U, .cc = 0U };
+
+	uiUtilityRenderHeaderCore(false, false, forceBatteryDisplay, &ov);
 }
 #endif
 

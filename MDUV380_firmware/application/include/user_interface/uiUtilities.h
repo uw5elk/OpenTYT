@@ -227,6 +227,7 @@ typedef struct
 	uint8_t cc;              /* DMR: колірний код */
 } uiHeaderOverride_t;
 void uiUtilityRenderHeaderForChannel(const uiHeaderOverride_t *ov, bool forceBatteryDisplay);
+void uiUtilityRenderHeaderDw(bool forceBatteryDisplay);   /* R98-FIX5 Б1: шапка екрана режиму -- «DW», заряд, час */
 #endif
 LinkItem_t *lastHeardFindInList(uint32_t id);
 void lastHeardInitList(void);
