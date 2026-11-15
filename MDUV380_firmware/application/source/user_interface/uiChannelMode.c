@@ -4412,8 +4412,9 @@ static const CodeplugZone_t *dualZoneB(CodeplugZone_t *buf)
 	return buf;
 }
 
-// R98 В8: ручка на картці B -- ЗАМКНЕНИЙ цикл «канали поточної зони -> VFO A -> VFO B -> перший канал» (в обидва боки), dcStepExt().
-// Поточна позиція: B = канал -- його позиція в зоні (B не з цієї зони -- крок від A, як раніше); B = VFO -- n або n+1.
+// R98-FIX7 А1: ручка на картці B = канал -- лише КАНАЛИ (зона, вибрана SK2 + ручкою, інакше поточна), коло замикається на каналах (dcStepPos, A == B
+// дозволено -- нічого не пропускаємо). VFO з кола прибрано; на картці VFO ручка -- частота (dualIsVfoStepKey).
+// B не з цієї зони -- крок від позиції A (як раніше).
 static void dualStepB(int dir)
 {
 	CodeplugZone_t zb;
@@ -4421,23 +4422,14 @@ static void dualStepB(int dir)
 	const CodeplugZone_t *zz = ((z != NULL) ? z : &currentZone);
 	void *ctx = (void *)z;
 	int n = (CODEPLUG_ZONE_IS_ALLCHANNELS(*zz) ? zz->NOT_IN_CODEPLUGDATA_highestIndex : zz->NOT_IN_CODEPLUGDATA_numChannelsInZone);
-	int from;
+	int from = dcFindPos(n, dcChannelB(), dualZoneChannelAt, ctx);
 
-	if (dcBIsVfo())
+	if ((from < 0) && (z == NULL))
 	{
-		from = (n + (int)dualVfoIdx());
-	}
-	else
-	{
-		from = dcFindPos(n, dcChannelB(), dualZoneChannelAt, ctx);
-
-		if ((from < 0) && (z == NULL))
-		{
-			from = dcFindPos(n, dualChannelA(), dualZoneChannelAt, NULL);   // B не з цієї зони -- крок від A
-		}
+		from = dcFindPos(n, dualChannelA(), dualZoneChannelAt, NULL);   // B не з цієї зони -- крок від A
 	}
 
-	int pos = dcStepExt(n, from, dir, dualZoneChannelAt, ctx);
+	int pos = dcStepPos(n, from, dir, 0U, dualZoneChannelAt, ctx);
 
 	if (pos < 0)
 	{
@@ -4446,15 +4438,7 @@ static void dualStepB(int dir)
 	}
 
 	dualBReset();   // R98-FIX3 Б / R98-FIX5 А5: новий B -- з кодплага (копія й ТГ B -- з нуля)
-
-	if (pos >= n)
-	{
-		dcSetTypeB((pos == n) ? DC_TYPE_VFO_A : DC_TYPE_VFO_B);   // відкладений запис (3 с без змін), номер каналу B лишається
-	}
-	else
-	{
-		(void)dcSetChannelB(dualZoneChannelAt(pos, ctx), false);   // відкладений запис (3 с без змін); тип -> «канал»
-	}
+	(void)dcSetChannelB(dualZoneChannelAt(pos, ctx), false);   // відкладений запис (3 с без змін); тип -> «канал»
 
 	if (dualIsRunning() == false)
 	{
@@ -4518,83 +4502,15 @@ static void dualZoneStepB(int dir)
 	}
 }
 
-// R98-FIX4 Б4: ручка на картці A -- те саме коло, що й для B (dcStepExt): позиції 0..n-1 -- канали ПОТОЧНОЇ зони, n -- VFO A, n+1 -- VFO B.
-// false -- звичайний крок каналу зони на каналі (стокові handleUpKey/handleDownKey, поведінка без змін); true -- оброблено тут (перехід на VFO, між VFO
-// або з VFO на канал зони: «останній канал зони» = цей канал, канал завантажується стоковим шляхом).
-static bool dualStepA(int dir)
-{
-	int n = (CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? currentZone.NOT_IN_CODEPLUGDATA_highestIndex : currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone);
-	int from = (dcAIsVfo() ? (n + (int)dualCardVfo(false)) : dcFindPos(n, dualChannelA(), dualZoneChannelAt, NULL));
-
-	if (from < 0)
-	{
-		return false;   // A не з цієї зони (не мало б траплятись) -- стоковий крок
-	}
-
-	int pos = dcStepExt(n, from, dir, dualZoneChannelAt, NULL);
-
-	if ((dcAIsVfo() == false) && ((pos < 0) || (pos < n)))
-	{
-		return false;   // канал -> канал: стоковий шлях
-	}
-
-	if (pos < 0)
-	{
-		soundSetMelody(MELODY_ERROR_BEEP);
-		return true;
-	}
-
-	dualSuspend();
-
-	if (pos >= n)
-	{
-		if ((dcAIsVfo() == false) && (dcIsOnB() == false) && (s_dualBKeep != 0U))
-		{
-			dualSwapBufs();   // R98-FIX5 А5: A канал -> VFO: робоча копія B переходить туди, де вона живе при A = VFO (канальний буфер)
-		}
-
-		dcSetTypeA((pos == n) ? DC_TYPE_VFO_A : DC_TYPE_VFO_B);   // відкладений запис блоку 18 (тип поточного A, Б7)
-		dualTune(false);                                           // налаштувати на VFO (ізольовано; з B -- теж повернення індексу ТГ A); канальний буфер не чіпаємо
-	}
-	else
-	{
-		uint16_t ch = dualZoneChannelAt(pos, NULL);
-
-		if (dcIsOnB())
-		{
-			dualTune(false);   // з B -- спершу на A (індекс ТГ A, рація на A)
-		}
-
-		if (dcAIsVfo())
-		{
-			s_dualBKeep = 0U;   // R98-FIX5 А5: канал A вантажиться в канальний буфер -- там була копія B (A = VFO); B перечитається з кодплага
-		}
-
-		dcSetTypeA(DC_TYPE_CHANNEL);
-		codeplugSetLastUsedChannelInZone(currentZone.NOT_IN_CODEPLUGDATA_indexNumber, (int16_t)(CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone) ? (int)ch : pos));
-		currentChannelData = &channelScreenChannelData;
-		uiChannelModeLoadChannelData(false, true);   // свіжо з кодплага: стара копія A (R98-FIX2 Є) не відновлюється (Б11)
-	}
-
-	s_dualKeyMs = 0U;   // чергування -- одразу
-	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
-	dualAutoResume();
-
-	if (dualIsRunning() == false)
-	{
-		uiChannelModeUpdateScreen(0);
-	}
-
-	return true;
-}
-
 // R98-FIX4 Б4 / R98-FIX5 А0: dualIsAKey() прибрано -- у режимі всі клавіші й так ідуть у правила режиму (handleEventCore), тож ручка при A = VFO теж.
 
-// R98 В8: SK2 + ручка при покажчику на B = VFO (режим ввімкнено, екран каналу) -- крок частоти цього VFO.
+// R98 В8 / R98-FIX7 А2: ручка (без SK1) на картці VFO з покажчиком (режим ввімкнено, екран каналу) -- крок частоти цього VFO, як ручка в стоковому
+// екрані VFO (handleUpKey/handleDownKey: stepFrequency на крок VFO). SK2 + ручка -- те саме, що було з R98 (у стоку SK2 + ручка вибирає поле RX/TX --
+// у картці його нема). Ручка з VFO на канал не виводить.
 static bool dualIsVfoStepKey(const uiEvent_t *ev)
 {
 	return (dcIsEnabled() && dualCardIsVfo(dcPointerB()) && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) &&   // R98-FIX4 Б3: картка з покажчиком -- VFO (A або B)
-			BUTTONCHECK_DOWN(ev, BUTTON_SK2) && (BUTTONCHECK_DOWN(ev, BUTTON_SK1) == false) &&
+			(BUTTONCHECK_DOWN(ev, BUTTON_SK1) == false) &&
 			((ev->keys.key == KEY_ROTARY_INCREMENT) || (ev->keys.key == KEY_ROTARY_DECREMENT)));
 }
 
@@ -4603,8 +4519,8 @@ static bool dualHandleKey(uiEvent_t *ev)
 {
 	if (dualIsVfoStepKey(ev))
 	{
-		// R98 В8: SK2 + ручка на картці B = VFO -- крок частоти цього VFO (стокова stepFrequency(), VFO_FREQ_STEP_TABLE); звичайна ручка -- вибір каналу/VFO.
-		// Цифри/введення частоти -- лише у VFO-екрані. Чергування призупиняється на B (тиша DUAL_RESUME_QUIET_MS), далі -- як після будь-якої клавіші.
+		// R98 В8 / R98-FIX7 А2: ручка (і SK2 + ручка) на картці VFO -- крок частоти цього VFO (стокова stepFrequency(), VFO_FREQ_STEP_TABLE).
+		// Чергування призупиняється на картці (тиша DUAL_RESUME_QUIET_MS), далі -- як після будь-якої клавіші.
 		if (KEYCHECK_SHORTUP(ev->keys, ev->keys.key))
 		{
 			dualSuspend();   // чергування стоп; рація на обраному
@@ -4703,17 +4619,14 @@ static bool dualHandleKey(uiEvent_t *ev)
 			{
 				int dir = ((ev->keys.key == KEY_ROTARY_INCREMENT) ? 1 : -1);
 
+				// R98-FIX7 А1: тут картка з покажчиком -- канал (картку VFO обробив dualIsVfoStepKey вище): лише канали, без VFO в колі
 				if (dcPointerB())
 				{
 					dualStepB(dir);
 				}
-				else if (dualStepA(dir))
-				{
-					return true;   // R98-FIX4 Б4: перехід A канал -> VFO A/B або VFO -> канал/VFO (коло «канали зони -> VFO A -> VFO B -> канали»)
-				}
 				else
 				{
-					// Покажчик на A -- звичайна зміна каналу зони (ті самі handleUpKey/handleDownKey); A не може стати B -- перескакуємо
+					// Покажчик на A -- звичайна зміна каналу зони (ті самі стокові handleUpKey/handleDownKey -- коло по каналах зони)
 					dualSuspend();
 
 					if (dcIsOnB())
