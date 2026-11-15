@@ -2,7 +2,8 @@
  * volume_low_logic.h -- R78: ЧИСТА логіка постійного «тихого» нижнього рівня гучності («Мін.гучність», ENABLE_VOLUME_LOW): крива, таблиці, рампа.
  * Підключається і прошивкою (functions/volume_low.c, sound.c), і хостовим тестом (tests/test_volume_low.c). Без обладнання.
  *
- * КРИВА. Позиція ручки n = lastVolume + 31 (0 = мінімум, -31 дБ; 0..62). Коліно K (позицій від мінімуму): 8 / 16 / 24 (режими 1/2/3; режим 0 -- вимкнено).
+ * КРИВА. Позиція ручки n = lastVolume + 31 (0 = мінімум, -31 дБ; 0..62). Коліно K (позицій від мінімуму) -- VOLLOW_KNEE (R98-FIX7: 32; R81..R98-FIX6: 16);
+ * режим 0 -- вимкнено, будь-який увімкнений -- K = VOLLOW_KNEE.
  * Для n >= K додаткового ослаблення нема -- шкала стокова. Для n < K:  extra_dB(n) = округлене( D * (K - n) / K ),  D -- глибина в мінімумі:
  *   DMR  D = 36 дБ  (власник на залізі: 1/64 = -36 дБ комфортно);
  *   FM   D = 23 дБ  (20*log10(0xCC/0x0F) = 22,7 -> 23; власник: 6 % = low-byte 0x0F). Таблиця low-byte нижче 0x0F не опускається (x = 23 дало б 0x0E).
@@ -21,7 +22,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define VOLLOW_MODES            4U       /* 0 = вимк, 1 = K 8, 2 = K 16, 3 = K 24 */
+#define VOLLOW_MODES            4U       /* 0 = вимк, 1..3 = увімк (R98-FIX7: коліно для всіх -- VOLLOW_KNEE; окремих K 8/16/24 більше нема) */
 #define VOLLOW_DEPTH_DMR_DB     36U
 #define VOLLOW_DEPTH_FM_DB      23U
 #define VOLLOW_FM_REG           0x44U
@@ -32,7 +33,10 @@
 #define VOLLOW_RAMP_STEP        128U     /* зміна Q15-множника за один вихідний відлік (повний діапазон -36 дБ ~ 250 відліків) */
 #define VOLLOW_POS_MAX          62U
 
-#define VOLLOW_FIXED_MODE       2U       /* R81: єдиний режим у прошивці -- K = 16 (рішення власника 2026-11-10); меню немає */
+#define VOLLOW_FIXED_MODE       2U       /* R81: єдиний режим у прошивці (увімкнено); меню немає */
+/* R98-FIX7 В1: коліно K -- ЄДИНЕ місце значення (рішення власника 2026-11-15: плавніше зростання; було 16). Допустимо 1..VOLLOW_POS_MAX:
+ * vlExtraDb рахує (2*D*(K-n)+K)/(2K) в uint32 (найбільше 2*36*62+62), extra <= D -- таблиці D_DMR/D_FM не виходять за межі. */
+#define VOLLOW_KNEE             32U
 
 /* R81: ефективний режим -- що б не лежало в custom-data блоці 17 (0/1/2/3/сміття/блоку немає), завжди VOLLOW_FIXED_MODE. */
 static inline uint8_t vlEffectiveMode(uint8_t raw)
@@ -41,11 +45,10 @@ static inline uint8_t vlEffectiveMode(uint8_t raw)
 	return VOLLOW_FIXED_MODE;
 }
 
-/* Коліно K для режиму 0..3 (0 -- вимкнено; режим поза діапазоном -- вимкнено). */
+/* Коліно K для режиму 0..3: 0 -- вимкнено (і режим поза діапазоном), 1..3 -- VOLLOW_KNEE. */
 static inline uint8_t vlKnee(uint8_t mode)
 {
-	static const uint8_t k[VOLLOW_MODES] = { 0U, 8U, 16U, 24U };
-	return (mode < VOLLOW_MODES) ? k[mode] : 0U;
+	return ((mode != 0U) && (mode < VOLLOW_MODES)) ? (uint8_t)VOLLOW_KNEE : 0U;
 }
 
 /* Значення з флеша -> режим: 0..3, решта -- 0 (вимкнено). */

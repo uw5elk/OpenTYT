@@ -95,7 +95,7 @@ static void applyFm(void)
 
 void volumeLowLoad(void)
 {
-	/* R81: режим ЗАВЖДИ фіксований -- коліно K = 16 (VOLLOW_FIXED_MODE). Custom-data блок 17 (CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG)
+	/* R81: режим ЗАВЖДИ фіксований -- коліно K = VOLLOW_KNEE (VOLLOW_FIXED_MODE; R98-FIX7: 32). Custom-data блок 17 (CODEPLUG_CUSTOM_DATA_TYPE_VOLUME_LOW_CFG)
 	 * у кодплузі лишається (довжину й номер не чіпаємо, щоб не міняти розкладку), але його значення (0/1/2/3/сміття або відсутність блоку)
 	 * більше НЕ діє і тут не читається -- старі значення з R78 не вимикають і не змінюють функцію. Пункт меню «Мін.гучн.» прибрано. */
 	s_mode = vlEffectiveMode(0U);
