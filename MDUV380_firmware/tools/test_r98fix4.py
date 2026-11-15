@@ -395,9 +395,8 @@ def test_static():
           "Б2: довге ▼ у VFO: стокова зупинка сканування частот лишається першою, у звичайному режимі -- вмикання режиму (без автоповтору й SK)")
     en = ms[ms.find("enum VFO_SCREEN_QUICK_MENU_ITEMS"):]
     en = en[:en.find("};")]
-    check(en.find("VFO_SCREEN_QUICK_MENU_AUDIO_MUTE,") < en.find("VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL") < en.find("NUM_VFO_SCREEN_QUICK_MENU_ITEMS") and "#if defined(DUAL_CHANNEL_ENABLED)" in en,
-          "Б2: пункт «Подв. прийом» у швидкому меню VFO -- останнім, під DUAL_CHANNEL_ENABLED (номери стокових пунктів не зсуваються)")
-    check("case VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL:" in vm and "currentLanguage->dual_rx" in vm, "Б2: пункт меню показує наявне мовне поле dual_rx (нових полів нема)")
+    check("VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL" not in en and "VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL" not in vm,
+          "Б2 (R98-FIX5 В2): пункт «Подв. прийом» у кінці швидкого меню VFO прибрано -- наш режим запускає стоковий пункт «Dual Watch» (test_r98fix5)")
     # Б15: стоковий Dual Watch -- без змін; наш не вмикається разом зі стоковим
     vs = vm[vm.find("static void vfoDualStart(void)\n{"):]
     vs = vs[:vs.find("\n}\n")]

@@ -263,6 +263,9 @@ def test_part_d(incs, cf):
 
     def C(n):
         return eval_const(ucm, n, env)
+    if "DW_SQ_X" not in env:
+        print("ПРОПУСК: Д3 -- розкладку карток (квадрат 24x51, «D» у квадраті) замінено в R98-FIX5 Б2; координати й накладання перевіряє tools/test_r98fix5.py")
+        return
     DISP_X = 160
     card = (0, 0, C("DW_CARD_X") + C("DW_CARD_W") + 1, C("DW_CARD_H"))
     r = {
@@ -415,6 +418,9 @@ def test_part_k(incs, cf):
     check("dualFmToneLine(l3, sizeof(l3), rec->rxTone, rec->txTone," in uc, "К2: рядок 3 FM будується з rxTone/txTone запису (канал і VFO -- один шлях rec)")
     check("CTCSS %d.%d" not in uc[uc.find("static void dualRenderRow("):uc.find("static void dualRenderRow(") + 6000], "К2: старий показ лише RX-тону прибрано")
     # --- К1 відстань
+    if "static void dualAppendDistance(" not in uc:
+        print("ПРОПУСК: К1 -- відстань перенесено з рядка 3 у рядок 4 картки (R98-FIX5 Б2, dualRow4Text, зі стрілкою); умови й мутанти перевіряє tools/test_r98fix5.py")
+        return
     f3 = T.carve_fn(tc or "", "void dualAppendDistance(char *l3)")
     check(f3 is not None, "К1: dualAppendDistance знайдено (під LC_DISTANCE)")
     if f3:

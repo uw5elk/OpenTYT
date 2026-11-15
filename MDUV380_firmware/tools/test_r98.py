@@ -324,8 +324,8 @@ def test_sk2(incs, cf):
     hk = hk[:hk.find("// Увімкнути/вимкнути режим")]
     check(hk.find("dualIsVfoStepKey(ev)") < hk.find("BUTTONCHECK_DOWN(ev, BUTTON_SK2) || BUTTONCHECK_DOWN(ev, BUTTON_SK1)") and ("uiVFOModeDualStep(dualVfoIdx()" in hk or "uiVFOModeDualStep(dualCardVfo(dcIsOnB())" in hk),   # R98-FIX4 Б3: VFO картки з покажчиком
           "В8: у dualHandleKey SK2+ручка на картці VFO обробляється ДО загального «SK2/SK1 -- не наші» і викликає uiVFOModeDualStep")
-    check(re.search(r"if \(dwRunning \|\| dualSingle\(\) \|\| dualIsVfoStepKey\(ev\)( \|\| dualIsSquelchKey\(ev\))?( \|\| dualIsAKey\(ev\))?\)", src) is not None,   # R98-FIX3 Б: + SK1+ручка
-          "В8: хук handleEvent пропускає SK2+ручку на VFO-картці в dualHandleKey навіть коли чергування вже зупинене паузою")
+    check(re.search(r"if \(dcIsEnabled\(\)\)\s*\{\s*if \(dualHandleKey\(ev\)\)", src) is not None,   # R98-FIX5 А0: у режимі всі клавіші -- спершу правила режиму
+          "В8: хук handleEvent пропускає SK2+ручку на VFO-картці в dualHandleKey навіть коли чергування вже зупинене паузою (R98-FIX5 А0: усі клавіші в режимі)")
     vs = T.rd(os.path.join(UI, "uiVFOMode.c"))
     st = vs[vs.find("void uiVFOModeDualStep("):]
     st = st[:st.find("\n}\n")]
@@ -375,8 +375,8 @@ def test_static():
     ar = ar[:ar.find("\n}\n")]
     check("(menuSystemGetCurrentMenuNumber() != UI_CHANNEL_MODE)" in ar, "В7: чергування НЕ відновлюється під VFO-екраном/іншим меню (dualAutoResume лише на екрані каналу); повернення на канал -- самовідновлення")
     hv = src[src.find("static void handleEventCore(uiEvent_t *ev)\n#else"):]
-    check("if (dcIsOnB() && (ev->keys.key != KEY_GREEN) && (KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN) == false))" in hv[:2500] and "dualTune(false);" in hv[:2500],
-          "В7: у паузі після клавіші (режим зупинено, рація на B) стокова червона (в VFO) спершу повертає рацію на A (канальний буфер), тоді стока відкриває VFO-екран")
+    check("if ((dcIsOnB() != toB) && (ev->keys.key != KEY_GREEN) && (KEYCHECK_LONGDOWN(ev->keys, KEY_FRONT_DOWN) == false))" in hv[:3500] and "dualTune(toB);" in hv[:3500],
+          "В7 (R98-FIX5 А0/А5): у паузі червона теж з'їдається правилами режиму; решта стокових клавіш -- спершу на картку з покажчиком")
     # В4 / В6: пара для VFO
     cp = src[src.find("static dcPairCheck_t dualCheckPair(void)"):]
     cp = cp[:cp.find("\n}\n")]

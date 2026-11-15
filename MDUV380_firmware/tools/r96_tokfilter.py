@@ -6,7 +6,8 @@
 R98-FIX2 Л (той самий принцип -- лише прототипи, без коду в чужих файлах):
   - keypadAlphaPreviewMap (keyboard.h, LANGUAGE_BUILD_UKRAINIAN) і uiSmsKeyHintMap (uiSmsKeys.h) -- підказка літер у назві каналу.
 R98-FIX3 Б: стоковий крок шумодава ▲/▼ екрана каналу винесено в static inline (always_inline) channelSquelchStep(dir) -- для порівняння з базою виклики
-channelSquelchStep(1)/(-1) розгортаються назад у стокові блоки, а визначення функції вирізається (байт-у-байт образу перевіряє sha типової збірки)."""
+channelSquelchStep(1)/(-1) розгортаються назад у стокові блоки, а визначення функції вирізається (байт-у-байт образу перевіряє sha типової збірки).
+R98-FIX5 А2: те саме для кроку ТГ ▲/▼ DMR-каналу -- channelTgStep(dir)."""
 import re
 
 _PATS = (
@@ -35,8 +36,49 @@ def strip_r98fix3(j):
     return b" ".join(j.split())
 
 
+_TG_SIG = b"static inline __attribute__((always_inline)) void channelTgStep(int dir) {"
+
+
+def _block(j, k):
+    """j[k] == b"{": індекс після парної «}» і вміст між ними (без крайніх пробілів)."""
+    d = 0
+    for n in range(k, len(j)):
+        c = j[n:n + 1]
+        if c == b"{":
+            d += 1
+        elif c == b"}":
+            d -= 1
+            if d == 0:
+                return n + 1, j[k + 1:n].strip()
+    return -1, b""
+
+
+def strip_r98fix5(j):
+    i = j.find(_TG_SIG)
+    if i < 0:
+        return j
+    end, body = _block(j, i + len(_TG_SIG) - 1)
+    head = b"if (currentRxGroupData.NOT_IN_CODEPLUG_numTGsInGroup > 1) {"
+    pre = head + b" if (dir > 0) {"
+    if end < 0 or not body.startswith(pre):
+        return j
+    e1, up = _block(body, len(pre) - 1)
+    rest = body[e1:].strip()
+    if not rest.startswith(b"else {"):
+        return j
+    e2, dn = _block(rest, len(b"else {") - 1)
+    rest2 = rest[e2:].strip()
+    if not rest2.startswith(b"}"):
+        return j
+    tail = rest2[1:].strip()
+    j = j[:i] + j[end:]
+    j = j.replace(b"channelTgStep(1);", head + b" " + up + b" } " + tail)
+    j = j.replace(b"channelTgStep(-1);", head + b" " + dn + b" } " + tail.replace(b"_OR_PC, ", b"_OR_PC,"))
+    return b" ".join(j.split())
+
+
 def strip_r96(raw):
     j = b" ".join(raw.split())
     for a, b in _PATS:
         j = j.replace(a, b)
-    return strip_r98fix3(j)
+    return strip_r98fix5(strip_r98fix3(j))

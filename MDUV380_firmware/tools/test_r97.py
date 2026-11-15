@@ -15,7 +15,7 @@
   6  CPS не ламає невідомий блок 18: розбір області, ущільнення, файл налаштувань, план відновлення (custom_region.py, custom_compact.py).
 Порівняння з комітом бази стійке до його відсутності: без коміта -- ПРОПУСК з повідомленням.
 Запуск: python3 tools/test_r97.py"""
-import os, re, shutil, struct, subprocess, sys, tempfile
+import json, os, re, shutil, struct, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); FW = os.path.dirname(HERE); sys.path.insert(0, HERE)
 import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages")
@@ -77,6 +77,7 @@ def compat_a_channel(f, text=None):
         inl = _compat_enable_inline(text)
         if inl:
             f = re.sub(r"if \(dualEnable\(\(uint8_t\)0U\) == 0\)\s*\{\s*return;\s*\}", lambda m: inl, f)
+    f = f.replace("dualBReset();", "s_dualSqlB = 0U;").replace("s_dualZoneB = 0U;", ";")   # R98-FIX5 -> R98-FIX3/4 (див. COMPAT_FIX4)
     f = re.sub(r"uint16_t retIdx = \(dcAIsVfo\(\) \? 0U : dualChannelA\(\)\);", "uint16_t retIdx = 0U;", f)
     f = f.replace("dualBSameAsA() && dualBExists()", "dualBSameAsA() && (dcBIsVfo() || ((dcChannelB() >= 1U) && (dcChannelB() <= 1024U) && codeplugAllChannelsIndexIsInUse(dcChannelB())))")
     f = f.replace("(dcIsOnB() || dcAIsVfo())", "dcIsOnB()")
@@ -91,8 +92,32 @@ def compat_a_channel(f, text=None):
     return f
 
 
+# R98-FIX5: функції «Подвійного прийому», змінені в R98-FIX5 (керування, розкладка, робоча копія B), старі тести (R97..R98-FIX4) бачать у вигляді
+# R98-FIX4 -- препроцесований текст бази 7205514, заморожений у tools/testdata/r98fix4_dw_frozen.json (база в CI/клоні може бути недоступна).
+# Їхні гарнеси моделюють світ до FIX5 (s_dualSqlB, dualIsAKey, шапка обраного каналу); нову поведінку перевіряє tools/test_r98fix5.py (COMPAT_FIX4 = False).
+COMPAT_FIX4 = True
+_FROZEN = None
+
+
+def frozen_fix4(name):
+    global _FROZEN
+    if _FROZEN is None:
+        try:
+            _FROZEN = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata", "r98fix4_dw_frozen.json"), encoding="utf-8"))
+        except (OSError, ValueError):
+            _FROZEN = {}
+    return _FROZEN.get(name)
+
+
 def carve_fn(text, sig):
     """Функція від сигнатури sig до парної закривальної дужки (лічба { })."""
+    if COMPAT_FIX4:
+        m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\(", sig)
+        fz = frozen_fix4(m.group(1)) if m else None
+        p = fz.find(sig) if fz is not None else -1
+        if 0 <= p < 24:
+            fz = fz[p:]
+            return compat_a_channel(fz, text) if COMPAT_A_CHANNEL else fz
     i = -1
     for m in re.finditer(re.escape(sig), text):
         if text[m.end():].lstrip().startswith("{"):   # визначення, а не оголошення «...;»
@@ -911,8 +936,8 @@ def test_fix2(incs, cf):
           "FIX4 З1: червона в режимі нічого не робить (не вимикає режим)")
     hv = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):]
     hv = hv[:hv.find("if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))")]
-    check("dualSuspend();" in hv and re.search(r"if \(dcIsOnB\(\) && \(ev->keys\.key != KEY_GREEN\) && \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) == false\)\)\s*\{[^}]*dualTune\(false\);", hv) is not None,
-          "FIX4 З2: «чужі» клавіші на B повертають на A, крім зеленої (меню) і довгого ▼ (вимкнення)")
+    check("dualSuspend();" in hv and re.search(r"if \(\(dcIsOnB\(\) != toB\) && \(ev->keys\.key != KEY_GREEN\) && \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) == false\)\)\s*\{\s*dualTune\(toB\);", hv) is not None,
+          "FIX4 З2 (R98-FIX5 А5): «чужі» клавіші -- на картку з покажчиком (було: на A), крім зеленої (меню) і довгого ▼ (вимкнення)")
     ro = src[src.find("// Покажчик на A -- звичайна зміна каналу зони"):]
     ro = ro[:ro.find("return true;")]
     ia, ib, ic, idd = ro.find("s_dualQuiet = true;"), ro.find("handleUpKey(ev);"), ro.find("s_dualQuiet = false;"), ro.find("dualAutoResume();")
@@ -920,7 +945,7 @@ def test_fix2(incs, cf):
     us = src[src.find("void uiChannelModeUpdateScreen(int txTimeSecs)\n{"):]
     check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*if \(s_dualQuiet\)\s*\{\s*return;\s*\}\s*#endif", us[:600]) is not None,
           "FIX4 З4: uiChannelModeUpdateScreen() на початку виходить при s_dualQuiet (лише під DUAL_CHANNEL_ENABLED)")
-    check(re.search(r"static bool\s+s_dualQuiet;", src) is not None and src.count("s_dualQuiet") == 8, "FIX4 З4: одна нова статична змінна (1 Б), s_dualQuiet (FIX5: 8 згадок -- додано хук, dualQuietEnd)")
+    check(re.search(r"static bool\s+s_dualQuiet;", src) is not None and src.count("s_dualQuiet") == 9, "FIX4 З4: одна нова статична змінна (1 Б), s_dualQuiet (FIX5: 8 згадок; R98-FIX5 А3: +1 -- SK2 + ручка на A)")
     # ---- п.2: гаряча клавіша ----
     ev = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):src.find("static bool dualIsRunning(void)\n{")]
     hk = re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*else if \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) && \(KEYCHECK_LONGDOWN_REPEAT\(ev->keys, KEY_FRONT_DOWN\) == false\) &&\s*\(BUTTONCHECK_DOWN\(ev, BUTTON_SK2\) == 0\) && \(BUTTONCHECK_DOWN\(ev, BUTTON_SK1\) == 0\) && \(directChannelNumber == 0\)\)\s*\{[^}]*dualHotkeyToggle\(\);\s*return;\s*\}\s*#endif", ev)
@@ -1062,14 +1087,14 @@ def test_fix5_z1(incs, cf):
     ia = src.find("static void handleEventCore(uiEvent_t *ev)\n#else")
     ib = src.find("if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))")
     hk = src[ia:ib]
-    check(ia > 0 and "s_dualQuiet = true;" in hk and hk.find("dualSuspend();") < hk.find("s_dualQuiet = true;") < hk.find("dualTune(false);"),
+    check(ia > 0 and "s_dualQuiet = true;" in hk and hk.find("dualSuspend();") < hk.find("s_dualQuiet = true;") < hk.find("dualTune(toB);"),
           "FIX5 З1: хук handleEventCore -- «тиша» вмикається після dualSuspend() і до будь-якої стокової обробки клавіші")
-    check(re.search(r"static void handleEvent\(uiEvent_t \*ev\)\s*\{\s*handleEventCore\(ev\);\s*dualQuietEnd\(\);\s*\}", src) is not None,
-          "FIX5 З1: handleEvent -- обгортка: handleEventCore + dualQuietEnd() (єдиний вихід, жодного return повз скидання)")
+    check(re.search(r"static void handleEvent\(uiEvent_t \*ev\)\s*\{\s*uint16_t tsBefore = nonVolatileSettings\.tsManualOverride;\s*handleEventCore\(ev\);\s*dualVfoKeyDone\(ev, tsBefore\);\s*dualQuietEnd\(\);\s*\}", src) is not None,
+          "FIX5 З1: handleEvent -- обгортка: handleEventCore (+ R98-FIX5 А5 dualVfoKeyDone) + dualQuietEnd() (єдиний вихід, жодного return повз скидання)")
     check(len(re.findall(r"\bhandleEvent\(ev\)", src)) == 1 and src.count("handleEventCore(ev);") == 1,
           "FIX5 З1: handleEvent викликається з тих самих місць (1 виклик у uiChannelMode), обгортка викликає Core")
-    check(len(re.findall(r"s_dualQuiet = true;", src)) == 2 and len(re.findall(r"s_dualQuiet = false;", src)) == 2,
-          "FIX5 З1: «тиша» вмикається у двох місцях (ручка на A, хук), скидається у двох (ручка на A, dualQuietEnd)")
+    check(len(re.findall(r"s_dualQuiet = true;", src)) == 3 and len(re.findall(r"s_dualQuiet = false;", src)) == 2,
+          "FIX5 З1: «тиша» вмикається у трьох місцях (ручка на A, хук, R98-FIX5 А3: SK2 + ручка на A -- стокова зміна зони), скидається у двох (ручка на A, dualQuietEnd)")
     us = src[src.find("void uiChannelModeUpdateScreen(int txTimeSecs)\n{"):]
     check(re.search(r"if \(\(dualIsRunning\(\) \|\| dualHoldScreen\(\)\) && \(uiDataGlobal\.displayChannelSettings == false\) && \(isTransmitting == false\)\)\s*\{\s*dualRenderScreen\(\);", us[:1400]) is not None,
           "FIX5 З1: UpdateScreen малює екран режиму і в паузі після клавіші (dualHoldScreen), а не лише під час чергування")
@@ -1370,6 +1395,9 @@ def test_fix5_z2(incs, cf):
     t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
     check(t is not None, "FIX6 З2/З3: uiChannelMode.c препроцесується в DUALCH")
     if t is None:
+        return
+    if "#define DW_LET_BOX_X" in src:
+        print("ПРОПУСК: FIX6 З2/З3 -- розкладку карток R97-FIX6 (квадрат з літерою 16x32, 3 рядки) замінено в R98-FIX5 Б2 (5 рядків); показ і координати перевіряє tools/test_r98fix5.py")
         return
     # ---- геометрія з макросів (кожна константа -- з коду) ----
     D = {"DISPLAY_Y_POS_BAR": 10}

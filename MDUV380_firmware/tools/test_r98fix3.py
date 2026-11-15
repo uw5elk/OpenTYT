@@ -363,8 +363,8 @@ def test_part_b(t):
     # s_dualSqlB скидається при КОЖНІЙ зміні B у режимі
     sets = [m.start() for m in re.finditer(r"dcSetChannelB\(|dcSetTypeB\(", uc)]
     lines = [uc.count("\n", 0, p) + 1 for p in sets]
-    near = [("s_dualSqlB = 0U;" in uc[max(0, p - 700):p]) for p in sets]
-    check(all(near) and len(sets) >= 3, "Б2: перекриття шумодава B скидається при кожній зміні B (рядки %s)" % lines)
+    near = [(("s_dualSqlB = 0U;" in uc[max(0, p - 700):p]) or ("dualBReset();" in uc[max(0, p - 700):p])) for p in sets]   # R98-FIX5 А5: s_dualSqlB -> робоча копія B (dualBReset)
+    check(all(near) and len(sets) >= 3, "Б2: перекриття шумодава B (R98-FIX5: робоча копія B) скидається при кожній зміні B (рядки %s)" % lines)
 
 
 # ------------------------------------------------------------------------------------------------ В
