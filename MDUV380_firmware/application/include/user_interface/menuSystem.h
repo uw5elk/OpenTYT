@@ -249,6 +249,7 @@ bool uiChannelModeIsScanning(void);
 void uiVFOModeDualLoad(uint8_t vfo, bool freshTune);   /* R98 В2: налаштувати рацію на VFO для «Подвійного прийому» з ізоляцією стану (uiVFOMode.c) */
 void uiVFOModeDualStep(uint8_t vfo, int dir);          /* R98 В8: крок частоти VFO на картці B */
 bool uiVFOModeDualFreqEnter(uint8_t vfo, int frequency);
+void uiVFOModeDualTgStep(uint8_t vfo, int dir);        /* R98-FIX5 А2: крок ТГ у списку прийому VFO на картці режиму (SK1 + ручка) з ізоляцією поточного VFO */
 bool uiChannelModeDualEnableFromVfo(uint8_t vfo);         /* R98-FIX4 Б1: увімкнути «Подвійний прийом» з екрана VFO (A = цей VFO), перейти на екран режиму */   /* R98-FIX3 А3: введена цифрами частота (одиниці 10 Гц) для VFO на картці B -- стокова updateFrequency(); false -- поза діапазонами */
 bool uiChannelModeDualPrepareTx(void);   /* R97: PTT під час «Подвійного прийому» (uiChannelMode.c) */
 bool uiChannelModeDualHeader(bool forceBattery);   /* R97-FIX3: чергування без активності -- шапка обраного каналу з кодплага; true = намальовано (applicationMain.c) */

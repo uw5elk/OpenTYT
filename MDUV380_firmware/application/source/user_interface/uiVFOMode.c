@@ -1470,6 +1470,39 @@ bool uiVFOModeDualFreqEnter(uint8_t vfo, int frequency)
 	nonVolatileSettings.currentVFONumber = savedVfo;
 	return true;
 }
+
+// R98-FIX5 А2: SK1 + ручка на DMR-картці VFO -- крок ТГ у списку прийому цього VFO (індекс SETTINGS_VFO_A_MODE + vfo), як стокові ▲/▼ екрана VFO:
+// по колу, лише без перекриття ТГ; перекриття скидається; menuPrivateCallClear(), стокова updateTrxID() (контакт, ТС). Ізоляція: поточний VFO стока на час
+// виклику = vfo і відновлюється. Рація має бути вже налаштована на цей VFO (currentChannelData, currentRxGroupData). Екран і підказку дає викликач.
+void uiVFOModeDualTgStep(uint8_t vfo, int dir)
+{
+	uint8_t savedVfo = nonVolatileSettings.currentVFONumber;
+	int n = currentRxGroupData.NOT_IN_CODEPLUG_numTGsInGroup;
+
+	nonVolatileSettings.currentVFONumber = vfo;
+
+	if ((n > 1) && (nonVolatileSettings.overrideTG == 0))
+	{
+		int16_t idx = (int16_t)(nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_VFO_A_MODE + vfo] + ((dir > 0) ? 1 : -1));
+
+		if (idx < 0)
+		{
+			idx = (int16_t)(n - 1);
+		}
+		else if (idx > (n - 1))
+		{
+			idx = 0;
+		}
+
+		settingsSet(nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_VFO_A_MODE + vfo], idx);
+	}
+
+	settingsSet(nonVolatileSettings.overrideTG, 0);// setting the override TG to 0 indicates the TG is not overridden
+	menuPrivateCallClear();
+	updateTrxID();
+
+	nonVolatileSettings.currentVFONumber = savedVfo;
+}
 #endif
 
 static void checkAndFixIndexInRxGroup(void)
