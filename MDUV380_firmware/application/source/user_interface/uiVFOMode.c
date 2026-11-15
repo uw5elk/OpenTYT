@@ -832,6 +832,7 @@ void uiVFOModeUpdateScreen(int txTimeSecs)
 	{
 		case QSO_DISPLAY_DEFAULT_SCREEN:
 			lastHeardClearLastID();
+#if !defined(DUAL_CHANNEL_ENABLED)   // R98-FIX5 В3: екран стокового Dual Watch (дві частоти) -- лише без нашого режиму
 			if ((uiDataGlobal.Scan.active &&
 					(screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_DUAL_SCAN) && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)))
 			{
@@ -839,6 +840,7 @@ void uiVFOModeUpdateScreen(int txTimeSecs)
 				uiUtilityDisplayFrequency(DISPLAY_Y_POS_TX_FREQ, false, false, settingsVFOChannel[CHANNEL_VFO_B].rxFreq, true, true, 2);
 			}
 			else
+#endif
 			{
 				uiDataGlobal.displayQSOStatePrev = QSO_DISPLAY_DEFAULT_SCREEN;
 				uiDataGlobal.isDisplayingQSOData = false;
@@ -1192,6 +1194,7 @@ void uiVFOModeStopScanning(void)
 	uiDataGlobal.Scan.active = false;
 	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
 
+#if !defined(DUAL_CHANNEL_ENABLED)   // R98-FIX5 В3
 	if (screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_DUAL_SCAN)
 	{
 		screenOperationMode[CHANNEL_VFO_A] = screenOperationMode[CHANNEL_VFO_B] = VFO_SCREEN_OPERATION_NORMAL;
@@ -1199,7 +1202,9 @@ void uiVFOModeStopScanning(void)
 
 		rxPowerSavingSetLevel(nonVolatileSettings.ecoLevel);// Level is reduced by 1 when Dual Watch , so re-instate it back to the correct setting
 	}
-	else if (screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_SWEEP)
+	else
+#endif
+	if (screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_SWEEP)
 	{
 		screenOperationMode[nonVolatileSettings.currentVFONumber] = VFO_SCREEN_OPERATION_NORMAL;
 		trxSetFrequency(currentChannelData->rxFreq, currentChannelData->txFreq, (((currentChannelData->chMode == RADIO_MODE_DIGITAL) && codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_FORCE_DMO)) ? DMR_MODE_DMO : DMR_MODE_AUTO));
@@ -3780,11 +3785,6 @@ static void updateQuickMenuScreen(bool isFirstRun)
 					leftSide = currentLanguage->mute;
 					rightSideConst = (uiDataGlobal.QuickMenu.tmpAudioMute ? currentLanguage->yes : currentLanguage->no);
 					break;
-#if defined(DUAL_CHANNEL_ENABLED)
-				case VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R98-FIX4 Б2: наш режим (стоковий «Dual Watch» -- окремий пункт вище)
-					rightSideConst = currentLanguage->dual_rx;
-					break;
-#endif
 				default:
 					strcpy(buf, "");
 					break;
@@ -4039,13 +4039,12 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 					break;
 
 #if defined(DUAL_CHANNEL_ENABLED)
-				case VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL:   // R98-FIX4 Б2: спершу назад на екран VFO, далі -- увімкнення (перехід на екран режиму)
+				case VFO_SCREEN_QUICK_MENU_DUAL_SCAN:   // R98-FIX5 В1: стоковий пункт «Dual Watch» на своєму місці запускає НАШ режим (як довге ▼): спершу назад на екран VFO, далі -- увімкнення
 					menuDataGlobal.menuOptionsTimeout = 0;
 					menuSystemPopPreviousMenu();
 					vfoDualStart();
 					return;
-#endif
-
+#else
 				case VFO_SCREEN_QUICK_MENU_DUAL_SCAN:
 					uiDataGlobal.Scan.active = true;
 					uiDataGlobal.Scan.stepTimeMilliseconds = settingsGetScanStepTimeMilliseconds();
@@ -4061,6 +4060,7 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 						rxPowerSavingSetLevel(currentPowerSavingLevel - 1);
 					}
 					break;
+#endif
 
 				default:
 					// VFO_SCREEN_QUICK_MENU_FILTER_FM
@@ -4337,11 +4337,13 @@ bool uiVFOModeIsScanning(void)
 	return (uiDataGlobal.Scan.toneActive || uiDataGlobal.Scan.active);
 }
 
+#if !defined(DUAL_CHANNEL_ENABLED)   // R98-FIX5 В3: у збірці з режимом -- макрос false (menuSystem.h)
 bool uiVFOModeDualWatchIsScanning(void)
 {
 	return ((menuSystemGetCurrentMenuNumber() == UI_VFO_MODE) && uiDataGlobal.Scan.active &&
 			(uiDataGlobal.Scan.state == SCAN_STATE_SCANNING) && (screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_DUAL_SCAN));
 }
+#endif
 
 bool uiVFOModeSweepScanning(bool includePaused)
 {
@@ -5031,7 +5033,11 @@ static void scanInit(void)
 
 static void scanning(void)
 {
+#if defined(DUAL_CHANNEL_ENABLED)
+	static bool scanPaused __attribute__((unused)) = false;   // R98-FIX5 В3: читав лише вирізаний стоковий Dual Watch
+#else
 	static bool scanPaused = false;
+#endif
 	static bool voicePromptsAnnounced = true;
 #if defined(ENABLE_FAST_SCAN) || defined(ENABLE_SPECTRUM)
 	static bool rejectDone = false;
@@ -5246,6 +5252,7 @@ static void scanning(void)
 		scanRejectCountStep();
 #endif
 
+#if !defined(DUAL_CHANNEL_ENABLED)   // R98-FIX5 В3: у збірці з «Подвійним прийомом» стоковий Dual Watch вирізано -- лишається сканування частот
 		// We are in Dual Watch scanning mode
 		if (screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_DUAL_SCAN)
 		{
@@ -5309,6 +5316,7 @@ static void scanning(void)
 			}
 		}
 		else // Frequency scanning mode
+#endif
 		{
 			uiEvent_t tmpEvent = { .buttons = 0, .keys = NO_KEYCODE, .rotary = 0, .function = 0, .events = NO_EVENT, .hasEvent = 0, .time = 0 };
 			int fStep = VFO_FREQ_STEP_TABLE[(currentChannelData->VFOflag5 >> 4)];

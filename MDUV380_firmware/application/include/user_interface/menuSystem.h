@@ -223,7 +223,11 @@ void uiVFOLoadContact(CodeplugContact_t *contact);
 bool uiVFOModeIsTXFocused(void);
 void uiVFOModeStopScanning(void);
 bool uiVFOModeIsScanning(void);
+#if defined(DUAL_CHANNEL_ENABLED)
+#define uiVFOModeDualWatchIsScanning() false   /* R98-FIX5 В3: стоковий Dual Watch VFO вирізано -- його пункт меню запускає «Подвійний прийом» */
+#else
 bool uiVFOModeDualWatchIsScanning(void);
+#endif
 bool uiVFOModeSweepScanning(bool includePaused);
 #if defined(ENABLE_FAST_SCAN)
 /* Total width of the sweep display in OpenGD77 10 Hz units, and whether it is marching
@@ -491,9 +495,6 @@ enum VFO_SCREEN_QUICK_MENU_ITEMS
 	VFO_SCREEN_QUICK_MENU_DUAL_SCAN,
 	VFO_SCREEN_QUICK_MENU_FREQ_BIND_MODE,
 	VFO_SCREEN_QUICK_MENU_AUDIO_MUTE,
-#if defined(DUAL_CHANNEL_ENABLED)
-	VFO_SCREEN_QUICK_MENU_DUAL_CHANNEL,   /* R98-FIX4 Б2: «Подв. прийом» з екрана VFO -- В КІНЦІ, номери стокових пунктів (швидкі клавіші) не зсуваються */
-#endif
 	NUM_VFO_SCREEN_QUICK_MENU_ITEMS
 };
 
