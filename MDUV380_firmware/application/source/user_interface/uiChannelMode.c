@@ -4073,10 +4073,8 @@ static bool dualStart(bool holdCurrent)
 	}
 	else
 	{
-		if (dcIsOnB())
-		{
-			dualTune(false);   // чергування завжди починається з A
-		}
+		// R98-FIX6 Б1: чергування починається з картки, на якій рація вже стоїть (раніше -- завжди з A: при вмиканні з «A для повернення»
+		// рація з B у ту ж мить стрибала на A). Перша витримка -- на поточній картці, далі -- як завжди.
 		dualSetDwell();
 	}
 
@@ -4143,6 +4141,13 @@ static void dualLeaveOnB(void)
 	int pos = -1;
 	bool wasAll = CODEPLUG_ZONE_IS_ALLCHANNELS(currentZone);
 
+	// R98-FIX6 Б2: рація могла стояти на A (чергування за покажчиком на B) -- спершу прямо на B: канальний буфер = робоча копія B (незбережені правки
+	// картки), спільний індекс ТГ = ТГ B. Раніше B перечитувався з кодплага (правки губились), а ТГ лишався від A.
+	if (dualBufHoldsB() == false)
+	{
+		dualTune(true);
+	}
+
 	dcSetOnB(false);
 	lastHeardClearLastID();
 
@@ -4163,13 +4168,21 @@ static void dualLeaveOnB(void)
 		uiNotificationShowShort(2000U, currentLanguage->dual_zone_all, true);
 	}
 
-	uiChannelModeLoadChannelData(false, false);
+	uiChannelModeLoadChannelData(true, false);   // R98-FIX6 Б2: B уже в канальному буфері (з правками); номер -- «останній канал зони» = B
 }
 
 // Вимкнути режим (довге ▼ або пункт швидкого меню; червона з R97-FIX4 не вимикає): лишаємось на ОБРАНОМУ каналі -- A лишається на A, B (dualLeaveOnB()).
 // Якщо B уже не існує (видалено/не задано) -- як раніше, на A.
 static void dualDisable(void)
 {
+	if (directChannelNumber != 0)
+	{
+		// R98-FIX6 Б2: набір цифр режиму (номер каналу -- АБСОЛЮТНИЙ, або -1 -- частота) не переходить у звичайний екран: там стоковий набір
+		// трактує directChannelNumber як позицію в зоні (зелена відкрила б інший канал). Вимкнення з набору можливе через швидке меню.
+		directChannelNumber = 0;
+		freqEnterReset();
+	}
+
 	bool stayB = dualSelectedIsB();   // R97-FIX4: лишаємось на ОБРАНОМУ (активність -- де рація; чергування -- за покажчиком; з меню -- де стоїть)
 	uint8_t retType = dcTypeA();                                  // R98-FIX4 А1: «A для повернення» -- до будь-яких змін «останнього каналу зони»
 	uint16_t retIdx = (dcAIsVfo() ? 0U : dualChannelA());
@@ -5085,6 +5098,16 @@ static bool dualApplyReturnA(uint8_t rt, uint16_t ri)
 	dcSetOnB(true);
 	dcSetPointerB(true);
 	dcSetTypeA(rt);
+
+	// R98-FIX6 Б1: рація лишається на B (поточна ціль): канальний буфер -- уже робоча копія B (з незбереженими правками звичайного режиму), ТГ A
+	// невідомий -- той самий індекс, що зараз (інакше перший перехід на A взяв би індекс попереднього сеансу).
+	s_dualTgIdxA = nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE];
+
+	if (bufHadB)
+	{
+		s_dualBKeep = 1U;
+		s_dualTgIdxB = (uint8_t)nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE];   // ТГ B -- той, що стоїть зараз (рація на B)
+	}
 
 	if (rt == DC_TYPE_CHANNEL)
 	{
