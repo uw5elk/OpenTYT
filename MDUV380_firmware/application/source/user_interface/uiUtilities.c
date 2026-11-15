@@ -2801,6 +2801,15 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay)
 {
+	// R98-FIX6 А2: поки показано екран «Подвійного прийому», ЄДИНА шапка -- шапка режиму («DW», заряд, час). Раніше тік RSSI у паузі сканування
+	// (state PAUSED = прийом/утримання в режимі, uiChannelMode()) і інші стокові шляхи малювали тут повну стокову шапку (режим, потужність, CC, TS) --
+	// поверх шапки режиму, яку наступний кадр малював знову: «привиди» «3W»/«C1», що блимали під час прийому. Маршрутизація -- тут, для всіх викликачів.
+	if ((menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown())
+	{
+		uiUtilityRenderHeaderDw(forceBatteryDisplay);
+		return;
+	}
+
 	uiUtilityRenderHeaderCore(isVFODualWatchScanning, isVFOSweepScanning, forceBatteryDisplay, NULL);
 }
 
