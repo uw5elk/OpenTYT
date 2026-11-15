@@ -99,6 +99,9 @@ COMPAT_FIX4 = True
 # R98-FIX6: те саме для функцій, змінених у R98-FIX6 (переходи, розкладка 4 рядки): тести R97..R98-FIX5 бачать їх у вигляді R98-FIX5 (база e29eeb7,
 # tools/testdata/r98fix5_dw_frozen.json); нову поведінку перевіряє tools/test_r98fix6.py (COMPAT_FIX5 = False).
 COMPAT_FIX5 = True
+# R98-FIX7: функції, змінені в R98-FIX7 (ручка лише по каналах, червона = канал <-> VFO, dcStepExt прибрано), тести R97..R98-FIX6 бачать у вигляді
+# R98-FIX6 (база dda0a43, tools/testdata/r98fix6_dw_frozen.json); нову поведінку перевіряє tools/test_r98fix7.py (COMPAT_FIX6 = False).
+COMPAT_FIX6 = True
 _FROZEN = {}
 
 
@@ -119,10 +122,14 @@ def frozen_fix5(name):
     return _frozen("r98fix5_dw_frozen.json", name)
 
 
+def frozen_fix6(name):
+    return _frozen("r98fix6_dw_frozen.json", name)
+
+
 def carve_fn(text, sig):
     """Функція від сигнатури sig до парної закривальної дужки (лічба { })."""
     m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\(", sig)
-    for on, fn_ in ((COMPAT_FIX4, frozen_fix4), (COMPAT_FIX5, frozen_fix5)):
+    for on, fn_ in ((COMPAT_FIX4, frozen_fix4), (COMPAT_FIX5, frozen_fix5), (COMPAT_FIX6, frozen_fix6)):
         fz = fn_(m.group(1)) if (on and m) else None
         p = fz.find(sig) if fz is not None else -1
         if 0 <= p < 24:
@@ -144,7 +151,23 @@ def carve_fn(text, sig):
     return None
 
 
+def _dc_stepext_compat(code):
+    """R98-FIX7 А3: dcStepExt (коло «канали -> VFO A -> VFO B») з прошивки прибрано; старі гарнеси (заморожені dualStepA/dualStepB R98-FIX6) його
+    викликають -- для них дописується заморожене визначення R98-FIX6 (tools/testdata/r98fix6_dw_frozen.json). Нову поведінку перевіряє test_r98fix7.py."""
+    if (not COMPAT_FIX6) or ("dcStepExt(" not in code) or ("dual_channel.c" not in code):
+        return code
+    try:
+        src = open(os.path.join(APP, "source", "functions", "dual_channel.c"), encoding="utf-8").read()
+    except OSError:
+        return code
+    fz = frozen_fix6("dcStepExt")
+    if ("int dcStepExt(" in src) or (fz is None):
+        return code
+    return code + "\n/* R98-FIX7: заморожений dcStepExt R98-FIX6 (сумісність старих тестів) */\n" + fz + "\n"
+
+
 def run_c(code, extra=()):
+    code = _dc_stepext_compat(code)
     d = tempfile.mkdtemp(prefix="r97_")
     try:
         c = os.path.join(d, "h.c"); open(c, "w", encoding="utf-8").write(code)
@@ -333,7 +356,9 @@ def test_vs_base(incs, cfgs):
         # R98-FIX2 Л: підказка літер у назві каналу -- окрема українська можливість (не режим), її файли перевіряє tools/test_r98fix2.py;
         # прототипи keypadAlphaPreviewMap/uiSmsKeyHintMap у заголовках вирізаються тим самим фільтром, що й R96-вставки (r96_tokfilter.py).
         from r96_tokfilter import strip_r96
-        l_files = ("application/source/io/keyboard.c", "application/source/user_interface/uiSmsKeys.c", "application/source/user_interface/menuChannelDetails.c")
+        # R98-FIX7 В: volume_low.c -- окрема можливість ENABLE_VOLUME_LOW (коліно K = 32 замість 16), її перевіряють tools/test_r78.py і tests/test_volume_low.c.
+        l_files = ("application/source/io/keyboard.c", "application/source/user_interface/uiSmsKeys.c", "application/source/user_interface/menuChannelDetails.c",
+                   "application/source/functions/volume_low.c")
         for name in ("AES0", "ENDATA", "UA"):
             bad = []
             for rel in files:

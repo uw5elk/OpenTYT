@@ -30,6 +30,7 @@ BASE = "a76fb2b"   # коміт бази R98-FIX1 (HEAD після R98)
 
 def run_in(code, stdin="", extra=()):
     """Збирає й запускає хост-програму зі stdin."""
+    code = T._dc_stepext_compat(code)   # R98-FIX7 А3: заморожений dcStepExt для замороженого dualStepB R98-FIX6
     d = tempfile.mkdtemp(prefix="r98f1_")
     try:
         c = os.path.join(d, "h.c"); open(c, "w", encoding="utf-8").write(code)

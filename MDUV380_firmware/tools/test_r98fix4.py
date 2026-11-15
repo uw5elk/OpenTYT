@@ -39,6 +39,7 @@ def base_file(rel):
 
 
 def run_c(code):
+    code = T._dc_stepext_compat(code)   # R98-FIX7 А3: заморожений dcStepExt для заморожених dualStepA/dualStepB R98-FIX6
     d = tempfile.mkdtemp(prefix="r98f4_")
     try:
         c = os.path.join(d, "h.c"); open(c, "w", encoding="utf-8").write(code)

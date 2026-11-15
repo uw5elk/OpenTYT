@@ -78,7 +78,10 @@ int main(void)
 
 def test_encoding_and_cycle():
     dc = os.path.join(APP, "source", "functions", "dual_channel.c")
-    out = T.run_c(CODE1 % dc)
+    # R98-FIX7 А3: коло ручки «канали -> VFO A -> VFO B» (dcStepExt) з прошивки прибрано -- його перевірки пропускаються (ручка лише по каналах: test_r98fix7.py)
+    has_ext = "int dcStepExt(" in T.rd(dc)
+    code1 = CODE1 if has_ext else (CODE1[:CODE1.index("\t/* dcStepExt:")] + "\treturn 0;\n}\n")
+    out = T.run_c(code1 % dc)
     check(out is not None, "R98 В1/В8: хостова збірка dual_channel.c")
     if out is None:
         return
@@ -92,6 +95,9 @@ def test_encoding_and_cycle():
     check(o.get("c1") == "1,0", "В1: старий збирач дає той самий запис, що Ex з типами 0 (байт-у-байт, резерв нулі): %s" % o.get("c1"))
     check(o.get("rt") == "1", "В1: збирання -> розбір для типів 0/1/2 зберігає все")
     check(o.get("k") == "1,0,0,0,1,0,1", "В4: ключ рівності (тип, індекс): канали -- за номером, VFO -- за типом, канал != VFO, два різні VFO не рівні: %s" % o.get("k"))
+    if not has_ext:
+        print("ПРОПУСК: В8 цикл ручки з VFO (dcStepExt) прибрано у R98-FIX7 -- ручка лише по каналах, див. tools/test_r98fix7.py")
+        return
     check(o.get("f") == "5,6,0,2,4,5" and o.get("b") == "6,5,4,2,0,6", "В8: цикл ручки вперед 4(позиція 12) -> VFO A -> VFO B -> 0 -> 2 -> 4 -> VFO A, назад -- навпаки; непридатні позиції (1,3) пропущено: %s | %s" % (o.get("f"), o.get("b")))
     check(o.get("s0") == "0,6,0,6", "В8: старт без позиції (від краю): вперед -> перший канал, назад -> VFO B: %s" % o.get("s0"))
     check(o.get("v") == "6,6,5" or o.get("v") == "5,6,6", "В8: зона без придатних каналів -- лишаються VFO A/B (цикл не зависає): %s" % o.get("v"))

@@ -9,9 +9,9 @@ tests/test_volume_low.c зі справжнім volume_low.c):
   5  таблиці в заголовку збігаються з формулами (DMR Q15 за 10^(-x/20); FM low-byte за 0xCC·10^(-x/20), не нижче 0x0F);
   6  sound.c: множник DMR ПІСЛЯ АРУ, пік для АРУ -- з вхідного відліку; підказки/мелодії/«Переслухати» не ослаблюються; рампа;
   7  volume_low.c: єдиний шлях запису в кодек -- radioWriteReg2byte(0x44, 0x06, ...); жодного DMR-значення, SPI/I2C напряму; блок пишеться лише через custom-data;
-  8  R81: vollow_ua.h і рядків «Мін.гучн.» немає ніде (пункт меню прибрано, режим фіксований K = 16);
+  8  R81: vollow_ua.h і рядків «Мін.гучн.» немає ніде (пункт меню прибрано, режим фіксований);
   9  збірка без ENABLE_VOLUME_LOW: токени препроцесора (gcc -E -P) sound.c, trx.c, applicationMain.c, codeplug.c збігаються з комітом R77B у усіх конфігураціях.
-  10 R81: режим фіксований K = 16 (VOLLOW_FIXED_MODE = 2, vlEffectiveMode, Load не читає блок 17) + мутанти.
+  10 R81 / R98-FIX7: режим фіксований (VOLLOW_FIXED_MODE = 2, vlEffectiveMode, Load не читає блок 17), коліно -- ОДНА константа VOLLOW_KNEE = 32 + мутанти.
 Запуск: python3 tools/test_r78.py   (база для 9: коміт з темою «R77B:», або змінна R78_BASE)"""
 import math
 import os
@@ -166,22 +166,31 @@ def main():
                         continue
                 check(re.search(r'"[^"\n]*Мін\.гучн\.[^"\n]*"', txt) is None, "R81: рядкового літерала пункту «Мін.гучн.» немає у %s" % f)
 
-    # 10 (R81): режим ФІКСОВАНИЙ K = 16 -- вихідний код і мутанти
+    # 10 (R81 / R98-FIX7): режим ФІКСОВАНИЙ, коліно K = VOLLOW_KNEE = 32 (одна іменована константа, R98-FIX7 В1) -- вихідний код і мутанти
     lgc = rd(os.path.join(APP, "include/functions/volume_low_logic.h"))
+    KNEE_NEW = 32
 
     def fixed_k_ok(logic, vlc):
         m = re.search(r"#define VOLLOW_FIXED_MODE\s+(\d+)U", logic)
-        k = re.search(r"static const uint8_t k\[VOLLOW_MODES\] = \{([^}]*)\}", logic)
+        kd = re.findall(r"#define VOLLOW_KNEE\s+(\d+)U", logic)
+        kn = re.search(r"static inline uint8_t vlKnee\(uint8_t mode\)\s*\{(.*?)\n\}", logic, re.S)
         e = re.search(r"static inline uint8_t vlEffectiveMode\(uint8_t raw\)\s*\{(.*?)\}", logic, re.S)
         ld = re.search(r"void volumeLowLoad\(void\)\s*\{(.*?)\n\}", vlc, re.S)
-        if not (m and k and e and ld):
+        if not (m and kn and e and ld) or len(kd) != 1:
             return False
-        ks = [int(x) for x in re.findall(r"(\d+)U", k.group(1))]
-        return (int(m.group(1)) == 2 and ks[2] == 16 and "return VOLLOW_FIXED_MODE;" in e.group(1) and "raw" not in re.sub(r"\(void\)raw;", "", e.group(1))
+        body = kn.group(1)
+        # коліно -- лише VOLLOW_KNEE: жодної таблиці коліна й числових значень коліна у vlKnee (0U для «вимкнено» -- дозволено)
+        nums = [int(x) for x in re.findall(r"\b(\d+)U?\b", body)]
+        return (int(m.group(1)) == 2 and int(kd[0]) == KNEE_NEW and "VOLLOW_KNEE" in body and "k[" not in body and all(x == 0 for x in nums)
+                and "static const uint8_t k[" not in logic
+                and "return VOLLOW_FIXED_MODE;" in e.group(1) and "raw" not in re.sub(r"\(void\)raw;", "", e.group(1))
                 and "s_mode = vlEffectiveMode(" in ld.group(1) and "codeplugGet" not in ld.group(1))
-    check(fixed_k_ok(lgc, vl), "R81: K = 16 (режим 2) зашито; Load не читає блок")
-    check(not fixed_k_ok(lgc.replace("VOLLOW_FIXED_MODE       2U", "VOLLOW_FIXED_MODE       1U"), vl), "мутант: K 8 ловиться")
-    check(not fixed_k_ok(lgc.replace("{ 0U, 8U, 16U, 24U }", "{ 0U, 8U, 12U, 24U }"), vl), "мутант: крива/коліно не 16 ловиться")
+    check(fixed_k_ok(lgc, vl), "R98-FIX7: K = VOLLOW_KNEE = 32 (одне місце), режим 2 зашито; Load не читає блок")
+    check(not fixed_k_ok(lgc.replace("VOLLOW_FIXED_MODE       2U", "VOLLOW_FIXED_MODE       1U"), vl), "мутант: інший фіксований режим ловиться")
+    check(not fixed_k_ok(re.sub(r"(#define VOLLOW_KNEE\s+)32U", r"\g<1>16U", lgc), vl), "мутант: K != 32 (стара 16) ловиться")
+    check(not fixed_k_ok(lgc.replace("(uint8_t)VOLLOW_KNEE : 0U", "(uint8_t)24U : 0U"), vl), "мутант: коліно у vlKnee не VOLLOW_KNEE (число) ловиться")
+    check(not fixed_k_ok(lgc.replace("(uint8_t)VOLLOW_KNEE : 0U", "(uint8_t)(VOLLOW_KNEE / 2U) : 0U"), vl), "мутант: коліно != нове (K/2) ловиться")
+    check(not fixed_k_ok(lgc + "\n#define VOLLOW_KNEE 16U\n", vl), "мутант: друге визначення коліна ловиться")
     check(not fixed_k_ok(lgc.replace("return VOLLOW_FIXED_MODE;", "return raw;"), vl), "мутант: режим береться з блока ловиться")
     check(not fixed_k_ok(lgc, vl.replace("s_mode = vlEffectiveMode(0U);", "s_mode = vlModeSanitize(raw);")), "мутант: Load читає значення блока ловиться")
     check(re.search(r"VOLLOW_DEPTH_DMR_DB\s+36U", lgc) and re.search(r"VOLLOW_DEPTH_FM_DB\s+23U", lgc) and re.search(r"VOLLOW_FM_FLOOR_LOW\s+0x0FU", lgc), "R81: D_DMR 36, D_FM 23, підлога 0x0F не змінились")
