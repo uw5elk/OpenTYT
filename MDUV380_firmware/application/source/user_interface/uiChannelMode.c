@@ -134,6 +134,7 @@ static void dualSuspend(void);
 static void dualScanning(void);
 static bool dualHandleKey(uiEvent_t *ev);
 static void dualStepB(int dir) __attribute__((noinline));   // R98-FIX5 А3: те саме (зона B на стеку)
+static void dualRedToggle(void);
 static bool dualIsVfoStepKey(const uiEvent_t *ev);
 static void dualRenderScreen(void);
 static uint16_t dualChannelA(void);
@@ -4413,7 +4414,7 @@ static const CodeplugZone_t *dualZoneB(CodeplugZone_t *buf)
 }
 
 // R98-FIX7 А1: ручка на картці B = канал -- лише КАНАЛИ (зона, вибрана SK2 + ручкою, інакше поточна), коло замикається на каналах (dcStepPos, A == B
-// дозволено -- нічого не пропускаємо). VFO з кола прибрано; на картці VFO ручка -- частота (dualIsVfoStepKey).
+// дозволено -- нічого не пропускаємо). VFO з кола прибрано: канал <-> VFO -- червоною (dualRedToggle); на картці VFO ручка -- частота (dualIsVfoStepKey).
 // B не з цієї зони -- крок від позиції A (як раніше).
 static void dualStepB(int dir)
 {
@@ -4502,11 +4503,82 @@ static void dualZoneStepB(int dir)
 	}
 }
 
+// R98-FIX7 Б: червона на картці з покажчиком -- канал <-> VFO, як стокова червона на екранах каналів/VFO (канали -> VFO, VFO -> канали):
+// картка A: канал -> VFO A; VFO (A або B) -> канал A, що був до VFO (стоковий «останній канал зони» -- його VFO не чіпає). Картка B: канал -> VFO B;
+// VFO (B або старий запис R98..R98-FIX5 «B = VFO A») -> закріплений канал B (номер у блоці 18 тип VFO не затирає). Нових змінних нема.
+// Правки каналу на VFO не переносяться (як у стоку: VFO -- свій запис); канал після VFO -- з кодплага (A -- як ручкою з VFO у R98-FIX4 Б11, B -- dualBReset).
+// A == B після перемикання (напр. A = VFO B з екрана VFO і B -> VFO B) -- допустимо: режим лишається, чергування тихо стоїть (dualAutoResume).
+static void dualRedToggle(void)
+{
+	// Діє на картку з покажчиком і при A == B (інакше червона на B у стані «A = VFO B, B = VFO B» перемкнула б A, а не повернула B на його канал)
+	if (dcPointerB())
+	{
+		if (dcBIsVfo() && ((dcChannelB() == 0U) || (codeplugAllChannelsIndexIsInUse(dcChannelB()) == false)))
+		{
+			soundSetMelody(MELODY_ERROR_BEEP);   // закріпленого каналу B нема / видалено -- лишаємось на VFO
+			return;
+		}
+
+		dualSuspend();
+		dualBReset();   // новий B: канал -- з кодплага, VFO -- свій запис; копія й ТГ B -- з нуля
+
+		if (dcBIsVfo())
+		{
+			dcSetTypeB(DC_TYPE_CHANNEL);   // відкладений запис; номер каналу B той самий
+		}
+		else
+		{
+			dcSetTypeB(DC_TYPE_VFO_B);     // відкладений запис; номер каналу B лишається для повернення
+		}
+
+		if (dcIsOnB())
+		{
+			dualTune(true);
+		}
+	}
+	else
+	{
+		dualSuspend();
+
+		if (dcAIsVfo())
+		{
+			if (dcIsOnB())
+			{
+				dualTune(false);   // з B -- спершу на A (індекс ТГ A, рація на A)
+			}
+
+			s_dualBKeep = 0U;   // R98-FIX5 А5: канал A вантажиться в канальний буфер -- там була копія B (A = VFO); B перечитається з кодплага
+			dcSetTypeA(DC_TYPE_CHANNEL);
+			currentChannelData = &channelScreenChannelData;
+			uiChannelModeLoadChannelData(false, true);   // стоковий «останній канал зони» -- той самий, що до VFO
+		}
+		else
+		{
+			if ((dcIsOnB() == false) && (s_dualBKeep != 0U))
+			{
+				dualSwapBufs();   // R98-FIX5 А5: робоча копія B переходить туди, де вона живе при A = VFO (канальний буфер)
+			}
+
+			dcSetTypeA(DC_TYPE_VFO_A);   // відкладений запис блоку 18 (тип поточного A)
+			dualTune(false);             // налаштувати на VFO (ізольовано); канальний буфер не чіпаємо
+		}
+	}
+
+	s_dualKeyMs = 0U;   // чергування -- одразу
+	uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+	dualAutoResume();
+
+	if (dualIsRunning() == false)
+	{
+		uiChannelModeUpdateScreen(0);
+	}
+}
+
 // R98-FIX4 Б4 / R98-FIX5 А0: dualIsAKey() прибрано -- у режимі всі клавіші й так ідуть у правила режиму (handleEventCore), тож ручка при A = VFO теж.
 
 // R98 В8 / R98-FIX7 А2: ручка (без SK1) на картці VFO з покажчиком (режим ввімкнено, екран каналу) -- крок частоти цього VFO, як ручка в стоковому
 // екрані VFO (handleUpKey/handleDownKey: stepFrequency на крок VFO). SK2 + ручка -- те саме, що було з R98 (у стоку SK2 + ручка вибирає поле RX/TX --
-// у картці його нема). Ручка з VFO на канал не виводить.
+// у картці його нема). Ручка з VFO на канал не виводить: канал <-> VFO -- червоною.
 static bool dualIsVfoStepKey(const uiEvent_t *ev)
 {
 	return (dcIsEnabled() && dualCardIsVfo(dcPointerB()) && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) &&   // R98-FIX4 Б3: картка з покажчиком -- VFO (A або B)
@@ -4664,8 +4736,13 @@ static bool dualHandleKey(uiEvent_t *ev)
 			return true;
 
 		case KEY_RED:
-			// R97-FIX4: червона режим НЕ вимикає (рішення власника): вимикають лише довге ▼ і пункт швидкого меню «Подв. прийом».
-			// Клавішу з'їдаємо без дій -- стокова червона на цьому екрані нічого корисного не робить, а чергування не переривається.
+			// R97-FIX4: червона режим НЕ вимикає (вимикають лише довге ▼ і пункт швидкого меню «Подв. прийом»).
+			// R98-FIX7 Б: коротка червона -- канал <-> VFO картки з покажчиком (як стокова червона: канали -> VFO і назад), див. dualRedToggle().
+			// Набір цифр має пріоритет: його червона скасовує раніше (dualEntryKey), сюди не доходить. Довге/повтор/PRESS -- з'їдаємо без дій (як було).
+			if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+			{
+				dualRedToggle();
+			}
 			return true;
 
 		default:
@@ -4682,8 +4759,8 @@ static bool dualHandleKey(uiEvent_t *ev)
 // обробники (ручка -- зміна каналу A, ▲/▼ -- ТГ/шумодав), а не в покажчик. Тепер набір -- власний стан режиму на тих самих змінних (нових нема):
 //   directChannelNumber > 0   -- набирається НОМЕР КАНАЛУ (абсолютний, як у рядку 1 картки) для картки з покажчиком;
 //   directChannelNumber == -1 -- набирається ЧАСТОТА для картки VFO (цифри -- у стоковому uiDataGlobal.FreqEnter, правила стокового екрана VFO).
-// Поки набір триває: цифри доповнюють, ▼ стирає останню (як у стоковому введенні частоти), зелена підтверджує, червона скасовує (виняток із «червона в режимі
-// нічого не робить»), решта клавіш (ручка, ▲, довге ▼, SK1/SK2 + ...) з'їдається -- картки й канали не перемикаються. Довге 0 / довге 8 -- як у стоку
+// Поки набір триває: цифри доповнюють, ▼ стирає останню (як у стоковому введенні частоти), зелена підтверджує, червона скасовує (R98-FIX7: набір має
+// пріоритет над «червона = канал <-> VFO»), решта клавіш (ручка, ▲, довге ▼, SK1/SK2 + ...) з'їдається -- картки й канали не перемикаються. Довге 0 / довге 8 -- як у стоку
 // (без звуку, відкриття пеленга): набір скасовується, клавіша йде стоковому обробнику. Тайм-ауту нема (у стоку його теж нема). PTT набору не чіпає: передача --
 // на каналі, де рація стоїть (набране не застосовано). Після підтвердження/скасування -- dualAutoResume().
 #define DUAL_ENTRY_FREQ    (-1)
