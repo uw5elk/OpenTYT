@@ -96,24 +96,34 @@ def compat_a_channel(f, text=None):
 # R98-FIX4 -- препроцесований текст бази 7205514, заморожений у tools/testdata/r98fix4_dw_frozen.json (база в CI/клоні може бути недоступна).
 # Їхні гарнеси моделюють світ до FIX5 (s_dualSqlB, dualIsAKey, шапка обраного каналу); нову поведінку перевіряє tools/test_r98fix5.py (COMPAT_FIX4 = False).
 COMPAT_FIX4 = True
-_FROZEN = None
+# R98-FIX6: те саме для функцій, змінених у R98-FIX6 (переходи, розкладка 4 рядки): тести R97..R98-FIX5 бачать їх у вигляді R98-FIX5 (база e29eeb7,
+# tools/testdata/r98fix5_dw_frozen.json); нову поведінку перевіряє tools/test_r98fix6.py (COMPAT_FIX5 = False).
+COMPAT_FIX5 = True
+_FROZEN = {}
+
+
+def _frozen(fname, name):
+    if fname not in _FROZEN:
+        try:
+            _FROZEN[fname] = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata", fname), encoding="utf-8"))
+        except (OSError, ValueError):
+            _FROZEN[fname] = {}
+    return _FROZEN[fname].get(name)
 
 
 def frozen_fix4(name):
-    global _FROZEN
-    if _FROZEN is None:
-        try:
-            _FROZEN = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata", "r98fix4_dw_frozen.json"), encoding="utf-8"))
-        except (OSError, ValueError):
-            _FROZEN = {}
-    return _FROZEN.get(name)
+    return _frozen("r98fix4_dw_frozen.json", name)
+
+
+def frozen_fix5(name):
+    return _frozen("r98fix5_dw_frozen.json", name)
 
 
 def carve_fn(text, sig):
     """Функція від сигнатури sig до парної закривальної дужки (лічба { })."""
-    if COMPAT_FIX4:
-        m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\(", sig)
-        fz = frozen_fix4(m.group(1)) if m else None
+    m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\(", sig)
+    for on, fn_ in ((COMPAT_FIX4, frozen_fix4), (COMPAT_FIX5, frozen_fix5)):
+        fz = fn_(m.group(1)) if (on and m) else None
         p = fz.find(sig) if fz is not None else -1
         if 0 <= p < 24:
             fz = fz[p:]
@@ -1396,8 +1406,8 @@ def test_fix5_z2(incs, cf):
     check(t is not None, "FIX6 З2/З3: uiChannelMode.c препроцесується в DUALCH")
     if t is None:
         return
-    if "#define DW_LET_BOX_X" in src:
-        print("ПРОПУСК: FIX6 З2/З3 -- розкладку карток R97-FIX6 (квадрат з літерою 16x32, 3 рядки) замінено в R98-FIX5 Б2 (5 рядків); показ і координати перевіряє tools/test_r98fix5.py")
+    if "#define DW_SQ_X" not in src:
+        print("ПРОПУСК: FIX6 З2/З3 -- розкладку карток R97-FIX6 (квадрат з літерою 16x32, 3 рядки) замінено (R98-FIX5 Б2 -- 5 рядків, R98-FIX6 Г -- 4 рядки); показ і координати перевіряє tools/test_r98fix6.py")
         return
     # ---- геометрія з макросів (кожна константа -- з коду) ----
     D = {"DISPLAY_Y_POS_BAR": 10}

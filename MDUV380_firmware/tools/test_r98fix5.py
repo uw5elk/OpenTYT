@@ -704,6 +704,9 @@ def analyse(D, line):
 
 
 def test_layout(t, src):
+    if "#define DW_ROW1_DY" in src:
+        print("ПРОПУСК: Б2/Б3 -- розкладку 5 рядків R98-FIX5 замінено в R98-FIX6 Г (4 рядки); зони, накладання й вміст перевіряє tools/test_r98fix6.py")
+        return None
     D = consts(src)
     need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_IN_R", "DW_LET_BOX_X", "DW_LET_BOX_DY", "DW_LET_BOX_W", "DW_LET_BOX_H", "DW_LET_X", "DW_LET_DY",
             "DW_TXT_X", "DW_FULL_X", "DW_LINE1_DY", "DW_LINE2_DY", "DW_LINE3_DY", "DW_LINE3_MAX", "DW_LOCK_X", "DW_LOCK_DY", "DW_LINE4_DY", "DW_LINE4_MAX", "DW_ARROW_DY",
