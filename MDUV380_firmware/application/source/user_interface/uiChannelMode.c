@@ -5287,10 +5287,10 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_SEL_W         4
 #define DW_IN_L          (DW_SEL_X + DW_SEL_W + 1)         // 7: перший стовпчик вмісту рядків 2..4 і стрілки ▶ (зазор x=6 після смуги)
 #define DW_IN_R          155                               // останній стовпчик вмісту (зазор x=156..157, рамка x=158)
-#define DW_ROW1_DY       3                                 // рядок 1 (8x16): літера + «номер назва» ліворуч, значки праворуч, y+3..18
+#define DW_ROW1_DY       3                                 // рядок 1 (8x16): літера + повна назва каналу (до 16 символів; R98-FIX9 А), y+3..18
 #define DW_ROW2_DY       20                                // рядок 2 (8x16): абонент / призначення / «FM частота» / поле набору, y+20..35
-#define DW_ROW3_DY       37                                // рядок 3 (6x8): TS/CC/ТГ або тони ліворуч; режим + потужність (або відстань + стрілка під час виклику) праворуч, y+37..44
-#define DW_ROW4_DY       46                                // рядок 4 (8 px): RX + S-метр (лише активна картка), y+46..53
+#define DW_ROW3_DY       37                                // рядок 3 (6x8): «номер» + TS/CC/ТГ або тони ліворуч; режим + потужність (або відстань + стрілка під час виклику) праворуч, y+37..44
+#define DW_ROW4_DY       46                                // рядок 4 (8 px): ліворуч -- мітка + S-метр (активна) або мітка + частота (неактивна); праворуч -- значки, y+46..54
 #define DW_TRI_X         DW_IN_L                           // 7: стрілка ▶ обраної x=7..10 (вертикальні відрізки 7, 5, 3, 1 px), рядки y+7..y+13
 #define DW_TRI_W         4
 #define DW_TRI_CY        (DW_ROW1_DY + 7)                  // 10: середній рядок рамки літери
@@ -5299,8 +5299,9 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_LET_H         15
 #define DW_LET_GX        (DW_LET_L + 2)                    // 14: клітинка 8x16 літери; «чорнило» A і B (шрифт 8x16) -- 7x11 у стовпчиках 0..6 і рядках 2..12 клітинки:
                                                            //     x=14..20, y+5..y+15 -- по 1 px до рамки з кожного боку (зліва/справа/зверху/знизу)
-#define DW_ROW1_TX       (DW_LET_L + DW_LET_W + 2)         // 25: «номер назва» -- за рамкою літери
-#define DW_ICON_DY       7                                 // значки рядка 1 (висота 8..9) -- по вертикальному центру рядка 1: y+7..15
+#define DW_ROW1_TX       (DW_LET_L + DW_LET_W + 2)         // 25: назва каналу -- за рамкою літери; 16 символів 8x16 -- x=25..152 (<= DW_IN_R)
+#define DW_ROW1_MAX      16                                // символів назви в рядку 1 (кодплаг не дозволяє більше)
+#define DW_ICON_DY       DW_ROW4_DY                        // значки (R98-FIX9 Б2) -- у рядку 4, праворуч: y+46..54 (висота 8..9; рамка картки -- y+56)
 #define DW_ICON_GAP      2                                 // зазор між значками і перед ними
 #define DW_LOCK_W        10                                // замок AES 10x9
 #define DW_UN_W          22                                // значок SMS DMR: «D» 6 + 1 + конверт 8 + 1 + число 6
@@ -5310,14 +5311,18 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_ARROW_DY      36                                // комірка стрілки 10x10 (lcDistArrowAfter): y+36..45 -- між рядками 2 і 4, по центру рядка 3
 #define DW_ARROW_CELL    10
 #define DW_ARROW_GAP     2                                 // = LC_ARROW_GAP (lc_distance.h); свій, бо заголовок дає макроси лише з LC_DISTANCE
+#define DW_ICONS_W       (DW_UN_W + DW_ICON_GAP + DW_AP_W + DW_ICON_GAP + DW_LOCK_W)   // 50: усі три значки разом (найгірший випадок) -- x=106..155
 #define DW_R3_SIZE       24                                // буфер правої частини рядка 3 (= LC_DIST_LABEL_SIZE 16 + 8)
 #define DW_METER_H       8
 #define DW_TAG_W         14                                // мітка «RX» 14x8, x=7..20
-#define DW_METER_SEG_W   10
-#define DW_METER_STEP    12
+#define DW_METER_SEG_W   6                                 // R98-FIX9 Б3: сегмент 6x8 з кроком 7 (було 10 з кроком 12) -- S-метр не заходить на значки рядка 4
+#define DW_METER_STEP    7
 #define DW_METER_SEGS    11                                // 1..9 -- S1..S9 (стокова шкала 4 дБ), 10 -- S9+10 дБ, 11 -- S9+20 дБ
-#define DW_METER_X       (DW_IN_R + 1 - (((DW_METER_SEGS - 1) * DW_METER_STEP) + DW_METER_SEG_W))   // 26: сегменти вирівняні до правого краю вмісту, x=26..155
+#define DW_METER_X       (DW_IN_L + DW_TAG_W + 1)          // 22: сегменти одразу за міткою «RX» (x=7..20), x=22..97; значки (до 50 px) починаються не раніше x=106
+#define DW_METER_END     (DW_METER_X + ((DW_METER_SEGS - 1) * DW_METER_STEP) + DW_METER_SEG_W)   // 98: перший стовпчик після S-метра (смуга фону для перемальовування)
 #define DW_METER_HOT     2                                 // R98-FIX3 В: скільки останніх сегментів -- кольором «понад S9» (червоні): S9+10 і S9+20
+typedef char dwMeterClearOfIcons[((DW_METER_END + 7) <= (DW_IN_R + 1 - DW_ICONS_W)) ? 1 : -1];   // R98-FIX9 Б3: S-метр (x<=97) не заходить на значки (x>=106) -- перевірка під час збірки
+typedef char dwName16Fits[((DW_ROW1_TX + (DW_ROW1_MAX * 8)) <= (DW_IN_R + 1)) ? 1 : -1];            // R98-FIX9 А1: 16 символів назви 8x16 вміщуються в полі вмісту
 
 // Текст абонента за тим самим правилом, що «останній абонент» звичайного екрана (contactDisplayPriority).
 static void dualCallerText(char *text17)
@@ -5340,19 +5345,25 @@ static void dualCallerText(char *text17)
 	(void)chomp(text17);
 }
 
-// Смуга активності картки (рядок 4, R98-FIX6 Г): мітка «RX» ліворуч + сегментований S-метр, вирівняний до правого краю вмісту (11 сегментів). Лише для активної
-// картки; перемальовує тільки свою ділянку. Сегменти 1..9 -- стокова шкала (SMETER_S0 + 4 дБ на S-одиницю, S9 = SMETER_S9), 10 і 11 -- S9+10 і S9+20 дБ (червоні).
+// Інверсна мітка («RX»/«TX») на початку рядка 4: x=DW_IN_L..+13 (R98-FIX9 Б4: однакова в активної й неактивної картки).
+static void dualRowTag(int16_t my, const char *tag)
+{
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+	displayFillRect(DW_IN_L, my, DW_TAG_W, DW_METER_H, false);
+	displayPrintCore((DW_IN_L + 1), my, tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+}
+
+// Смуга активності картки (рядок 4, R98-FIX6 Г; R98-FIX9 Б3): мітка «RX» + сегментований S-метр (11 сегментів 6x8, крок 7: x=22..97), правіше -- значки картки
+// (їх ця функція не чіпає: тік перемальовує лише свою ділянку x=DW_IN_L..DW_METER_END-1). Лише для активної картки. Сегменти 1..9 -- стокова шкала
+// (SMETER_S0 + 4 дБ на S-одиницю, S9 = SMETER_S9), 10 і 11 -- S9+10 і S9+20 дБ (червоні).
 static void dualMeterRow(int16_t y)
 {
 	int rssi = trxGetRSSIdBm(RADIO_DEVICE_PRIMARY);
 	int16_t my = (y + DW_ROW4_DY);
 
 	displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
-	displayFillRect(DW_IN_L, my, (DW_IN_R + 1 - DW_IN_L), DW_METER_H, true);
-
-	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
-	displayFillRect(DW_IN_L, my, DW_TAG_W, DW_METER_H, false);
-	displayPrintCore((DW_IN_L + 1), my, "RX", FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+	displayFillRect(DW_IN_L, my, (DW_METER_END - DW_IN_L), DW_METER_H, true);
+	dualRowTag(my, "RX");
 
 	for (int i = 1; i <= DW_METER_SEGS; i++)
 	{
@@ -5589,10 +5600,11 @@ static int16_t dualCardTgIdx(bool isB, uint8_t vfoType)
 	return (isB ? (int16_t)s_dualTgIdxB : s_dualTgIdxA);
 }
 
-// Одна картка (R98-FIX6 Г, 4 рядки; R98-FIX8 Б). Рамка -- 1 px кольором декору (однакова); обрана -- смуга ліворуч і ▶ кольором виділення. Рядок 1 (8x16):
-// ▶ (лише обрана), літера A/B у рамці 11x15 і «номер назва» / «VFO A частота» ліворуч; значки праворуч, вирівняні до правого краю: SMS «D» (картка-джерело), APRS «A» (картка B), замок AES.
-// Рядок 2 (8x16): абонент / призначення / «FM частота» / поле набору. Рядок 3 (6x8): TS/CC/ТГ або тони ліворуч; праворуч -- режим і потужність картки, під час
-// виклику -- відстань і стрілка. Рядок 4: RX + S-метр (лише активна; неактивна -- порожньо). Довгий текст обрізається до місця, що лишилось. Усе на стеку.
+// Одна картка (R98-FIX6 Г, 4 рядки; R98-FIX8 Б; R98-FIX9 розкладка). Рамка -- 1 px кольором декору (однакова); обрана -- смуга ліворуч і ▶ кольором виділення. Рядок 1 (8x16):
+// ▶ (лише обрана), літера A/B у рамці 11x15 і ПОВНА назва каналу (до 16 символів) / «VFO A частота» -- без номера й значків.
+// Рядок 2 (8x16): абонент / призначення / «FM частота» / поле набору. Рядок 3 (6x8): «номер» каналу + TS/CC/ТГ або тони ліворуч; праворуч -- режим і потужність картки,
+// під час виклику -- відстань і стрілка. Рядок 4 (6x8): ліворуч -- активна: «RX» + S-метр; неактивна: мітка й частота, якої ще нема на картці (DMR-канал -- RX; FM-канал і VFO -- TX);
+// праворуч, вирівняні до правого краю: SMS «D» (картка-джерело), APRS «A» (картка B), замок AES. Довгий текст обрізається до місця, що лишилось. Усе на стеку.
 static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, bool selected, bool active, bool callerHere)
 {
 	CodeplugChannel_t tmp;
@@ -5600,6 +5612,7 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	char name[17];
 	char l1[24];
 	char l2[17];
+	char f4[12];
 	char l3[DW_ROW3_MAX + 1];
 	char r3[DW_R3_SIZE];
 	char letter[2];
@@ -5608,7 +5621,11 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	bool isVfo = (vfoType != DC_TYPE_CHANNEL);   // R98 В3: картка VFO -- дані прямо із запису VFO
 	bool known = (isVfo || ((ch >= DC_CH_MIN) && (ch <= DC_CH_MAX) && codeplugAllChannelsIndexIsInUse(ch)));
 	bool aes = false;
+	size_t nn = 0U;   // довжина префікса «номер » у l3 (R98-FIX9 Б1)
+	uint32_t f4Freq = 0U;
+	const char *f4Tag = NULL;
 
+	f4[0] = 0;
 	name[0] = 0;
 	l1[0] = 0;
 	l2[0] = 0;
@@ -5631,6 +5648,11 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 #endif
 		}
 
+		if (isVfo == false)
+		{
+			nn = (size_t)snprintf(l3, sizeof(l3), "%u ", (unsigned)ch);   // R98-FIX9 Б1: номер каналу -- на початку рядка 3 (не обрізається)
+		}
+
 		if (rec->chMode == RADIO_MODE_DIGITAL)
 		{
 			bool numOnly;
@@ -5638,7 +5660,7 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 			uint32_t dest = dualDestination(rec, l2, &numOnly, &tsFlags, dualCardTgIdx(isB, vfoType));   // куди піде виклик (PTT) -- ТГ цієї картки
 			size_t n;
 
-			snprintf(l3, sizeof(l3), "TS%d CC%d", (int)dualEffectiveTs(rec, tsFlags), (int)rec->txColor);   // ефективний ТС передачі (Д2)
+			snprintf((l3 + nn), (sizeof(l3) - nn), "TS%d CC%d", (int)dualEffectiveTs(rec, tsFlags), (int)rec->txColor);   // ефективний ТС передачі (Д2)
 			n = strlen(l3);
 
 			if (callerHere && (LinkHead != NULL))
@@ -5658,15 +5680,32 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 			int mhz = (int)(rec->rxFreq / 100000U);
 
 			snprintf(l2, sizeof(l2), "FM %d.%05d", mhz, (int)(rec->rxFreq - ((uint32_t)mhz * 100000U)));
-			dualFmToneLine(l3, sizeof(l3), rec->rxTone, rec->txTone, (codeplugChannelGetFlag((CodeplugChannel_t *)rec, CHANNEL_FLAG_BW_25K) != 0));   // R98-FIX2 К2
+			dualFmToneLine((l3 + nn), (sizeof(l3) - nn), rec->rxTone, rec->txTone, (codeplugChannelGetFlag((CodeplugChannel_t *)rec, CHANNEL_FLAG_BW_25K) != 0));   // R98-FIX2 К2
 		}
+
+		// R98-FIX9 Б4: рядок 4 неактивної картки -- частота, якої ще нема на картці: DMR-канал -- RX (рядок 2 -- ТГ); FM-канал (RX у рядку 2) і VFO (RX у рядку 1 або 2) -- TX
+		if ((isVfo == false) && (rec->chMode == RADIO_MODE_DIGITAL))
+		{
+			f4Freq = rec->rxFreq;
+			f4Tag = "RX";
+		}
+		else
+		{
+			f4Freq = rec->txFreq;
+			f4Tag = "TX";
+		}
+
+		snprintf(f4, sizeof(f4), "%d.%05d", (int)(f4Freq / 100000U), (int)(f4Freq % 100000U));
 
 		if (dualDistText(r3, sizeof(r3), callerHere, &bearing, &bearingKnown) == false)
 		{
 			dualModePowerText(r3, sizeof(r3), rec);
 		}
 	}
-	// каналу нема (не задано/видалено) -- рядки порожні (без прочерків)
+	else if ((isVfo == false) && (ch >= DC_CH_MIN))
+	{
+		snprintf(l3, sizeof(l3), "%u", (unsigned)ch);   // каналу нема (не задано/видалено) -- лише номер, решта порожньо (без прочерків)
+	}
 
 	if (callerHere)
 	{
@@ -5718,10 +5757,17 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	}
 	else if (ch >= DC_CH_MIN)
 	{
-		snprintf(l1, sizeof(l1), ((name[0] != 0) ? "%u %s" : "%u"), (unsigned)ch, name);
+		snprintf(l1, sizeof(l1), "%s", name);   // R98-FIX9 А1: лише назва (без номера): 16 символів 8x16 -- x=25..152
 	}
 
-	// значки рядка 1 -- справа наліво від правого краю вмісту: замок, APRS, SMS; рядок 1 обрізається до місця, що лишилось
+	if (strlen(l1) > DW_ROW1_MAX)
+	{
+		l1[DW_ROW1_MAX] = 0;
+	}
+
+	displayPrintCore(DW_ROW1_TX, (y + DW_ROW1_DY), l1, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+
+	// R98-FIX9 Б2: значки -- у рядку 4, справа наліво від правого краю вмісту: замок, APRS, SMS (зліва направо: «D ✉», APRS «A», замок)
 	unsigned un = uiUnreadCountCard(isB);
 	unsigned aprsUn = (isB ? uiUnreadCount('A') : 0U);
 	int16_t cur = (DW_IN_R + 1);
@@ -5750,14 +5796,7 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 		cur -= DW_ICON_GAP;
 	}
 
-	size_t l1max = (size_t)((cur - DW_ROW1_TX) / 8);
-
-	if (strlen(l1) > l1max)
-	{
-		l1[l1max] = 0;
-	}
-
-	displayPrintCore(DW_ROW1_TX, (y + DW_ROW1_DY), l1, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+	(void)cur;
 
 #if defined(ENABLE_AES)
 	if (lockX >= 0)
@@ -5832,6 +5871,13 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	if (active)
 	{
 		dualMeterRow(y);
+	}
+	else if (f4Tag != NULL)
+	{
+		// R98-FIX9 Б4: неактивна картка -- мітка й частота (6x8); значки правіше (їх ліва межа >= x=106, текст закінчується x<=75)
+		dualRowTag((y + DW_ROW4_DY), f4Tag);
+		displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+		displayPrintCore(DW_METER_X, (y + DW_ROW4_DY), f4, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	}
 
 	displayThemeResetToDefault();
