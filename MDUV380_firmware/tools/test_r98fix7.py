@@ -260,7 +260,7 @@ int main(void)
 	dualRedToggle(); printf(",%d,%d,%d", typeA, typeB, chB); printf(",%s\n", at(1));
 	/* o1: старий запис R98..R98-FIX5 «B = VFO A», номер 7: червона на B -> канал 7 (номер не втрачено) */
 	setup(); typeB = 1; ptrB = 1; dualRedToggle(); printf("o1=%d,%d,%d", typeB, chB, beep); printf(",%s\n", at(1));
-	/* x1: B = VFO B, закріплений канал видалено (або 0): звук помилки, лишаємось на VFO, нічого не перемикаємо */
+	/* x1: B = VFO B, канал картки B видалено (або 0): звук помилки, лишаємось на VFO, нічого не перемикаємо */
 	setup(); typeB = 2; chB = 9; used[9] = 0; ptrB = 1; resumes = 0; dualRedToggle(); printf("x1=%d,%d,%d,%d", typeB, chB, beep, resumes);
 	setup(); typeB = 2; chB = 0; ptrB = 1; dualRedToggle(); printf(",%d,%d\n", typeB, beep); used[9] = 1;
 	/* a2: A = VFO A, рація на B (виклик на B), покажчик на A: червона -> рація на A, канал 3 */
@@ -275,8 +275,8 @@ TOGGLE_NAMES = {"a1": "картка A: канал -> VFO A -> той самий 
                 "b2": "картка B, рація на B: одразу на VFO B і назад на канал 7 з кодплага; правка A ціла",
                 "d1": "A у VFO A і B у VFO B одночасно, чергування між ними; повернення -- на свої канали",
                 "e1": "A = VFO B (вхід з екрана VFO B), червона на B -> A == B без збою; ще раз -- B знову канал 7",
-                "o1": "старий запис «B = VFO A» -> червона -> закріплений канал 7",
-                "x1": "закріплений канал B видалено / не задано -- звук помилки, лишаємось на VFO",
+                "o1": "старий запис «B = VFO A» -> червона -> канал картки B 7",
+                "x1": "канал картки B видалено / не задано -- звук помилки, лишаємось на VFO",
                 "a2": "A = VFO A, рація на B, покажчик на A: червона -> рація на A, канал 3"}
 TOGGLE_SIGS = ["static void dualSwapBufs(void)", "static _Bool dualBCopyValid(const CodeplugChannel_t *copy)", "static void dualBReset(void)",
                "static _Bool dualBufHoldsB(void)", "static uint8_t dualVfoIdx(void)", "static _Bool dualCardIsVfo(_Bool isB)", "static uint8_t dualCardVfo(_Bool isB)",

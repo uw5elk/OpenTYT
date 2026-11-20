@@ -421,7 +421,10 @@ def test_static():
     ctx = ax[max(0, i - 400):i + 400]
     check(i > 0 and "UI_CHANNEL_MODE" not in ctx and "menuSystemGetCurrentMenuNumber" not in ctx, "Б13: aprs_rx.c призупиняє приймач за dcIsEnabled(), без прив'язки до екрана (DW з екрана VFO -- так само)")
     # роумінг: стокова умова «лише в режимі каналів» (екран режиму -- завжди екран каналів, і з VFO теж) + окремий доданок «режим вимкнено»
-    check("(dcIsEnabled() == false) &&" in wh and "(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&" in wh, "Б13: wake_hop.c -- автоперехід роумінгу вимкнено, поки режим ввімкнено (окремий доданок; екран режиму -- екран каналів і при вмиканні з VFO)")
+    if "roamDwOnB" in wh:
+        print("ПРОПУСК: Б13 (роумінг вимкнено в режимі) -- R98-FIX8 В вмикає роумінг у DW (рішення власника 2026-11-20), див. tools/test_r98fix8.py")
+    else:
+        check("(dcIsEnabled() == false) &&" in wh and "(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&" in wh, "Б13: wake_hop.c -- автоперехід роумінгу вимкнено, поки режим ввімкнено (окремий доданок; екран режиму -- екран каналів і при вмиканні з VFO)")
     mut = ax.replace("if (dcIsEnabled())", "if (dcIsEnabled() && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE))", 1)
     i = mut.find("dcIsEnabled()")
     check(mut != ax and "UI_CHANNEL_MODE" in mut[max(0, i - 400):i + 400], "Б13 (мутант): пауза APRS лише з екрана каналів -- статична перевірка ловить")

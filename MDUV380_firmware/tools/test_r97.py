@@ -102,6 +102,9 @@ COMPAT_FIX5 = True
 # R98-FIX7: функції, змінені в R98-FIX7 (ручка лише по каналах, червона = канал <-> VFO, dcStepExt прибрано), тести R97..R98-FIX6 бачать у вигляді
 # R98-FIX6 (база dda0a43, tools/testdata/r98fix6_dw_frozen.json); нову поведінку перевіряє tools/test_r98fix7.py (COMPAT_FIX6 = False).
 COMPAT_FIX6 = True
+# R98-FIX8: функції, змінені в R98-FIX8 (смуга й ▶ виділення, літера 11x15, роумінг у DW: dualChannelA/dualLeaveOnB), тести R97..R98-FIX7 бачать у вигляді
+# R98-FIX7 (база e1ca1ad, tools/testdata/r98fix7_dw_frozen.json); нову поведінку перевіряє tools/test_r98fix8.py (COMPAT_FIX7 = False).
+COMPAT_FIX7 = True
 _FROZEN = {}
 
 
@@ -126,10 +129,14 @@ def frozen_fix6(name):
     return _frozen("r98fix6_dw_frozen.json", name)
 
 
+def frozen_fix7(name):
+    return _frozen("r98fix7_dw_frozen.json", name)
+
+
 def carve_fn(text, sig):
     """Функція від сигнатури sig до парної закривальної дужки (лічба { })."""
     m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\(", sig)
-    for on, fn_ in ((COMPAT_FIX4, frozen_fix4), (COMPAT_FIX5, frozen_fix5), (COMPAT_FIX6, frozen_fix6)):
+    for on, fn_ in ((COMPAT_FIX4, frozen_fix4), (COMPAT_FIX5, frozen_fix5), (COMPAT_FIX6, frozen_fix6), (COMPAT_FIX7, frozen_fix7)):
         fz = fn_(m.group(1)) if (on and m) else None
         p = fz.find(sig) if fz is not None else -1
         if 0 <= p < 24:

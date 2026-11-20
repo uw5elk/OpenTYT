@@ -324,6 +324,9 @@ def analyse(D, line):
 
 
 def test_layout(t, src, png_dir):
+    if "#define DW_SEL_X" in src:
+        print("ПРОПУСК: В/Г -- розкладку FIX6 (рамка обраної 2 px, літера 10x16) замінено в R98-FIX8 Б (смуга + ▶, літера 11x15); перевіряє tools/test_r98fix8.py")
+        return None
     D = F5.consts(src)
     need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_FRAME_SEL", "DW_IN_L", "DW_IN_R", "DW_ROW1_DY", "DW_ROW2_DY", "DW_ROW3_DY", "DW_ROW4_DY",
             "DW_LET_W", "DW_LET_X", "DW_ROW1_TX", "DW_ICON_DY", "DW_ICON_GAP", "DW_LOCK_W", "DW_UN_W", "DW_AP_W", "DW_AP_H", "DW_ROW3_MAX", "DW_ARROW_DY", "DW_ARROW_CELL",
