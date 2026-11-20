@@ -244,6 +244,9 @@ def letter_pads(D, d, y0):
 
 
 def test_layout(t, src, png_dir):
+    if "#define DW_ROW1_MAX" in src:
+        print("ПРОПУСК: Б -- розкладку FIX8 (номер і значки в рядку 1, S-метр на всю ширину) замінено в R98-FIX9 А/Б (повна назва в рядку 1, номер у рядку 3, значки в рядку 4); перевіряє tools/test_r98fix9.py")
+        return
     D = F5.consts(src)
     need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_SEL_X", "DW_SEL_W", "DW_IN_L", "DW_IN_R", "DW_ROW1_DY", "DW_ROW2_DY", "DW_ROW3_DY",
             "DW_ROW4_DY", "DW_TRI_X", "DW_TRI_W", "DW_TRI_CY", "DW_LET_L", "DW_LET_W", "DW_LET_H", "DW_LET_GX", "DW_ROW1_TX", "DW_ICON_DY", "DW_UN_W", "DW_AP_W", "DW_AP_H",

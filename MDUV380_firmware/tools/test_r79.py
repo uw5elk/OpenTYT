@@ -6,7 +6,7 @@ Tk-частина (xvfb), для масштабів 1.0/1.25/1.5/2.0 × (сис�
   1  підпис стану рації не перекривається кнопкою поруч (у т.ч. після зміни тексту «рації нема» -> «COM12»: причина R79 -- FlowFrame не перераховувався);
   2  довгий жовтогарячий рядок переноситься: wraplength не більший за ширину панелі, правий край у межах панелі;
   3  дерево: усі пункти досяжні (смуга прокрутки з'являється, коли не вміщується; see() останнього пункту), стовпець не вужчий за найдовшу назву;
-  4  межі: перетягування журналу й дерева працює, мінімуми дотримуються, нічого не зникає; «Збільшити» робить журнал вищим;
+  4  межі: перетягування журналу й дерева працює, мінімуми дотримуються, нічого не зникає; (R98-FIX9: кнопок «Збільшити»/«Зменшити» нема -- висоту журналу міняють межею, вона з «хватом»);
   5  діалог: зміннорозмірний, мінімальний розмір задано, віджети розтягуються.
 Запуск: xvfb-run -a python3.12 tools/test_r79.py"""
 import json
@@ -160,14 +160,36 @@ def t_tk():
             pt.set(300)
             lp.spin(app, 0.2)
             h0 = app.vpane.winfo_height() - pl.position()
-            app.toggle_log_big()
+            # R98-FIX9 Г: кнопок «Збільшити»/«Зменшити» над журналом нема (висоту журналу міняють межею мишкою); типова висота -- як і була
+            check(not hasattr(app, "log_big_btn") and not hasattr(app, "toggle_log_big"), "R98-FIX9 Г [%s]: у застосунку лишилась кнопка/метод «Збільшити»/«Зменшити» журналу" % lab)
+            labels = []
+            stack = [app]
+            while stack:
+                w = stack.pop()
+                try:
+                    labels.append(str(w.cget("text")))
+                except tk.TclError:
+                    pass
+                stack.extend(w.winfo_children())
+            check(not any(t in ("Збільшити", "Зменшити") for t in labels), "R98-FIX9 Г [%s]: у вікні є віджет «Збільшити»/«Зменшити»" % lab)
+            want0 = max(app._default_log_height(), app._min_log_height())   # на великих масштабах мінімум (заголовок + 2 рядки) вищий за типові 100 px
+            check(abs(h0 - want0) <= 6, "R98-FIX9 Г [%s]: типова висота журналу %d, очікувано ~%d" % (lab, h0, want0))
+            # межу видно й легко захопити: зона >= 5 px, «хват» (крапки) задано, на межі курсор зміни розміру
+            st = ttk.Style(app)
+            thick = int(str(st.lookup("Sash", "sashthickness") or 0))
+            grip = int(str(st.lookup("Sash", "gripcount") or 0))
+            check(thick >= 5 and grip >= 10, "R98-FIX9 Г3 [%s]: межа журналу -- товщина %d px (>= 5), крапок «хвата» %d (>= 10)" % (lab, thick, grip))
+            app.vpane.event_generate("<Motion>", x=app.vpane.winfo_width() // 2, y=app.vpane.sashpos(0) + 2, warp=True)
+            lp.spin(app, 0.2)
+            check("double_arrow" in str(app.vpane.cget("cursor")), "R98-FIX9 Г3 [%s]: на межі журналу курсор зміни розміру (є «%s»)" % (lab, app.vpane.cget("cursor")))
+            pl.set(app.vpane.winfo_height() - app._default_log_height() - 150)
             lp.spin(app, 0.3)
             h1 = app.vpane.winfo_height() - pl.position()
-            check(h1 > h0 + 80, "R79 [%s]: «Збільшити» не збільшило журнал (%d -> %d)" % (lab, h0, h1))
-            app.toggle_log_big()
+            check(h1 > h0 + 80, "R98-FIX9 Г [%s]: межею журнал збільшується (%d -> %d)" % (lab, h0, h1))
+            pl.reset()
             lp.spin(app, 0.3)
             h2 = app.vpane.winfo_height() - pl.position()
-            check(abs(h2 - h0) <= 4, "R79 [%s]: «Зменшити» не повернуло висоту (%d -> %d)" % (lab, h2, h0))
+            check(abs(h2 - h0) <= 4, "R98-FIX9 Г [%s]: подвійне клацання (reset) повертає типову висоту (%d -> %d)" % (lab, h2, h0))
             # 5. діалог
             win = tk.Toplevel(app)
             ttk.Label(win, text="Тест").pack(fill="both", expand=True)

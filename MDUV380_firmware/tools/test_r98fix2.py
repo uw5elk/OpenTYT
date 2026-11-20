@@ -415,7 +415,8 @@ def test_part_k(incs, cf):
             mo = run_in(TONE_HARNESS.replace("@@FN1@@", f1).replace("@@FN2@@", m)) if m != f2 else None
             check(m != f2 and mo is not None and mo != base, "К2 (мутант): %s -- ловиться" % what)
     uc = T.rd(os.path.join(UI, "uiChannelMode.c"))
-    check("dualFmToneLine(l3, sizeof(l3), rec->rxTone, rec->txTone," in uc, "К2: рядок 3 FM будується з rxTone/txTone запису (канал і VFO -- один шлях rec)")
+    check(("dualFmToneLine(l3, sizeof(l3), rec->rxTone, rec->txTone," in uc) or ("dualFmToneLine((l3 + nn), (sizeof(l3) - nn), rec->rxTone, rec->txTone," in uc),   # R98-FIX9: перед тонами -- префікс «номер »
+           "К2: рядок 3 FM будується з rxTone/txTone запису (канал і VFO -- один шлях rec)")
     check("CTCSS %d.%d" not in uc[uc.find("static void dualRenderRow("):uc.find("static void dualRenderRow(") + 6000], "К2: старий показ лише RX-тону прибрано")
     # --- К1 відстань
     if "static void dualAppendDistance(" not in uc:
