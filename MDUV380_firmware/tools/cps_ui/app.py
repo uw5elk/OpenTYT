@@ -243,7 +243,7 @@ class CpsApp(DocActions, tk.Tk):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         style = ttk.Style(self)
-        style.configure("Sash", sashthickness=gt.SASH, gripcount=0)
+        style.configure("Sash", sashthickness=gt.SASH, gripcount=gt.SASH_GRIP)   # R98-FIX9 Г3: межа з «хватом» (крапки по центру)
         # Дерево зливається з лівою колонкою (без власної рамки й окремого тла): порожнє місце під пунктами не виглядає «коробкою».
         style.configure("Nav.Treeview", rowheight=24, background=gt.P["bg"], fieldbackground=gt.P["bg"], bordercolor=gt.P["bg"],
                         lightcolor=gt.P["bg"], darkcolor=gt.P["bg"], borderwidth=0)
@@ -297,8 +297,6 @@ class CpsApp(DocActions, tk.Tk):
         ttk.Label(head, text="Журнал").pack(side="left")
         self.clear_btn = ttk.Button(head, text="Очистити", command=self.clear_log)
         self.clear_btn.pack(side="right")
-        self.log_big_btn = ttk.Button(head, text="Збільшити", command=self.toggle_log_big)    # R79: журнал на пів вікна й назад
-        self.log_big_btn.pack(side="right", padx=(0, 6))
         ttk.Label(head, text="(межу над журналом можна тягнути)", foreground=gt.P["muted"]).pack(side="left", padx=8)
         self.log_text = scrolledtext.ScrolledText(self.log_frame, height=4, state="disabled", font=("Consolas", 9))
         gt.style_text(self.log_text)
@@ -601,20 +599,6 @@ class CpsApp(DocActions, tk.Tk):
 
     def _update_log_toggle(self):
         self.log_toggle.config(text="Сховати журнал" if self._log_open else "Показати журнал")
-
-    def toggle_log_big(self):
-        """R79: «Збільшити» -- журнал займає близько половини висоти; «Зменшити» -- типова висота."""
-        try:
-            self.update_idletasks()
-            h = self.vpane.winfo_height()
-            if h <= 1 or not self._log_open:
-                return
-            _lw, lh = self._measure_sashes()
-            big = bool(lh and lh < h * 0.4)
-            self.pane_log.set(h - int(h * 0.5) if big else h - self._default_log_height())
-            self.log_big_btn.config(text="Зменшити" if big else "Збільшити")
-        except tk.TclError:
-            pass
 
     def toggle_log(self):
         if self._log_open:

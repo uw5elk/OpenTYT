@@ -72,7 +72,8 @@ GAP = 8                # проміжок між сусідніми елемен
 PAD = 12               # поле панелі зліва/справа (заголовки, форми, таблиці)
 SECTION_GAP = 10       # проміжок між блоками панелі по вертикалі
 BTN_EXTRA = 2          # запас у «символах» до найдовшого підпису кнопок групи, коли їм задають однакову ширину
-SASH = 6               # товщина рухомої межі між частинами вікна, px
+SASH = 6               # товщина рухомої межі між частинами вікна, px (зона захоплення мишкою; ttk додає курсор зміни розміру)
+SASH_GRIP = 24         # R98-FIX9 Г3: «хват» -- крапки по центру межі (помітно, де її тягнути); 0 -- без крапок
 
 
 def _lum(h):
@@ -205,7 +206,7 @@ def apply(root):
         st.configure(name, background=P["accent"], troughcolor=P["field"], bordercolor=P["border"], lightcolor=P["accent"],
                      darkcolor=P["accent"])
     st.configure("TPanedwindow", background=P["bg"])
-    st.configure("Sash", background=P["border"], bordercolor=P["border"], sashthickness=SASH, gripcount=0)
+    st.configure("Sash", background=P["border"], bordercolor=P["border"], lightcolor=P["muted"], darkcolor=P["muted"], sashthickness=SASH, gripcount=SASH_GRIP)
     st.map("Sash", background=[("active", P["accent"])])
 
 
