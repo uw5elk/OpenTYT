@@ -5270,32 +5270,40 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_CARD_H        57                                // y..y+56
 #define DW_CARD_A_Y      (DISPLAY_Y_POS_BAR + 1)           // 11: одразу під рядком шапки
 #define DW_CARD_B_Y      (DW_CARD_A_Y + DW_CARD_H + 3)     // 71; картка B закінчується на y=127 (останній рядок екрана)
-// R98-FIX6 В/Г: «дві рівні картки, 4 рядки». Рамка: обрана картка -- 2 px кольором виділення теми (THEME_ITEM_BG_MENU_ITEM_SELECTED), інша -- 1 px
-// приглушеним кольором декору (THEME_ITEM_FG_DECORATION). Поле вмісту однакове для обох: x=DW_IN_L..DW_IN_R (по 3 px від рамки з кожного боку --
-// однакові поля), y+3..y+53. Рядки: 1 і 2 -- 8x16, 3 і 4 -- 8 px; інтервал між рядками однаковий -- 1 px. Таблиця координат -- у r98-fix6-result.md.
-#define DW_FRAME_SEL     2                                 // товщина рамки обраної картки
-#define DW_IN_L          4                                 // перший стовпчик вмісту (рамка x=1..2, зазор x=3)
-#define DW_IN_R          155                               // останній стовпчик вмісту (зазор x=156, рамка x=157..158)
+// R98-FIX6 Г: «дві рівні картки, 4 рядки»; R98-FIX8 Б: рамка картки однакова для обох (1 px, колір декору THEME_ITEM_FG_DECORATION). Обрана картка --
+// ВЕРТИКАЛЬНА СМУГА 4 px уздовж лівого краю всередині рамки (x=2..5) і стрілка ▶ (4x7) перед рамкою літери, обидві -- кольором виділення теми
+// (THEME_ITEM_BG_MENU_ITEM_SELECTED, той самий, що рамка обраної у FIX6). Необрана -- ці стовпчики порожні; вміст обох карток з тих самих x, тож при зміні
+// обраної нічого не зсувається. Поле вмісту: x=DW_IN_L..DW_IN_R, y+3..y+53. Рядки: 1 і 2 -- 8x16, 3 і 4 -- 8 px; інтервал 1 px. Таблиця -- r98-fix8-result.md.
+#define DW_SEL_X         (DW_CARD_X + 1)                   // 2: смуга обраної x=2..5, y+1..y+55 (усередині рамки)
+#define DW_SEL_W         4
+#define DW_IN_L          (DW_SEL_X + DW_SEL_W + 1)         // 7: перший стовпчик вмісту рядків 2..4 і стрілки ▶ (зазор x=6 після смуги)
+#define DW_IN_R          155                               // останній стовпчик вмісту (зазор x=156..157, рамка x=158)
 #define DW_ROW1_DY       3                                 // рядок 1 (8x16): літера + «номер назва» ліворуч, значки праворуч, y+3..18
 #define DW_ROW2_DY       20                                // рядок 2 (8x16): абонент / призначення / «FM частота» / поле набору, y+20..35
 #define DW_ROW3_DY       37                                // рядок 3 (6x8): TS/CC/ТГ або тони ліворуч; режим + потужність (або відстань + стрілка під час виклику) праворуч, y+37..44
 #define DW_ROW4_DY       46                                // рядок 4 (8 px): RX + S-метр (лише активна картка), y+46..53
-#define DW_LET_W         10                                // рамка літери 10x16: x=DW_IN_L..13, y+3..18 (обрана -- залита, інша -- контур)
-#define DW_LET_X         (DW_IN_L + 1)                     // літера 8x16: x=5..12
-#define DW_ROW1_TX       (DW_IN_L + DW_LET_W + 2)          // 16: «номер назва» -- одразу за рамкою літери
+#define DW_TRI_X         DW_IN_L                           // 7: стрілка ▶ обраної x=7..10 (вертикальні відрізки 7, 5, 3, 1 px), рядки y+7..y+13
+#define DW_TRI_W         4
+#define DW_TRI_CY        (DW_ROW1_DY + 7)                  // 10: середній рядок рамки літери
+#define DW_LET_L         (DW_TRI_X + DW_TRI_W + 1)         // 12: рамка літери x=12..22 (11 px -- непарна), y+3..y+17 (15 px -- непарна), однакова для обох карток
+#define DW_LET_W         11
+#define DW_LET_H         15
+#define DW_LET_GX        (DW_LET_L + 2)                    // 14: клітинка 8x16 літери; «чорнило» A і B (шрифт 8x16) -- 7x11 у стовпчиках 0..6 і рядках 2..12 клітинки:
+                                                           //     x=14..20, y+5..y+15 -- по 1 px до рамки з кожного боку (зліва/справа/зверху/знизу)
+#define DW_ROW1_TX       (DW_LET_L + DW_LET_W + 2)         // 25: «номер назва» -- за рамкою літери
 #define DW_ICON_DY       7                                 // значки рядка 1 (висота 8..9) -- по вертикальному центру рядка 1: y+7..15
 #define DW_ICON_GAP      2                                 // зазор між значками і перед ними
 #define DW_LOCK_W        10                                // замок AES 10x9
 #define DW_UN_W          22                                // значок SMS DMR: «D» 6 + 1 + конверт 8 + 1 + число 6
 #define DW_AP_W          14                                // маркер APRS (інвертований бокс «A»+число) 14x9
 #define DW_AP_H          9
-#define DW_ROW3_MAX      25                                // (DW_IN_R + 1 - DW_IN_L) / 6
+#define DW_ROW3_MAX      24                                // (DW_IN_R + 1 - DW_IN_L) / 6
 #define DW_ARROW_DY      36                                // комірка стрілки 10x10 (lcDistArrowAfter): y+36..45 -- між рядками 2 і 4, по центру рядка 3
 #define DW_ARROW_CELL    10
 #define DW_ARROW_GAP     2                                 // = LC_ARROW_GAP (lc_distance.h); свій, бо заголовок дає макроси лише з LC_DISTANCE
 #define DW_R3_SIZE       24                                // буфер правої частини рядка 3 (= LC_DIST_LABEL_SIZE 16 + 8)
 #define DW_METER_H       8
-#define DW_TAG_W         14                                // мітка «RX» 14x8, x=4..17
+#define DW_TAG_W         14                                // мітка «RX» 14x8, x=7..20
 #define DW_METER_SEG_W   10
 #define DW_METER_STEP    12
 #define DW_METER_SEGS    11                                // 1..9 -- S1..S9 (стокова шкала 4 дБ), 10 -- S9+10 дБ, 11 -- S9+20 дБ
@@ -5572,8 +5580,8 @@ static int16_t dualCardTgIdx(bool isB, uint8_t vfoType)
 	return (isB ? (int16_t)s_dualTgIdxB : s_dualTgIdxA);
 }
 
-// Одна картка (R98-FIX6 В/Г, 4 рядки). Рамка: обрана -- 2 px кольором виділення теми, інша -- 1 px кольором декору. Рядок 1 (8x16): літера A/B у рамці
-// (обрана -- залита) і «номер назва» / «VFO A частота» ліворуч; значки праворуч, вирівняні до правого краю: SMS «D» (картка-джерело), APRS «A» (картка B), замок AES.
+// Одна картка (R98-FIX6 Г, 4 рядки; R98-FIX8 Б). Рамка -- 1 px кольором декору (однакова); обрана -- смуга ліворуч і ▶ кольором виділення. Рядок 1 (8x16):
+// ▶ (лише обрана), літера A/B у рамці 11x15 і «номер назва» / «VFO A частота» ліворуч; значки праворуч, вирівняні до правого краю: SMS «D» (картка-джерело), APRS «A» (картка B), замок AES.
 // Рядок 2 (8x16): абонент / призначення / «FM частота» / поле набору. Рядок 3 (6x8): TS/CC/ТГ або тони ліворуч; праворуч -- режим і потужність картки, під час
 // виклику -- відстань і стрілка. Рядок 4: RX + S-метр (лише активна; неактивна -- порожньо). Довгий текст обрізається до місця, що лишилось. Усе на стеку.
 static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, bool selected, bool active, bool callerHere)
@@ -5661,36 +5669,29 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 		dualEntryText(l2, sizeof(l2));   // R98-FIX3 А1: набір цифр для цієї картки -- поле введення в рядку 2
 	}
 
-	// рамка картки (R98-FIX6 В1): обрана -- 2 px кольором виділення теми; інша -- 1 px приглушеним кольором декору
+	// рамка картки (R98-FIX8 Б2): однакова для обох -- 1 px кольором декору
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
+	displayDrawRect(DW_CARD_X, y, DW_CARD_W, DW_CARD_H, true);
+
+	// R98-FIX8 Б2: обрана -- смуга 4 px уздовж лівого краю й стрілка ▶ перед літерою (кольором виділення теми); залита літера й рамка 2 px FIX6 прибрані --
+	// смуга й стрілка вже кажуть «сюди підуть PTT/клавіші», а дублювання лише забирало місце. Необрана -- стовпчики смуги й стрілки порожні.
 	if (selected)
 	{
 		displayThemeApply(THEME_ITEM_BG_MENU_ITEM_SELECTED, THEME_ITEM_BG);
-		for (int16_t k = 0; k < DW_FRAME_SEL; k++)
+		displayFillRect(DW_SEL_X, (y + 1), DW_SEL_W, (DW_CARD_H - 2), false);
+
+		for (int16_t k = 0; k < DW_TRI_W; k++)
 		{
-			displayDrawRect((DW_CARD_X + k), (y + k), (DW_CARD_W - (2 * k)), (DW_CARD_H - (2 * k)), true);
+			displayDrawLine((DW_TRI_X + k), (y + DW_TRI_CY - (DW_TRI_W - 1) + k), (DW_TRI_X + k), (y + DW_TRI_CY + (DW_TRI_W - 1) - k), true);
 		}
 	}
-	else
-	{
-		displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
-		displayDrawRect(DW_CARD_X, y, DW_CARD_W, DW_CARD_H, true);
-	}
 
-	// літера в рамці: обрана -- залита рамка, літера кольором фону; інша -- контур
+	// R98-FIX8 Б1: літера в рамці 11x15 (непарні), однакова для обох карток; спершу літера (клітинка 8x16 малює й фон), потім рамка поверх
 	letter[0] = (isB ? 'B' : 'A');
 	letter[1] = 0;
 	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
-
-	if (selected)
-	{
-		displayFillRect(DW_IN_L, (y + DW_ROW1_DY), DW_LET_W, 16, false);
-	}
-	else
-	{
-		displayDrawRect(DW_IN_L, (y + DW_ROW1_DY), DW_LET_W, 16, true);
-	}
-
-	displayPrintCore(DW_LET_X, (y + DW_ROW1_DY), letter, FONT_SIZE_3, TEXT_ALIGN_LEFT, selected);
+	displayPrintCore(DW_LET_GX, (y + DW_ROW1_DY), letter, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+	displayDrawRect(DW_LET_L, (y + DW_ROW1_DY), DW_LET_W, DW_LET_H, true);
 
 	if (isVfo)
 	{
