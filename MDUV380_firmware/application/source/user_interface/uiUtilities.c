@@ -113,11 +113,19 @@ static const uint8_t uiAesPadlockBitmap[] = {
 // знизу виживало, бо це оновлення ніколи не чіпає y>=14. Початок з y=14 лежить повністю
 // нижче цієї смуги, а 9px висоти закінчуються на y=22 -- на один чистий піксель вище за
 // DISPLAY_Y_POS_CONTACT (24).
+#if defined(ENABLE_DMR_DATA) && defined(DUAL_CHANNEL_ENABLED)
+static int16_t uiAesPadlockX(int16_t defaultX);   // R98-FIX10: визначена нижче, поруч із конвертом непрочитаних
+#endif
 void uiDrawAesEnabledIcon(void)
 {
 	if (uiChannelHasAesEnabled())
 	{
+#if defined(ENABLE_DMR_DATA) && defined(DUAL_CHANNEL_ENABLED)
+		// R98-FIX10: не налазити на конверт «D ✉ N» (він у тому ж куті, y=16..24)
+		displayDrawXBitmap(uiAesPadlockX(DISPLAY_SIZE_X - UI_AES_PADLOCK_W - 3), 14, uiAesPadlockBitmap, UI_AES_PADLOCK_W, UI_AES_PADLOCK_H, true);
+#else
 		displayDrawXBitmap(DISPLAY_SIZE_X - UI_AES_PADLOCK_W - 3, 14, uiAesPadlockBitmap, UI_AES_PADLOCK_W, UI_AES_PADLOCK_H, true);
+#endif
 	}
 }
 #if defined(DUAL_CHANNEL_ENABLED)
@@ -2248,6 +2256,28 @@ unsigned uiUnreadCount(char kind)
 #endif
 	(void)kind;
 	return 0U;
+}
+#endif
+
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA) && defined(DUAL_CHANNEL_ENABLED)
+// R98-FIX10: замок шифрування стоїть у правому куті (x=147..156, y=14..22), а блок «D ✉ N» непрочитаних SMS
+// притиснутий до правого краю (x=DISPLAY_SIZE_X-2-msgEnvelopeWidth .. 157, y=16..24) -- при непрочитаних на каналі з
+// шифруванням вони лягали один на одного. Коли конверт малюється (та сама умова, що в шапці: лічильник > 0 і це
+// не екран «Подвійного прийому», де конверти в картках), замок зсувається ліворуч від блока на 2 пікселі проміжку.
+// Без непрочитаних -- звичайна позиція (defaultX). Ширина блока залежить від кількості цифр (1 або 2).
+// Лише у збірці з режимом (DUAL_CHANNEL_ENABLED): збірки без нього лишаються байт-у-байт як до R98-FIX10.
+#define UI_AES_PADLOCK_ENV_GAP 2
+static int16_t uiAesPadlockX(int16_t defaultX)
+{
+	// на екрані режиму конверти малюють картки (як у шапці) -- замок лишається на місці
+	int unread = (dualEnvelopeInCards() ? 0 : dmrSmsUnreadCount());
+
+	if (unread > 0)
+	{
+		return (int16_t)(DISPLAY_SIZE_X - 2 - msgEnvelopeWidth((unsigned)unread) - UI_AES_PADLOCK_ENV_GAP - UI_AES_PADLOCK_W);
+	}
+
+	return defaultX;
 }
 #endif
 
