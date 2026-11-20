@@ -3988,6 +3988,12 @@ static void dualTune(bool toB)
 
 static uint16_t dualChannelA(void)
 {
+#if defined(ENABLE_ROAM_RETRY)
+	if (roamIsActive())
+	{
+		return roamActiveChannel();   // R98-FIX8 В: A -- на каналі, знайденому роумінгом (поза «останнім каналом зони», як у звичайному режимі)
+	}
+#endif
 	return ((currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0) ? (uint16_t)codeplugGetLastUsedChannelNumberInCurrentZone() : 0U);
 }
 
@@ -4169,6 +4175,9 @@ static void dualLeaveOnB(void)
 		uiNotificationShowShort(2000U, currentLanguage->dual_zone_all, true);
 	}
 
+#if defined(ENABLE_ROAM_RETRY)
+	roamClear();   // R98-FIX8 В: виходимо на B -- «знайдений» канал A (роумінг) лишається позаду; інакше завантаження нижче взяло б його номер для буфера B
+#endif
 	uiChannelModeLoadChannelData(true, false);   // R98-FIX6 Б2: B уже в канальному буфері (з правками); номер -- «останній канал зони» = B
 }
 

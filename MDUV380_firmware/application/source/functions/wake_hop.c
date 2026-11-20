@@ -336,6 +336,15 @@ int roamChannelStep(int fromNum, int dir)
 	return stepCircle(fromNum, dir, 0U, true);
 }
 
+#if defined(DUAL_CHANNEL_ENABLED)
+/* R98-FIX8 В: «Подвійний прийом», передача з картки B (рація налаштована на B). Знайдений канал стає КАНАЛОМ КАРТКИ B (dcSetChannelB, відкладений запис,
+ * як ручкою), а не «знайденим» станом s_active/s_num: той належить каналу зони (картці A) і лишається недоторканим. Нових змінних нема -- стан B живе в блоці 18. */
+static bool roamDwOnB(void)
+{
+	return (dcIsEnabled() && dcIsOnB());
+}
+#endif
+
 void wakeHopBegin(void)
 {
 	wakeHopTriedReset(&s_tried);
@@ -345,15 +354,19 @@ void wakeHopBegin(void)
 	s_success = false;
 	s_listMode = false;
 	s_origRoamed = s_active;
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (roamDwOnB())
+	{
+		s_origRoamed = false;   /* R98-FIX8 В: вихідний канал B -- канал картки B (chB), не «знайдений» стан A */
+	}
+#endif
 	s_origNum = (uint16_t)uiDataGlobal.currentSelectedChannelNumber;
 	s_curNum = s_origNum;
 
 	/* Роумінг -- лише в режимі каналів, цифровий канал, не хотспот/реверс/talkaround, функція увімкнена,
-	 * поточний канал у списку. Одне рішення на PTT. */
+	 * поточний канал у списку. Одне рішення на PTT. R98-FIX8 В: і в «Подвійному прийомі» (R97 його призупиняв) -- на картці-каналі A або B
+	 * (картка VFO: currentSelectedChannelNumber = CH_DETAILS_VFO_CHANNEL -- поза межами нижче, роумінгу нема, як у стоковому VFO). */
 	if (wakeHopMayRoam(roamCfgIsEnabled(), roamCurrentList()) &&
-#if defined(DUAL_CHANNEL_ENABLED)
-			(dcIsEnabled() == false) &&   /* R97: «Подвійний прийом» -- автоперехід роумінгу призупинено (налаштування не змінюються) */
-#endif
 			(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&
 			(trxGetMode() == RADIO_MODE_DIGITAL) &&
 			(settingsUsbMode != USB_MODE_HOTSPOT) &&
@@ -388,8 +401,20 @@ bool wakeHopTry(void)
 	roamLoadChannel((int)next);
 	(void)wakeHopTriedAdd(&s_tried, currentChannelData->rxFreq, currentChannelData->txFreq, currentChannelData->txColor);
 	s_curNum = (uint16_t)next;
+#if defined(DUAL_CHANNEL_ENABLED)
+	if (roamDwOnB())
+	{
+		(void)dcSetChannelB((uint16_t)next, false);   /* R98-FIX8 В: картка B -- на знайденому каналі (будь-яка зона), запис блоку 18 відкладений */
+	}
+	else
+	{
+		s_num = (uint16_t)next;   /* картка A / звичайний режим -- стоково */
+		s_active = true;
+	}
+#else
 	s_num = (uint16_t)next;
 	s_active = true;
+#endif
 	s_away = true;
 	s_hops++;
 	HRC6000RestartWakeForRoam();
@@ -411,6 +436,15 @@ void wakeHopRestore(void)
 
 	if (wakeHopShouldRestore(s_away, s_success))
 	{
+#if defined(DUAL_CHANNEL_ENABLED)
+		if (roamDwOnB())
+		{
+			/* R98-FIX8 В: невдача на картці B -- назад на її вихідний канал (з кодплага, як стоковий шлях нижче), канал картки B -- знову він */
+			roamLoadChannel((int)s_origNum);
+			(void)dcSetChannelB(s_origNum, false);
+		}
+		else
+#endif
 		if (s_origRoamed)
 		{
 			roamLoadChannel((int)s_origNum);
