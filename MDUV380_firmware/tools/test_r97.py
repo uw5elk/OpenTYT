@@ -255,7 +255,9 @@ enum { RADIO_DEVICE_PRIMARY = 0 };
 enum { AUDIO_AMP_CHANNEL_RF = (1 << 1) };
 enum { QSO_DISPLAY_IDLE = 0, QSO_DISPLAY_DEFAULT_SCREEN = 1 };
 enum { UI_CHANNEL_MODE = 7, UI_VFO_MODE = 8 };
-struct { struct { bool active; int scanType; int state; struct { int timeout; } timer; int dwellTime; int stepTimeMilliseconds; } Scan; int displayQSOState; } uiDataGlobal;
+struct { struct { bool active; int scanType; int state; struct { uint32_t start; int timeout; } timer; int dwellTime; int stepTimeMilliseconds; } Scan; int displayQSOState; } uiDataGlobal;
+static int dmrSmsRxExchangeActive(uint32_t ms) { (void)ms; return 0; }   /* R98-FIX11 Г1: без обміну даними -- утримання як було (моделі даних -- test_r98fix11) */
+static uint32_t ticksGetMillis(void) { return 0; }
 struct { int dmrCcTsFilter; int scanDelay; } nonVolatileSettings;
 struct { int trxDMRModeRx; } dev, *currentRadioDevice = &dev;
 int slotState = 0, dmrMonitorCapturedTS = -1;
@@ -309,7 +311,10 @@ def test_engine(incs, cf):
     check(all(fns), "знайдено dualIsRunning / dualScanning / uiChannelModeDualPrepareTx")
     if not all(fns):
         return
-    check("scanModePause" not in fns[1], "рушій режиму не читає «Тип скану» (утримання завжди HOLD, STOP/PAUSE режим не вимикають)")
+    dh = carve_fn(t, "static void dualDataHold(void)")   # R98-FIX11 Г1 (якщо є): утримання на час обміну даними
+    if dh:
+        fns = [fns[0], dh, fns[1], fns[2]]
+    check("scanModePause" not in fns[-2], "рушій режиму не читає «Тип скану» (утримання завжди HOLD, STOP/PAUSE режим не вимикають)")
     check("codeplugSetLastUsedChannelInZone" not in t[t.find("static void dualTune(_Bool toB)"):t.find("static uint16_t dualChannelA(void)")],
           "dualTune() не пише «останній канал зони»")
     out = run_c(HARNESS % {"dc": os.path.join(APP, "source", "functions", "dual_channel.c"), "fns": "\n".join(fns)})

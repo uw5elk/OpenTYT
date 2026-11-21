@@ -224,6 +224,9 @@ def build_code(fns, fa):
 
 def test_layout(t, src, png_dir):
     D = F5.consts(src)
+    if "DW_LET_L" not in D and "DW_ROW4_H" in D:
+        print("ПРОПУСК: А/Б -- розкладку FIX9 (літера A/B у рамці, значок SMS 22 px, мітка 14x8) замінено в R98-FIX11 (без літер, смуга рядка 4 9 px, значок як на звичайному екрані); координати, перетини й мутанти перевіряє tools/test_r98fix11.py (В)")
+        return
     need = ["DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_SEL_X", "DW_SEL_W", "DW_IN_L", "DW_IN_R", "DW_ROW1_DY", "DW_ROW2_DY", "DW_ROW3_DY", "DW_ROW4_DY", "DW_LET_L", "DW_LET_W",
             "DW_LET_H", "DW_LET_GX", "DW_ROW1_TX", "DW_ROW1_MAX", "DW_ICON_DY", "DW_ICON_GAP", "DW_ICONS_W", "DW_LOCK_W", "DW_UN_W", "DW_AP_W", "DW_AP_H", "DW_ROW3_MAX", "DW_ARROW_DY", "DW_ARROW_CELL",
             "DW_METER_H", "DW_TAG_W", "DW_METER_SEG_W", "DW_METER_STEP", "DW_METER_SEGS", "DW_METER_X", "DW_METER_END", "DW_METER_HOT", "DW_TRI_X", "DW_TRI_W"]
