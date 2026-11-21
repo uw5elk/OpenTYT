@@ -113,19 +113,11 @@ static const uint8_t uiAesPadlockBitmap[] = {
 // знизу виживало, бо це оновлення ніколи не чіпає y>=14. Початок з y=14 лежить повністю
 // нижче цієї смуги, а 9px висоти закінчуються на y=22 -- на один чистий піксель вище за
 // DISPLAY_Y_POS_CONTACT (24).
-#if defined(ENABLE_DMR_DATA) && defined(DUAL_CHANNEL_ENABLED)
-static int16_t uiAesPadlockX(int16_t defaultX);   // R98-FIX10: визначена нижче, поруч із конвертом непрочитаних
-#endif
 void uiDrawAesEnabledIcon(void)
 {
 	if (uiChannelHasAesEnabled())
 	{
-#if defined(ENABLE_DMR_DATA) && defined(DUAL_CHANNEL_ENABLED)
-		// R98-FIX10: не налазити на конверт «D ✉ N» (він у тому ж куті, y=16..24)
-		displayDrawXBitmap(uiAesPadlockX(DISPLAY_SIZE_X - UI_AES_PADLOCK_W - 3), 14, uiAesPadlockBitmap, UI_AES_PADLOCK_W, UI_AES_PADLOCK_H, true);
-#else
 		displayDrawXBitmap(DISPLAY_SIZE_X - UI_AES_PADLOCK_W - 3, 14, uiAesPadlockBitmap, UI_AES_PADLOCK_W, UI_AES_PADLOCK_H, true);
-#endif
 	}
 }
 #if defined(DUAL_CHANNEL_ENABLED)
@@ -2180,6 +2172,12 @@ void uiUtilityRenderQSOData(void)
 #define MSG_ENV_LETTER_W   6
 #define MSG_ENV_BODY_W     13
 #define MSG_ENV_BODY_H     9
+#if defined(DUAL_CHANNEL_ENABLED)
+// R98-FIX11 А2: конверти шапки -- на висоті замка AES (y=14..22, uiDrawAesEnabledIcon): однакові верх і низ. Змінено конверт, а не замок: замок лишається
+// на стоковому місці, а конверт перестає торкатися поля позивного (нижній рядок корпуса був y=24 = DISPLAY_Y_POS_CONTACT, R98-FIX10). y=14 -- нижче
+// RSSI-смуги (y=10..13), яку періодичне оновлення шапки (заливка y=0..13) не зачіпає.
+#define MSG_ENV_Y          (DISPLAY_Y_POS_BAR + 4)
+#endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 static int16_t msgEnvelopeWidth(unsigned count)
@@ -2198,11 +2196,47 @@ static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
 	lt[0] = letter;
 	lt[1] = 0;
 
+#if defined(DUAL_CHANNEL_ENABLED)
+	// R98-FIX11 А2: «чорнило» шрифту 6x8 -- 7 рядків (0..6), корпус -- 9; текст на 1 px нижче верху корпуса -- по центру (1 px зверху й знизу), як у картках DW
+	displayPrintCore(x, (y + 1), lt, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);          // літера: A -- APRS, D -- DMR
+	displayDrawRect(ex, y, MSG_ENV_BODY_W, MSG_ENV_BODY_H, true);                  // корпус конверта
+	displayDrawLine(ex, y, ex + 6, y + 4, true);                                   // клапан (ліва частина)
+	displayDrawLine(ex + 12, y, ex + 6, y + 4, true);                              // клапан (права частина)
+	displayPrintCore(ex + MSG_ENV_BODY_W + 2, (y + 1), nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false); // число
+#else
 	displayPrintCore(x, y, lt, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);               // літера: A -- APRS, D -- DMR
 	displayDrawRect(ex, y, MSG_ENV_BODY_W, MSG_ENV_BODY_H, true);                  // корпус конверта
 	displayDrawLine(ex, y, ex + 6, y + 4, true);                                   // клапан (ліва частина)
 	displayDrawLine(ex + 12, y, ex + 6, y + 4, true);                              // клапан (права частина)
 	displayPrintCore(ex + MSG_ENV_BODY_W + 2, y, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false); // число
+#endif
+}
+#endif
+
+#if defined(DUAL_CHANNEL_ENABLED) && defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+// R98-FIX11 А4: той самий значок «D ✉ N» у картках «Подвійного прийому» (рядок 4), що й на звичайному екрані -- одна функція малювання, однакові розміри
+// (корпус 13x9, текст по центру по вертикалі), однакове число (до 99).
+int16_t uiMsgEnvelopeWidth(unsigned count)
+{
+	return msgEnvelopeWidth(count);
+}
+
+void uiDrawMsgEnvelopeAt(int16_t x, int16_t y, char letter, unsigned count)
+{
+	drawMsgEnvelope(x, y, letter, count);
+}
+
+// R98-FIX11 А1: порядок значків звичайного екрана той самий, що в картках DW -- «D ✉ N» ліворуч, замок AES крайній праворуч (стокове місце x=147..156).
+// Замок малює uiDrawAesEnabledIcon() лише на екранах каналу й VFO і лише для каналу з ключем; тоді правий край блока конверта -- за 2 px (UI_ICON_GAP)
+// до лівої межі замка; без замка -- як було, притиснутий до правого краю (x=DISPLAY_SIZE_X-2).
+#define UI_ICON_GAP 2
+static int16_t headerEnvelopeX(unsigned count)
+{
+	int menu = menuSystemGetCurrentMenuNumber();
+	bool lockShown = (((menu == UI_CHANNEL_MODE) || (menu == UI_VFO_MODE)) && (uiChannelHasAesEnabled() != 0));
+	int16_t right = (lockShown ? (int16_t)(DISPLAY_SIZE_X - UI_AES_PADLOCK_W - 3 - UI_ICON_GAP) : (int16_t)(DISPLAY_SIZE_X - 2));
+
+	return (int16_t)(right - msgEnvelopeWidth(count));
 }
 #endif
 
@@ -2256,28 +2290,6 @@ unsigned uiUnreadCount(char kind)
 #endif
 	(void)kind;
 	return 0U;
-}
-#endif
-
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA) && defined(DUAL_CHANNEL_ENABLED)
-// R98-FIX10: замок шифрування стоїть у правому куті (x=147..156, y=14..22), а блок «D ✉ N» непрочитаних SMS
-// притиснутий до правого краю (x=DISPLAY_SIZE_X-2-msgEnvelopeWidth .. 157, y=16..24) -- при непрочитаних на каналі з
-// шифруванням вони лягали один на одного. Коли конверт малюється (та сама умова, що в шапці: лічильник > 0 і це
-// не екран «Подвійного прийому», де конверти в картках), замок зсувається ліворуч від блока на 2 пікселі проміжку.
-// Без непрочитаних -- звичайна позиція (defaultX). Ширина блока залежить від кількості цифр (1 або 2).
-// Лише у збірці з режимом (DUAL_CHANNEL_ENABLED): збірки без нього лишаються байт-у-байт як до R98-FIX10.
-#define UI_AES_PADLOCK_ENV_GAP 2
-static int16_t uiAesPadlockX(int16_t defaultX)
-{
-	// на екрані режиму конверти малюють картки (як у шапці) -- замок лишається на місці
-	int unread = (dualEnvelopeInCards() ? 0 : dmrSmsUnreadCount());
-
-	if (unread > 0)
-	{
-		return (int16_t)(DISPLAY_SIZE_X - 2 - msgEnvelopeWidth((unsigned)unread) - UI_AES_PADLOCK_ENV_GAP - UI_AES_PADLOCK_W);
-	}
-
-	return defaultX;
 }
 #endif
 
@@ -2788,8 +2800,13 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		if (unread > 0)
 		{
 			// R15: конверт спільний з APRS (drawMsgEnvelope), справа; блок притиснутий до правого краю. Число -- справжнє (до 99).
+#if defined(DUAL_CHANNEL_ENABLED)
+			// R98-FIX11 А1/А2: ліворуч від замка (якщо він є), верх і низ -- як у замка (y=14..22)
+			drawMsgEnvelope(headerEnvelopeX((unsigned)unread), MSG_ENV_Y, 'D', (unsigned)unread);
+#else
 			int16_t ex = (int16_t)(DISPLAY_SIZE_X - 2 - msgEnvelopeWidth((unsigned)unread));
 			drawMsgEnvelope(ex, DISPLAY_Y_POS_BAR + 6, 'D', (unsigned)unread);
+#endif
 		}
 	}
 #endif
@@ -2811,7 +2828,11 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 
 		if (aun > 0U)
 		{
+#if defined(DUAL_CHANNEL_ENABLED)
+			drawMsgEnvelope(2, MSG_ENV_Y, 'A', aun);   // R98-FIX11 А2: та сама висота, що в «D ✉ N» і замка
+#else
 			drawMsgEnvelope(2, DISPLAY_Y_POS_BAR + 6, 'A', aun);
+#endif
 		}
 	}
 #endif

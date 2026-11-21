@@ -213,6 +213,10 @@ void uiDrawAesIconAt(int16_t x, int16_t y);       /* R97-FIX6: замок 10x9 �
 #if defined(DUAL_CHANNEL_ENABLED)
 unsigned uiUnreadCountCard(bool cardB);   /* R98-FIX1 Д: непрочитані SMS DMR для картки A/B (прив'язка за джерелом; неприв'язане -- на A) */
 unsigned uiUnreadCount(char kind);   /* R98 Д1: 'D' -- непрочитані SMS DMR, 'A' -- APRS (0, якщо збірка без них); для карток «Подвійного прийому» */
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+int16_t uiMsgEnvelopeWidth(unsigned count);   /* R98-FIX11 А4: ширина блока «D ✉ N» (той самий значок, що в шапці) */
+void uiDrawMsgEnvelopeAt(int16_t x, int16_t y, char letter, unsigned count);   /* R98-FIX11 А4: значок «літера ✉ число» 9 px заввишки */
+#endif
 #endif
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
 void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
