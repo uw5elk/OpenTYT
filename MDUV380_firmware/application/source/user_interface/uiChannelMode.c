@@ -49,6 +49,9 @@
 #if defined(ENABLE_DUAL_CHANNEL)
 #include "functions/dual_channel.h"   // R97: «Подвійний прийом»
 #if defined(DUAL_CHANNEL_ENABLED)
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#include "functions/dmr_sms.h"        // R98-FIX11 Г1: dmrSmsRxExchangeActive() -- утримання картки на час прийому даних (SMS)
+#endif
 #include "crypto/dmr_aes_hook.h"      // R98-FIX2 Е: dmrAesRxRetune() (без ENABLE_AES -- порожня заглушка); лише коли режим справді збирається
 #endif
 #if defined(ENABLE_LC_DISTANCE)
@@ -4321,6 +4324,38 @@ static void dualQuietEnd(void)
 	}
 }
 
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+// R98-FIX11 Г1: утримання картки, поки на ній іде обмін даними DMR (SMS: преамбули, заголовок, блоки, термінатор; квитанція).
+// Стокове (і досі єдине) продовження утримання -- за звуком (AUDIO_AMP_CHANNEL_RF, HR-C6000 вмикає його лише на голосових кадрах), а після виявлення
+// несучої картка тримається лише SCAN_SHORT_PAUSE_TIME (0,5 с; 1 с без фільтра TS) -- повідомлення з кількох блоків і квитанція рвались перемиканням
+// на іншу картку. Тут: поки dmrSmsRxExchangeActive() (burst за останні DW_DATA_IDLE_MS, необроблений PDU, квитанція в черзі чи в ефірі) -- таймер
+// утримання не спадає до нуля (картка лишається), тож чергування відновлюється рівно через DW_DATA_IDLE_MS тиші після обміну (або коли закінчиться
+// довша пауза/утримання за звуком); але не довше за DMR_SMS_RX_EXCHANGE_MAX_MS від початку (найдовший обмін, dmr_sms.h), щоб безперервні
+// дані на одній картці не «залипали» на ній. Початок відліку -- у Scan.timer.start: це поле в режимі каналу не використовується (ticksTimerStart()
+// для Scan.timer кличе лише VFO-розгортка, uiVFOMode.c), тож нових змінних нема; 0 -- відлік не почато (скидається при кожному новому утриманні).
+// Радіо на цей час лишається на картці прийому -- квитанція (dmrSmsAckTick -> dmr_data) іде з тієї самої картки; PTT/покажчик тут не задіяні.
+#define DW_DATA_IDLE_MS   (TIMESLOT_DURATION * 12)   // 360 мс = суперкадр DMR (6 кадрів по 60 мс): стільки тиші -- і відправник точно закінчив
+static void dualDataHold(void)
+{
+	if ((trxGetMode() != RADIO_MODE_DIGITAL) || (dmrSmsRxExchangeActive(DW_DATA_IDLE_MS) == 0))
+	{
+		return;
+	}
+
+	uint32_t now = ticksGetMillis();
+
+	if (uiDataGlobal.Scan.timer.start == 0U)
+	{
+		uiDataGlobal.Scan.timer.start = (now | 1U);
+	}
+
+	if ((((uint32_t)(now - uiDataGlobal.Scan.timer.start)) < DMR_SMS_RX_EXCHANGE_MAX_MS) && (uiDataGlobal.Scan.timer.timeout == 0U))
+	{
+		uiDataGlobal.Scan.timer.timeout = 1U;   // ще один тік на цій картці; вікно тиші вже враховане в dmrSmsRxExchangeActive()
+	}
+}
+#endif
+
 static void dualScanning(void)
 {
 	if ((uiDataGlobal.Scan.state == SCAN_STATE_SCANNING) && (uiDataGlobal.Scan.timer.timeout > SCAN_SKIP_CHANNEL_INTERVAL) &&
@@ -4360,6 +4395,9 @@ static void dualScanning(void)
 			uiDataGlobal.Scan.state = SCAN_STATE_SHORT_PAUSED;
 			uiDataGlobal.Scan.timer.timeout = pause;
 			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;   // виділити рядок, що приймає
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+			uiDataGlobal.Scan.timer.start = 0U;   // R98-FIX11 Г1: нове утримання -- відлік межі утримання для даних ще не почато
+#endif
 		}
 	}
 
@@ -4371,6 +4409,12 @@ static void dualScanning(void)
 			uiDataGlobal.Scan.timer.timeout = (nonVolatileSettings.scanDelay * 1000);
 			uiDataGlobal.Scan.state = SCAN_STATE_PAUSED;
 		}
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+		else
+		{
+			dualDataHold();   // R98-FIX11 Г1: дані (SMS, квитанція) звуку не дають -- утримання за обміном даних, з верхньою межею
+		}
+#endif
 	}
 
 	if (uiDataGlobal.Scan.timer.timeout > 0)

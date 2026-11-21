@@ -82,6 +82,14 @@ int  dmrSmsUnreadCount(void);
 #define dmrSmsPeerClean(p)     ((uint32_t)(p) & DMR_SMS_PEER_ID_MASK)
 #if defined(ENABLE_DUAL_CHANNEL) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = DUAL_CHANNEL_ENABLED (functions/dual_channel.h) */
 int  dmrSmsUnreadCountB(void);   /* R98-FIX2 Д: скільки з непрочитаних вхідних прийнято на картці B (один прохід по сховищу, без лічильників у RAM) */
+/* R98-FIX11 Г1: чи триває обмін даними DMR на поточному каналі -- для утримання картки «Подвійного прийому» (дані звуку не дають, а утримання
+ * за звуком (AUDIO_AMP_CHANNEL_RF) їх не бачить). 1, якщо: data-sync burst був менше ніж idleMs тому; зібраний PDU ще чекає на головний цикл
+ * (адресний фільтр, біт картки B і рішення про квитанцію беруться з ПОТОЧНОГО каналу); винні квитанцію; іде наша передача даних (квитанція). */
+int  dmrSmsRxExchangeActive(uint32_t idleMs);
+/* Верхня межа одного обміну (утримання DW не довше): найдовше повідомлення -- 16 CSBK-преамбул (SMS_ACK_MAX_PREAMBLES, «стільки ж, скільки шле
+ * стокова»), заголовок даних, ENC-заголовок, 384/12 = 32 блоки rate-1/2 (накопичувач s_rxPdu[384], найменший блок 12 Б) і термінатор = 51 burst
+ * по 60 мс (кадр DMO: 2 таймслоти по 30 мс) = 3060 мс, плюс найдовше очікування квитанції SMS_ACK_MAX_WAIT_MS = 2500 мс. Перевірка -- у dmr_sms.c. */
+#define DMR_SMS_RX_EXCHANGE_MAX_MS   (((16 + 1 + 1 + (384 / 12) + 1) * 60) + 2500)
 #endif
 /* ui6: час запису (секунди UTC; 0 = невідомо / годинник не був виставлений). Читається прямо
  * зі сховища (запис v3), у dmrSmsMessage_t поля немає -- RAM не росте. */

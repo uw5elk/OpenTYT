@@ -1664,6 +1664,19 @@ void dmrSmsRxDiagBurst(int rxDataType, int crcOk)
 #endif
 }
 
+#if defined(DUAL_CHANNEL_ENABLED)
+/* R98-FIX11 Г1: див. dmr_sms.h. Нових змінних нема -- лише наявні мітка/прапорці. s_lastRxBurstMs (будь-який data-sync burst поточного каналу,
+ * dmrSmsRxDiagBurst) -- «відправник ще передає»; s_rxReady -- PDU зібрано, але dmrSmsRxTick() ще не вирішив (фільтр «для нас», біт картки B,
+ * квитанція); s_ackPending -- квитанція в черзі (сама має межу SMS_ACK_MAX_WAIT_MS); dmrDataTxBusy() -- квитанція в ефірі. */
+typedef char dmrSmsExchangeMaxMatches[(DMR_SMS_RX_EXCHANGE_MAX_MS == (((SMS_ACK_MAX_PREAMBLES + 1 + 1 + (sizeof(s_rxPdu) / 12) + 1) * (2 * 30)) + SMS_ACK_MAX_WAIT_MS)) ? 1 : -1];
+int dmrSmsRxExchangeActive(uint32_t idleMs)
+{
+	uint32_t quiet = (uint32_t)(ticksGetMillis() - s_lastRxBurstMs);
+
+	return ((quiet < idleMs) || (s_rxReady != 0) || (s_ackPending != 0) || (dmrDataTxBusy() != 0)) ? 1 : 0;
+}
+#endif
+
 void dmrSmsRxReset(void)
 {
 	s_rxHaveHeader = 0; s_rxHaveEnc = 0; s_rxExpBlocks = 0; s_rxHdrBlocks = 0; s_rxCount = 0; s_rxLen = 0;
