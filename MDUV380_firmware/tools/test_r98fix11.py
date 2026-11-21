@@ -13,6 +13,8 @@
   Г  SMS у DW: СПРАВЖНІ dualScanning()/dualDataHold() (uiChannelMode.c) і dmrSmsRxExchangeActive() (dmr_sms.c) у моделі часу 1 мс: повідомлення
      на A і на B (заголовок + N блоків + квитанція), довге, обірване, безперервні дані (межа), голос; мутанти «лише за звуком», «без межі»,
      «квитанція з іншої картки».
+  R98-FIX12: мітка RX/TX -- звичайний текст без заливки, рядки 2..4 -- нова сітка за видимими межами (y+17, 34, 44): перевірки цього файлу переведено, піксельні проміжки й мітку
+  перевіряє tools/test_r98fix12.py.
 Запуск: python3 tools/test_r98fix11.py [--png КАТАЛОГ]"""
 import os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
@@ -347,9 +349,9 @@ def analyse_after(D, line):
             n = "arrow"
         elif p["k"] == "f" and p["inv"] == 1 and p["y"] == R4 and p["x"] == D["DW_IN_L"] and p["w"] == D["DW_METER_END"] - D["DW_IN_L"]:
             n = "meterbg"
-        elif p["y"] >= R4 and ((p["k"] == "f" and p["x"] == D["DW_IN_L"] and p["w"] == D["DW_TAG_W"]) or (p["k"] == "T" and p["inv"] == 1 and p["x"] == D["DW_IN_L"] + 1)):
-            n = "tag"
-        elif p["k"] == "T" and p["y"] == R4 + 1 and p["x"] == D["DW_METER_X"]:
+        elif p["y"] >= R4 and p["k"] == "T" and p["inv"] == 0 and p["x"] == D["DW_IN_L"] and p["y"] == R4 + D["DW_ROW4_TXT_DY"] and p["t"] in ("RX", "TX"):
+            n = "tag"           # R98-FIX12 А: мітка -- звичайний текст без заливки (до FIX12 -- інверсний прямокутник 13x9)
+        elif p["k"] == "T" and p["y"] == R4 + D["DW_ROW4_TXT_DY"] and p["x"] == D["DW_METER_X"]:
             n = "f4"
         elif p["k"] in "fr" and p["y"] >= R4 and D["DW_METER_X"] <= p["x"] and b[2] < D["DW_METER_END"]:
             n = "meter"
@@ -363,6 +365,9 @@ def analyse_after(D, line):
             bad.append(p); continue
         el.setdefault(n, []).append(p)
     boxes = {k: F6.union([F6.box(p) for p in v]) for k, v in el.items() if k not in ("frame", "meterbg")}
+    if "row1" in boxes:
+        b1 = boxes["row1"]
+        boxes["row1"] = (b1[0], b1[1], b1[2], b1[3] - 1)   # R98-FIX12 Б: нижній рядок клітинки рядка 1 (виносні латиниці g, j, p, q, y) -- спільний із верхнім рядком клітинки рядка 2; піксельні проміжки -- test_r98fix12
     if "arrow" in boxes:
         x0, y0, x1, y1 = boxes["arrow"]; cx = (x0 + x1) // 2
         boxes["arrow"] = (cx - 5, D["DW_ARROW_DY"], cx + 4, D["DW_ARROW_DY"] + D["DW_ARROW_CELL"] - 1)
@@ -417,17 +422,17 @@ def cards_check(o, D, mutant=False):
         bx = [boxes[n] for n in ("D", "aprs", "lock") if n in boxes]
         bx.sort()
         want(all(bx[i + 1][0] - bx[i][2] - 1 >= D["DW_ICON_GAP"] for i in range(len(bx) - 1)), "А4: між значками >= %d px (%s)" % (D["DW_ICON_GAP"], k))
-    # піксельно: мітка RX/TX по центру прямокутника, 1 px з усіх боків
+    # піксельно (R98-FIX12 А): мітка RX/TX -- звичайний текст без заливки: у смузі мітки (x=DW_IN_L..+DW_TAG_W-1, рядки смуги) є лише піксели гліфів, «чорнило» -- рядки
+    # смуги 1..7 (по центру смуги 9 px), колір -- як у решти дрібного тексту (FG_CHANNEL_NAME), літери «R»/«X»/«T» розпізнаються за бітмапою шрифту
     for k in ("s1a", "s1b", "s2a", "s3b", "s6c", "w2b"):
         d = render(o, k if k.endswith("a") else "s1a", k if k.endswith(("b", "c")) else "s1b", D)
         y0 = (D["DW_CARD_A_Y"] if k.endswith("a") else D["DW_CARD_B_Y"]) + R4
         x0 = D["DW_IN_L"]; x1 = x0 + D["DW_TAG_W"] - 1
-        fill = {(x, y) for y in range(y0, y0 + H4) for x in range(x0, x1 + 1) if d.px[y * sim.W + x] == sim.IT["FG_CHANNEL_NAME"]}
-        txt = {(x, y) for y in range(y0, y0 + H4) for x in range(x0, x1 + 1) if d.px[y * sim.W + x] == sim.IT["BG"]}
-        tb = bbox(txt)
-        m = (tb[0] - x0, x1 - tb[2], tb[1] - y0, y0 + H4 - 1 - tb[3]) if tb else None
-        want(tb is not None and m == (1, 1, 1, 1), "В2: мітка RX/TX -- «чорнило» по центру, поля ліво/право/верх/низ = 1 px (%s): %s" % (k, m))
-        want(len(fill) + len(txt) == D["DW_TAG_W"] * H4, "В2: прямокутник мітки суцільний %dx%d (%s)" % (D["DW_TAG_W"], H4, k))
+        pts = {(x, y) for y in range(y0, y0 + H4) for x in range(x0, x1 + 1) if d.px[y * sim.W + x] != sim.IT["BG"]}
+        tb = bbox(pts)
+        want(tb is not None and tb[1] == y0 + 1 and tb[3] == y0 + 7, "В2/А: мітка RX/TX -- «чорнило» в рядках смуги 1..7 (по центру смуги 9 px) (%s): %s" % (k, tb))
+        want(all(d.px[y * sim.W + x] == sim.IT["FG_CHANNEL_NAME"] for (x, y) in pts), "А: мітка RX/TX -- кольором решти дрібного тексту (FG_CHANNEL_NAME), без заливки (%s)" % k)
+        want(len(pts) < 40, "А: у смузі мітки лише піксели літер, не суцільна заливка (%s): %d px" % (k, len(pts)))
     return broken
 
 
@@ -441,8 +446,8 @@ def test_part_v(src_cm, src_uu, png_dir):
     check(D["DW_ROW1_TX"] == D["DW_TRI_X"] + D["DW_TRI_W"] + 2 and D["DW_ROW1_TX"] + 16 * 8 <= D["DW_IN_R"] + 1,
           "В1: назва за ▶ із зазором 2 px; 16 символів 8x16 -- x=%d..%d" % (D["DW_ROW1_TX"], D["DW_ROW1_TX"] + 127))
     check(D["DW_ROW1_TX"] + 16 * 8 + 3 + 4 * 6 > D["DW_IN_R"] + 1, "В1: номер (4 цифри 6x8 + зазор) поруч із 16 символами назви в рядок 1 не вміщується -- лишається в рядку 3")
-    check(D["DW_ROW1_DY"] + 16 <= D["DW_ROW2_DY"] and D["DW_ROW2_DY"] + 16 <= D["DW_ROW3_DY"] and D["DW_ROW3_DY"] + 8 < D["DW_ROW4_DY"] and D["DW_ROW4_DY"] + D["DW_ROW4_H"] + 2 <= D["DW_CARD_H"] - 1,
-          "В3: сітка рядків 1/2/3/4 без накладання, 1 px між рядками, 2 px під рядком 4 до рамки")
+    check(D["DW_ROW1_DY"] + 15 <= D["DW_ROW2_DY"] and D["DW_ROW2_DY"] + 15 <= D["DW_ROW3_DY"] and D["DW_ROW3_DY"] + 8 < D["DW_ROW4_DY"] and D["DW_ROW4_DY"] + D["DW_ROW4_H"] + 3 <= D["DW_CARD_H"] - 1,
+          "В3: сітка рядків 1/2/3/4: клітинки 8x16 рядків 1 і 2 -- спільний піксельний рядок (проміжки за видимими межами -- test_r98fix12), смуга рядка 4 + 3 px до нижньої рамки")
     check(D["DW_METER_END"] + 7 <= D["DW_IN_R"] + 1 - D["DW_ICONS_W"], "В3: S-метр (до x=%d) не заходить на значки (з x=%d)" % (D["DW_METER_END"] - 1, D["DW_IN_R"] + 1 - D["DW_ICONS_W"]))
     tu_cm = pp_text(REL_CM); tu_uu = pp_text(REL_UU)
     check(bool(tu_cm) and bool(tu_uu), "В: препроцесування uiChannelMode.c / uiUtilities.c")
@@ -465,8 +470,8 @@ def test_part_v(src_cm, src_uu, png_dir):
         check(any(part in x for x in br), "В4 (мутант %s): ловиться: %s" % (name, br[:2]))
     mut("літера A/B повернулась", "	// R98-FIX11 В1: літери A/B у рамці більше нема -- верхня картка A, нижня B; обрану показують смуга й ▶\n	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);\n",
         "	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);\n	displayPrintCore(9, (y + DW_ROW1_DY), (isB ? \"B\" : \"A\"), FONT_SIZE_3, TEXT_ALIGN_LEFT, false);\n", "В1")
-    mut("мітка RX зміщена на 1 px", "displayPrintCore((DW_IN_L + 1), (my + 1), tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);",
-        "displayPrintCore((DW_IN_L + 1), my, tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);", "В2")
+    mut("мітка RX зміщена на 1 px", "displayPrintCore(DW_IN_L, (my + DW_ROW4_TXT_DY), tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);",
+        "displayPrintCore(DW_IN_L, my, tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);", "В2")
     mut("значок вищий за інші", "#define DW_AP_H          DW_ROW4_H", "#define DW_AP_H          (DW_ROW4_H + 1)", "В2/В3")
     # PNG «до/після»
     if png_dir:
