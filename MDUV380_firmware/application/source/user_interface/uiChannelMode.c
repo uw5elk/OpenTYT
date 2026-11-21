@@ -5358,15 +5358,16 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_ICONS_W       (DW_UN_W_MAX + DW_ICON_GAP + DW_AP_W + DW_ICON_GAP + DW_LOCK_W)   // 61: усі три значки разом (найгірший випадок, 2 цифри) -- x=95..155
 #define DW_R3_SIZE       24                                // буфер правої частини рядка 3 (= LC_DIST_LABEL_SIZE 16 + 8)
 #define DW_METER_H       DW_ROW4_H
-#define DW_TAG_W         13                                // R98-FIX11 В2: мітка «RX»/«TX» 13x9, x=7..19: «чорнило» 11x7 по центру -- 1 px з кожного боку
-#define DW_METER_SEG_W   5                                 // R98-FIX11: сегмент 5x9 з кроком 6 -- S-метр не заходить на значки рядка 4 (значок SMS тепер 13x9, як на звичайному екрані)
-#define DW_METER_STEP    6
+#define DW_TAG_W         18                                // R98-FIX12 А: мітка «RX »/«TX » -- звичайний текст 6x8 без заливки (3 символи, x=7..24), далі частота (9 символів, x=25..78) або S-метр
+#define DW_METER_SEG_W   4                                 // R98-FIX12 А: сегмент 4x9 з кроком 5: 11 сегментів = 54 px -- рівно під частотою неактивної картки (x=25..78), значки (з x=95) вільні
+#define DW_METER_STEP    5
 #define DW_METER_SEGS    11                                // 1..9 -- S1..S9 (стокова шкала 4 дБ), 10 -- S9+10 дБ, 11 -- S9+20 дБ
-#define DW_METER_X       (DW_IN_L + DW_TAG_W + 1)          // 21: сегменти одразу за міткою «RX» (x=7..19), x=21..85; значки (до 61 px) починаються не раніше x=95
-#define DW_METER_END     (DW_METER_X + ((DW_METER_SEGS - 1) * DW_METER_STEP) + DW_METER_SEG_W)   // 86: перший стовпчик після S-метра (смуга фону для перемальовування)
+#define DW_METER_X       (DW_IN_L + DW_TAG_W)              // 25: сегменти (і частота неактивної картки) одразу за міткою «RX » -- x=25..78; значки (до 61 px) починаються не раніше x=95
+#define DW_METER_END     (DW_METER_X + ((DW_METER_SEGS - 1) * DW_METER_STEP) + DW_METER_SEG_W)   // 79: перший стовпчик після S-метра (смуга фону для перемальовування)
 #define DW_METER_HOT     2                                 // R98-FIX3 В: скільки останніх сегментів -- кольором «понад S9» (червоні): S9+10 і S9+20
-typedef char dwMeterClearOfIcons[((DW_METER_END + 7) <= (DW_IN_R + 1 - DW_ICONS_W)) ? 1 : -1];   // S-метр (x<=85) не заходить на значки (x>=95) -- перевірка під час збірки
+typedef char dwMeterClearOfIcons[((DW_METER_END + 7) <= (DW_IN_R + 1 - DW_ICONS_W)) ? 1 : -1];   // S-метр (x<=78) не заходить на значки (x>=95) -- перевірка під час збірки
 typedef char dwName16Fits[((DW_ROW1_TX + (DW_ROW1_MAX * 8)) <= (DW_IN_R + 1)) ? 1 : -1];            // 16 символів назви 8x16 вміщуються в полі вмісту
+typedef char dwTagFitsBeforeMeter[((DW_TAG_W == (3 * 6)) && (DW_METER_END - DW_METER_X == (9 * 6))) ? 1 : -1];   // R98-FIX12 А: «RX » = 3 символи 6x8; S-метр = ширина частоти (9 символів)
 typedef char dwRow4InCard[((DW_ROW4_DY + DW_ROW4_H + 2) <= (DW_CARD_H - 1)) ? 1 : -1];             // R98-FIX11: смуга рядка 4 + 2 px поля -- над нижньою рамкою (y+56)
 
 // Текст абонента за тим самим правилом, що «останній абонент» звичайного екрана (contactDisplayPriority).
@@ -5390,18 +5391,17 @@ static void dualCallerText(char *text17)
 	(void)chomp(text17);
 }
 
-// Інверсна мітка («RX»/«TX») на початку рядка 4: x=DW_IN_L..+12 (однакова в активної й неактивної картки).
-// R98-FIX11 В2: раніше прямокутник 14x8 починався в тому ж рядку, що й текст, а «чорнило» шрифту 6x8 -- рядки 0..6, тож літери торкалися верхнього краю
-// (поля 0 px зверху, 1 знизу, 1 зліва, 2 справа) і зливалися з заливкою -- на залізі мітка читалась як заштрихований прямокутник, «зміщений» відносно
-// тексту. Тепер 13x9, текст на (+1, +1): «чорнило» 11x7 рівно по центру, по 1 px з усіх боків. Шрифт 6x8 звичайний: у жирному 6x8 «X» і «R» зливаються в пляму.
+// Мітка («RX»/«TX») на початку рядка 4 -- звичайний текст 6x8 БЕЗ заливки, тим самим кольором THEME_ITEM_FG_CHANNEL_NAME, що решта дрібного тексту картки (рядок 3, частота);
+// після неї пробіл і частота (неактивна картка) або S-метр (активна): x=DW_IN_L..DW_IN_L+17, текст на (my + 1) -- по центру смуги 9 px (1 px зверху й знизу).
+// R98-FIX12 А: інверсна заливка (R98-FIX6..FIX11) на самій рації читалась як мозаїчний квадрат -- «чорнило» 6x8 на суцільній заливці з вужчим кроком пікселів LCD
+// зливається; звичайний текст читається так само, як рядок 3. Жирний 6x8 не годиться: «X» і «R» зливаються.
 static void dualRowTag(int16_t my, const char *tag)
 {
 	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
-	displayFillRect(DW_IN_L, my, DW_TAG_W, DW_ROW4_H, false);
-	displayPrintCore((DW_IN_L + 1), (my + 1), tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, true);
+	displayPrintCore(DW_IN_L, (my + 1), tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 }
 
-// Смуга активності картки (рядок 4, R98-FIX6 Г; R98-FIX11): мітка «RX» + сегментований S-метр (11 сегментів 5x9, крок 6: x=21..85), правіше -- значки картки
+// Смуга активності картки (рядок 4, R98-FIX6 Г; R98-FIX12): мітка «RX» + сегментований S-метр (11 сегментів 4x9, крок 5: x=25..78), правіше -- значки картки
 // (їх ця функція не чіпає: тік перемальовує лише свою ділянку x=DW_IN_L..DW_METER_END-1). Лише для активної картки. Сегменти 1..9 -- стокова шкала
 // (SMETER_S0 + 4 дБ на S-одиницю, S9 = SMETER_S9), 10 і 11 -- S9+10 і S9+20 дБ (червоні).
 static void dualMeterRow(int16_t y)
@@ -5908,7 +5908,7 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	}
 	else if (f4Tag != NULL)
 	{
-		// R98-FIX9 Б4: неактивна картка -- мітка й частота (6x8); значки правіше (їх ліва межа >= x=95, текст закінчується x<=74)
+		// R98-FIX9 Б4: неактивна картка -- мітка й частота (6x8): «RX » x=7..24, частота x=25..78; значки правіше (їх ліва межа >= x=95)
 		dualRowTag((y + DW_ROW4_DY), f4Tag);
 		displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
 		displayPrintCore(DW_METER_X, (y + DW_ROW4_DY + 1), f4, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);   // R98-FIX11 В2: на одній базовій лінії з текстом мітки
