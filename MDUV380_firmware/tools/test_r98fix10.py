@@ -180,8 +180,13 @@ def main():
     # Г: збірки без режиму
     check("#else\n\t\t\tint16_t ex = (int16_t)(DISPLAY_SIZE_X - 2 - msgEnvelopeWidth((unsigned)unread));\n\t\t\tdrawMsgEnvelope(ex, DISPLAY_Y_POS_BAR + 6, 'D', (unsigned)unread);\n#endif" in src,
           "Г1: без DUAL_CHANNEL_ENABLED -- стоковий виклик конверта «D» (гілка #else)")
-    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\) && defined\(ENABLE_AES\) && defined\(ENABLE_DMR_DATA\)\n// R98-FIX11 А4", src) is not None,
-          "Г2: нові функції -- під DUAL_CHANNEL_ENABLED && ENABLE_AES && ENABLE_DMR_DATA")
+    # R98-FIX14: коментар «R98-FIX11 А4» зник разом із конвертами на картках DW (R98-FIX13 В); перевірка прив'язана до блока, що лишився
+    # (headerEnvelopeX -- конверт «D» звичайного екрана з замком, R98-FIX11 А1) і до нових конвертів шапки DW (dwHeaderEnvelopes, R98-FIX13 В)
+    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\) && defined\(ENABLE_AES\) && defined\(ENABLE_DMR_DATA\)\n// R98-FIX11 А1: порядок значків[^\n]*\n(?:[^\n]*\n){0,4}?#define UI_ICON_GAP 2\nstatic int16_t headerEnvelopeX\(", src) is not None,
+          "Г2: headerEnvelopeX() -- під DUAL_CHANNEL_ENABLED && ENABLE_AES && ENABLE_DMR_DATA")
+    check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\n// kind:[^\n]*\nunsigned uiUnreadCount\(char kind\)", src) is not None
+          and re.search(r"#if defined\(APRS_RX\) \|\| \(defined\(ENABLE_AES\) && defined\(ENABLE_DMR_DATA\)\)\n// R98-FIX13 В:[^\n]*\n(?:[^\n]*\n){0,40}?static void dwHeaderEnvelopes\(unsigned aprsCount, unsigned dmrCount\)", src) is not None,
+          "Г3: uiUnreadCount() -- під DUAL_CHANNEL_ENABLED, dwHeaderEnvelopes() -- під APRS_RX || (ENABLE_AES && ENABLE_DMR_DATA) усередині нього")
     print("перевірок: %d, провалів: %d" % (N[0], len(FAILS)))
     return 1 if FAILS else 0
 

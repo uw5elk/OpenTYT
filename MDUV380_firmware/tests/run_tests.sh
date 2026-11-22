@@ -153,7 +153,7 @@ NOFIX_TOO=(test_aes_txphase)
 
 rm -rf "$BUILD" && mkdir -p "$BUILD"
 
-pass=0; fail=0
+pass=0; fail=0; notk=0
 # R76B: вивід невдалого тесту для логу CI: усі рядки з ПРОВАЛ/FAIL/Traceback/Error (до 40) і хвіст (до 40 рядків). Раніше було лише tail -10, а
 # його забивав шум (рядки «Супутники записані…»), тож причину падіння в CI було не видно. Формат рядків ok/ПРОВАЛ/ПРОПУЩЕНО не змінено.
 show_fail() {
@@ -394,7 +394,7 @@ for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_
 			fi
 		else
 			if out="$(python3 -B "$TESTS_DIR/../tools/$T.py" 2>&1)"; then
-				pass=$((pass + 1)); echo "ok            $T (python; частину з Tk пропущено -- нема tkinter або xvfb-run)"
+				pass=$((pass + 1)); notk=$((notk + 1)); echo "ok            $T (python; частину з Tk пропущено -- нема tkinter або xvfb-run)"
 			else
 				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python)"; show_fail "$out"
 			fi
@@ -428,5 +428,7 @@ fi
 
 echo
 echo "Тестів пройдено: $pass, провалено: $fail"
+# R98-FIX14: мовчазний пропуск Tk-частини -- видно в підсумку (CI має xvfb і tkinter; без них частину перевірок не виконано)
+if [ "$notk" -gt 0 ]; then echo "УВАГА: у $notk тестах Tk-частину пропущено (нема tkinter або xvfb-run) -- це не прогін як у CI"; fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0
