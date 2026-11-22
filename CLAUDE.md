@@ -6,17 +6,18 @@
 
 ## Середовище власника (Богдан)
 - Працює з телефона: Android, Termux, bash. Репозиторій: ~/OpenGD77-AES256.
-- ARM-тулчейну локально немає; збирає лише GitHub Actions (uw5elk/OpenTYT). gh CLI авторизований.
+- origin = github.com/uw5elk/OpenTYT (публічний). ARM-тулчейну локально немає; збирає лише GitHub Actions у цьому репо. gh CLI авторизований.
+- Прошиває й тестує на реальній рації (є дві рації). Термін: «кодплаг» (не «codeplug»).
 - /tmp недоступний, тимчасові файли в ~/. Немає iconv, xxd. Є git, gh, python3 (numpy, scipy).
-- Файли для передачі (бандли, .C16) лежать у /sdcard/Download/.
+- Файли для передачі (патчі, бандли, .C16) лежать у /sdcard/Download/.
 - Прошивку тестує сам на реальній рації; результати повідомляє за номерами кроків TESTING.md.
 - Не писати «виправлено», доки Богдан не перевірив на залізі.
 
 ## Правила коду
-- Збірка без дефайнів байт-у-байт стокова. Усе нове під ENABLE_AES / ENABLE_DMR_DATA / окремим ENABLE_*.
+- Збірка без дефайнів байт-у-байт стокова. Усе нове під ENABLE_AES / ENABLE_DMR_DATA / DUAL_CHANNEL_ENABLED / APRS_RX / окремим ENABLE_*.
 - languages/*.h в кодуванні cp1251, не UTF-8. Нові мовні поля останніми в блоці LANGUAGE_BUILD_UKRAINIAN; код, що до них звертається, під тим самим #if.
 - Довжину наявних custom-data блоків не міняти. Нове налаштування: вільний біт або новий малий custom-data блок. Розкладку nonVolatileSettings не чіпати.
-- RAM вільно ~212 Б: нічого не додавати. CCM: обмежений запас. Зміни з масивами підтверджувати через tools/mem_report.py у CI.
+- Пам'ять на межі: найтісніше CCM (CI R98-FIX12: вільно CCM 216 Б, RAM 1536 Б). Нових масивів без потреби не додавати; зміни з масивами підтверджувати через tools/mem_report.py у CI. Локальні цифри Cowork можуть відрізнятися від CI: рахуються лише цифри CI.
 - Не вигадувати цифри пам'яті, розмірів, адрес: лише виміряні або прочитані з коду.
 
 ## Економія токенів
@@ -30,25 +31,36 @@
 - tools/check_string_encoding.py
 - tools/check_menu_widths.py
 - tools/check_smeter_align.py
-- tests/run_tests.sh
+- tests/run_tests.sh -- повним набором і так само, як у CI (python + Tk під xvfb); тест, що мовчки пропустився, не вважається пройденим.
+- Видалив або перейменував код: grep по tools/test_*.py і оновити старі тести, що на нього посилаються.
+- Відомі нестабільні тести: test_r98fix2 К2, test_r98fix9 Г5, test_r50fix S1 (при падінні перезапустити один раз і записати в результат).
 - Оновити STATUS.md і TESTING.md (кроки ручної перевірки).
 - Правило для тестів: порівняння з комітом бази (`git diff`/`git show`/`git archive` з хешем) мусить бути стійким до відсутності цього коміта (CI без історії, клон після `git am`): `git cat-file -e <хеш>^{commit}`, якщо нема -- пропуск З ПОВІДОМЛЕННЯМ «ПРОПУСК: база недоступна (CI/клон без історії)», а не провал і не мовчки.
 
 ## Доставка
-- git bundle від бази, яку назве Богдан (або останній origin/main):
-  git bundle create ІМ'Я.bundle БАЗА..main
-- Бандл класти так, щоб він був у /sdcard/Download/.
-- У підсумку: що зроблено, що НЕ перевірено на залізі, найважливіші кроки TESTING.md, ім'я бандла й база.
+- База -- та, яку назвав бриф (останній застосований FIX); перевірити за темою коміту: git log -12 --format=%s | grep '^ПОПЕРЕДНІЙ-FIX'.
+- Теми комітів починаються з назви брифа (напр. «R98-FIX14»).
+- Патч: git format-patch --stdout БАЗА..HEAD > /sdcard/Download/ІМ'Я.patch
+- Результат: claude/ІМ'Я-result.md у Project (що зроблено, відхилення, що НЕ перевірено на залізі, кроки TESTING.md, база, ім'я патча, скільки ітерацій знадобилось); PNG у чат.
+- У підсумку: що зроблено, що НЕ перевірено на залізі, найважливіші кроки TESTING.md, ім'я патча й база.
 
 ## Команди для Богдана
 - Один рядок, кроки через &&. Без exit. Без плейсхолдерів (<ID>, <файл>): значення підставляти автоматично або спершу дати команду, що його покаже.
 - Шляхи повні від кореня репо (MDUV380_firmware/...). Не впевнений: find/grep.
-- Застосування бандла (змінити лише ім'я файла):
+- Застосування патча (змінити лише ім'я файла й тему попереднього FIX; перевірки за темою коміту, не за sha -- git am змінює хеші):
+  cd ~/OpenGD77-AES256 && P=/sdcard/Download/ІМ'Я.patch && ls -l "$P" && [ -z "$(git status --porcelain)" ] && { git log -12 --format=%s | grep -q '^ПОПЕРЕДНІЙ-FIX' || { echo "спершу застосуйте попередній патч"; false; }; } && { gh run list --branch main --limit 1 --json conclusion,headSha -q '.[0] | select(.conclusion=="success") | .headSha' | grep -q "^$(git rev-parse HEAD)$" || { echo "CI для HEAD не зелений"; false; }; } && git apply --check "$P" && git am --3way "$P" && python3 MDUV380_firmware/tools/check_string_encoding.py && git push
+  Перевірку «CI зелений» прибирати лише для патча, що лагодить червоний CI, і казати про це явно.
+- Бандл (рідкісний запасний варіант):
   cd ~/OpenGD77-AES256 && B=/sdcard/Download/ІМ'Я.bundle && ls -l "$B" && git bundle list-heads "$B" && git pull --no-rebase --no-edit "$B" main && python3 MDUV380_firmware/tools/check_string_encoding.py && git push
 - Звіт CI про пам'ять:
-  ID=$(gh run list --limit 1 --json databaseId -q '.[0].databaseId') && gh run view $ID --log > ~/ci.log 2>&1 && grep -A 12 "ENABLE_DMR_DATA=1.*Звіт про пам'ять" ~/ci.log | grep -i "ВІЛЬНО"
+  cd ~/OpenGD77-AES256 && ID=$(gh run list --limit 1 --json databaseId -q '.[0].databaseId') && gh run view $ID --json headSha,status,conclusion -q '"CI: " + .headSha[0:7] + " " + .status + " " + .conclusion' && git log -1 --format='HEAD: %h %s' && gh run view $ID --log > ~/ci.log 2>&1; N=$(grep -n "Запас до кодека.*build-ukrainian\]" ~/ci.log | head -1 | cut -d: -f1); { [ -n "$N" ] || { echo "рядка Запас до кодека нема"; false; }; } && sed -n "${N},$((N+80))p" ~/ci.log | sed 's/^.*Z //' | grep -E "Запас до кодека|ВІЛЬНО" | head -4; grep -c "ПРОВАЛ" ~/ci.log
+- Розбір червоного CI:
+  cd ~/OpenGD77-AES256 && ID=$(gh run list --branch main --limit 1 --json databaseId -q '.[0].databaseId') && gh run view $ID --log-failed > ~/ci-fail.log 2>&1; wc -l ~/ci-fail.log && grep -nE "ПРОВАЛ|FAIL|error:|Traceback|ЗБІРКА ВПАЛА|timed out" ~/ci-fail.log | sed 's/^\([0-9]*\):.*Z /\1: /' | head -25
 - Довгі операції: лише з параметрами, що завершаться за хвилини; вивід у файл у ~/, потім cat.
 - Перед видачею багатокрокової команди подумки прогнати її з порожньою змінною або відсутнім файлом: має впасти зрозумілою помилкою.
+
+## Моделі
+- Бриф починається з рядка «МОДЕЛЬ: модель, зусилля»; Cowork повідомляє в результаті, скільки ітерацій знадобилось.
 
 ## Стиль
 - Коротко, спершу висновок. Гіпотезу називати гіпотезою й давати дослід, що її перевірить.
