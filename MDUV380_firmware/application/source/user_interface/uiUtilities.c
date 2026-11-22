@@ -2214,19 +2214,7 @@ static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)
 #endif
 
 #if defined(DUAL_CHANNEL_ENABLED) && defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-// R98-FIX11 А4: той самий значок «D ✉ N» у картках «Подвійного прийому» (рядок 4), що й на звичайному екрані -- одна функція малювання, однакові розміри
-// (корпус 13x9, текст по центру по вертикалі), однакове число (до 99).
-int16_t uiMsgEnvelopeWidth(unsigned count)
-{
-	return msgEnvelopeWidth(count);
-}
-
-void uiDrawMsgEnvelopeAt(int16_t x, int16_t y, char letter, unsigned count)
-{
-	drawMsgEnvelope(x, y, letter, count);
-}
-
-// R98-FIX11 А1: порядок значків звичайного екрана той самий, що в картках DW -- «D ✉ N» ліворуч, замок AES крайній праворуч (стокове місце x=147..156).
+// R98-FIX11 А1: порядок значків звичайного екрана -- «D ✉ N» ліворуч, замок AES крайній праворуч (стокове місце x=147..156).
 // Замок малює uiDrawAesEnabledIcon() лише на екранах каналу й VFO і лише для каналу з ключем; тоді правий край блока конверта -- за 2 px (UI_ICON_GAP)
 // до лівої межі замка; без замка -- як було, притиснутий до правого краю (x=DISPLAY_SIZE_X-2).
 #define UI_ICON_GAP 2
@@ -2241,34 +2229,6 @@ static int16_t headerEnvelopeX(unsigned count)
 #endif
 
 #if defined(DUAL_CHANNEL_ENABLED)
-// R98 Д1: на екрані «Подвійного прийому» конверт непрочитаних малюють картки (dualRenderRow, у квадраті з літерою), а не шапка (її конверт на y=16
-// налазив на картку A). Умова показу -- та сама, що в стоку (лічильник > 0); тут лише ознака «екран режиму показано» і лічильники.
-static bool dualEnvelopeInCards(void)
-{
-	return ((menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown());
-}
-
-// R98-FIX2 Д: непрочитані SMS DMR для картки за ДЖЕРЕЛОМ прийому: B -- записи з бітом 31 peerId (dmrSmsUnreadCountB), A -- решта від загального
-// dmrSmsUnreadCount(). Один прохід по сховищу, лічильників у RAM нема. Без AES/DMR-даних -- 0.
-unsigned uiUnreadCountCard(bool cardB)
-{
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-	int total = dmrSmsUnreadCount();
-#if defined(DUAL_CHANNEL_ENABLED)
-	int onB = dmrSmsUnreadCountB();
-#else
-	int onB = 0;   // без режиму все на A
-#endif
-
-	if (total < 0) { total = 0; }
-	if (onB > total) { onB = total; }
-	return (unsigned)(cardB ? onB : (total - onB));
-#else
-	(void)cardB;
-	return 0U;
-#endif
-}
-
 // kind: 'D' -- непрочитані SMS DMR, 'A' -- APRS; без відповідної збірки -- 0.
 unsigned uiUnreadCount(char kind)
 {
@@ -2291,6 +2251,39 @@ unsigned uiUnreadCount(char kind)
 	(void)kind;
 	return 0U;
 }
+
+#if defined(APRS_RX) || (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA))
+// R98-FIX13 В: конверти непрочитаних на екрані «Подвійного прийому» -- ГЛОБАЛЬНІ, у шапці (y=0..9), а не в картках: «A ✉ N» (APRS) ліворуч, «D ✉ N» (SMS DMR) праворуч.
+// Той самий значок, що на звичайному екрані (drawMsgEnvelope: літера 6 px + 1 + корпус 13x9 + 2 + число до 99), корпус y=1..9 -- літера й число на y=2, як «DW», заряд і час
+// (DISPLAY_Y_POS_HEADER). Слоти фіксовані: A -- з x=16 (після «DW», x=1..12, зазор 3 px), D -- праворуч від нього до x=96 (за 3 px до найлівішого заряду x=100: режим
+// напруги xV = 160 - 33 - 27, коли показано годинник). Найширші випадки (число 10..99: 34 px) -- A x=16..49, D x=63..96: між ними 13 px. Лічильник 0 -- конверта нема.
+#define DW_HDR_ENV_Y     1
+#define DW_HDR_A_X       16
+#define DW_HDR_D_RIGHT   97   // перший стовпчик ПІСЛЯ блока D
+#define DW_HDR_ENV_MAXW  (MSG_ENV_LETTER_W + 1 + MSG_ENV_BODY_W + 2 + 12)   // 34: число з двох цифр
+typedef char dwHdrEnvFits[(((DW_HDR_A_X) >= (1 + (2 * 6) + 2)) && ((DW_HDR_A_X + DW_HDR_ENV_MAXW + 6) <= (DW_HDR_D_RIGHT - DW_HDR_ENV_MAXW)) &&
+		((DW_HDR_D_RIGHT + 3) <= (DISPLAY_SIZE_X - 33 - ((4 * 6) + 3))) && ((DW_HDR_ENV_Y + MSG_ENV_BODY_H) <= DISPLAY_Y_POS_BAR)) ? 1 : -1];
+
+static void dwHeaderEnvelopes(unsigned aprsCount, unsigned dmrCount)
+{
+#if defined(APRS_RX)
+	if (aprsCount > 0U)
+	{
+		drawMsgEnvelope(DW_HDR_A_X, DW_HDR_ENV_Y, 'A', aprsCount);
+	}
+#else
+	(void)aprsCount;
+#endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	if (dmrCount > 0U)
+	{
+		drawMsgEnvelope((int16_t)(DW_HDR_D_RIGHT - msgEnvelopeWidth(dmrCount)), DW_HDR_ENV_Y, 'D', dmrCount);
+	}
+#else
+	(void)dmrCount;
+#endif
+}
+#endif
 #endif
 
 #if defined(APRS_R21_TXLABEL)
@@ -2792,9 +2785,9 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 	{
 		int unread = dmrSmsUnreadCount();
 #if defined(DUAL_CHANNEL_ENABLED)
-		if (dualEnvelopeInCards())
+		if (dwOnly)
 		{
-			unread = 0;   // R98 Д1: на екрані режиму конверт малюють картки (не налазить на картку A)
+			unread = 0;   // R98-FIX13 В: на екрані режиму конверти -- у шапці режиму (нижче, dwHeaderEnvelopes), не на y=14 (там картка A)
 		}
 #endif
 		if (unread > 0)
@@ -2820,9 +2813,9 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		const aprsMsgBox_t *ab = aprsModeMsgBox();
 		unsigned aun = (ab != NULL) ? aprsMsgUnreadCount(ab) : 0U;
 #if defined(DUAL_CHANNEL_ENABLED)
-		if (dualEnvelopeInCards())
+		if (dwOnly)
 		{
-			aun = 0U;   // R98 Д1: див. вище
+			aun = 0U;   // R98-FIX13 В: див. вище
 		}
 #endif
 
@@ -2834,6 +2827,13 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 			drawMsgEnvelope(2, DISPLAY_Y_POS_BAR + 6, 'A', aun);
 #endif
 		}
+	}
+#endif
+
+#if defined(DUAL_CHANNEL_ENABLED) && (defined(APRS_RX) || (defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)))
+	if (dwOnly)
+	{
+		dwHeaderEnvelopes(uiUnreadCount('A'), uiUnreadCount('D'));   // R98-FIX13 В: «A ✉ N» ліворуч, «D ✉ N» праворуч; ті самі лічильники, що на звичайному екрані
 	}
 #endif
 
