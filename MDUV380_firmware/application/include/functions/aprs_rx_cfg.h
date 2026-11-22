@@ -28,6 +28,12 @@
 #if defined(ENABLE_APRS_RX)
 #define APRS_R18_UI 1
 #endif
+/* R98-MSG1: «Повідом. APRS» у вигляді «SMS DMR» (головний екран і списки з виділенням у центрі, «позивний:текст» + час, «[Видалити все]» у кінці
+ * списку, читання з часом, «ще раз», SK2+RED -- усі прочитані) -- APRS_MSG1_UI, лише користувацька збірка: запас diag/probe до кодека не чіпаємо
+ * (як APRS_R18_CARDS / APRS_R21_QSY), там лишається вигляд R19. Час рядків -- uiSmsTimeStr() (uiSms.c), тому ще й ENABLE_AES && ENABLE_DMR_DATA. */
+#if defined(APRS_RX) && !defined(ENABLE_APRS_RX_PROBE) && defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#define APRS_MSG1_UI 1
+#endif
 /* R20 Ж3: картки підтверджень (Д6) і позивний на «Переслухати» (Д10) -- APRS_R18_CARDS, найменш пріоритетні (порядок за брифом: піктограми ->
  * видалення -> картки). Піктограми й видалення повернуто в diag, картки лишились лише в user: з ними запас diag до кодека 1932 Б (< 2048), без них 2332 Б
  * (виміряно, STATUS.md, розділ R20). */

@@ -13,8 +13,8 @@
 #define USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_
 
 #define MSGS_TITLE               "SMS DMR"
-#define MSGS_INBOX_FMT           "Вхідні (%d)"
-#define MSGS_SENT_FMT            "Надіслані (%d)"
+#define MSGS_INBOX_FMT           "Вхідні %d/%d"
+#define MSGS_SENT_FMT            "Надіслані %d"
 #define MSGS_NEW                 "Нове повідомлення"
 #define MSGS_TITLE_SENT          "Надіслані"
 #define MSGS_TITLE_INBOX         "Вхідні"

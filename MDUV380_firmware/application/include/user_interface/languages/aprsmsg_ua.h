@@ -75,4 +75,16 @@
 #define APRSMSG_Q_HINT        "GREEN:так RED:ні"
 #define APRSMSG_L_HINT_D      "GREEN:чит. SK2+GREEN:вид."   /* R19 Е1: список займає 6 стокових рядків -- одна об'єднана підказка (було два рядки) */
 
+/* ---- R98-MSG1: вигляд «SMS DMR» (APRS_MSG1_UI, menuAprsMode.c); тексти -- ті самі, що в messages_ua.h ---- */
+#define APRSMSG_T_IN          "Вхідні"                    /* заголовок читання «Вхідні 3/9» (позиція/усього) */
+#define APRSMSG_T_OUT         "Надіслані"                 /* заголовок читання «Надіслані 1/3» */
+#define APRSMSG_R1_FROM       "Від"                       /* рядок 1 читання: «Від CALL» (як MSGS_FROM) */
+#define APRSMSG_R1_TO         "Кому"                      /* «Кому CALL стан {NN» (як MSGS_TO) */
+#define APRSMSG_L_DELALL      "[Видалити все]"            /* останній пункт списку (як MSGS_DELETE_ALL) */
+#define APRSMSG_L_EMPTY1      "(порожньо)"                /* порожній список, великий шрифт (як MSGS_EMPTY) */
+#define APRSMSG_L_BACK        "RED:назад"                 /* під ним (як MSGS_HINT_BACK) */
+#define APRSMSG_R_HINT_IN     "SK2+GRN:вид GRN:відпов"    /* підказка читання вхідного (як MSGS_HINT_INBOX_ITEM) */
+#define APRSMSG_R_HINT_OUT    "SK2+GRN:вид GRN:ще раз"    /* надісланого (як MSGS_HINT_SENT_ITEM) */
+#define APRSMSG_TITLE_RESEND  "Ще раз"                    /* заголовок набору після GREEN на надісланому */
+
 #endif /* USER_INTERFACE_LANGUAGES_APRSMSG_UA_H_ */

@@ -19,6 +19,10 @@
 #include "user_interface/languages/aprsmode_ua.h"
 #include "user_interface/languages/aprsmsg_ua.h"
 #include "user_interface/uiSmsKeys.h"   /* R11-fix2: підказка літер і шпаргалка розкладки -- спільні з SMS */
+#if defined(APRS_MSG1_UI)
+#include "user_interface/uiSms.h"        /* R98-MSG1: uiSmsTimeStr() -- час рядків, як у SMS DMR */
+#include "functions/sms_format.h"     /* SMS_TIME_VALID_MIN, SMS_TIME_SHORT/FULL */
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -83,10 +87,75 @@ static void msgAgeStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t now)
 	}
 }
 
+#if defined(APRS_MSG1_UI)
+/* R98-MSG1: стовпчик часу у списку -- те саме місце й ширина, що LIST_TIME_X/LIST_TEXT_COLS у menuMessages.c (FONT_SIZE_1, 5 символів праворуч;
+ * текст рядка 8x16 обрізається перед ним). tools/test_r98msg1.py звіряє обидва визначення. */
+#define AM_LIST_TIME_X     ((int16_t)(DISPLAY_SIZE_X - DISPLAY_X_POS_MENU_OFFSET - 2 - 5 * 6))
+#define AM_LIST_TEXT_COLS  ((AM_LIST_TIME_X - 2 - DISPLAY_X_POS_MENU_TEXT_OFFSET) / 8)
+
+/* R98-MSG1 (рішення 3): час запису за годинником рації = «годинник зараз - вік». Стінного часу в записі нема (лише ticksGetMillis() прийому/
+ * створення; aprsMsgEntry_t без нових полів). 0 -- невідомо, тоді показується вік, як було: годинник не виставлено (< SMS_TIME_VALID_MIN),
+ * тик-лічильник переповнився після запису (~49,7 доби, now < ms -- вік за модулем 2^32 міг би бути сміттям) або вийшло б раніше за 2025 р.
+ * Зміна годинника/пояса після прийому зсуває показаний час старих записів (відомо й прийнято власником). */
+static uint32_t msgClockTime(const aprsMsgEntry_t *e, uint32_t nowMs)
+{
+	uint32_t clk = (uint32_t)uiDataGlobal.dateTimeSecs;
+	uint32_t age;
+
+	if ((e->noTime != 0U) || (clk < SMS_TIME_VALID_MIN) || (nowMs < e->ms))
+	{
+		return 0U;
+	}
+	age = (nowMs - e->ms) / 1000U;
+	if ((age > clk) || ((clk - age) < SMS_TIME_VALID_MIN))
+	{
+		return 0U;
+	}
+	return (clk - age);
+}
+
+/* Час рядка списку (mode = SMS_TIME_SHORT: «ГГ:ХХ» сьогодні, інакше «ДД.ММ») або читання (SMS_TIME_FULL: «ДД.ММ ГГ:ХХ»). Час невідомий --
+ * вік («12хв»); у списку для нашого «чекає» -- саме слово «чекає» (рішення 4: у читанні воно вже є в рядку 1). */
+static void msgWhenStr(char *b, size_t n, const aprsMsgEntry_t *e, uint32_t nowMs, int mode)
+{
+	uint32_t t = msgClockTime(e, nowMs);
+
+	if ((t != 0U) && (uiSmsTimeStr(t, mode, b, (int)n) > 0))
+	{
+		return;
+	}
+	if ((mode == SMS_TIME_SHORT) && (e->dir == AMSG_DIR_OUT) && (e->status == AMSG_ST_WAIT))
+	{
+		snprintf(b, n, "%s", APRSMSG_ST_WAIT);
+		return;
+	}
+	msgAgeStr(b, n, e, nowMs);
+}
+
+/* Маркер першої клітинки рядка: вхідні -- '*' непрочитане; надіслані (рішення 4) -- ACK: пробіл (поверх малюється галочка uiDrawTickMark, як
+ * «доставлено» в SMS DMR), «без ACK» -- '!', «чекає»/«надіслано» -- '~'. */
+static char msgListMark(const aprsMsgEntry_t *e)
+{
+	if (e->dir != AMSG_DIR_OUT)
+	{
+		return (e->unread ? '*' : ' ');
+	}
+	switch (e->status)
+	{
+		case AMSG_ST_NOACK: return '!';
+		case AMSG_ST_WAIT:
+		case AMSG_ST_SENT:  return '~';
+		default:            return ' ';
+	}
+}
+#endif
+
 /* R15: перший екран «Повідом. APRS» -- Нове / Вхідні / Надіслані. R18: «Вхідні n/m» (n -- НЕпрочитані, як біля конверта; m -- усього вхідних), «Надіслані» -- усі записи
  * напрямку (раніше рахувалась черга передачі і після відправки була 0), четвертий пункт -- «[Видалити всі]». Великий шрифт, смуга вибору. */
 /* R18: у діагностичній збірці (ENABLE_APRS_RX_PROBE) видалення вимкнено -- не вистачає місця до адреси кодека (aprs_rx_cfg.h, APRS_R18_UI). */
-#if defined(APRS_R18_UI)
+#if defined(APRS_MSG1_UI)
+#define AM_HOME_ITEMS  3   /* R98-MSG1 (рішення 5): «[Видалити все]» -- останній пункт кожного списку, як у SMS DMR; з першого екрана прибрано */
+#elif defined(APRS_R18_UI)
 #define AM_HOME_ITEMS  4
 #else
 #define AM_HOME_ITEMS  3
@@ -112,10 +181,37 @@ static void msgHomeText(int i, char *buf, size_t cap, int *opt)
 
 static void drawMsgHome(void)
 {
+#if defined(APRS_MSG1_UI)
+	/* R98-MSG1: макет і виділення -- як «SMS DMR» (menuMessages.c:homeUpdate): menuGetMenuOffset(), вибраний пункт у центрі, по колу; підказки нема */
+	char buf[APRS_LIST_COLS + 8];
+	int saved = menuDataGlobal.currentItemIndex;
+
+	menuDataGlobal.currentItemIndex = (int)aprsModeUi()->msg.scroll;   /* menuGetMenuOffset()/menuDisplayEntry() рахують від нього; повертаємо нижче */
+	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
+	{
+		int opt = 0;
+		int mNum = menuGetMenuOffset(AM_HOME_ITEMS, i);
+
+		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
+		{
+			continue;
+		}
+		if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)
+		{
+			break;
+		}
+		buf[0] = 0;
+		msgHomeText(mNum, buf, sizeof(buf), &opt);
+		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+	}
+	menuDataGlobal.currentItemIndex = saved;
+#else
 	menuAprsListDraw(AM_HOME_ITEMS, (int)aprsModeUi()->msg.scroll, msgHomeText);
 	displayPrintCentered(112, APRSMSG_H_HINT, FONT_SIZE_1);
+#endif
 }
 
+#if !defined(APRS_MSG1_UI)
 /* R19 Е1: рядок списку. «Вхідні»: ознака '*' (непрочитане) + позивний(9) + вік (праворуч, 8) = 18 стовпців; «Надіслані»: позивний(8) + слово стану (праворуч, 10).
  * Текст повідомлення у списку не вміщується -- його видно при читанні. */
 static void msgListText(int i, char *buf, size_t cap, int *opt)
@@ -147,6 +243,83 @@ static void msgListText(int i, char *buf, size_t cap, int *opt)
 
 /* R15: список одного напрямку (mu->dirFilter): «Вхідні» -- маркер '*' у непрочитаних; «Надіслані» -- слово стану (чекає/надіслано/ACK).
  * mu->sel -- номер у відфільтрованому списку; індекс у b->list дає aprsMsgNth(). Лічильники -- у заголовку (R19 Е1). */
+#endif
+
+#if defined(APRS_MSG1_UI)
+/* R98-MSG1 (А): список -- як «Вхідні»/«Надіслані» SMS DMR (menuMessages.c:listUpdate): «маркер + позивний:текст» (обрізано перед стовпчиком
+ * часу) + час праворуч (FONT_SIZE_1, колір значення); 7 рядків, вибраний -- у центрі, по колу; останній пункт -- «[Видалити все]»; підказки
+ * внизу нема. mu->sel -- номер у відфільтрованому списку (== count -- рядок «[Видалити все]»). */
+static void drawMsgList(void)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	const bool out = (mu->dirFilter == AMSG_DIR_OUT);
+	int count = (int)aprsMsgDirCount(b, mu->dirFilter);
+	uint32_t now = ticksGetMillis();
+	int saved = menuDataGlobal.currentItemIndex;
+
+	if (count == 0)
+	{
+		displayPrintCentered(56, APRSMSG_L_EMPTY1, FONT_SIZE_3);   /* як у SMS DMR: «(порожньо)» і «RED:назад» */
+		displayPrintCentered(112, APRSMSG_L_BACK, FONT_SIZE_1);
+		return;
+	}
+	if ((int)mu->sel > count)
+	{
+		mu->sel = (uint8_t)count;   /* записи витіснено новими -- курсор на «[Видалити все]» */
+	}
+	menuDataGlobal.currentItemIndex = (int)mu->sel;
+	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
+	{
+		char buf[APRS_MSG_CALL_LEN + APRS_MSG_TEXT_LEN + 4];
+		char ts[12];
+		const aprsMsgEntry_t *e = NULL;
+		int mNum = menuGetMenuOffset(count + 1, i);
+		int16_t cy = (int16_t)(DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + (i * MENU_ENTRY_HEIGHT));
+		bool focused;
+
+		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
+		{
+			continue;
+		}
+		if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)
+		{
+			break;
+		}
+		focused = (mNum == menuDataGlobal.currentItemIndex);
+		ts[0] = 0;
+		if (mNum == count)
+		{
+			snprintf(buf, sizeof(buf), "%s", APRSMSG_L_DELALL);
+		}
+		else
+		{
+			int ri = aprsMsgNth(b, mu->dirFilter, (unsigned)mNum);
+
+			if (ri < 0)
+			{
+				continue;
+			}
+			e = &b->list[ri];
+			snprintf(buf, sizeof(buf), "%c%s:%s", msgListMark(e), e->call, e->text);
+			buf[AM_LIST_TEXT_COLS] = 0;
+			msgWhenStr(ts, sizeof(ts), e, now, SMS_TIME_SHORT);
+		}
+		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+		if (ts[0] != 0)
+		{
+			displayThemeApply(focused ? THEME_ITEM_BG : THEME_ITEM_FG_OPTIONS_VALUE, focused ? THEME_ITEM_BG_MENU_ITEM_SELECTED : THEME_ITEM_BG);
+			displayPrintCore(AM_LIST_TIME_X, (int16_t)(cy + 4), ts, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+			displayThemeResetToDefault();
+		}
+		if (out && (e != NULL) && (e->status == AMSG_ST_ACK))
+		{
+			uiDrawTickMark(DISPLAY_X_POS_MENU_TEXT_OFFSET, cy, THEME_ITEM_FG_RSSI_BAR, focused);   /* та сама галочка, що «доставлено» в SMS DMR */
+		}
+	}
+	menuDataGlobal.currentItemIndex = saved;
+}
+#else
 static void drawMsgList(void)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
@@ -170,6 +343,7 @@ static void drawMsgList(void)
 	printRow(10, APRSMSG_L_HINT_S);   /* R17: сторінок режиму нема */
 #endif
 }
+#endif
 
 #if defined(APRS_R18_UI)
 /* R18 Д1: підтвердження видалення (один запис або всі). mu->err: 1 -- всі; mu->reply -- вигляд, куди повернутись по RED. Видаляє лише GREEN. */
@@ -182,7 +356,11 @@ static void drawMsgConfirm(void)
 	if (mu->err != 0U)
 	{
 		displayPrintCentered(34, APRSMSG_Q_ALL, FONT_SIZE_3);
+#if defined(APRS_MSG1_UI)
+		snprintf(buf, sizeof(buf), APRSMSG_Q_COUNT, aprsMsgDirCount(b, mu->dirFilter));   /* R98-MSG1: «[Видалити все]» -- у списку, видаляє лише цей напрямок */
+#else
 		snprintf(buf, sizeof(buf), APRSMSG_Q_COUNT, aprsMsgListCount(b));
+#endif
 		displayPrintCentered(58, buf, FONT_SIZE_1);
 	}
 	else
@@ -229,6 +407,69 @@ static int drawWrapped(const char *t, int len, int first, int rows, int16_t y0, 
 	return line;
 }
 
+#if defined(APRS_MSG1_UI)
+/* R98-MSG1 (Б): розкладка читання -- як у SMS DMR (menuMessages.c:readUpdate). Рядок 1 (FONT_SIZE_1, y=16): «Від CALL» / «Кому CALL стан {NN»
+ * ({NN -- якщо влізає в 26 символів), праворуч -- час «ДД.ММ ГГ:ХХ» (годинник не виставлено -- вік); разом не влазять -- час другим рядком
+ * (y=25), текст з y=35, інакше з y=26 (великий шрифт -- до 5 рядків). Повертає найбільший перший рядок тексту (для U/D на краю, msgPageEvent). */
+static int msgReadLayout(const aprsMsgEntry_t *e, char *hdr, size_t hcap, char *ts, size_t tcap, int16_t *textY, int *rows)
+{
+	const amMsgFont_t f = amMsgFont();
+	size_t hl;
+	int total;
+
+	snprintf(hdr, hcap, "%s %s", (e->dir == AMSG_DIR_OUT) ? APRSMSG_R1_TO : APRSMSG_R1_FROM, e->call);
+	if (e->dir == AMSG_DIR_OUT)
+	{
+		hl = strlen(hdr);
+		snprintf(hdr + hl, hcap - hl, " %s", msgStatusWord(e->status));
+		hl = strlen(hdr);
+		if ((e->id[0] != 0) && ((hl + 2U + strlen(e->id)) <= 26U))
+		{
+			snprintf(hdr + hl, hcap - hl, " {%s", e->id);
+		}
+	}
+	msgWhenStr(ts, tcap, e, ticksGetMillis(), SMS_TIME_FULL);
+	*textY = 26;
+	if ((2 + ((int)strlen(hdr) * 6) + 6 + ((int)strlen(ts) * 6)) > (DISPLAY_SIZE_X - 2))
+	{
+		*textY = 35;
+	}
+	*rows = ((111 - *textY - f.glyphH) / f.lineH) + 1;
+	total = drawWrapped(e->text, (int)strlen(e->text), 0, 0, *textY, f.font, f.lineH);   /* лише порахувати */
+	return ((total > *rows) ? (total - *rows) : 0);
+}
+
+static void drawMsgRead(void)
+{
+	aprsMsgBox_t *b = aprsModeMsgBox();
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	int ri = aprsMsgNth(b, mu->dirFilter, mu->sel);
+	const aprsMsgEntry_t *e = &b->list[(ri >= 0) ? ri : 0];
+	const amMsgFont_t f = amMsgFont();
+	char hdr[48], ts[16];
+	int16_t textY;
+	int rows;
+	int maxTop = msgReadLayout(e, hdr, sizeof(hdr), ts, sizeof(ts), &textY, &rows);
+	int tl = (int)strlen(ts);
+
+	if (mu->readTop > maxTop)
+	{
+		mu->readTop = (uint8_t)maxTop;
+	}
+	displayPrintAt(2, 16, hdr, FONT_SIZE_1);
+	displayPrintCore((int16_t)(DISPLAY_SIZE_X - 2 - (tl * 6)), (textY == 26) ? 16 : 25, ts, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	(void)drawWrapped(e->text, (int)strlen(e->text), mu->readTop, rows, textY, f.font, f.lineH);
+	displayPrintCentered(112, (e->dir == AMSG_DIR_OUT) ? APRSMSG_R_HINT_OUT : APRSMSG_R_HINT_IN, FONT_SIZE_1);
+	if (mu->readTop > 0U)
+	{
+		displayFillTriangle(4, 112, 0, 119, 8, 119, true);                                   /* є вище */
+	}
+	if (mu->readTop < maxTop)
+	{
+		displayFillTriangle(DISPLAY_SIZE_X - 9, 112, DISPLAY_SIZE_X - 1, 112, DISPLAY_SIZE_X - 5, 119, true);   /* є нижче */
+	}
+}
+#else
 static void drawMsgRead(void)
 {
 	aprsMsgBox_t *b = aprsModeMsgBox();
@@ -276,6 +517,8 @@ static void drawMsgRead(void)
 	}
 }
 
+#endif
+
 /* R15: заголовок сторінки «Повідомлення» за виглядом */
 static const char *msgPageTitle(char *tb, size_t cap)
 {
@@ -284,7 +527,13 @@ static const char *msgPageTitle(char *tb, size_t cap)
 
 	if (mu->view == APRS_MSG_VIEW_READ)
 	{
+#if defined(APRS_MSG1_UI)
+		/* R98-MSG1: «Вхідні 3/9» -- позиція/усього в цьому напрямку, як заголовок читання SMS DMR */
+		snprintf(tb, cap, "%s %u/%u", (mu->dirFilter == AMSG_DIR_OUT) ? APRSMSG_T_OUT : APRSMSG_T_IN, (unsigned)mu->sel + 1U, aprsMsgDirCount(b, mu->dirFilter));
+		return tb;
+#else
 		return APRSMSG_TITLE_READ;
+#endif
 	}
 	if (mu->view == APRS_MSG_VIEW_LIST)
 	{
@@ -358,7 +607,11 @@ static void drawMsgCompose(void)
 		return;
 	}
 	displayClearBuf();
+#if defined(APRS_MSG1_UI)
+	menuDisplayTitle((isCall || (mu->reply == 0U)) ? APRSMSG_TITLE_NEW : ((mu->reply == 2U) ? APRSMSG_TITLE_RESEND : APRSMSG_TITLE_REPLY));   /* R98-MSG1: 2 -- «ще раз» */
+#else
 	menuDisplayTitle((isCall || (mu->reply == 0U)) ? APRSMSG_TITLE_NEW : APRSMSG_TITLE_REPLY);
+#endif
 	if (isCall)
 	{
 		printRow(0, APRSMSG_C_CALL);
@@ -645,6 +898,51 @@ static bool msgComposeEvent(uiEvent_t *ev)
 	return false;
 }
 
+#if defined(APRS_MSG1_UI)
+/* R98-MSG1 (Б): «ще раз» для надісланого -- адресат і текст із запису підставляються в mu->call/mu->text (поля набору, нових нема), одразу
+ * екран тексту, де GREEN надсилає (у SMS DMR «ще раз» веде на «Одержувач», де GREEN теж надсилає). RED -- назад до списку (reply != 0).
+ * Текст нашого повідомлення вже пройшов перевірку при першому надсиланні (<= 67 Б UTF-8), тож у буфер набору він влазить. */
+static void msgComposeResend(const aprsMsgEntry_t *e)
+{
+	aprsMsgUi_t *mu = &aprsModeUi()->msg;
+	char norm[APRS_MSG_CALL_LEN];
+
+	if (aprsMsgNormCall(norm, e->call) == false)
+	{
+		msgNotify(APRSMSG_E_CALL);
+		return;
+	}
+	msgComposeStart(norm);
+	snprintf(mu->text, sizeof(mu->text), "%s", e->text);
+	mu->pos = (int16_t)strlen(mu->text);
+	mu->reply = 2U;
+}
+
+/* R98-MSG1 (А): SK2+RED у списку -- усі вхідні прочитані (як dmrSmsMarkAllRead() у SMS DMR). */
+static void msgMarkAllRead(aprsMsgBox_t *b)
+{
+	for (unsigned i = 0; i < APRS_MSG_LIST_MAX; i++)
+	{
+		if (b->list[i].used && (b->list[i].dir == AMSG_DIR_IN))
+		{
+			aprsMsgMarkRead(b, i);
+		}
+	}
+}
+
+/* R98-MSG1 (рішення 5): «[Видалити все]» у списку видаляє лише ЦЕЙ напрямок (як тека в SMS DMR). aprsMsgDelete() знімає й завдання черги. */
+static void msgDeleteDir(aprsMsgBox_t *b, uint8_t dir)
+{
+	for (int i = (int)APRS_MSG_LIST_MAX - 1; i >= 0; i--)
+	{
+		if (b->list[i].used && (b->list[i].dir == dir))
+		{
+			(void)aprsMsgDelete(b, (unsigned)i);
+		}
+	}
+}
+#endif
+
 /* Читання: сусіднє повідомлення (dir +1 -- старіше). На краях нічого. */
 static void msgReadGo(int dir)
 {
@@ -655,6 +953,9 @@ static void msgReadGo(int dir)
 
 	if ((n < 0) || (n >= (int)aprsMsgDirCount(b, mu->dirFilter)))
 	{
+#if defined(APRS_MSG1_UI)
+		soundSetMelody(MELODY_ERROR_BEEP);   /* R98-MSG1: на краях списку -- сигнал помилки, як readGo() у SMS DMR */
+#endif
 		return;
 	}
 	ri = aprsMsgNth(b, mu->dirFilter, (unsigned)n);
@@ -696,7 +997,7 @@ static int msgPageEvent(uiEvent_t *ev)
 			{
 				msgComposeStart(NULL);
 			}
-#if defined(APRS_R18_UI)
+#if defined(APRS_R18_UI) && !defined(APRS_MSG1_UI)
 			else if (mu->scroll == 3U)
 			{
 				if (aprsMsgListCount(b) == 0U)
@@ -732,9 +1033,15 @@ static int msgPageEvent(uiEvent_t *ev)
 		{
 			if (mu->err != 0U)
 			{
+#if defined(APRS_MSG1_UI)
+				msgDeleteDir(b, mu->dirFilter);   /* R98-MSG1: з рядка «[Видалити все]» списку -- лише цей напрямок; лишаємось у списку */
+				mu->view = APRS_MSG_VIEW_LIST;
+				mu->sel = 0U;
+#else
 				(void)aprsMsgDeleteAll(b);
 				mu->view = APRS_MSG_VIEW_HOME;
 				mu->scroll = 0U;
+#endif
 			}
 			else
 			{
@@ -774,6 +1081,38 @@ static int msgPageEvent(uiEvent_t *ev)
 			mu->view = APRS_MSG_VIEW_LIST;
 			return 1;
 		}
+#if defined(APRS_MSG1_UI)
+		/* R98-MSG1 (Б): U/D гортають текст, на краю тексту -- сусіднє повідомлення (як readEvent() у SMS DMR) */
+		if (KEYCHECK_PRESS(ev->keys, KEY_UP))
+		{
+			if (mu->readTop > 0U)
+			{
+				mu->readTop--;
+			}
+			else
+			{
+				msgReadGo(-1);
+			}
+			return 1;
+		}
+		if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+		{
+			int ri = aprsMsgNth(b, mu->dirFilter, mu->sel);
+			char hdr[48], ts[16];
+			int16_t textY;
+			int rows;
+
+			if ((ri >= 0) && ((int)mu->readTop < msgReadLayout(&b->list[ri], hdr, sizeof(hdr), ts, sizeof(ts), &textY, &rows)))
+			{
+				mu->readTop++;
+			}
+			else
+			{
+				msgReadGo(+1);
+			}
+			return 1;
+		}
+#else
 		if (KEYCHECK_PRESS(ev->keys, KEY_UP) && (mu->readTop > 0U))
 		{
 			mu->readTop--;
@@ -784,6 +1123,7 @@ static int msgPageEvent(uiEvent_t *ev)
 			mu->readTop++;   /* верхню межу виправить drawMsgRead() */
 			return 1;
 		}
+#endif
 		if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
 		{
 			msgReadGo(+1);
@@ -798,6 +1138,13 @@ static int msgPageEvent(uiEvent_t *ev)
 		{
 			char norm[APRS_MSG_CALL_LEN];
 
+#if defined(APRS_MSG1_UI)
+			if (b->list[aprsMsgNth(b, mu->dirFilter, mu->sel)].dir == AMSG_DIR_OUT)
+			{
+				msgComposeResend(&b->list[aprsMsgNth(b, mu->dirFilter, mu->sel)]);   /* R98-MSG1: надіслане -- «ще раз» */
+				return 1;
+			}
+#endif
 			if (aprsMsgNormCall(norm, b->list[aprsMsgNth(b, mu->dirFilter, mu->sel)].call))
 			{
 				msgComposeStart(norm);
@@ -812,6 +1159,31 @@ static int msgPageEvent(uiEvent_t *ev)
 	}
 
 	/* список (R15: одного напрямку); RED -- назад до першого екрана */
+#if defined(APRS_MSG1_UI)
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED) && BUTTONCHECK_DOWN(ev, BUTTON_SK2))
+	{
+		msgMarkAllRead(b);   /* R98-MSG1 (А): SK2+RED -- усі вхідні прочитані (у «Надісланих» нічого не змінює), як у SMS DMR */
+		return 1;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_LEFT) || KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
+	{
+		/* R98-MSG1: по колу через count + 1 пунктів (останній -- «[Видалити все]»); ручка гортає, як і раніше (R17) */
+		int n = (int)mu->sel + ((KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_PRESS(ev->keys, KEY_RIGHT)) ? 1 : -1);
+
+		if (count > 0U)
+		{
+			mu->sel = (uint8_t)((n < 0) ? (int)count : ((n > (int)count) ? 0 : n));
+		}
+		return 1;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN) && (count > 0U) && (mu->sel >= count))
+	{
+		mu->err = 1U;                         /* «[Видалити все]» -> «Видалити всі?» «Записів: N»; видаляє лише GREEN там */
+		mu->reply = APRS_MSG_VIEW_LIST;
+		mu->view = APRS_MSG_VIEW_CONFIRM;
+		return 1;
+	}
+#endif
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
 		mu->view = APRS_MSG_VIEW_HOME;

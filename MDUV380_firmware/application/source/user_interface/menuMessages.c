@@ -57,8 +57,8 @@
 #define MSGS_SET_MONITOR         "SMS monitor"
 #define MSGS_SET_TXCONF          "SMS confirm"
 #define MSGS_SET_TX_R12          "1/2"
-#define MSGS_INBOX_FMT           "Inbox (%d)"
-#define MSGS_SENT_FMT            "Sent (%d)"
+#define MSGS_INBOX_FMT           "Inbox %d/%d"   /* R98-MSG1: unread/total */
+#define MSGS_SENT_FMT            "Sent %d"
 #define MSGS_NEW                 "New Message"
 #define MSGS_TITLE_SENT          "Sent"
 #define MSGS_TITLE_INBOX         "Inbox"
@@ -367,6 +367,16 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 }
 
 /* ============================ HOME ===================================== */
+/* R98-MSG1 (рішення 2): «Вхідні n/m» -- n непрочитаних (dmrSmsUnreadCount(), той самий лічильник, що біля конверта), m -- усього у «Вхідних».
+ * Відкладене вхідне (прийняте, ще не у флеші) лічильник непрочитаних уже бачить, а список -- ще ні: n обмежено m, щоб не було «2/1». */
+static void smsInboxTitle(char *buf, int cap)
+{
+	int total = dmrSmsCount(0);
+	int unread = dmrSmsUnreadCount();
+
+	snprintf(buf, (size_t)cap, MSGS_INBOX_FMT, (unread < total) ? unread : total, total);
+}
+
 static void homeUpdate(void)
 {
 	char buf[24];
@@ -383,7 +393,7 @@ static void homeUpdate(void)
 		{
 			/* ui7: «Нове» -- першим. R81: далі два налаштування SMS DMR ("підпис:значення"). */
 			case 0:  snprintf(buf, sizeof buf, MSGS_NEW);                       break;
-			case 1:  snprintf(buf, sizeof buf, MSGS_INBOX_FMT, dmrSmsCount(0)); break;
+			case 1:  smsInboxTitle(buf, sizeof buf); break;   /* R98-MSG1: «Вхідні n/m» -- непрочитані/усього, як у «Повідом. APRS» */
 			case 2:  snprintf(buf, sizeof buf, MSGS_SENT_FMT,  dmrSmsCount(1)); break;
 			case MSGS_HOME_SET_MONITOR:
 				snprintf(buf, sizeof buf, "%s:%s", MSGS_SET_MONITOR, settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? currentLanguage->on : currentLanguage->off);
@@ -828,8 +838,12 @@ static void listUpdate(void)
 {
 	char buf[DMR_SMS_TEXT_MAX + 24];
 	int count = dmrSmsCount(s_msg.folder);
+	char title[24];
 	displayClearBuf();
-	menuDisplayTitle(s_msg.folder ? MSGS_TITLE_SENT : MSGS_TITLE_INBOX);
+	/* R98-MSG1: заголовок списку з лічильниками -- «Вхідні n/m», «Надіслані m» (як на першому екрані й у «Повідом. APRS») */
+	if (s_msg.folder) { snprintf(title, sizeof title, MSGS_SENT_FMT, count); }
+	else              { smsInboxTitle(title, sizeof title); }
+	menuDisplayTitle(title);
 
 	if (count == 0)
 	{
