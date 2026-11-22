@@ -234,7 +234,7 @@ def test_part_d(incs, cf):
     # --- uiUnreadCountCard (справжня)
     tu = T.pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiUtilities.c")
     fn = T.carve_fn(tu or "", "unsigned uiUnreadCountCard(_Bool cardB)")
-    check(fn is not None, "Д: uiUnreadCountCard знайдено")
+    check(fn is None, "Д (R98-FIX13 В): uiUnreadCountCard прибрано -- конверти SMS/APRS у шапці DW (загальні лічильники), не по картках")
     if fn:
         out = run_in(CARD_HARNESS.replace("@@FN@@", fn))
         o = kv(out)

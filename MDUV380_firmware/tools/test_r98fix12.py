@@ -97,7 +97,8 @@ def test_tag(D, o, src_cm, H, env):
     check(D["DW_TAG_W"] == 3 * 6 and D["DW_METER_X"] == X0 + D["DW_TAG_W"] == 25, "А1: «RX » = 3 символи 6x8 = 18 px (x=%d..%d), далі x=%d" % (X0, X0 + 17, D["DW_METER_X"]))
     check(D["DW_METER_END"] - D["DW_METER_X"] == 9 * 6 and D["DW_METER_SEGS"] == 11 and D["DW_METER_HOT"] == 2,
           "А1: S-метр -- 11 сегментів, 2 останні червоні, ширина 54 px = ширина частоти з 9 символів (x=%d..%d)" % (D["DW_METER_X"], D["DW_METER_END"] - 1))
-    check(D["DW_METER_END"] + 7 <= D["DW_IN_R"] + 1 - D["DW_ICONS_W"], "А1: dwMeterClearOfIcons -- S-метр (до x=%d) не заходить на значки (з x=%d)" % (D["DW_METER_END"] - 1, D["DW_IN_R"] + 1 - D["DW_ICONS_W"]))
+    mpx = D["DW_IN_R"] + 1 - D["DW_LOCK_W"] - D["DW_ICON_GAP"] - D["DW_MP_CHARS"] * 6
+    check(D["DW_METER_END"] + D["DW_ICON_GAP"] <= mpx, "А1: dwMeterClearOfIcons (R98-FIX13) -- S-метр (до x=%d) не заходить на «DMR 750mW» (з x=%d) і замок" % (D["DW_METER_END"] - 1, mpx))
     keys = (("s1a", "p6a"), ("s2a", "DMR"), ("s2b", "FM"), ("s4b", "VFO"), ("s3a", "FM"), ("p6b", "DMR"))
     stock = {v: te.stock_colors(v) for v in ("day", "night")}
     def lum(c565):

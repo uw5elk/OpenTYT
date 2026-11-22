@@ -394,9 +394,11 @@ def test_static():
     check("uint8_t  typeB;" in sd and sd.count("[") == 0, "В9: тип B -- байт у колишньому вирівнюванні s_dc (8 байт), масивів/нових змінних нема")
     check(re.findall(r"^static [a-z_0-9]+ ([a-zA-Z_0-9]+)\[", dcc, re.M) == [], "В9: у dual_channel.c нових статичних масивів нема (R98-FIX2 Д2: лічильників у RAM нема)")
     # Д1: конверт
-    check("static bool dualEnvelopeInCards(void)" in uu and uu.count("if (dualEnvelopeInCards())") == 2, "Д1: конверт непрочитаних у шапці вимкнено на екрані карток (SMS і APRS), на інших екранах -- як було")
+    check("dualEnvelopeInCards" not in uu and uu.count("if (dwOnly)") >= 2 and "dwHeaderEnvelopes(uiUnreadCount('A'), uiUnreadCount('D'));" in uu,
+          "Д1 (R98-FIX13 В): стокові конверти шапки на екрані карток вимкнено (dwOnly), натомість -- «A ✉ N»/«D ✉ N» у шапці режиму; на інших екранах -- як було")
     rowb = src[src.find("static void dualRenderRow("):src.find("static bool dualActivity(")]
-    check("uiUnreadCountCard(isB)" in rowb and "uiUnreadCount('A')" in rowb and "drawMsgEnvelope" not in rowb, "Д1: індикатор у квадраті літери картки (D на A, A на B); стокова шапкова функція в картках не викликається")
+    check("uiUnreadCountCard" not in rowb and "uiUnreadCount(" not in rowb and "drawMsgEnvelope" not in rowb and "uiDrawMsgEnvelopeAt" not in rowb,
+          "Д1 (R98-FIX13 В): у картках значків SMS/APRS нема (вони в шапці режиму)")
     # Д3: показ перекриття ТГ -- на обох DMR-картках (глобальне)
     check("nonVolatileSettings.overrideTG != 0" in src[src.find("static uint32_t dualDestination(const"):src.find("static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)\n{")], "Д3: dualDestination враховує глобальне перекриття ТГ (показ = реальний PTT)")
     # символи: «VFO A/B» -- латиниця, без нових полів мови

@@ -377,7 +377,7 @@ if [ -z "${FONTCONFIG_FILE:-}" ] && [ -d /usr/share/fonts/truetype/dejavu ] && [
 	printf '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><dir>/usr/share/fonts/truetype/dejavu</dir><dir>/usr/share/fonts/truetype/liberation</dir><cachedir>%s/cache</cachedir></fontconfig>\n' "$FCDIR" > "$FCDIR/fonts.conf"
 	export FONTCONFIG_FILE="$FCDIR/fonts.conf"
 fi
-for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65 test_r65b test_r66 test_r70 test_r71 test_r73 test_r74 test_r75 test_r76 test_r77a test_r78 test_r81 test_r79 test_r88 test_r91a test_r91b test_r91c test_r92 test_r93 test_r82 test_r94a test_r94b test_r94d test_r95 test_r96 test_r97 test_r98 test_r98fix1 test_r98fix2 test_r98fix3 test_r98fix4 test_r98fix5 test_r98fix6 test_r98fix7 test_r98fix8 test_r98fix9 test_r98fix10 test_r98fix11 test_r98fix12; do
+for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_cps_doc test_cps_edit test_cps_fix3 test_rnext test_r28 test_r30 test_r31 test_r32 test_r33 test_r34 test_r35 test_r36 test_r37 test_r41 test_r42 test_r43 test_r44 test_r44fix test_r46 test_r47 test_r50 test_r50fix test_r51 test_r53 test_r53_ui test_r54 test_r54_ui test_r55 test_r55_ui test_r56 test_r56_ui test_r59 test_r59_ui test_aes_key_name test_r64 test_r64_editor test_r65 test_r65b test_r66 test_r70 test_r71 test_r73 test_r74 test_r75 test_r76 test_r77a test_r78 test_r81 test_r79 test_r88 test_r91a test_r91b test_r91c test_r92 test_r93 test_r82 test_r94a test_r94b test_r94d test_r95 test_r96 test_r97 test_r98 test_r98fix1 test_r98fix2 test_r98fix3 test_r98fix4 test_r98fix5 test_r98fix6 test_r98fix7 test_r98fix8 test_r98fix9 test_r98fix10 test_r98fix11 test_r98fix12 test_r98fix13; do
 	if [ -z "$FILTER" ] || [[ "$T" == *"$FILTER"* ]]; then
 		PYTK=""
 		for cand in python3 python3.12 python3.11 python3.10 python3.13; do
@@ -385,7 +385,7 @@ for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_
 		done
 		if [ -n "$PYTK" ] && command -v xvfb-run >/dev/null 2>&1; then
 			# R51: test_r50fix проходить 6 сценаріїв шрифт × масштаб по всіх розділах (≈125 с на вільній машині, більше під навантаженням) -- ліміт для нього 900 с
-			TMO=240; [ "$T" = "test_r50fix" ] && TMO=900; [ "$T" = "test_r53_ui" ] && TMO=600
+			TMO=240; [ "$T" = "test_r50fix" ] && TMO=900; [ "$T" = "test_r53_ui" ] && TMO=600; [ "$T" = "test_r98fix13" ] && TMO=900
 			out="$(timeout "$TMO" xvfb-run -a "$PYTK" -B "$TESTS_DIR/../tools/$T.py" 2>&1)"; rc=$?
 			if [ "$rc" -eq 0 ]; then
 				pass=$((pass + 1)); echo "ok            $T (python + Tk під xvfb)"

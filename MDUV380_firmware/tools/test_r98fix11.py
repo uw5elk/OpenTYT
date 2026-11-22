@@ -265,9 +265,13 @@ def harness_after(tu_uu):
     H = H.replace("enum { FONT_SIZE_1 = 1, FONT_SIZE_3 = 3, FONT_SIZE_4 = 4 };", "enum { FONT_SIZE_1 = 1, FONT_SIZE_1_BOLD = 2, FONT_SIZE_3 = 3, FONT_SIZE_4 = 4 };")
     H = H.replace("int w = (f == FONT_SIZE_1) ? 6 : (f == FONT_SIZE_3 ? 8 : 16), h = (f == FONT_SIZE_1) ? 8 : (f == FONT_SIZE_3 ? 16 : 32);",
                   "int w = ((f == FONT_SIZE_1) || (f == FONT_SIZE_1_BOLD)) ? 6 : (f == FONT_SIZE_3 ? 8 : 16), h = ((f == FONT_SIZE_1) || (f == FONT_SIZE_1_BOLD)) ? 8 : (f == FONT_SIZE_3 ? 16 : 32);")
-    env = [T.carve_fn(tu_uu, s) for s in ("static int16_t msgEnvelopeWidth(unsigned count)", "static void drawMsgEnvelope(int16_t x, int16_t y, char letter, unsigned count)",
-                                         "int16_t uiMsgEnvelopeWidth(unsigned count)", "void uiDrawMsgEnvelopeAt(int16_t x, int16_t y, char letter, unsigned count)")]
-    return H, env
+    # R98-FIX13 В: у картках значків SMS/APRS більше нема -- uiMsgEnvelopeWidth()/uiDrawMsgEnvelopeAt() з uiUtilities.c прибрано; заглушки потрібні лише МУТАНТАМ («значок знову на картці»)
+    # і гарнесу коду бази (R98-FIX11/12), що їх викликав; корисний код карток їх не викликає (cards_check це перевіряє).
+    stub = ("int16_t uiMsgEnvelopeWidth(unsigned count) { return (count > 9U) ? 34 : 28; }\n"
+            "void uiDrawMsgEnvelopeAt(int16_t x, int16_t y, char letter, unsigned count) { char lt[2] = { letter, 0 }; char nb[4]; snprintf(nb, sizeof nb, \"%u\", count); "
+            "displayPrintCore(x, y + 1, lt, FONT_SIZE_1, TEXT_ALIGN_LEFT, false); displayDrawRect(x + 7, y, 13, 9, true); displayDrawLine(x + 7, y, x + 13, y + 4, true); "
+            "displayDrawLine(x + 19, y, x + 13, y + 4, true); displayPrintCore(x + 22, y + 1, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false); }")
+    return H, [stub]
 
 
 def run_cards(tu_cm, H, extra):
@@ -324,7 +328,7 @@ def render(o, ka, kb, D):
 
 
 def analyse_after(D, line):
-    """Елементи картки (константи FIX11). (елементи, рамки, нерозпізнані, перетини, поза полем)."""
+    """Елементи картки (константи R98-FIX13). (елементи, рамки, нерозпізнані, перетини, поза полем)."""
     ps = F6.prims_of(line)
     R4 = D["DW_ROW4_DY"]; el = {}; bad = []
     for p in ps:
@@ -333,12 +337,6 @@ def analyse_after(D, line):
             n = "frame"
         elif p["k"] == "f" and p["x"] == D["DW_SEL_X"] and p["w"] == D["DW_SEL_W"]:
             n = "stripe"
-        elif p["k"] == "l" and D["DW_TRI_X"] <= p["x"] <= D["DW_TRI_X"] + D["DW_TRI_W"] - 1 and p["y"] < D["DW_ROW2_DY"]:
-            n = "tri"
-        elif p["k"] == "T" and p["font"] == 3 and p["y"] == D["DW_ROW1_DY"] and len(p["t"]) == 1 and p["t"] in "AB" and p["x"] < D["DW_ROW1_TX"]:
-            n = "letter"
-        elif p["k"] == "r" and p["w"] < 20 and p["h"] >= 12 and p["y"] < D["DW_ROW2_DY"]:
-            n = "letter"
         elif p["k"] == "T" and p["font"] == 3 and p["y"] == D["DW_ROW1_DY"]:
             n = "row1"
         elif p["k"] == "T" and p["font"] == 3 and p["y"] == D["DW_ROW2_DY"]:
@@ -350,24 +348,22 @@ def analyse_after(D, line):
         elif p["k"] == "f" and p["inv"] == 1 and p["y"] == R4 and p["x"] == D["DW_IN_L"] and p["w"] == D["DW_METER_END"] - D["DW_IN_L"]:
             n = "meterbg"
         elif p["y"] >= R4 and p["k"] == "T" and p["inv"] == 0 and p["x"] == D["DW_IN_L"] and p["y"] == R4 + D["DW_ROW4_TXT_DY"] and p["t"] in ("RX", "TX"):
-            n = "tag"           # R98-FIX12 А: мітка -- звичайний текст без заливки (до FIX12 -- інверсний прямокутник 13x9)
+            n = "tag"           # R98-FIX12 А: мітка -- звичайний текст без заливки
         elif p["k"] == "T" and p["y"] == R4 + D["DW_ROW4_TXT_DY"] and p["x"] == D["DW_METER_X"]:
             n = "f4"
         elif p["k"] in "fr" and p["y"] >= R4 and D["DW_METER_X"] <= p["x"] and b[2] < D["DW_METER_END"]:
             n = "meter"
         elif p["k"] == "k":
             n = "lock"
-        elif p["y"] >= R4 and ((p["k"] == "f" and p["w"] == D["DW_AP_W"]) or (p["k"] == "T" and p["inv"] == 1 and p["t"][:1] == "A")):
-            n = "aprs"
-        elif p["y"] >= R4 and p["k"] in "Trl" and p["x"] >= D["DW_METER_END"]:
-            n = "D"
+        elif p["k"] == "T" and p["y"] == R4 + D["DW_ROW4_TXT_DY"] and p["x"] >= D["DW_MP_MIN_X"] - 12 and p["inv"] == 0:
+            n = "mp"            # R98-FIX13 Е: «режим потужність» праворуч у рядку 4
         else:
             bad.append(p); continue
         el.setdefault(n, []).append(p)
     boxes = {k: F6.union([F6.box(p) for p in v]) for k, v in el.items() if k not in ("frame", "meterbg")}
     if "row1" in boxes:
         b1 = boxes["row1"]
-        boxes["row1"] = (b1[0], b1[1], b1[2], b1[3] - 1)   # R98-FIX12 Б: нижній рядок клітинки рядка 1 (виносні латиниці g, j, p, q, y) -- спільний із верхнім рядком клітинки рядка 2; піксельні проміжки -- test_r98fix12
+        boxes["row1"] = (b1[0], b1[1], b1[2], b1[3] - 1)   # R98-FIX12 Б: нижній рядок клітинки рядка 1 (виносні латиниці) -- спільний із верхнім рядком клітинки рядка 2
     if "arrow" in boxes:
         x0, y0, x1, y1 = boxes["arrow"]; cx = (x0 + x1) // 2
         boxes["arrow"] = (cx - 5, D["DW_ARROW_DY"], cx + 4, D["DW_ARROW_DY"] + D["DW_ARROW_CELL"] - 1)
@@ -380,8 +376,23 @@ def analyse_after(D, line):
 KEYS = F9.KEYS
 
 
+def icons_on_card(D, line):
+    """R98-FIX13 В: значки SMS/APRS і ▶ на картці -- перелік знайденого (порожній -- гаразд)."""
+    R4 = D["DW_ROW4_DY"]; found = []
+    for p in F6.prims_of(line):
+        if p["k"] == "r" and p["w"] == 13 and p["h"] == 9:
+            found.append("корпус конверта")
+        elif p["k"] == "f" and p["w"] == 13 and p["y"] >= R4 and p["inv"] == 0:
+            found.append("бокс APRS")
+        elif p["k"] == "T" and p["y"] >= R4 and p["font"] == 1 and p["t"][:1] in ("D", "A") and p["t"] not in ("RX", "TX") and len(p["t"]) <= 2 and p["x"] != D["DW_METER_X"] and not p["t"].isdigit():
+            found.append("літера %s" % p["t"])
+        elif p["k"] == "l" and D["DW_IN_L"] <= p["x"] <= D["DW_IN_L"] + 3 and p["y"] < D["DW_ROW2_DY"]:
+            found.append("▶")
+    return found
+
+
 def cards_check(o, D, mutant=False):
-    """Повертає список зламаних властивостей; без mutant -- ще й check()."""
+    """Повертає список зламаних властивостей; без mutant -- ще й check(). Розкладка R98-FIX13."""
     import screen_sim as sim
     broken = []
     def want(c, m):
@@ -392,36 +403,32 @@ def cards_check(o, D, mutant=False):
     R4 = D["DW_ROW4_DY"]; H4 = D["DW_ROW4_H"]
     for k in KEYS:
         el, boxes, bad, ov, out = analyse_after(D, o.get(k))
-        want("letter" not in el, "В1: літери A/B у рамці на картці нема (%s)" % k)
+        want(icons_on_card(D, o.get(k)) == [], "В (R98-FIX13): на картці нема конвертів SMS/APRS і стрілки ▶ (%s): %s" % (k, icons_on_card(D, o.get(k))))
         want(bad == [], "В: усі примітиви картки розпізнано (%s): %s" % (k, [(p["k"], p["x"], p["y"], p["w"], p["h"], p["t"]) for p in bad][:3]))
         want(ov == [], "В3: елементи картки не перетинаються (%s): %s" % (k, ov))
         want(out == [], "В3: усе в полі вмісту x=%d..%d, над нижньою рамкою (%s): %s" % (D["DW_IN_L"], D["DW_IN_R"], k, out))
-        if "row1" in el:
-            want(all(p["x"] == D["DW_ROW1_TX"] for p in el["row1"]), "В1: назва з x=%d (одразу за ▶, однаково для обраної й необраної) (%s)" % (D["DW_ROW1_TX"], k))
+        # А (R98-FIX13): рядки 1..4 починаються з одного x=DW_IN_L
+        starts = {}
+        for n in ("row1", "row2", "row3L", "tag"):
+            if n in el:
+                starts[n] = min(p["x"] for p in el[n])
+        want(all(v == D["DW_IN_L"] for v in starts.values()), "А: рядки 1..4 починаються з x=%d (%s): %s" % (D["DW_IN_L"], k, starts))
         # рядок 4: усе 9 px заввишки, однаковий верх
-        r4 = [p for n in ("tag", "meter", "lock", "aprs", "D") for p in el.get(n, []) if p["k"] in "frk"]
-        want(all(p["y"] == R4 and p["h"] == H4 for p in r4), "В2/В3: мітка, сегменти S-метра й значки -- смуга y+%d..%d (%s): %s" % (R4, R4 + H4 - 1, k, sorted({(p["k"], p["y"], p["h"]) for p in r4 if not (p["y"] == R4 and p["h"] == H4)})))
-        tx = [p for n in ("tag", "f4", "aprs", "D") for p in el.get(n, []) if p["k"] == "T"]
-        want(all(p["y"] == R4 + 1 for p in tx), "В2: текст рядка 4 (мітка, частота, «D», число, «A») -- на одній базовій лінії y+%d (%s)" % (R4 + 1, k))
-        # порядок значків: D (літера) < конверт < число < APRS < замок
-        seq = []
-        for p in el.get("D", []):
-            if p["k"] == "T" and p["t"] == "D":
-                seq.append(("D", p["x"]))
-            elif p["k"] == "r":
-                seq.append(("env", p["x"]))
-            elif p["k"] == "T":
-                seq.append(("num", p["x"]))
-        if "aprs" in boxes:
-            seq.append(("aprs", boxes["aprs"][0]))
+        r4 = [p for n in ("tag", "meter", "lock") for p in el.get(n, []) if p["k"] in "frk"]
+        want(all(p["y"] == R4 and p["h"] == H4 for p in r4), "В2/В3: мітка, сегменти S-метра й замок -- смуга y+%d..%d (%s)" % (R4, R4 + H4 - 1, k))
+        tx = [p for n in ("tag", "f4", "mp") for p in el.get(n, []) if p["k"] == "T"]
+        want(all(p["y"] == R4 + 1 for p in tx), "В2: текст рядка 4 (мітка, частота, режим+потужність) -- на одній базовій лінії y+%d (%s)" % (R4 + 1, k))
+        # замок -- крайній праворуч (стокове місце), режим+потужність -- вирівняний до його лівого краю із зазором >= DW_ICON_GAP
         if "lock" in boxes:
-            seq.append(("lock", boxes["lock"][0]))
-        order = [n for n, _ in sorted(seq, key=lambda v: v[1])]
-        exp = [n for n in ("D", "env", "num", "aprs", "lock") if n in order]
-        want(order == exp, "А4: порядок значків рядка 4 зліва направо D, ✉, N, APRS, замок (%s): %s" % (k, order))
-        bx = [boxes[n] for n in ("D", "aprs", "lock") if n in boxes]
-        bx.sort()
-        want(all(bx[i + 1][0] - bx[i][2] - 1 >= D["DW_ICON_GAP"] for i in range(len(bx) - 1)), "А4: між значками >= %d px (%s)" % (D["DW_ICON_GAP"], k))
+            lb = boxes["lock"]
+            want(lb[2] == D["DW_IN_R"] and lb[0] == D["DW_IN_R"] + 1 - D["DW_LOCK_W"], "Є: замок AES -- крайній праворуч x=%d..%d (%s): %s" % (D["DW_IN_R"] + 1 - D["DW_LOCK_W"], D["DW_IN_R"], k, lb))
+        if "mp" in boxes:
+            mb = boxes["mp"]
+            edge = (boxes["lock"][0] - D["DW_ICON_GAP"] - 1) if "lock" in boxes else D["DW_IN_R"]
+            want(mb[2] == edge, "Є: «режим потужність» -- вирівняний праворуч (до x=%d) (%s): %s" % (edge, k, mb))
+            want(mb[0] >= D["DW_MP_MIN_X"], "Є: «режим потужність» не заходить на ліву частину рядка 4 (з x=%d) (%s): %s" % (D["DW_MP_MIN_X"], k, mb))
+        if "lock" in boxes and "mp" in boxes:
+            want(boxes["lock"][0] - boxes["mp"][2] - 1 >= D["DW_ICON_GAP"], "Є: між «режим потужність» і замком >= %d px (%s)" % (D["DW_ICON_GAP"], k))
     # піксельно (R98-FIX12 А): мітка RX/TX -- звичайний текст без заливки: у смузі мітки (x=DW_IN_L..+DW_TAG_W-1, рядки смуги) є лише піксели гліфів, «чорнило» -- рядки
     # смуги 1..7 (по центру смуги 9 px), колір -- як у решти дрібного тексту (FG_CHANNEL_NAME), літери «R»/«X»/«T» розпізнаються за бітмапою шрифту
     for k in ("s1a", "s1b", "s2a", "s3b", "s6c", "w2b"):
@@ -430,7 +437,9 @@ def cards_check(o, D, mutant=False):
         x0 = D["DW_IN_L"]; x1 = x0 + D["DW_TAG_W"] - 1
         pts = {(x, y) for y in range(y0, y0 + H4) for x in range(x0, x1 + 1) if d.px[y * sim.W + x] != sim.IT["BG"]}
         tb = bbox(pts)
-        want(tb is not None and tb[1] == y0 + 1 and tb[3] == y0 + 7, "В2/А: мітка RX/TX -- «чорнило» в рядках смуги 1..7 (по центру смуги 9 px) (%s): %s" % (k, tb))
+        if tb is None:
+            continue        # R98-FIX13 Д: у FM/VFO без різниці TX/RX ліва частина порожня
+        want(tb[1] == y0 + 1 and tb[3] == y0 + 7, "В2/А: мітка RX/TX -- «чорнило» в рядках смуги 1..7 (по центру смуги 9 px) (%s): %s" % (k, tb))
         want(all(d.px[y * sim.W + x] == sim.IT["FG_CHANNEL_NAME"] for (x, y) in pts), "А: мітка RX/TX -- кольором решти дрібного тексту (FG_CHANNEL_NAME), без заливки (%s)" % k)
         want(len(pts) < 40, "А: у смузі мітки лише піксели літер, не суцільна заливка (%s): %d px" % (k, len(pts)))
     return broken
@@ -438,23 +447,24 @@ def cards_check(o, D, mutant=False):
 
 def test_part_v(src_cm, src_uu, png_dir):
     D = F5.consts(src_cm)
-    need = ["DW_ROW1_DY", "DW_ROW2_DY", "DW_ROW3_DY", "DW_ROW4_DY", "DW_ROW4_H", "DW_ROW1_TX", "DW_TAG_W", "DW_AP_W", "DW_AP_H", "DW_METER_X", "DW_METER_END", "DW_UN_W_MAX", "DW_ICONS_W"]
-    check(all(k in D for k in need), "В: константи FIX11 знайдено: нема %s" % [k for k in need if k not in D])
+    need = ["DW_ROW1_DY", "DW_ROW2_DY", "DW_ROW3_DY", "DW_ROW4_DY", "DW_ROW4_H", "DW_ROW1_TX", "DW_TAG_W", "DW_METER_X", "DW_METER_END", "DW_LOCK_W", "DW_ICON_GAP", "DW_MP_CHARS", "DW_L4_END", "DW_MP_MIN_X"]
+    check(all(k in D for k in need), "В: константи R98-FIX13 знайдено: нема %s" % [k for k in need if k not in D])
     if not all(k in D for k in need):
         return
-    check(not any(k in D for k in ("DW_LET_L", "DW_LET_W", "DW_LET_H", "DW_LET_GX")), "В1: констант рамки літери A/B нема")
-    check(D["DW_ROW1_TX"] == D["DW_TRI_X"] + D["DW_TRI_W"] + 2 and D["DW_ROW1_TX"] + 16 * 8 <= D["DW_IN_R"] + 1,
-          "В1: назва за ▶ із зазором 2 px; 16 символів 8x16 -- x=%d..%d" % (D["DW_ROW1_TX"], D["DW_ROW1_TX"] + 127))
+    check(not any(k in D for k in ("DW_LET_L", "DW_LET_W", "DW_LET_H", "DW_LET_GX", "DW_TRI_X", "DW_TRI_W", "DW_TRI_CY", "DW_AP_W", "DW_AP_H", "DW_UN_W_MAX", "DW_ICONS_W")),
+          "В1 (R98-FIX13 А/В): констант рамки літери A/B, стрілки ▶ і значків SMS/APRS у картках нема")
+    check(D["DW_ROW1_TX"] == D["DW_IN_L"] == 7 and D["DW_ROW1_TX"] + 16 * 8 <= D["DW_IN_R"] + 1,
+          "А1: назва з x=%d -- там само, де рядки 2..4; 16 символів 8x16 -- x=%d..%d" % (D["DW_ROW1_TX"], D["DW_ROW1_TX"], D["DW_ROW1_TX"] + 127))
     check(D["DW_ROW1_TX"] + 16 * 8 + 3 + 4 * 6 > D["DW_IN_R"] + 1, "В1: номер (4 цифри 6x8 + зазор) поруч із 16 символами назви в рядок 1 не вміщується -- лишається в рядку 3")
     check(D["DW_ROW1_DY"] + 15 <= D["DW_ROW2_DY"] and D["DW_ROW2_DY"] + 15 <= D["DW_ROW3_DY"] and D["DW_ROW3_DY"] + 8 < D["DW_ROW4_DY"] and D["DW_ROW4_DY"] + D["DW_ROW4_H"] + 3 <= D["DW_CARD_H"] - 1,
           "В3: сітка рядків 1/2/3/4: клітинки 8x16 рядків 1 і 2 -- спільний піксельний рядок (проміжки за видимими межами -- test_r98fix12), смуга рядка 4 + 3 px до нижньої рамки")
-    check(D["DW_METER_END"] + 7 <= D["DW_IN_R"] + 1 - D["DW_ICONS_W"], "В3: S-метр (до x=%d) не заходить на значки (з x=%d)" % (D["DW_METER_END"] - 1, D["DW_IN_R"] + 1 - D["DW_ICONS_W"]))
+    check(D["DW_METER_END"] + D["DW_ICON_GAP"] <= D["DW_IN_R"] + 1 - D["DW_LOCK_W"] - D["DW_ICON_GAP"] - D["DW_MP_CHARS"] * 6,
+          "В3: S-метр (до x=%d) не заходить на блок «режим потужність» (з x=%d) і замок" % (D["DW_METER_END"] - 1, D["DW_IN_R"] + 1 - D["DW_LOCK_W"] - D["DW_ICON_GAP"] - D["DW_MP_CHARS"] * 6))
     tu_cm = pp_text(REL_CM); tu_uu = pp_text(REL_UU)
     check(bool(tu_cm) and bool(tu_uu), "В: препроцесування uiChannelMode.c / uiUtilities.c")
     if not (tu_cm and tu_uu):
         return
     H, env = harness_after(tu_uu)
-    check(all(env), "В: функції конверта з uiUtilities.c знайдено (uiDrawMsgEnvelopeAt -- той самий значок, що на звичайному екрані)")
     o = run_cards(tu_cm, H, env)
     check(o is not None, "В: хостова збірка карток")
     if o is None:
@@ -468,11 +478,11 @@ def test_part_v(src_cm, src_uu, png_dir):
         o2 = run_cards(pp_text(REL_CM, s2) or "", H, env)
         br = cards_check(o2, F5.consts(s2), mutant=True) if o2 else ["build"]
         check(any(part in x for x in br), "В4 (мутант %s): ловиться: %s" % (name, br[:2]))
-    mut("літера A/B повернулась", "	// R98-FIX11 В1: літери A/B у рамці більше нема -- верхня картка A, нижня B; обрану показують смуга й ▶\n	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);\n",
-        "	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);\n	displayPrintCore(9, (y + DW_ROW1_DY), (isB ? \"B\" : \"A\"), FONT_SIZE_3, TEXT_ALIGN_LEFT, false);\n", "В1")
+    mut("літера A/B повернулась", "	// R98-FIX11 В1: літери A/B у рамці більше нема -- верхня картка A, нижня B; обрану показує смуга\n	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);\n",
+        "	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);\n	displayPrintCore(9, (y + DW_ROW1_DY), (isB ? \"B\" : \"A\"), FONT_SIZE_3, TEXT_ALIGN_LEFT, false);\n", "А:")
     mut("мітка RX зміщена на 1 px", "displayPrintCore(DW_IN_L, (my + DW_ROW4_TXT_DY), tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);",
         "displayPrintCore(DW_IN_L, my, tag, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);", "В2")
-    mut("значок вищий за інші", "#define DW_AP_H          DW_ROW4_H", "#define DW_AP_H          (DW_ROW4_H + 1)", "В2/В3")
+    mut("замок нижче за решту рядка 4", "#define DW_ICON_DY       DW_ROW4_DY ", "#define DW_ICON_DY       (DW_ROW4_DY + 1) ", "В2/В3")
     # PNG «до/після»
     if png_dir:
         snapshots(o, D, png_dir)

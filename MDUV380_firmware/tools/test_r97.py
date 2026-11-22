@@ -1401,8 +1401,8 @@ def test_fix7_a1():
     am = rd(os.path.join(APP, "source", "applicationMain.c"))
     uu = rd(os.path.join(APP, "source", "user_interface", "uiUtilities.c"))
     barY = int(re.search(r"#define DISPLAY_Y_POS_BAR\s+(\d+)", rd(os.path.join(APP, "include", "hardware", "HX8353E_display.h"))).group(1)) if os.path.exists(os.path.join(APP, "include", "hardware", "HX8353E_display.h")) else 10
-    cardY = barY + 1
-    check(re.search(r"#define DW_CARD_A_Y\s+\(DISPLAY_Y_POS_BAR \+ 1\)", ui) is not None, "FIX7 А1: верх картки A = DISPLAY_Y_POS_BAR + 1 (=%d)" % cardY)
+    cardY = barY + 2   # R98-FIX13 Г: між шапкою й рамкою A -- два порожніх рядки (одна лінія між картками)
+    check(re.search(r"#define DW_CARD_A_Y\s+\(DISPLAY_Y_POS_BAR \+ 2\)", ui) is not None, "FIX7 А1 (R98-FIX13 Г): верх картки A = DISPLAY_Y_POS_BAR + 2 (=%d), нижче за рядок шапки" % cardY)
     # (1) заливка у applicationMain.c на екрані режиму -- лише DISPLAY_Y_POS_BAR, 14 px -- лише поза ним
     i = am.find("if ((currentMenu == UI_CHANNEL_MODE) && uiChannelModeDualScreenShown())")
     j = am.find("displayFillRect(0, 0, DISPLAY_SIZE_X, 14, true);", i)

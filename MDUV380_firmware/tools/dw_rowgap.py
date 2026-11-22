@@ -74,8 +74,6 @@ def measure(D, ps, ph, cap16=None):
             continue                                # рамка
         if k == "f" and p["x"] == D["DW_SEL_X"] and p["w"] == D["DW_SEL_W"]:
             continue                                # смуга виділення
-        if k == "l" and D["DW_TRI_X"] <= p["x"] <= D["DW_TRI_X"] + D["DW_TRI_W"] - 1 and p["y"] < R2:
-            continue                                # ▶
         if k in "tl" and p["y"] >= D["DW_ARROW_DY"] and p["y"] < R4 and p["x"] > 100:
             continue                                # стрілка -- окремо
         if k == "k":
