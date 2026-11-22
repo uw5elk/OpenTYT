@@ -370,7 +370,8 @@ def test_vs_base(incs, cfgs):
         from r96_tokfilter import strip_r96
         # R98-FIX7 В: volume_low.c -- окрема можливість ENABLE_VOLUME_LOW (коліно K = 32 замість 16), її перевіряють tools/test_r78.py і tests/test_volume_low.c.
         l_files = ("application/source/io/keyboard.c", "application/source/user_interface/uiSmsKeys.c", "application/source/user_interface/menuChannelDetails.c",
-                   "application/source/functions/volume_low.c")
+                   "application/source/functions/volume_low.c",
+                   "application/source/user_interface/menuMessages.c")   # R98-MSG1: лічильники «Вхідні n/m» SMS DMR -- окрема зміна (не режим), її перевіряє tools/test_r98msg1.py
         for name in ("AES0", "ENDATA", "UA"):
             bad = []
             for rel in files:
