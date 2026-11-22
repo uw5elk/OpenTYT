@@ -499,6 +499,13 @@ if os.path.exists(msg_path):
             lim = 18   # R19 Е1: стоковий пункт меню (menuDisplayEntry, смуга x=4..156) -- 18 стовпців
         elif name in ('APRSMSG_Q_ONE', 'APRSMSG_Q_ALL'):
             lim = 20   # R18: великий шрифт 8x16, по центру -- 20 символів у рядку
+        elif name == 'APRSMSG_L_DELALL':
+            lim = 18   # R98-MSG1: останній пункт списку (menuDisplayEntry) -- 18 стовпців
+        elif name == 'APRSMSG_L_EMPTY1':
+            lim = 20   # R98-MSG1: «(порожньо)» великим шрифтом по центру
+        elif name in ('APRSMSG_T_IN', 'APRSMSG_T_OUT'):
+            t = val + ' 99/99'   # R98-MSG1: заголовок читання «Вхідні 3/9» (позиція/усього)
+            lim = LINE_CHARS
         else:
             lim = 26
         if len(t) > lim:
@@ -508,6 +515,15 @@ if os.path.exists(msg_path):
         msg_over.append(('рядок списку', '', 18, 18))
     if max(len(mm.get(k, '')) for k in ('APRSMSG_ST_WAIT', 'APRSMSG_ST_SENT', 'APRSMSG_ST_ACK', 'APRSMSG_ST_NOACK')) > 10:
         msg_over.append(('APRSMSG_ST_*', '', 11, 10))
+    # R98-MSG1: у списку (вигляд SMS DMR) слово «чекає» стоїть у стовпчику часу -- 5 символів FONT_SIZE_1 (LIST_TIME_X..x=153)
+    if len(mm.get('APRSMSG_ST_WAIT', '')) > 5:
+        msg_over.append(('APRSMSG_ST_WAIT (стовпчик часу)', mm.get('APRSMSG_ST_WAIT', ''), len(mm.get('APRSMSG_ST_WAIT', '')), 5))
+    # R98-MSG1: рядок 1 читання «Кому CALL стан» без {NN має влізти в 26 символів FONT_SIZE_1 (найгірше: позивний 9, найдовше слово стану)
+    if 'APRSMSG_R1_TO' in mm:
+        w = max(len(mm.get(k, '')) for k in ('APRSMSG_ST_WAIT', 'APRSMSG_ST_SENT', 'APRSMSG_ST_ACK', 'APRSMSG_ST_NOACK'))
+        n = len(mm['APRSMSG_R1_TO']) + 1 + 9 + 1 + w
+        if n > 26:
+            msg_over.append(('рядок 1 читання (Кому CALL стан)', '', n, 26))
 for name, t, n, lim in msg_over:
     print(f'  {name}: "{t}" = {n} > {lim}')
 print(f'  разом: {len(msg_over)}')
