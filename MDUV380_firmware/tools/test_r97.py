@@ -937,6 +937,7 @@ def test_fix2(incs, cf):
     check(all(fns), "R97-FIX3: знайдено dualRenderHeader / uiChannelModeDualHeader / dualRenderScreen / dualActivity / dualSingle")
     if all(fns):
         pre = "static int directChannelNumber = 0;\nstatic _Bool dualIsRunning(void) { return (uiDataGlobal.Scan.active && (uiDataGlobal.Scan.scanType == SCAN_TYPE_DUAL_CHANNEL)); }\n"
+        pre += (carve_fn(t, "static _Bool dualCallerNow(void)") or "") + "\n"   # R98-FIX15: умова виклику винесена з dualRenderScreen (спільна з тіком стрічки)
         out = run_c(RS_HARNESS % {"fns": pre + "\n".join(fns)})
         check(out is not None, "R97-FIX3: хостова збірка шапки екрана режиму")
         if out is not None:
@@ -1013,7 +1014,7 @@ def test_fix2(incs, cf):
     us = src[src.find("void uiChannelModeUpdateScreen(int txTimeSecs)\n{"):]
     check(re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*if \(s_dualQuiet\)\s*\{\s*return;\s*\}\s*#endif", us[:600]) is not None,
           "FIX4 З4: uiChannelModeUpdateScreen() на початку виходить при s_dualQuiet (лише під DUAL_CHANNEL_ENABLED)")
-    check(re.search(r"static bool\s+s_dualQuiet;", src) is not None and src.count("s_dualQuiet") == 9, "FIX4 З4: одна нова статична змінна (1 Б), s_dualQuiet (FIX5: 8 згадок; R98-FIX5 А3: +1 -- SK2 + ручка на A)")
+    check(re.search(r"static bool\s+s_dualQuiet;", src) is not None and src.count("s_dualQuiet") == 10, "FIX4 З4: одна нова статична змінна (1 Б), s_dualQuiet (FIX5: 8 згадок; R98-FIX5 А3: +1; R98-FIX15: +1 -- умова тіку стрічки; SK2 + ручка на A)")
     # ---- п.2: гаряча клавіша ----
     ev = src[src.find("static void handleEvent(uiEvent_t *ev)\n{"):src.find("static bool dualIsRunning(void)\n{")]
     hk = re.search(r"#if defined\(DUAL_CHANNEL_ENABLED\)\s*else if \(KEYCHECK_LONGDOWN\(ev->keys, KEY_FRONT_DOWN\) && \(KEYCHECK_LONGDOWN_REPEAT\(ev->keys, KEY_FRONT_DOWN\) == false\) &&\s*\(BUTTONCHECK_DOWN\(ev, BUTTON_SK2\) == 0\) && \(BUTTONCHECK_DOWN\(ev, BUTTON_SK1\) == 0\) && \(directChannelNumber == 0\)\)\s*\{[^}]*dualHotkeyToggle\(\);\s*return;\s*\}\s*#endif", ev)

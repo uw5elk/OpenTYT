@@ -343,6 +343,8 @@ def analyse_after(D, line):
             n = "row2"
         elif p["k"] == "T" and p["y"] == D["DW_ROW3_DY"]:
             n = "row3L" if p["x"] == D["DW_IN_L"] else "row3R"
+        elif p["k"] == "f" and p["inv"] == 1 and p["x"] == D["DW_IN_L"] and p["y"] == D["DW_ROW3_DY"] and p["h"] == 8:
+            n = "row3L"         # R98-FIX15: заливка вікна стрічки -- клітинка лівої частини рядка 3 (перевіряє tools/test_r98fix15.py)
         elif p["k"] in "tl" and D["DW_ARROW_DY"] <= p["y"] and b[3] <= D["DW_ARROW_DY"] + D["DW_ARROW_CELL"] - 1:
             n = "arrow"
         elif p["k"] == "f" and p["inv"] == 1 and p["y"] == R4 and p["x"] == D["DW_IN_L"] and p["w"] == D["DW_METER_END"] - D["DW_IN_L"]:
