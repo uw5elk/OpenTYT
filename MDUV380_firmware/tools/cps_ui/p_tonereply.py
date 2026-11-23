@@ -39,7 +39,7 @@ class ToneReplyPanel(Panel):
 
     def _build_ui(self):
         self.header("Тон-відгук", purpose="перевірка покриття й антени: рація у FM після почутого сигналу сама відповідає тоном заданої частоти й тривалості.")
-        ttk.Label(self, text=("Лише FM і лише в прошивці зі збіркою «тон-відгук». Відгук -- на КОЖЕН сигнал, що тривав щонайменше порогу (%d..%d с), коли шумодав "
+        ttk.Label(self, text=("Лише FM і лише в прошивці зі збіркою «тон-відгук». Відгук -- на КОЖЕН сигнал, що тривав щонайменше порогу (%d..%d с; 0 -- будь-яке відкриття шумодава), коли шумодав "
                               "закрився і минула затримка. Позивного у відповіді нема. Паузи після відгуку й захисту від зациклення немає: дві рації з "
                               "увімкненою функцією відповідатимуть одна одній без кінця -- вмикайте лише на одній. На рації: головне меню → «Тон-відгук»."
                               % (trc.THRESH_MIN, trc.THRESH_MAX)),
@@ -60,7 +60,7 @@ class ToneReplyPanel(Panel):
                                                       command=self.refresh_warnings))
         self.sp_delay = self._row(box, "Затримка перед тоном, с (%d..%d)" % (trc.DELAY_MIN, trc.DELAY_MAX),
                                   lambda f: ttk.Spinbox(f, from_=trc.DELAY_MIN, to=trc.DELAY_MAX, increment=trc.STEP_S, textvariable=self.v_delay, width=7))
-        self.sp_thresh = self._row(box, "Поріг сигналу, с (%d..%d; 0 -- будь-яке відкриття)" % (trc.THRESH_MIN, trc.THRESH_MAX),
+        self.sp_thresh = self._row(box, "Поріг сигналу, с (%d..%d)" % (trc.THRESH_MIN, trc.THRESH_MAX),
                                    lambda f: ttk.Spinbox(f, from_=trc.THRESH_MIN, to=trc.THRESH_MAX, increment=trc.STEP_S, textvariable=self.v_thresh, width=7,
                                                          command=self.refresh_warnings))
         self.v_dur.trace_add("write", lambda *_: self.refresh_warnings())
