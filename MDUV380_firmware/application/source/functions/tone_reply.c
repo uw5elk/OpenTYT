@@ -391,6 +391,17 @@ static void trTxStop(void)
 	trxSetRxCSS(RADIO_DEVICE_PRIMARY, currentChannelData->rxTone);
 	trxActivateRx(true);
 	trxIsTransmitting = false;
+	/* R103-TONE-UI: прапор передачі скинуто, але екран каналу/VFO міг бути намальований у час тону (відлік «0», режим передачі) --
+	 * перемальовку ніхто не просив (маяк просить в aprs.c APRS_TX_FINAL_STAGE, PTT -- виходом з uiTxScreen). Просимо так само, як маяк:
+	 * повна перемальовка в наступному циклі екрана. Лише на екрані каналу/VFO: на меню (клавіша скасувала тон) воно перемалюється саме. */
+	{
+		int m = menuSystemGetCurrentMenuNumber();
+
+		if ((m == UI_CHANNEL_MODE) || (m == UI_VFO_MODE))
+		{
+			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+		}
+	}
 }
 
 void toneReplyAbort(void)
