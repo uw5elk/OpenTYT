@@ -10,7 +10,7 @@
 #include "functions/sms_format.h"   /* SMS_TIME_VALID_MIN */
 
 /* Стан у вирівнюванні структури: нової пам'яті нема. */
-_Static_assert(sizeof(aprsMsgBox_t) == 1336U, "storeSec/storeAge мають лежати у вирівнюванні aprsMsgBox_t (1336 Б), а не збільшувати його");
+_Static_assert(sizeof(aprsMsgBox_t) == 1336U, "storeSec/storeAge must fit the aprsMsgBox_t padding (1336 B)");
 
 typedef struct
 {
@@ -27,7 +27,7 @@ typedef struct
 	uint32_t crcHdr;          /* CRC32 байтів 0..23 */
 	uint8_t  erased[4];       /* не програмуються (0xFF) */
 } amsHdr_t;
-_Static_assert(sizeof(amsHdr_t) == AMS_HDR_LEN, "заголовок -- 32 Б");
+_Static_assert(sizeof(amsHdr_t) == AMS_HDR_LEN, "slot header must be 32 B");
 #define AMS_HDR_PROG_LEN   28   /* програмується одним викликом, ОСТАННІМ */
 #define AMS_HDR_CRC_LEN    24
 

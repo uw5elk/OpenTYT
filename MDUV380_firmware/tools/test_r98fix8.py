@@ -482,6 +482,8 @@ def test_tokens():
                 continue
             for rel in ("application/source/functions/wake_hop.c", "application/source/user_interface/uiChannelMode.c", "application/source/functions/dual_channel.c"):
                 a, b = T.pp(FW, INCS, CF[name], rel), T.pp(root, INCS, CF[name], rel)
+                # R101: два байти стану сховища APRS у вирівнюванні aprsMsgBox_t (aprs_msg.h, APRS_MSG1_UI) -- до DW не стосуються, sizeof той самий
+                a = re.sub(r"uint8_t\s+storeSec\s*;\s*uint8_t\s+storeAge\s*;", " ", a or "")
                 if (a or "").split() != (b or "").split():
                     bad.append((name, os.path.basename(rel)))
         check(bad == [], "В3: збірки без DW (ROAM/UA/AES1) -- токени wake_hop.c, uiChannelMode.c, dual_channel.c як у базі %s: %s" % (BASE, bad))
