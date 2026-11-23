@@ -554,5 +554,21 @@ for name, t, n, lim in set_over:
 print(f'  разом: {len(set_over)}')
 fails += set_over
 
+print('\n=== 10. «Тон-відгук» (languages/tonereply_ua.h, R99-TONE): пункт «підпис:значення» <= 16, найгірші значення ===')
+tr_over = []
+tr_path = os.path.join(LANG, 'tonereply_ua.h')
+if os.path.exists(tr_path):
+    tm = {m.group(1): m.group(2) for m in re.finditer(r'#define\s+(TONEREPLY_\w+)\s+"((?:[^"\\]|\\.)*)"', open(tr_path, 'rb').read().decode('cp1251'))}
+    for t in (tm['TONEREPLY_MENU_ON'] + ':' + max(tm['TONEREPLY_ON'], tm['TONEREPLY_OFF'], key=len), tm['TONEREPLY_MENU_FREQ'] + ':3000',
+              tm['TONEREPLY_MENU_DUR'] + ':5.0' + tm['TONEREPLY_SEC'], tm['TONEREPLY_MENU_DELAY'] + ':5.0' + tm['TONEREPLY_SEC']):
+        if len(t) > 16:
+            tr_over.append(('Тон-відгук', t, len(t), 16))
+    if len(tm.get('TONEREPLY_HDR', '')) > 2:
+        tr_over.append(('TONEREPLY_HDR', tm['TONEREPLY_HDR'], len(tm['TONEREPLY_HDR']), 2))   # місце CC у шапці -- 2 символи
+for name, t, n, lim in tr_over:
+    print(f'  {name}: "{t}" = {n} > {lim}')
+print(f'  разом: {len(tr_over)}')
+fails += tr_over
+
 print(f'\n{"Є ПЕРЕПОВНЕННЯ" if fails else "Переповнень не знайдено"} (всього: {len(fails)})')
 sys.exit(1 if fails else 0)
