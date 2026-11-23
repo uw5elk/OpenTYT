@@ -126,7 +126,7 @@ def main():
     chg = subprocess.run(["git", "-C", FW, "diff", "--name-only", BASE, "--", "application/include/user_interface/languages"], capture_output=True, text=True).stdout.split()
     if chg or subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE], capture_output=True).returncode == 0:
         allowed = {"MDUV380_firmware/application/include/user_interface/languages/" + x for x in ("ukrainian.h", "uiLanguage.h", "messages_ua.h", "english.h", "aeskeys_ua.h", "roam_ua.h",
-                                                                               "aprsmsg_ua.h")}   # R98-MSG1: нові #define екрана «Повідом. APRS» (не stringsTable_t)
+                                                                               "aprsmsg_ua.h", "tonereply_ua.h")}   # R98-MSG1: нові #define екрана «Повідом. APRS» (не stringsTable_t)
         check(set(chg) <= allowed, "змінено лише ukrainian.h, uiLanguage.h, messages_ua.h і english.h (дзеркало UA-блока для check_language_fields); решта мов байт-у-байт: %r" % sorted(set(chg) - allowed))
         b = git_show("application/include/user_interface/languages/ukrainian.h")
         if b is not None:

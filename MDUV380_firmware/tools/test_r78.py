@@ -215,7 +215,7 @@ def main():
                         os.symlink(os.path.join(FW, entry), os.path.join(root, entry))
                 n = 0
                 for name, defs in cfgs:
-                    nd = [x for x in defs if x != "-DENABLE_VOLUME_LOW"]
+                    nd = [x for x in defs if x not in ("-DENABLE_VOLUME_LOW", "-DENABLE_TONE_REPLY")]   # R99-TONE: прапорець законно додає тип блока 19 у codeplug.h
                     for rel in ("source/functions/sound.c", "source/functions/trx.c", "source/applicationMain.c", "source/functions/codeplug.c"):   # R81: menuRadioOptions.c змінено свідомо (пункти прибрано) -- його перевіряє test_r81.py
                         if rel.endswith("applicationMain.c") and "-DLANGUAGE_BUILD_UKRAINIAN" in defs:
                             continue       # R91A: «Гучність» (картка гучності) в українській збірці завжди On -- макрос SETTINGS_VISUAL_VOLUME_EFFECTIVE() законно змінює токени; перевіряє test_r91a
