@@ -51,10 +51,12 @@
 #include "crypto/dmr_aes.h"   // DMR_AES_MAX_KEYS (межа діапазону слота ключа на каналі)
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h" // callReplayToggleOnSK1() нижче -- гаряча клавіша "Переслухати" (2026-09-19, задача п.6)
-#include "functions/tone_reply.h"   // R99-TONE: індикатор «Тон-відгук» у шапці
+#endif
+/* R99-TONE: індикатор «Тон-відгук» у шапці. R100: винесено з-під ENABLE_CALL_REPLAY -- у збірці без «Переслухати» (TONEBARE) індикатор
+ * мовчки зникав, а з R100 (menuSystem.h сам включає tone_reply.h) не збирався б. */
+#include "functions/tone_reply.h"
 #if defined(TONE_REPLY_ENABLED)
 #include "user_interface/languages/tonereply_ua.h"
-#endif
 #endif
 
 #if defined(ENABLE_AES)
