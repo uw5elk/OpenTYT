@@ -145,6 +145,7 @@ static void dualAutoResume(void);
 static bool dualHoldScreen(void);
 static bool dualSingle(void);
 static bool dualRenderMeter(void);
+static void dualMarqueeTick(void);   // R98-FIX15: біжуча стрічка рядка 3 карток
 static void dualQuietEnd(void);
 static void dualQuickMenuApply(void);
 static void dualHotkeyToggle(void);
@@ -360,6 +361,7 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 		{
 #if defined(DUAL_CHANNEL_ENABLED)
 			dualAutoResume();   // R97: увімкнений режим, який зупинила клавіша/меню/передача, -- відновити (і відкладений запис блоку 18)
+			dualMarqueeTick();  // R98-FIX15: зсув рядка 3, що не влазить (лише своя клітинка, крок раз на DW_MQ_STEP_MS)
 #endif
 			bool updateLHDisplay = ((nonVolatileSettings.lastTalkerOnScreenTimer > 0U) &&
 					(uiDataGlobal.lastHeardCount > 0) &&
@@ -5361,6 +5363,7 @@ bool uiChannelModeDualPrepareTx(void)
 #define DW_ICON_GAP      2                                 // зазор між замком і блоком «режим + потужність» (R98-FIX13 Є: не менше 2 px; = UI_ICON_GAP звичайного екрана)
 #define DW_LOCK_W        10                                // замок AES 10x9 (стокове місце: крайній праворуч, x=146..155)
 #define DW_ROW3_MAX      24                                // (DW_IN_R + 1 - DW_IN_L) / 6
+#define DW_ROW3_BUF      (DW_ROW3_MAX + 2)                 // R98-FIX15: буфер рядка 3 -- найдовший текст під час виклику «1024 TS1 CC15 PC 16777215» = 25 символів (+ NUL); видно до DW_ROW3_MAX
 #define DW_ARROW_DY      (DW_ROW3_DY - 2)                  // комірка стрілки 10x10 (lcDistArrowAfter): «чорнило» стрілки y+33..41 -- по центру рядка 3 (y+34..40)
 #define DW_ARROW_CELL    10
 #define DW_ARROW_GAP     2                                 // = LC_ARROW_GAP (lc_distance.h); свій, бо заголовок дає макроси лише з LC_DISTANCE
@@ -5674,6 +5677,91 @@ static int16_t dualCardTgIdx(bool isB, uint8_t vfoType)
 // неактивна: DMR-канал -- «RX» і частота прийому (+«+»/«-» вплотную, якщо TX вище/нижче), FM-канал і VFO -- «TX» і частота передачі, лише коли вона відрізняється від прийому;
 // праворуч, вирівняні до правого краю: «режим потужність» («DMR 3W»), крайній праворуч -- замок AES. Конвертів і значка APRS у картках нема (R98-FIX13 В: вони в шапці).
 // Довгий текст обрізається до місця, що лишилось. Усе на стеку.
+// R98-FIX15: біжуча стрічка рядка 3 картки. Рядок 1 (назва 8x16) не переповнюється: до 16 символів = 128 px, x=7..134 (typedef dwName16Fits; VFO --
+// «VFOA 145.50000», 14 символів), тому стрічка там не потрібна. Рядок 3 (6x8) без відстані -- до 24 символів = уся ширина x=7..150 (DW_ROW3_MAX) -- влазить
+// завжди; не влазить лише під час виклику з відстанню (dualDistText -- лише callerHere): ліва частина «номер TS CC ТГ» обрізається перед «відстань + стрілка».
+// Тоді текст у вікні лівої частини (те саме місце й ширина, що в статичного обрізання) стоїть DW_MQ_PAUSE0 кроків, зсувається на символ за крок до кінця,
+// стоїть DW_MQ_PAUSE1 кроків і починає знову. Зсув -- цілими символами 6 px: драйвер дисплея не має відсікання (HX8353E_display.c), часткові гліфи
+// заходили б на сусідні елементи (смуга вибору, відстань) або потребували б збереження смуг пікселів на стеку; символ за крок -- чіткі гліфи без «розмазування».
+// Крок DW_MQ_STEP_MS = RSSI_UPDATE_COUNTER_RELOAD (200 мс) -- той самий період, з яким тік оновлює S-метр картки; 5 символів/с: найбільший виліт (9 символів,
+// канал 1024 + PC 16777215 + стрілка) проходить за 1,8 с, ТГ 22504 (3 символи) -- за 0,6 с. Паузи -- кратні кроку: 8 кроків (1,6 с) на початку, щоб прочитати
+// видимий початок (4 слова «номер TS CC ТГ»), 5 кроків (1 с) у кінці -- обґрунтовано, не виміряно; змінюються однією константою.
+// Стан -- у RAM (звичайний .bss, не CCM): по структурі на картку, 16 Б кожна. Тік не читає кодплаг: текст відтворюється з номера каналу, TS, CC (запам'ятовані
+// при повному малюванні) і LinkHead->talkgroup -- той самий формат, що в dualRenderRow.
+#define DW_MQ_STEP_MS    RSSI_UPDATE_COUNTER_RELOAD
+#define DW_MQ_PAUSE0     8U
+#define DW_MQ_PAUSE1     5U
+typedef struct
+{
+	uint32_t t0;      // ticksGetMillis() початку поточного циклу (початкова пауза)
+	uint16_t sig;     // підпис повного тексту й ширини вікна: інший -- цикл з початку
+	uint16_t ch;      // номер каналу картки (0 -- VFO, без номера)
+	uint8_t  ts;      // TS і CC рядка 3 -- для відтворення тексту в тіку
+	uint8_t  cc;
+	uint8_t  win;     // символів у вікні лівої частини; 0 -- текст влазить, стрічки нема
+	uint8_t  len;     // символів у повному тексті
+	uint8_t  shown;   // зсув (символів), що зараз на екрані
+} dwMarquee_t;
+static dwMarquee_t dwMqA;   // R98-FIX15: картка A (RAM)
+static dwMarquee_t dwMqB;   // картка B
+
+static uint16_t dwMqSig(const char *t, size_t win)
+{
+	uint16_t h = (uint16_t)(0x5A00U + win);
+
+	while (*t != 0)
+	{
+		h = (uint16_t)(((h << 5) | (h >> 11)) ^ (uint8_t)*t);
+		t++;
+	}
+	return h;
+}
+
+// Зсув (символів) за часом від початку циклу; цикл скінчився -- новий з початку (t0 переноситься).
+static uint8_t dwMqStep(dwMarquee_t *m, uint32_t now)
+{
+	uint32_t k = (uint32_t)(m->len - m->win);
+	uint32_t cyc = (DW_MQ_PAUSE0 + k + DW_MQ_PAUSE1) * DW_MQ_STEP_MS;
+	uint32_t e = now - m->t0;
+	uint32_t s;
+
+	if (e >= cyc)
+	{
+		e %= cyc;
+		m->t0 = now - e;
+	}
+	if (e < (DW_MQ_PAUSE0 * DW_MQ_STEP_MS))
+	{
+		return 0U;
+	}
+	s = ((e - (DW_MQ_PAUSE0 * DW_MQ_STEP_MS)) / DW_MQ_STEP_MS) + 1U;
+	return (uint8_t)((s > k) ? k : s);
+}
+
+// Текст лівої частини рядка 3 під час виклику (той самий формат, що в dualRenderRow): «номер » (канал), «TS CC», ТГ/ID виклику.
+static void dwMqText(char *l3, size_t size, const dwMarquee_t *m)
+{
+	size_t n = 0U;
+
+	if (m->ch != 0U)
+	{
+		n = (size_t)snprintf(l3, size, "%u ", (unsigned)m->ch);
+	}
+	n += (size_t)snprintf((l3 + n), (size - n), "TS%d CC%d", (int)m->ts, (int)m->cc);
+	snprintf((l3 + n), (size - n), " %.11s", ((LinkHead != NULL) ? LinkHead->talkgroup : ""));
+}
+
+// Вікно лівої частини рядка 3: текст із зсуву k, не довший за вікно; клітинка заливається тлом лише в межах вікна (смуга вибору, відстань, стрілка не чіпаються).
+static void dwMqDrawWindow(int16_t y, const char *l3, uint8_t win, uint8_t k)
+{
+	char w[DW_ROW3_MAX + 1];
+
+	snprintf(w, sizeof(w), "%.*s", (int)win, (l3 + k));
+	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+	displayFillRect(DW_IN_L, (y + DW_ROW3_DY), (int16_t)(win * 6), 8, true);
+	displayPrintCore(DW_IN_L, (y + DW_ROW3_DY), w, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+}
+
 static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, bool selected, bool active, bool callerHere)
 {
 	CodeplugChannel_t tmp;
@@ -5683,7 +5771,7 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	char l2[17];
 	char f4[12];
 	char mp[16];     // R98-FIX13 Є: «режим потужність» -- праворуч у рядку 4
-	char l3[DW_ROW3_MAX + 1];
+	char l3[DW_ROW3_BUF];   // R98-FIX15: увесь текст виклику (25) -- для стрічки; без стрічки обрізається до DW_ROW3_MAX
 	char r3[DW_R3_SIZE];
 	uint16_t bearing = 0U;
 	bool bearingKnown = false;
@@ -5694,6 +5782,8 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	uint32_t f4Freq = 0U;
 	const char *f4Tag = NULL;
 	char f4Sign = 0;   // R98-FIX13 Д: «+»/«-» одразу за частотою RX у DMR-каналі, якщо TX вище/нижче
+	uint8_t l3Ts = 0U;   // R98-FIX15: TS рядка 3 -- для стрічки
+	dwMarquee_t *mq = (isB ? &dwMqB : &dwMqA);
 
 	f4[0] = 0;
 	mp[0] = 0;
@@ -5731,7 +5821,8 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 			uint32_t dest = dualDestination(rec, l2, &numOnly, &tsFlags, dualCardTgIdx(isB, vfoType));   // куди піде виклик (PTT) -- ТГ цієї картки
 			size_t n;
 
-			snprintf((l3 + nn), (sizeof(l3) - nn), "TS%d CC%d", (int)dualEffectiveTs(rec, tsFlags), (int)rec->txColor);   // ефективний ТС передачі (Д2)
+			l3Ts = (uint8_t)dualEffectiveTs(rec, tsFlags);
+			snprintf((l3 + nn), (sizeof(l3) - nn), "TS%d CC%d", (int)l3Ts, (int)rec->txColor);   // ефективний ТС передачі (Д2)
 			n = strlen(l3);
 
 			if (callerHere && (LinkHead != NULL))
@@ -5888,14 +5979,48 @@ static void dualRenderRow(int16_t y, bool isB, uint16_t ch, uint8_t vfoType, boo
 	int16_t rw = (int16_t)(strlen(r3) * 6) + (bearingKnown ? (DW_ARROW_CELL + DW_ARROW_GAP) : 0);
 	int16_t rx = (DW_IN_R + 1 - rw);
 	size_t l3max = ((r3[0] != 0) ? (size_t)(((rx - 6) - DW_IN_L) / 6) : (size_t)DW_ROW3_MAX);
+	size_t l3len = strlen(l3);
+	uint8_t l3k = 0U;
 
-	if (strlen(l3) > l3max)
+	// R98-FIX15: не влазить (лише виклик з відстанню) -- стрічка у вікні l3max символів; влазить -- нерухомо, як було. Інший текст/вікно, набір цифр -- цикл з початку.
+	if ((l3len > l3max) && callerHere && known && (rec->chMode == RADIO_MODE_DIGITAL))
 	{
-		l3[l3max] = 0;
+		uint16_t sig = dwMqSig(l3, l3max);
+		uint32_t now = ticksGetMillis();
+
+		if ((sig != mq->sig) || (mq->win == 0U) || (directChannelNumber != 0))
+		{
+			mq->t0 = now;
+			mq->sig = sig;
+		}
+		mq->win = (uint8_t)l3max;
+		mq->len = (uint8_t)l3len;
+		mq->ch = (isVfo ? 0U : ch);
+		mq->ts = l3Ts;
+		mq->cc = rec->txColor;
+		l3k = ((directChannelNumber != 0) ? 0U : dwMqStep(mq, now));
+		mq->shown = l3k;
+	}
+	else
+	{
+		mq->win = 0U;
 	}
 
+	if (mq->win != 0U)
+	{
+		dwMqDrawWindow(y, l3, mq->win, l3k);
+	}
+	else
+	{
+		if (l3len > l3max)
+		{
+			l3[l3max] = 0;
+		}
+
+		displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
+		displayPrintCore(DW_IN_L, (y + DW_ROW3_DY), l3, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
+	}
 	displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
-	displayPrintCore(DW_IN_L, (y + DW_ROW3_DY), l3, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 	if (r3[0] != 0)
 	{
 		displayPrintCore(rx, (y + DW_ROW3_DY), r3, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
@@ -5993,12 +6118,68 @@ int uiChannelModeDualTsBucket(void)
 	return (uiChannelModeDualOnVfo() ? (int)(CHANNEL_VFO_A + dualCardVfo(dcIsOnB())) : (int)CHANNEL_CHANNEL);
 }
 
+// Виклик DMR, дані якого показує картка (як було в dualRenderScreen; R98-FIX15: також умова стрічки в тіку).
+static bool dualCallerNow(void)
+{
+	return (((uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA) || (uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA_UPDATE)) &&
+			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL) && (directChannelNumber == 0));
+}
+
+// R98-FIX15: тік стрічки (головний цикл, подія NO_EVENT). Дешево: порівняння часу; перемальовує лише вікно лівої частини рядка 3 картки, коли зсув змінився,
+// і відправляє на дисплей тільки смуги по 8 рядків, що його містять (displayRenderRows). Не біжить і скидається на початок: екран режиму не показано, панель
+// деталей, передача, набір цифр, придушення на час клавіші, сповіщення поверх екрана, виклик скінчився. Кодплаг не читає.
+static void dualMarqueeTick(void)
+{
+	uint32_t now = ticksGetMillis();
+	bool run = (uiChannelModeDualScreenShown() && (uiDataGlobal.displayChannelSettings == false) && (isTransmittingIgnoringAPRSBeaconing() == false) &&
+			(directChannelNumber == 0) && (s_dualQuiet == false) && (uiNotificationIsVisible() == false) &&
+			(menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE) && dualCallerNow());
+
+	for (int b = 0; b < 2; b++)
+	{
+		dwMarquee_t *m = ((b != 0) ? &dwMqB : &dwMqA);
+		char l3[DW_ROW3_BUF];
+		uint8_t k;
+		int16_t y = ((b != 0) ? DW_CARD_B_Y : DW_CARD_A_Y);
+
+		if (m->win == 0U)
+		{
+			continue;
+		}
+		if (run == false)
+		{
+			m->t0 = now;   // з початку, коли умова зникне
+			continue;
+		}
+		dwMqText(l3, sizeof(l3), m);
+		if ((dwMqSig(l3, m->win) != m->sig) || (strlen(l3) <= m->win))
+		{
+			// ТГ/ID виклику змінився між повними перемальовуваннями: цикл з початку
+			m->sig = dwMqSig(l3, m->win);
+			m->len = (uint8_t)strlen(l3);
+			m->t0 = now;
+			if (m->len <= m->win)
+			{
+				m->win = 0U;   // тепер влазить -- нерухомий (повне перемальовування намалює як завжди)
+				continue;
+			}
+		}
+		k = dwMqStep(m, now);
+		if (k != m->shown)
+		{
+			m->shown = k;
+			dwMqDrawWindow(y, l3, m->win, k);
+			displayThemeResetToDefault();
+			displayRenderRows((int16_t)((y + DW_ROW3_DY) / 8), (int16_t)(((y + DW_ROW3_DY + 7) / 8) + 1));
+		}
+	}
+}
+
 static void dualRenderScreen(void)
 {
 	bool cardB = false;
 	bool active = dualActivity(&cardB);
-	bool caller = (((uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA) || (uiDataGlobal.displayQSOState == QSO_DISPLAY_CALLER_DATA_UPDATE)) &&
-			(trxGetMode() == RADIO_MODE_DIGITAL) && (HRC6000GetReceivedTgOrPcId() != 0) && (LinkHead != NULL) && (directChannelNumber == 0));
+	bool caller = dualCallerNow();
 	bool selB = (dualSingle() ? dcPointerB() : dualSelectedIsB());
 
 	if (caller && dualSingle())
