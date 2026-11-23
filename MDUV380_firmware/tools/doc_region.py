@@ -6,7 +6,7 @@
 поводиться як custom_data.read_block/write_block, але над байтами). У рацію зміни йдуть однією дією «Записати в рацію» (doc_actions).
 
 Що входить у документ (DOC_TYPES) і чому саме це:
-  9 RCTL_CONFIG, 13 APRS_MODE_CFG, 14 APRS_BEACON_CFG, 15 ROAM_CFG, 16 ROAM_NAMES, 17 VOLUME_LOW_CFG -- малі блоки НАЛАШТУВАНЬ з фіксованою довжиною, які
+  9 RCTL_CONFIG, 13 APRS_MODE_CFG, 14 APRS_BEACON_CFG, 15 ROAM_CFG, 16 ROAM_NAMES, 17 VOLUME_LOW_CFG, 19 TONE_REPLY_CFG (R100) -- малі блоки НАЛАШТУВАНЬ з фіксованою довжиною, які
   пише лише CPS/CHIRP/прошивка при зміні меню; їх безпечно писати разом із кодплагом (однакова довжина, sector-safe групове стирання,
   звірка читанням, страхова копія області).
 Що НЕ входить (лишається в групі «Сервіс», зі своїми кнопками):
@@ -28,8 +28,9 @@ TYPE_APRS_BEACON_CFG = 14
 TYPE_ROAM_CFG = 15
 TYPE_ROAM_NAMES = 16
 TYPE_VOLUME_LOW_CFG = 17      # R78: «Мін.гучність» -- 1 байт налаштування (прошивка пише з меню «Опції рації»)
+TYPE_TONE_REPLY_CFG = 19      # R100: «Тон-відгук» -- 8 Б (tools/tone_reply_cfg.py; прошивка пише з меню «Тон-відгук»)
 
-DOC_TYPES = (TYPE_RCTL_CONFIG, TYPE_APRS_MODE_CFG, TYPE_APRS_BEACON_CFG, TYPE_ROAM_CFG, TYPE_ROAM_NAMES, TYPE_VOLUME_LOW_CFG)
+DOC_TYPES = (TYPE_RCTL_CONFIG, TYPE_APRS_MODE_CFG, TYPE_APRS_BEACON_CFG, TYPE_ROAM_CFG, TYPE_ROAM_NAMES, TYPE_VOLUME_LOW_CFG, TYPE_TONE_REPLY_CFG)
 
 # Назви для діалогу «що зміниться»: у термінах користувача, без внутрішніх назв блоків.
 DOC_TITLES = {
@@ -39,6 +40,7 @@ DOC_TITLES = {
     TYPE_ROAM_CFG: "Роумінг: налаштування",
     TYPE_ROAM_NAMES: "Роумінг: імена списків",
     TYPE_VOLUME_LOW_CFG: "Мін. гучність",
+    TYPE_TONE_REPLY_CFG: "Тон-відгук",
 }
 
 # Типи, яких у «Записати в рацію» немає за жодних умов (захист від помилки в списку вище; перевіряє тест).

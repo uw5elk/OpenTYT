@@ -51,6 +51,7 @@ from .p_flash import FlashPanel
 from .p_general import GeneralPanel
 from .p_rctl import RctlPanel
 from .p_roam import RoamPanel
+from .p_tonereply import ToneReplyPanel
 from .p_screenshot import ScreenshotPanel
 from .p_tglists import TgListsPanel
 from .p_satellites import SatellitesPanel
@@ -69,7 +70,7 @@ from .settings import Settings
 # «Усі налаштування» -- файл усіх блоків області). Новий розділ = новий клас Panel + рядок тут.
 SECTIONS = [
     ("grp_data", "Дані", [BasicInfoPanel, GeneralPanel, ChannelsPanel, RoamPanel, VfoPanel, ZonesPanel, ContactsPanel, TgListsPanel,
-                          DtmfPanel, AprsPanel, RctlPanel, CsvPanel]),
+                          DtmfPanel, AprsPanel, RctlPanel, ToneReplyPanel, CsvPanel]),
     ("grp_service", "Сервіс", [ConnectionPanel, FlashPanel, ScreenshotPanel, BackupPanel, DmrDbPanel, SatellitesPanel, ThemesPanel, SplashPanel,
                                MelodyPanel, AesPanel, AllSettingsPanel]),
 ]

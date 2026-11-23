@@ -34,6 +34,7 @@ EXPECTED = [
     ("dtmf", "DTMF-контакти", "grp_data"),
     ("aprs", "APRS", "grp_data"),
     ("rctl", "Віддалене керування (RCTL)", "grp_data"),
+    ("tonereply", "Тон-відгук", "grp_data"),
     ("csv", "CSV", "grp_data"),
     ("grp_service", "Сервіс", ""),
     ("conn", "Підключення і стан", "grp_service"),
