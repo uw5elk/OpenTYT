@@ -154,8 +154,28 @@ def carve_fn(text, sig):
         elif text[k] == "}":
             depth -= 1
             if depth == 0:
-                return compat_a_channel(text[i:k + 1], text) if COMPAT_A_CHANNEL else text[i:k + 1]
+                res = compat_a_channel(text[i:k + 1], text) if COMPAT_A_CHANNEL else text[i:k + 1]
+                return _marquee_prelude(sig, res, text)
     return None
+
+
+def _marquee_prelude(sig, res, text):
+    """R98-FIX15: dualRenderRow користується стрічкою рядка 3 (dwMarquee_t, dwMqA/dwMqB, dwMqSig/dwMqStep/dwMqDrawWindow). Гарнеси карток вирізають
+    лише перелічені функції -- тож перед dualRenderRow дописуються тип, стан і помічники стрічки з того самого тексту, а ticksGetMillis() у них і в
+    dualRenderRow замінюється змінною dwMqTestNow (гарнес може її ставити; без цього -- 0, тобто стрічка на початковій паузі, як статичний вигляд)."""
+    if ("dualRenderRow(" not in sig) or ("dwMqStep(" not in res):
+        return res
+    m = re.search(r"typedef struct\s*\{[^{}]*\}\s*dwMarquee_t;", text)
+    if m is None:
+        return res
+    parts = ["static uint32_t dwMqTestNow;", m.group(0), "static dwMarquee_t dwMqA;", "static dwMarquee_t dwMqB;"]
+    for s2 in ("static uint16_t dwMqSig(const char *t, size_t win)", "static uint8_t dwMqStep(dwMarquee_t *m, uint32_t now)",
+               "static void dwMqDrawWindow(int16_t y, const char *l3, uint8_t win, uint8_t k)"):
+        f = carve_fn(text, s2)
+        if f is None:
+            return res
+        parts.append(f)
+    return ("\n".join(parts) + "\n" + res).replace("ticksGetMillis()", "dwMqTestNow")
 
 
 def _dc_stepext_compat(code):
