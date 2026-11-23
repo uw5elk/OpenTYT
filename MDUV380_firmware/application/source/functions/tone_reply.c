@@ -13,6 +13,7 @@ void toneReplyCfgDefaults(toneReplyCfg_t *c)
 	c->freqHz = TONE_REPLY_FREQ_DEF;
 	c->durS = TONE_REPLY_DUR_DEF_S;
 	c->delayS = TONE_REPLY_DELAY_DEF_S;
+	c->threshS = TONE_REPLY_THRESH_DEF_S;
 }
 
 void toneReplyCfgClamp(toneReplyCfg_t *c)
@@ -46,6 +47,14 @@ void toneReplyCfgClamp(toneReplyCfg_t *c)
 	{
 		c->delayS = TONE_REPLY_DELAY_MAX_S;
 	}
+	if (c->threshS < TONE_REPLY_THRESH_MIN_S)
+	{
+		c->threshS = TONE_REPLY_THRESH_MIN_S;
+	}
+	if (c->threshS > TONE_REPLY_THRESH_MAX_S)
+	{
+		c->threshS = TONE_REPLY_THRESH_MAX_S;
+	}
 }
 
 /* v1 (×100 мс) -> секунди: округлення ВГОРУ (0,5 с -> 1 с), далі межі нових констант. */
@@ -58,7 +67,7 @@ int toneReplyCfgParse(const toneReplyOnFlash_t *raw, toneReplyCfg_t *c, bool *en
 {
 	toneReplyCfgDefaults(c);
 	*enabled = false;
-	if ((raw->version != TONE_REPLY_CFG_VERSION) && (raw->version != TONE_REPLY_CFG_V1))
+	if ((raw->version != TONE_REPLY_CFG_VERSION) && (raw->version != TONE_REPLY_CFG_V2) && (raw->version != TONE_REPLY_CFG_V1))
 	{
 		return 0;   /* блоку нема / невідома версія / сміття -- типові, вимкнено */
 	}
@@ -73,6 +82,10 @@ int toneReplyCfgParse(const toneReplyOnFlash_t *raw, toneReplyCfg_t *c, bool *en
 		c->durS = raw->dur;
 		c->delayS = raw->delay;
 		*enabled = ((raw->flags & TONE_REPLY_FLAG_ENABLED) != 0U);
+		if (raw->version == TONE_REPLY_CFG_VERSION)
+		{
+			c->threshS = raw->thresh;     /* v2: поріг був константою -- лишається типовий (TONE_REPLY_THRESH_DEF_S, з toneReplyCfgDefaults) */
+		}
 	}
 	toneReplyCfgClamp(c);
 	return (int)raw->version;
@@ -87,13 +100,22 @@ void toneReplyCfgBuild(toneReplyOnFlash_t *raw, const toneReplyCfg_t *c, bool en
 	raw->flags = (enabled ? TONE_REPLY_FLAG_ENABLED : 0U);
 	raw->freqLo = (uint8_t)(c->freqHz & 0xFFU);
 	raw->freqHi = (uint8_t)(c->freqHz >> 8);
+	raw->thresh = c->threshS;
 }
 
 /*
- * Стан-машина: ЧЕКАЮ (IDLE) -> сигнал відкрив шумодав (RX) -> сигнал закрився, тривав >= TONE_REPLY_THRESH_MS (DELAY) -> минула затримка і передача
- * дозволена (TX: тон) -> тривалість, але не більше TONE_REPLY_DUR_MAX_S (жорстка межа) -> СТОРОЖ (GUARD) >= TONE_REPLY_GUARD_MS і тиша -> ЧЕКАЮ.
- * Короткий сигнал (< порогу) -- назад у ЧЕКАЮ без відгуку. Новий сигнал під час затримки -- знову RX (відгук після нього).
- * Скасування (PTT, клавіша, зміна каналу): у затримці -- ЧЕКАЮ; у тоні -- зупинка і СТОРОЖ. Вимкнення функції -- зупинка і ЧЕКАЮ.
+ * Стан-машина (R102: без паузи-сторожа після відгуку):
+ *   ЧЕКАЮ (IDLE) -- шумодав ВІДКРИВСЯ (спостережено закрито -> відкрито) і передача дозволена -> RX;
+ *   RX -- сигнал закрився: тривав >= порогу (cfg->threshS, с) -> DELAY, інакше (короткий сплеск) -> ЧЕКАЮ без відгуку;
+ *   DELAY -- минула затримка і передача дозволена -> TX (тон); новий сигнал під час затримки -> знову RX (відгук після нього);
+ *   TX -- тривалість, але не більше TONE_REPLY_DUR_MAX_S (жорстка межа) -> WAITCLOSE (зупинка тону); скасування (PTT, клавіша, зміна частоти) або заборона TX -- так само.
+ * WAITCLOSE -- НЕ пауза (часу не чекає), а умова коректності «свіже відкриття»: у ЧЕКАЮ машина переходить лише коли шумодав закритий і передача
+ * дозволена. Без цього відгук запускався б від стану «шумодав уже відкритий» -- зразу після власної передачі (тон, PTT), на старті, при вмиканні функції,
+ * при поверненні на екран каналу, після скасування -- без жодного нового сигналу. Сигнал під час власного тону не чутний (рація передає): після тону
+ * потрібне свіже закриття, а потім -- свіже відкриття.
+ * Скасування (PTT, клавіша, зміна каналу): у затримці й тоні -- WAITCLOSE. Заборона TX у ЧЕКАЮ/RX/ЗАТРИМЦІ -- WAITCLOSE (цикл відкинуто).
+ * Вимкнення функції -- зупинка тону (якщо йшов) і WAITCLOSE: при повторному вмиканні відкритий шумодав не запускає відгук.
+ * Захисту від зациклення двох рацій з увімкненою функцією НЕМАЄ (рішення власника).
  */
 int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, bool txAllowed, bool cancel, const toneReplyCfg_t *cfg)
 {
@@ -103,7 +125,7 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 	{
 		bool wasTx = (s->state == TR_ST_TX);
 
-		s->state = TR_ST_IDLE;
+		s->state = TR_ST_WAITCLOSE;
 		s->t = now;
 		return (wasTx ? TR_ACT_STOP : TR_ACT_NONE);
 	}
@@ -111,17 +133,32 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 	switch (s->state)
 	{
 		case TR_ST_IDLE:
-			if (rxOpen && (cancel == false))
+			if (txAllowed == false)
+			{
+				s->state = TR_ST_WAITCLOSE;   /* передача заборонена (інший екран, TX inhibit, власна передача...) -- потрібне свіже закриття */
+				s->t = now;
+			}
+			else if (rxOpen && (cancel == false))
 			{
 				s->state = TR_ST_RX;
+				s->t = now;
+			}
+			else if (cancel)
+			{
+				s->state = TR_ST_WAITCLOSE;   /* користувач щось натиснув: відкритий зараз шумодав не є «свіжим» сигналом */
 				s->t = now;
 			}
 			break;
 
 		case TR_ST_RX:
-			if (rxOpen == false)
+			if (txAllowed == false)
 			{
-				if ((now - s->t) >= TONE_REPLY_THRESH_MS)
+				s->state = TR_ST_WAITCLOSE;   /* під час сигналу заборонено передачу -- цикл відкинуто */
+				s->t = now;
+			}
+			else if (rxOpen == false)
+			{
+				if ((now - s->t) >= ((uint32_t)cfg->threshS * 1000U))
 				{
 					s->state = TR_ST_DELAY;
 				}
@@ -134,9 +171,9 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 			break;
 
 		case TR_ST_DELAY:
-			if (cancel)
+			if (cancel || (txAllowed == false))
 			{
-				s->state = TR_ST_IDLE;
+				s->state = TR_ST_WAITCLOSE;   /* скасовано, або передачу заборонено (інший екран, TX inhibit...) -- цикл відкинуто */
 				s->t = now;
 			}
 			else if (rxOpen)
@@ -147,12 +184,8 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 			else if ((now - s->t) >= ((uint32_t)cfg->delayS * 1000U))
 			{
 				s->t = now;
-				if (txAllowed)
-				{
-					s->state = TR_ST_TX;
-					return TR_ACT_START;
-				}
-				s->state = TR_ST_IDLE;   /* передача заборонена -- мовчимо */
+				s->state = TR_ST_TX;   /* txAllowed перевірено вище */
+				return TR_ACT_START;
 			}
 			break;
 
@@ -160,17 +193,17 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 			dur = (uint32_t)((cfg->durS > TONE_REPLY_DUR_MAX_S) ? TONE_REPLY_DUR_MAX_S : cfg->durS) * 1000U;   /* жорстка межа навіть при пошкодженому значенні */
 			if (cancel || (txAllowed == false) || ((now - s->t) >= dur))
 			{
-				s->state = TR_ST_GUARD;
+				s->state = TR_ST_WAITCLOSE;
 				s->t = now;
 				return TR_ACT_STOP;
 			}
 			break;
 
-		case TR_ST_GUARD:
+		case TR_ST_WAITCLOSE:
 		default:
-			if (((now - s->t) >= TONE_REPLY_GUARD_MS) && (rxOpen == false))
+			if ((rxOpen == false) && txAllowed)
 			{
-				s->state = TR_ST_IDLE;
+				s->state = TR_ST_IDLE;   /* шумодав закрито спостережено -- наступне відкриття буде «свіжим» */
 				s->t = now;
 			}
 			break;
@@ -208,8 +241,8 @@ static toneReplyCfg_t s_trCfg;     /* поточні (меню редагує ї
 static toneReplyCfg_t s_trSaved;   /* те, що в блоці 19 (порівняння перед записом і «скасувати» в меню) */
 static uint32_t       s_trTxFreq;  /* частота передачі на старті тону: інша -- канал змінено, тон зупиняється */
 static uint8_t        s_trEnabled;        /* R100: зберігається в блоці 19 ([3] біт 0) */
-static uint8_t        s_trEnabledSaved;   /* те, що в блоці 19; TR_SAVED_V1 -- у флеші ще v1 (GREEN у меню запише v2 навіть без змін) */
-#define TR_SAVED_V1           0xFFU
+static uint8_t        s_trEnabledSaved;   /* те, що в блоці 19: біт 0 -- «увімкнено»; TR_SAVED_OLD -- у флеші ще v1/v2 (GREEN у меню запише v3 навіть без змін) */
+#define TR_SAVED_OLD          0x02U
 
 void toneReplyLoad(void)
 {
@@ -227,9 +260,9 @@ void toneReplyLoad(void)
 
 		s_trEnabled = (en ? 1U : 0U);
 		s_trSaved = s_trCfg;
-		s_trEnabledSaved = ((ver == (int)TONE_REPLY_CFG_V1) ? TR_SAVED_V1 : s_trEnabled);   /* стан-машина -- ЧЕКАЮ: на старті нічого не передається */
+		s_trEnabledSaved = (uint8_t)(s_trEnabled | (((ver == (int)TONE_REPLY_CFG_V1) || (ver == (int)TONE_REPLY_CFG_V2)) ? TR_SAVED_OLD : 0U));   /* v1/v2 -- у флеші лишається, доки користувач не збереже */
 	}
-	s_trSm.state = TR_ST_IDLE;
+	s_trSm.state = TR_ST_WAITCLOSE;   /* на старті нічого не передається; відгук -- лише від сигналу, що відкрив шумодав ПІСЛЯ старту (свіже відкриття) */
 	s_trSm.t = 0U;
 	s_trTxFreq = 0U;
 }
@@ -259,15 +292,16 @@ bool toneReplySave(void)
 	toneReplyOnFlash_t raw;
 
 	toneReplyCfgClamp(&s_trCfg);
-	if ((s_trCfg.freqHz == s_trSaved.freqHz) && (s_trCfg.durS == s_trSaved.durS) && (s_trCfg.delayS == s_trSaved.delayS) && (s_trEnabled == s_trEnabledSaved))
+	if ((s_trCfg.freqHz == s_trSaved.freqHz) && (s_trCfg.durS == s_trSaved.durS) && (s_trCfg.delayS == s_trSaved.delayS) && (s_trCfg.threshS == s_trSaved.threshS) &&
+			(s_trEnabled == (s_trEnabledSaved & 1U)) && ((s_trEnabledSaved & TR_SAVED_OLD) == 0U))
 	{
-		return true;   /* нічого не змінилось -- флеш не чіпаємо (v1 лишається v1) */
+		return true;   /* нічого не змінилось і у флеші вже v3 -- флеш не чіпаємо (v1/v2 лишається, доки не збережено) */
 	}
 	toneReplyCfgBuild(&raw, &s_trCfg, (s_trEnabled != 0U));
 	if (codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_TONE_REPLY_CFG, (uint8_t *)&raw, (int)sizeof(raw)))
 	{
 		s_trSaved = s_trCfg;
-		s_trEnabledSaved = s_trEnabled;
+		s_trEnabledSaved = s_trEnabled;   /* біт TR_SAVED_OLD знято: у флеші v3 */
 		return true;
 	}
 	return false;
@@ -276,7 +310,7 @@ bool toneReplySave(void)
 void toneReplyMenuCancel(void)
 {
 	s_trCfg = s_trSaved;
-	s_trEnabled = ((s_trEnabledSaved == 1U) ? 1U : 0U);   /* TR_SAVED_V1 -- вимкнено (v1 «увімкнено» не зберігав) */
+	s_trEnabled = (uint8_t)(s_trEnabledSaved & 1U);   /* v1 -- вимкнено (v1 «увімкнено» не зберігав); v2/v3 -- збережене */
 }
 
 /* Чи можна передати тон зараз. Лише екран каналу/VFO, FM-канал з частотою TX, без «лише прийом», TX inhibit, межі діапазону, hotspot,
@@ -364,12 +398,12 @@ void toneReplyAbort(void)
 	if (s_trSm.state == TR_ST_TX)
 	{
 		trTxStop();
-		s_trSm.state = TR_ST_GUARD;
+		s_trSm.state = TR_ST_WAITCLOSE;
 		s_trSm.t = ticksGetMillis();
 	}
-	else if ((s_trSm.state == TR_ST_DELAY) || (s_trSm.state == TR_ST_RX))
+	else if ((s_trSm.state == TR_ST_DELAY) || (s_trSm.state == TR_ST_RX) || (s_trSm.state == TR_ST_IDLE))
 	{
-		s_trSm.state = TR_ST_IDLE;
+		s_trSm.state = TR_ST_WAITCLOSE;   /* PTT: шумодав відкритий -- не «свіжий» сигнал після передачі */
 		s_trSm.t = ticksGetMillis();
 	}
 }
@@ -381,9 +415,9 @@ void toneReplyTick(const void *evp)
 	bool rxOpen;
 	int act;
 
-	if ((s_trEnabled == 0U) && (s_trSm.state == TR_ST_IDLE))
+	if ((s_trEnabled == 0U) && (s_trSm.state == TR_ST_WAITCLOSE))
 	{
-		return;   /* вимкнено -- нічого не робимо (дешевий вихід) */
+		return;   /* вимкнено -- нічого не робимо (дешевий вихід); машина вже в WAITCLOSE */
 	}
 
 	cancel = (ev->hasEvent && ((ev->events & (KEY_EVENT | BUTTON_EVENT)) != 0));   /* будь-яка клавіша/кнопка (PTT, ручка, меню) */

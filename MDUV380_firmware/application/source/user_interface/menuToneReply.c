@@ -1,7 +1,8 @@
 /*
- * menuToneReply.c -- R100-TONE: головне меню -> «Тон-відгук». Чотири рядки «підпис:значення» (як «Опції рації»):
- *   «Тон-відгук:Увімк/Вимк», «Частота:1000» (TONE_REPLY_FREQ_MIN..MAX, крок TONE_REPLY_FREQ_STEP), «Тривал:10с» (с), «Затрим:2с» (с).
- * ↑/↓ -- рядок, ←/→ -- значення; GREEN -- запис блоку 19 (v2; якщо змінилось або у флеші ще v1) і вихід; RED -- повернення збереженого і вихід.
+ * menuToneReply.c -- R100-TONE / R102-TONE: головне меню -> «Тон-відгук». П'ять рядків «підпис:значення» (як «Опції рації»):
+ *   «Тон-відгук:Увімк/Вимк», «Частота:1000» (TONE_REPLY_FREQ_MIN..MAX, крок TONE_REPLY_FREQ_STEP), «Тривал:10с» (с), «Затрим:2с» (с),
+ *   «Поріг:1с» (TONE_REPLY_THRESH_MIN_S..MAX_S, крок TONE_REPLY_STEP_S; 0 -- будь-яке відкриття шумодава).
+ * ↑/↓ -- рядок, ←/→ -- значення; GREEN -- запис блоку 19 (v3; якщо змінилось або у флеші ще v1/v2) і вихід; RED -- повернення збереженого і вихід.
  * Будь-який інший вихід з екрана (без GREEN) -- теж повернення збереженого (exit-callback), як у «Опціях рації».
  * Лише під TONE_REPLY_ENABLED (ENABLE_TONE_REPLY + українська + UV380). Рядки -- languages/tonereply_ua.h (cp1251).
  */
@@ -17,7 +18,7 @@
 #include <string.h>
 #include "user_interface/languages/tonereply_ua.h"
 
-enum { TRM_ON = 0, TRM_FREQ, TRM_DUR, TRM_DELAY, TRM_ROWS };
+enum { TRM_ON = 0, TRM_FREQ, TRM_DUR, TRM_DELAY, TRM_THRESH, TRM_ROWS };
 
 static void trmUpdate(void);
 static void trmExit(void *data);
@@ -42,9 +43,13 @@ static void trmRowText(int row, char *buf, size_t cap, int *opt)
 			l = TONEREPLY_MENU_DUR;
 			snprintf(buf, cap, "%s:%u%s", l, (unsigned)c->durS, TONEREPLY_SEC);
 			break;
-		default:
+		case TRM_DELAY:
 			l = TONEREPLY_MENU_DELAY;
 			snprintf(buf, cap, "%s:%u%s", l, (unsigned)c->delayS, TONEREPLY_SEC);
+			break;
+		default:
+			l = TONEREPLY_MENU_THRESH;
+			snprintf(buf, cap, "%s:%u%s", l, (unsigned)c->threshS, TONEREPLY_SEC);
 			break;
 	}
 	*opt = (int)strlen(l) + 1;
@@ -75,7 +80,7 @@ static void trmUpdate(void)
 	displayRender();
 }
 
-/* ←/→: увімкнути/вимкнути; частота -- крок TONE_REPLY_FREQ_STEP; тривалість і затримка -- крок TONE_REPLY_STEP_S (межі -- toneReplyCfgClamp). */
+/* ←/→: увімкнути/вимкнути; частота -- крок TONE_REPLY_FREQ_STEP; тривалість, затримка і поріг -- крок TONE_REPLY_STEP_S (межі -- toneReplyCfgClamp). */
 static void trmChange(int row, int dir)
 {
 	toneReplyCfg_t *c = toneReplyCfg();
@@ -93,9 +98,13 @@ static void trmChange(int row, int dir)
 			c->durS = (uint8_t)((dir > 0) ? (c->durS + TONE_REPLY_STEP_S) :
 					((c->durS > (TONE_REPLY_DUR_MIN_S + TONE_REPLY_STEP_S)) ? (c->durS - TONE_REPLY_STEP_S) : TONE_REPLY_DUR_MIN_S));
 			break;
-		default:
+		case TRM_DELAY:
 			c->delayS = (uint8_t)((dir > 0) ? (c->delayS + TONE_REPLY_STEP_S) :
 					((c->delayS > (TONE_REPLY_DELAY_MIN_S + TONE_REPLY_STEP_S)) ? (c->delayS - TONE_REPLY_STEP_S) : TONE_REPLY_DELAY_MIN_S));
+			break;
+		default:
+			c->threshS = (uint8_t)((dir > 0) ? (c->threshS + TONE_REPLY_STEP_S) :
+					((c->threshS > (TONE_REPLY_THRESH_MIN_S + TONE_REPLY_STEP_S)) ? (c->threshS - TONE_REPLY_STEP_S) : TONE_REPLY_THRESH_MIN_S));
 			break;
 	}
 	toneReplyCfgClamp(c);
@@ -151,7 +160,7 @@ menuStatus_t menuToneReply(uiEvent_t *ev, bool isFirstRun)
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
-		(void)toneReplySave();   /* блок 19 (v2) -- якщо змінилось або у флеші ще v1; «увімкнено» теж зберігається */
+		(void)toneReplySave();   /* блок 19 (v3) -- якщо змінилось або у флеші ще v1/v2; «увімкнено» теж зберігається */
 		menuSystemPopPreviousMenu();
 		return MENU_STATUS_SUCCESS;
 	}
