@@ -427,6 +427,16 @@ if [ -z "$FILTER" ] || [[ "test_r102tone" == *"$FILTER"* ]]; then
 	fi
 fi
 
+# R103: «Тон-відгук» -- після кінця/скасування тону екран каналу/VFO перемальовується без відліку «0» (tools/test_r103tone.py: справжній tone_reply.c на хості, модель екрана, мутанти).
+# Окремим блоком (а не в списку вище) -- як R101/R102, щоб патчі застосовувались у будь-якому порядку без конфлікту. Без Tk, потрібен gcc.
+if [ -z "$FILTER" ] || [[ "test_r103tone" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/test_r103tone.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_r103tone (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_r103tone (python)"; show_fail "$out"
+	fi
+fi
+
 # R80: README.md -- відносні посилання, якорі й зображення (docs/img, до 300 КБ), без слова «виправлено» (tools/check_readme_links.py, самоперевірка всередині).
 if [ -z "$FILTER" ] || [[ "check_readme_links" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/check_readme_links.py" 2>&1)"; then
