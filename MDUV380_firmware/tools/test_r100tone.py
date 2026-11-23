@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""test_r100tone.py -- R100-TONE: «Тон-відгук» у головному меню, секунди, блок 19 v2, «увімкнено» зберігається.
+"""test_r100tone.py -- R100-TONE (оновлено в R102): «Тон-відгук» у головному меню, секунди, блок 19, «увімкнено» зберігається.
 
 Хост (справжній код):
-  А  межі з констант tone_reply.h: частота 300..3000 крок 50, тривалість 1..60 с, затримка 0..10 с, крок 1 с; сторож = 10 + 60 + 1 = 71 с,
-     ОБЧИСЛЕНИЙ з констант (зміна DUR_MAX_S змінює сторож); жорстка межа тривалості 60 с навіть при пошкодженому значенні
-  Б  блок 19: v2 туди-назад з «увімкнено»; v1 -> міграція (секунди = округлення вгору, вимкнено); невідома версія / сміття -- типові, вимкнено
+  А  межі з констант tone_reply.h: частота 300..3000 крок 50, тривалість 1..60 с, затримка 0..10 с, поріг сигналу 0..5 с, крок 1 с;
+     жорстка межа тривалості 60 с навіть при пошкодженому значенні; R102: сторожа в коді й константах НЕМАЄ
+  Б  блок 19: v3 туди-назад з «увімкнено» і порогом; v2 (R100) і v1 (R99) -> міграція; невідома версія / сміття -- типові, вимкнено
   В  обгортка (toneReplyLoad/Save/MenuCancel/SetEnabled з tone_reply.c, codeplug -- заглушка): блоку нема -- типові, вимкнено, без запису;
-     v2 з «увімкнено» -- після старту ввімкнено, нічого не передається; v1 -- у флеші лишається v1, доки GREEN (тоді v2 навіть без змін);
+     v2/v3 з «увімкнено» -- після старту ввімкнено, нічого не передається; v1/v2 -- у флеші лишається, доки GREEN (тоді v3 навіть без змін);
      RED повертає збережене; GREEN без змін -- флеш не чіпається
   Г  підменю (trmChange з menuToneReply.c): ←/→ на межах не виходять за межі; Увімк/Вимк
 Текст коду:
   Д  головне меню: MENU_TONE_REPLY після MENU_RXGROUPS, перед NUM_MENU_ENTRIES (ID > 31 -- поза QuickKey, наявні не зсуваються), під TONE_REPLY_ENABLED;
-     явний індекс у data[], menuFunctions[], останній у mainMenuItems; назва -- TONEREPLY_MAIN без голосової підказки; підменю: 4 рядки, GREEN -- запис,
+     явний індекс у data[], menuFunctions[], останній у mainMenuItems; назва -- TONEREPLY_MAIN без голосової підказки; підменю: 5 рядків, GREEN -- запис,
      RED -- повернення, exit-callback; «Опції рації» -- enum ідентичний стану до R99 (e2f20ed)
-  Е  мутанти: без жорсткої межі тривалості, сторож числом, без міграції v1, v1 без примусового запису -- ловляться
+  Е  мутанти: без жорсткої межі тривалості, без міграції v1, v1/v2 без примусового запису, «увімкнено» не відновлюється, поріг не читається -- ловляться
 """
 import os, re, subprocess, sys, tempfile, shutil
 
@@ -92,12 +92,12 @@ static bool codeplugSetOpenGD77CustomData(int type, uint8_t *d, int len)
 '''
 
 WRAP_MAIN = r'''
-enum { TRM_ON = 0, TRM_FREQ, TRM_DUR, TRM_DELAY, TRM_ROWS };
+enum { TRM_ON = 0, TRM_FREQ, TRM_DUR, TRM_DELAY, TRM_THRESH, TRM_ROWS };
 %(TRM)s
 static void dump(const char *tag)
 {
 	toneReplyCfg_t *c = toneReplyCfg();
-	printf("%%s en=%%d tx=%%d f=%%u d=%%u l=%%u w=%%d flash=", tag, (int)toneReplyIsEnabled(), (int)toneReplyIsTransmitting(), c->freqHz, c->durS, c->delayS, g_writes);
+	printf("%%s en=%%d tx=%%d f=%%u d=%%u l=%%u t=%%u w=%%d flash=", tag, (int)toneReplyIsEnabled(), (int)toneReplyIsTransmitting(), c->freqHz, c->durS, c->delayS, c->threshS, g_writes);
 	for (int i = 0; i < 8; i++) printf("%%02x", g_flash[i]);
 	printf("\n");
 }
@@ -107,8 +107,11 @@ int main(void)
 	/* В1: блоку нема */
 	g_present = 0; g_writes = 0; memset(g_flash, 0, 8); toneReplyLoad(); dump("NONE");
 	toneReplySave(); dump("NONE_SAVE");
-	/* В2: v2 з «увімкнено» */
-	{ const uint8_t b[8] = { 2, 30, 5, 1, 0xB0, 0x04, 0, 0 }; setFlash(b); toneReplyLoad(); dump("V2ON"); }
+	/* В2: v2 (R100) з «увімкнено»: поріг -- типовий 1 с; у флеші лишається v2, доки GREEN */
+	{ const uint8_t b[8] = { 2, 30, 5, 1, 0xB0, 0x04, 0, 0 }; setFlash(b); toneReplyLoad(); dump("V2ON"); toneReplyMenuCancel(); dump("V2_RED"); toneReplySave(); dump("V2_GREEN"); toneReplyLoad(); dump("V2_RELOAD"); }
+	/* В2б: v3 з порогом 4 с і «увімкнено» */
+	{ const uint8_t b[8] = { 3, 30, 5, 1, 0xB0, 0x04, 4, 0 }; setFlash(b); toneReplyLoad(); dump("V3ON"); toneReplySave(); dump("V3_SAVE"); }
+	{ const uint8_t b[8] = { 3, 30, 5, 1, 0xB0, 0x04, 99, 0 }; setFlash(b); toneReplyLoad(); dump("V3BIG"); }
 	/* В3: v1 (×100 мс): тривалість 0,5 с -> 1 с, затримка 2,5 с -> 3 с; частота 1750 */
 	{ const uint8_t b[8] = { 1, 5, 25, 0, 0xD6, 0x06, 0, 0 }; setFlash(b); toneReplyLoad(); dump("V1"); toneReplyMenuCancel(); dump("V1_RED"); toneReplySave(); dump("V1_GREEN"); toneReplyLoad(); dump("V1_RELOAD"); }
 	/* В4: v1 з крайніми значеннями: 0 -> 1 с (мінімум), 255 (25,5 с) -> 26 с; затримка 50 (5 с) -> 5 с */
@@ -117,9 +120,10 @@ int main(void)
 	/* В5: сміття */
 	{ const uint8_t b[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }; setFlash(b); toneReplyLoad(); dump("JUNK"); }
 	/* В6: меню: змінити, RED -- повернення; змінити, GREEN -- запис; GREEN без змін -- без запису */
-	{ const uint8_t b[8] = { 2, 10, 2, 0, 0xE8, 0x03, 0, 0 }; setFlash(b); toneReplyLoad();
-	  trmChange(TRM_ON, 1); trmChange(TRM_FREQ, 1); dump("EDIT"); toneReplyMenuCancel(); dump("RED");
-	  trmChange(TRM_ON, 1); trmChange(TRM_DUR, 1); toneReplySave(); dump("GREEN"); toneReplySave(); dump("GREEN2"); toneReplyLoad(); dump("RELOAD"); }
+	{ const uint8_t b[8] = { 3, 10, 2, 0, 0xE8, 0x03, 1, 0 }; setFlash(b); toneReplyLoad();
+	  trmChange(TRM_ON, 1); trmChange(TRM_FREQ, 1); trmChange(TRM_THRESH, 1); dump("EDIT"); toneReplyMenuCancel(); dump("RED");
+	  trmChange(TRM_ON, 1); trmChange(TRM_DUR, 1); trmChange(TRM_THRESH, 1); toneReplySave(); dump("GREEN"); toneReplySave(); dump("GREEN2"); toneReplyLoad(); dump("RELOAD");
+	  trmChange(TRM_THRESH, 1); toneReplySave(); dump("THONLY"); }
 	/* Г: межі в підменю */
 	{ toneReplyCfg_t *c = toneReplyCfg();
 	  c->freqHz = 300; trmChange(TRM_FREQ, -1); printf("FMIN %%u\n", c->freqHz);
@@ -130,10 +134,12 @@ int main(void)
 	  c->durS = 10; trmChange(TRM_DUR, 1); printf("DSTEP %%u\n", c->durS);
 	  c->delayS = 0; trmChange(TRM_DELAY, -1); printf("LMIN %%u\n", c->delayS);
 	  c->delayS = 10; trmChange(TRM_DELAY, 1); printf("LMAX %%u\n", c->delayS);
+	  c->threshS = 0; trmChange(TRM_THRESH, -1); printf("TMIN %%u\n", c->threshS);
+	  c->threshS = 5; trmChange(TRM_THRESH, 1); printf("TMAX %%u\n", c->threshS);
+	  c->threshS = 2; trmChange(TRM_THRESH, 1); printf("TSTEP %%u\n", c->threshS);
 	  trmChange(TRM_ON, 1); printf("ON %%d\n", (int)toneReplyIsEnabled()); trmChange(TRM_ON, -1); printf("OFF %%d\n", (int)toneReplyIsEnabled()); }
-	/* А: сторож і жорстка межа */
-	printf("GUARD %%u\n", (unsigned)TONE_REPLY_GUARD_MS);
-	{ toneReplySm_t s; memset(&s, 0, sizeof s); toneReplyCfg_t k = { 1000, 250, 0 }; uint32_t st = 0, en = 0;
+	/* А: жорстка межа тривалості */
+	{ toneReplySm_t s; memset(&s, 0, sizeof s); toneReplyCfg_t k = { 1000, 250, 0, 1 }; uint32_t st = 0, en = 0;
 	  for (uint32_t t = 0; t <= 300000; t += 10) { int a = toneReplyStep(&s, t, true, (t < 2000), true, false, &k); if (a == TR_ACT_START) st = t; if (a == TR_ACT_STOP) en = t; }
 	  printf("HARD %%u\n", (unsigned)(en - st)); }
 	return 0;
@@ -176,41 +182,35 @@ def host_checks(out, hdr_text, tag=""):
         p = l.split(None, 1)
         L[p[0]] = p[1] if len(p) > 1 else ""
     k = consts(hdr_text)
-    want(L.get("NONE") == "en=0 tx=0 f=1000 d=10 l=2 w=0 flash=0000000000000000", "В1: блоку нема -- 1000 Гц / 10 с / 2 с, вимкнено: %r" % L.get("NONE"))
-    want(L.get("NONE_SAVE", "").startswith("en=0 tx=0 f=1000 d=10 l=2 w=0"), "В1: GREEN без змін при типових -- флеш не чіпається: %r" % L.get("NONE_SAVE"))
-    want(L.get("V2ON") == "en=1 tx=0 f=1200 d=30 l=5 w=0 flash=021e0501b0040000", "В2: v2 з «увімкнено» -- після старту ввімкнено, нічого не передається: %r" % L.get("V2ON"))
-    want(L.get("V1") == "en=0 tx=0 f=1750 d=1 l=3 w=0 flash=01051900d6060000", "В3: v1 -- секунди вгору (0,5 -> 1, 2,5 -> 3), вимкнено, у флеші v1: %r" % L.get("V1"))
-    want(L.get("V1_RED") == "en=0 tx=0 f=1750 d=1 l=3 w=0 flash=01051900d6060000", "В3: RED на v1 -- вимкнено, флеш не чіпається: %r" % L.get("V1_RED"))
-    want(L.get("V1_GREEN") == "en=0 tx=0 f=1750 d=1 l=3 w=1 flash=02010300d6060000", "В3: GREEN на v1 без змін -- записано v2: %r" % L.get("V1_GREEN"))
-    want(L.get("V1_RELOAD") == "en=0 tx=0 f=1750 d=1 l=3 w=1 flash=02010300d6060000", "В3: після перезапуску -- ті самі значення з v2: %r" % L.get("V1_RELOAD"))
-    want((L.get("V1BIG") or "").startswith("en=0 tx=0 f=1000 d=26 l=5 w=0"), "В4: v1 25,5 с -> 26 с, затримка 5 с -> 5 с: %r" % L.get("V1BIG"))
-    want((L.get("V1ZERO") or "").startswith("en=0 tx=0 f=1000 d=1 l=0 w=0"), "В4: v1 0 -> мінімум 1 с, затримка 0: %r" % L.get("V1ZERO"))
-    want((L.get("JUNK") or "").startswith("en=0 tx=0 f=1000 d=10 l=2 w=0"), "В5: сміття (0xFF…) -- типові, вимкнено: %r" % L.get("JUNK"))
-    want((L.get("EDIT") or "").startswith("en=1 tx=0 f=1050 d=10 l=2"), "В6: ←/→ змінюють поточні значення: %r" % L.get("EDIT"))
-    want(L.get("RED") == "en=0 tx=0 f=1000 d=10 l=2 w=0 flash=020a0200e8030000", "В6: RED -- повернення збереженого, без запису: %r" % L.get("RED"))
-    want(L.get("GREEN") == "en=1 tx=0 f=1000 d=11 l=2 w=1 flash=020b0201e8030000", "В6: GREEN -- запис v2 з «увімкнено»: %r" % L.get("GREEN"))
-    want((L.get("GREEN2") or "").startswith("en=1 tx=0 f=1000 d=11 l=2 w=1"), "В6: повторний GREEN без змін -- флеш не чіпається: %r" % L.get("GREEN2"))
-    want((L.get("RELOAD") or "").startswith("en=1 tx=0 f=1000 d=11 l=2 w=1"), "В6: «увімкнено» відновлюється після перезапуску: %r" % L.get("RELOAD"))
+    want(L.get("NONE") == "en=0 tx=0 f=1000 d=10 l=2 t=1 w=0 flash=0000000000000000", "В1: блоку нема -- 1000 Гц / 10 с / 2 с / поріг 1 с, вимкнено: %r" % L.get("NONE"))
+    want(L.get("NONE_SAVE", "").startswith("en=0 tx=0 f=1000 d=10 l=2 t=1 w=0"), "В1: GREEN без змін при типових -- флеш не чіпається: %r" % L.get("NONE_SAVE"))
+    want(L.get("V2ON") == "en=1 tx=0 f=1200 d=30 l=5 t=1 w=0 flash=021e0501b0040000", "В2: v2 з «увімкнено» -- після старту ввімкнено, поріг типовий 1 с, нічого не передається: %r" % L.get("V2ON"))
+    want(L.get("V2_RED") == "en=1 tx=0 f=1200 d=30 l=5 t=1 w=0 flash=021e0501b0040000", "В2: RED на v2 -- «увімкнено» лишається, флеш не чіпається: %r" % L.get("V2_RED"))
+    want(L.get("V2_GREEN") == "en=1 tx=0 f=1200 d=30 l=5 t=1 w=1 flash=031e0501b0040100", "В2: GREEN на v2 без змін -- записано v3 (поріг 1 с, «увімкнено» збережено): %r" % L.get("V2_GREEN"))
+    want(L.get("V2_RELOAD") == "en=1 tx=0 f=1200 d=30 l=5 t=1 w=1 flash=031e0501b0040100", "В2: після перезапуску -- ті самі значення з v3: %r" % L.get("V2_RELOAD"))
+    want(L.get("V3ON") == "en=1 tx=0 f=1200 d=30 l=5 t=4 w=0 flash=031e0501b0040400" and (L.get("V3_SAVE") or "").startswith("en=1 tx=0 f=1200 d=30 l=5 t=4 w=0"),
+         "В2б: v3 з порогом 4 с -- читається; GREEN без змін -- флеш не чіпається: %r %r" % (L.get("V3ON"), L.get("V3_SAVE")))
+    want((L.get("V3BIG") or "").startswith("en=1 tx=0 f=1200 d=30 l=5 t=5 w=0"), "В2б: v3 з порогом 99 -- 5 с: %r" % L.get("V3BIG"))
+    want(L.get("V1") == "en=0 tx=0 f=1750 d=1 l=3 t=1 w=0 flash=01051900d6060000", "В3: v1 -- секунди вгору (0,5 -> 1, 2,5 -> 3), вимкнено, поріг 1 с, у флеші v1: %r" % L.get("V1"))
+    want(L.get("V1_RED") == "en=0 tx=0 f=1750 d=1 l=3 t=1 w=0 flash=01051900d6060000", "В3: RED на v1 -- вимкнено, флеш не чіпається: %r" % L.get("V1_RED"))
+    want(L.get("V1_GREEN") == "en=0 tx=0 f=1750 d=1 l=3 t=1 w=1 flash=03010300d6060100", "В3: GREEN на v1 без змін -- записано v3: %r" % L.get("V1_GREEN"))
+    want(L.get("V1_RELOAD") == "en=0 tx=0 f=1750 d=1 l=3 t=1 w=1 flash=03010300d6060100", "В3: після перезапуску -- ті самі значення з v3: %r" % L.get("V1_RELOAD"))
+    want((L.get("V1BIG") or "").startswith("en=0 tx=0 f=1000 d=26 l=5 t=1 w=0"), "В4: v1 25,5 с -> 26 с, затримка 5 с -> 5 с: %r" % L.get("V1BIG"))
+    want((L.get("V1ZERO") or "").startswith("en=0 tx=0 f=1000 d=1 l=0 t=1 w=0"), "В4: v1 0 -> мінімум 1 с, затримка 0: %r" % L.get("V1ZERO"))
+    want((L.get("JUNK") or "").startswith("en=0 tx=0 f=1000 d=10 l=2 t=1 w=0"), "В5: сміття (0xFF…) -- типові, вимкнено: %r" % L.get("JUNK"))
+    want((L.get("EDIT") or "").startswith("en=1 tx=0 f=1050 d=10 l=2 t=2"), "В6: ←/→ змінюють поточні значення: %r" % L.get("EDIT"))
+    want(L.get("RED") == "en=0 tx=0 f=1000 d=10 l=2 t=1 w=0 flash=030a0200e8030100", "В6: RED -- повернення збереженого, без запису: %r" % L.get("RED"))
+    want(L.get("GREEN") == "en=1 tx=0 f=1000 d=11 l=2 t=2 w=1 flash=030b0201e8030200", "В6: GREEN -- запис v3 з «увімкнено» і порогом: %r" % L.get("GREEN"))
+    want((L.get("GREEN2") or "").startswith("en=1 tx=0 f=1000 d=11 l=2 t=2 w=1"), "В6: повторний GREEN без змін -- флеш не чіпається: %r" % L.get("GREEN2"))
+    want((L.get("RELOAD") or "").startswith("en=1 tx=0 f=1000 d=11 l=2 t=2 w=1"), "В6: «увімкнено» і поріг відновлюються після перезапуску: %r" % L.get("RELOAD"))
+    want(L.get("THONLY") == "en=1 tx=0 f=1000 d=11 l=2 t=3 w=2 flash=030b0201e8030300", "В6: змінено лише поріг -- GREEN записує: %r" % L.get("THONLY"))
     exp = {"FMIN": str(k.get("TONE_REPLY_FREQ_MIN")), "FMAX": str(k.get("TONE_REPLY_FREQ_MAX")), "FSTEP": "300", "DMIN": str(k.get("TONE_REPLY_DUR_MIN_S")),
            "DMAX": str(k.get("TONE_REPLY_DUR_MAX_S")), "DSTEP": "11", "LMIN": str(k.get("TONE_REPLY_DELAY_MIN_S")), "LMAX": str(k.get("TONE_REPLY_DELAY_MAX_S")),
-           "ON": "1", "OFF": "0"}
+           "TMIN": str(k.get("TONE_REPLY_THRESH_MIN_S")), "TMAX": str(k.get("TONE_REPLY_THRESH_MAX_S")), "TSTEP": "3", "ON": "1", "OFF": "0"}
     want(all(L.get(x) == v for x, v in exp.items()), "Г1: підменю ←/→ -- у межах констант, крок 50 Гц / 1 с: %r" % {x: L.get(x) for x in exp})
-    gexp = (k.get("TONE_REPLY_DELAY_MAX_S", 0) + k.get("TONE_REPLY_DUR_MAX_S", 0)) * 1000 + k.get("TONE_REPLY_THRESH_MS", 0)
-    want(L.get("GUARD") == str(gexp), "А2: сторож = (макс. затримка + макс. тривалість) * 1000 + поріг = %d мс: %r" % (gexp, L.get("GUARD")))
+    want("GUARD" not in L and not any("GUARD" in n or "THRESH_MS" in n for n in k), "А2: сторожа й порога в мс у константах нема: %r" % [n for n in k if "GUARD" in n or "THRESH_MS" in n])
     want(L.get("HARD") == str(k.get("TONE_REPLY_DUR_MAX_S", 0) * 1000), "А3: пошкоджена тривалість 250 с -- тон не довший за %d с: %r" % (k.get("TONE_REPLY_DUR_MAX_S", 0), L.get("HARD")))
     return ok[0]
-
-
-def guard_follows_constants(src, hdr, menu):
-    """А4: зміна DUR_MAX_S (60 -> 30) змінює сторож (71 с -> 41 с) -- сторож обчислюється з констант, а не записаний числом."""
-    h2 = hdr.replace("#define TONE_REPLY_DUR_MAX_S     60U", "#define TONE_REPLY_DUR_MAX_S     30U", 1)
-    if h2 == hdr:
-        return False
-    o, e = build_run(src, h2, menu)
-    if o is None:
-        return False
-    m = re.search(r"^GUARD (\d+)$", o, re.M)
-    return bool(m) and m.group(1) == "41000"
 
 
 def main():
@@ -220,15 +220,15 @@ def main():
     k = consts(hdr)
     check(k.get("TONE_REPLY_DUR_MIN_S") == 1 and k.get("TONE_REPLY_DUR_MAX_S") == 60 and k.get("TONE_REPLY_DELAY_MIN_S") == 0 and k.get("TONE_REPLY_DELAY_MAX_S") == 10 and
           k.get("TONE_REPLY_STEP_S") == 1 and k.get("TONE_REPLY_FREQ_MIN") == 300 and k.get("TONE_REPLY_FREQ_MAX") == 3000 and k.get("TONE_REPLY_FREQ_STEP") == 50 and
-          k.get("TONE_REPLY_FREQ_DEF") == 1000 and k.get("TONE_REPLY_DUR_DEF_S") == 10 and k.get("TONE_REPLY_DELAY_DEF_S") == 2 and k.get("TONE_REPLY_CFG_VERSION") == 2,
-          "А1: константи: тривалість 1..60 с, затримка 0..10 с, крок 1 с, 300..3000 Гц крок 50, типові 1000/10/2, версія 2: %r" % k)
-    check("_Static_assert(TONE_REPLY_GUARD_MS >=" in hdr, "А1: _Static_assert на сторож")
+          k.get("TONE_REPLY_FREQ_DEF") == 1000 and k.get("TONE_REPLY_DUR_DEF_S") == 10 and k.get("TONE_REPLY_DELAY_DEF_S") == 2 and k.get("TONE_REPLY_CFG_VERSION") == 3 and
+          k.get("TONE_REPLY_THRESH_MIN_S") == 0 and k.get("TONE_REPLY_THRESH_MAX_S") == 5 and k.get("TONE_REPLY_THRESH_DEF_S") == 1,
+          "А1: константи: тривалість 1..60 с, затримка 0..10 с, поріг 0..5 с (типово 1), крок 1 с, 300..3000 Гц крок 50, типові 1000/10/2, версія 3: %r" % k)
+    check("GUARD" not in hdr and "GUARD" not in src and "TR_ST_GUARD" not in menu, "А1: сторожа (константа, стан, _Static_assert) у заголовку й коді нема")
     out, err = build_run(src, hdr, menu)
     check(out is not None, "0: хостова збірка (tone_reply.c + обгортка + trmChange): %s" % err)
     if out is None:
         return finish()
     host_checks(out, hdr)
-    check(guard_follows_constants(src, hdr, menu), "А4: сторож обчислюється з констант (DUR_MAX_S 30 -> сторож 41 с)")
 
     # ---- Д: проводка за текстом
     sh = rd(os.path.join(INC, "user_interface", "menuSystem.h"))
@@ -246,8 +246,8 @@ def main():
     check(re.search(r"#if defined\(TONE_REPLY_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*\{ 0, MENU_TONE_REPLY \},\n#endif\n$", mm) is not None, "Д4: «Тон-відгук» -- останній пункт головного меню")
     check("menuName = TONEREPLY_MAIN;" in dl and re.search(r"#if defined\(TONE_REPLY_ENABLED\)\n\t+if \(isToneItem == false\)\n\t+\{\n#endif", dl) is not None,
           "Д5: назва пункту -- TONEREPLY_MAIN, голосової підказки за вказівником на таблицю нема")
-    check("#if defined(TONE_REPLY_ENABLED)" in menu and "TRM_ROWS };" in menu and "enum { TRM_ON = 0, TRM_FREQ, TRM_DUR, TRM_DELAY, TRM_ROWS };" in menu,
-          "Д6: підменю -- 4 рядки, лише під TONE_REPLY_ENABLED")
+    check("#if defined(TONE_REPLY_ENABLED)" in menu and "TRM_ROWS };" in menu and "enum { TRM_ON = 0, TRM_FREQ, TRM_DUR, TRM_DELAY, TRM_THRESH, TRM_ROWS };" in menu,
+          "Д6: підменю -- 5 рядків (…, «Поріг»), лише під TONE_REPLY_ENABLED")
     g = carve(menu, "if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))", "\n\t}\n")
     r = carve(menu, "if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))", "\n\t}\n")
     check("toneReplySave()" in g and "menuSystemPopPreviousMenu();" in g and "toneReplyMenuCancel();" in r and "menuSystemPopPreviousMenu();" in r and
@@ -267,8 +267,6 @@ def main():
             h2 = hdr.replace(a, b, 1); changed = h2 != hdr
         if not changed:
             check(False, "Е (%s): шаблон не знайдено" % name); return
-        if name == "сторож числом":
-            check(not guard_follows_constants(s2, h2, m2), "Е (%s): ловиться" % name); return
         o2, e2 = build_run(s2, h2, m2)
         if o2 is None:
             check(True, "Е (%s): не збирається -- ловиться" % name); return
@@ -278,10 +276,11 @@ def main():
         check(not ok, "Е (%s): ловиться" % name)
     mut("без жорсткої межі тривалості", "src", "dur = (uint32_t)((cfg->durS > TONE_REPLY_DUR_MAX_S) ? TONE_REPLY_DUR_MAX_S : cfg->durS) * 1000U;",
         "dur = (uint32_t)cfg->durS * 1000U;")
-    mut("сторож числом", "hdr", "#define TONE_REPLY_GUARD_MS      (((TONE_REPLY_DELAY_MAX_S + TONE_REPLY_DUR_MAX_S) * 1000U) + TONE_REPLY_THRESH_MS)",
-        "#define TONE_REPLY_GUARD_MS      71000U")
     mut("без міграції v1", "src", "c->durS = trDsToS(raw->dur);", "c->durS = raw->dur;")
-    mut("v1 без примусового запису", "src", "((ver == (int)TONE_REPLY_CFG_V1) ? TR_SAVED_V1 : s_trEnabled)", "s_trEnabled")
+    mut("v1/v2 без примусового запису", "src", "(uint8_t)(s_trEnabled | (((ver == (int)TONE_REPLY_CFG_V1) || (ver == (int)TONE_REPLY_CFG_V2)) ? TR_SAVED_OLD : 0U))", "s_trEnabled")
+    mut("поріг у v3 не читається", "src", "c->threshS = raw->thresh;", "(void)raw->thresh;")
+    mut("поріг не пишеться", "src", "raw->thresh = c->threshS;", "raw->thresh = 1U;")
+    mut("GREEN без порівняння порогу", "src", "(s_trCfg.threshS == s_trSaved.threshS) &&\n\t\t\t(s_trEnabled", "(1) &&\n\t\t\t(s_trEnabled")
     mut("«увімкнено» не відновлюється", "src", "*enabled = ((raw->flags & TONE_REPLY_FLAG_ENABLED) != 0U);", "*enabled = false;")
     return finish()
 

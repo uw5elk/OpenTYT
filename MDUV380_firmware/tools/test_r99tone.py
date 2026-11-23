@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""test_r99tone.py -- R99-TONE: «Тон-відгук» (FM). R100: одиниці -- секунди (тривалість 1..60 с, затримка 0..10 с), сторож 71 с, блок 19 v2,
-пункт перенесено в головне меню (деталі меню, міграції й «увімкнено» -- tools/test_r100tone.py).
+"""test_r99tone.py -- R99-TONE: «Тон-відгук» (FM). R100: одиниці -- секунди (тривалість 1..60 с, затримка 0..10 с), пункт перенесено в головне меню
+(деталі меню, міграції й «увімкнено» -- tools/test_r100tone.py). R102: сторожа НЕМАЄ (відгук на кожен сигнал >= порогу; повна модель -- tools/test_r102tone.py),
+блок 19 v3 з порогом; тут лишилась одна рація, межі, блок і проводка.
 
 Хост: СПРАВЖНІЙ application/source/functions/tone_reply.c (-DTONE_REPLY_HOST_TEST) -- стан-машина, межі, блок 19.
   А  одна рація: сигнал >= порогу -> після затримки тон заданої тривалості; короткий сигнал (< порогу) -- без відгуку; новий сигнал у затримці --
-     відгук після нього; сторож після відгуку; заборона TX -- мовчить; скасування (PTT/клавіша) у затримці й у тоні; вимкнення під час тону
-  Б  межі: частота 300..3000 крок 50, тривалість 1..60 с (жорстка межа навіть при «зламаному» значенні), затримка 0..10 с; блок 19 v2 туди-назад,
-     невідома версія -- типові значення
-  В  дві рації з функцією, що чують одна одну: після чужого сигналу обмін затухає (кожна відповідає не більше разу), для всіх поєднань меж
+     відгук після нього; другий сигнал після відгуку -- другий відгук (без паузи); заборона TX -- мовчить; скасування (PTT/клавіша) у затримці й у тоні;
+     вимкнення під час тону
+  Б  межі: частота 300..3000 крок 50, тривалість 1..60 с (жорстка межа навіть при «зламаному» значенні), затримка 0..10 с, поріг 0..5 с; блок 19 v3
+     туди-назад, невідома версія -- типові значення
+  В  (R102: прибрано -- дві рації з функцією відповідають одна одній без кінця; це документує tools/test_r102tone.py)
   Г  проводка на рації (за текстом коду): PTT скасовує, тік у головному циклі, на старті нічого не передається, заборони TX, блок 19, меню,
      індикатор у шапці, прапорець у Makefile / build-ukrainian / syntax_check
-  Д  мутанти: без порогу, без сторожа, без скасування, без межі тривалості -- ловляться
+  Д  мутанти: без порогу, без скасування, без межі тривалості -- ловляться
 """
 import os, re, subprocess, sys, tempfile, shutil
 
@@ -41,7 +43,7 @@ HARNESS = r'''
 #include <string.h>
 #include "functions/tone_reply.h"
 
-static toneReplyCfg_t cfgOf(int f, int d, int dl) { toneReplyCfg_t c; c.freqHz = (uint16_t)f; c.durS = (uint8_t)d; c.delayS = (uint8_t)dl; return c; }
+static toneReplyCfg_t cfgOf(int f, int d, int dl) { toneReplyCfg_t c; c.freqHz = (uint16_t)f; c.durS = (uint8_t)d; c.delayS = (uint8_t)dl; c.threshS = 1; return c; }
 
 /* одна рація: сигнал [0, sig) мс, далі тиша; повертає моменти START/STOP */
 static void one(const char *tag, uint32_t sig, toneReplyCfg_t c, int allowed, uint32_t cancelAt, uint32_t disableAt, uint32_t sig2From, uint32_t sig2To)
@@ -58,23 +60,6 @@ static void one(const char *tag, uint32_t sig, toneReplyCfg_t c, int allowed, ui
 	printf("\n");
 }
 
-/* дві рації: людина передає [0, 2000) мс; кожна чує людину або тон іншої (вікно 400 с -- понад кілька сторожів по 71 с) */
-static void two(int dA, int lA, int dB, int lB)
-{
-	toneReplySm_t a, b; memset(&a, 0, sizeof a); memset(&b, 0, sizeof b);
-	toneReplyCfg_t ca = cfgOf(1000, dA, lA), cb = cfgOf(1200, dB, lB);
-	int nA = 0, nB = 0, txA = 0, txB = 0;
-	for (uint32_t t = 0; t <= 400000; t += 10)
-	{
-		int human = (t < 2000);
-		int ra = (human || txB) && !txA, rb = (human || txA) && !txB;
-		int x = toneReplyStep(&a, t, 1, ra, 1, 0, &ca), y = toneReplyStep(&b, t, 1, rb, 1, 0, &cb);
-		if (x == TR_ACT_START) { txA = 1; nA++; } else if (x == TR_ACT_STOP) txA = 0;
-		if (y == TR_ACT_START) { txB = 1; nB++; } else if (y == TR_ACT_STOP) txB = 0;
-	}
-	printf("TWO %d %d %d %d %d %d %d %d\n", dA, lA, dB, lB, nA, nB, txA, txB);
-}
-
 int main(void)
 {
 	toneReplyCfg_t c = cfgOf(1000, 1, 1);
@@ -86,8 +71,7 @@ int main(void)
 	one("CANCD", 2000, c, 1, 2200, 0, 0, 0);        /* клавіша/PTT у затримці -- відгуку нема */
 	one("CANCT", 2000, c, 1, 3200, 0, 0, 0);        /* PTT під час тону -- зупинка негайно */
 	one("DISAB", 2000, c, 1, 0, 3200, 0, 0);        /* вимкнення під час тону -- зупинка */
-	one("GUARD", 2000, c, 1, 0, 0, 5000, 7000);     /* сигнал у сторожі (71 с) -- без нового відгуку */
-	one("AFTER", 2000, c, 1, 0, 0, 76000, 78000);   /* сигнал після сторожа (кінець тону 4 с + 71 с) -- новий відгук */
+	one("SECOND", 2000, c, 1, 0, 0, 5000, 7000);    /* R102: другий сигнал одразу після тону (без паузи) -- другий відгук */
 	toneReplyCfg_t big = cfgOf(1000, 200, 0);        /* «зламана» тривалість (повз межі) -- однаково не більше 60 с */
 	one("HARD", 2000, big, 1, 0, 0, 0, 0);
 	/* межі */
@@ -100,7 +84,7 @@ int main(void)
 	printf("\n");
 	/* блок */
 	{
-		toneReplyOnFlash_t raw; toneReplyCfg_t k = cfgOf(2450, 37, 7), r; bool en = false;
+		toneReplyOnFlash_t raw; toneReplyCfg_t k = cfgOf(2450, 37, 7), r; bool en = false; k.threshS = 3;
 		toneReplyCfgBuild(&raw, &k, true);
 		int ok = toneReplyCfgParse(&raw, &r, &en);
 		const uint8_t *p = (const uint8_t *)&raw;
@@ -108,9 +92,6 @@ int main(void)
 		raw.version = 7; ok = toneReplyCfgParse(&raw, &r, &en);
 		printf("BADVER %d %u %u %u %d\n", ok, r.freqHz, r.durS, r.delayS, (int)en);
 	}
-	/* дві рації */
-	int lv[] = { 0, 1, 10 }, dv[] = { 1, 30, 60 };   /* затримка 0/1/10 с × тривалість 1/30/60 с (межі й середина) */
-	for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) for (int k = 0; k < 3; k++) for (int l = 0; l < 3; l++) two(dv[i], lv[j], dv[k], lv[l]);
 	return 0;
 }
 '''
@@ -134,10 +115,9 @@ def parse(out):
     res = {}
     for l in out.splitlines():
         p = l.split()
-        if p and p[0] not in ("TWO", "CLAMPF", "CLAMPD", "BLOCK", "BADVER"):
+        if p and p[0] not in ("CLAMPF", "CLAMPD", "BLOCK", "BADVER"):
             res[p[0]] = [(x[0], int(x[1:])) for x in p[1:]]
-    two = [tuple(int(v) for v in l.split()[1:]) for l in out.splitlines() if l.startswith("TWO")]
-    return res, two
+    return res, []
 
 
 def core_checks(out, tag=""):
@@ -156,15 +136,9 @@ def core_checks(out, tag=""):
     want(r.get("CANCD") == [], "А6: PTT/клавіша в затримці -- відгуку нема: %r" % r.get("CANCD"))
     want(r.get("CANCT") == [("S", 3000), ("E", 3200)], "А7: PTT під час тону -- зупинка в той самий тік: %r" % r.get("CANCT"))
     want(r.get("DISAB") == [("S", 3000), ("E", 3200)], "А8: вимкнення під час тону -- зупинка: %r" % r.get("DISAB"))
-    want(r.get("GUARD") == [("S", 3000), ("E", 4000)], "А9: сигнал у сторожі -- нового відгуку нема: %r" % r.get("GUARD"))
-    g = r.get("AFTER") or []
-    want(len(g) == 4 and g[2] == ("S", 79000), "А10: сигнал після сторожа (71 с) -- новий відгук: %r" % g)
+    want(r.get("SECOND") == [("S", 3000), ("E", 4000), ("S", 8000), ("E", 9000)],
+         "А9: R102 -- другий сигнал (5..7 с) одразу після тону (кінець 4 с): другий відгук (затримка 1 с після закриття на 7 с) без жодної паузи: %r" % r.get("SECOND"))
     want(r.get("HARD") == [("S", 2010), ("E", 62010)], "Б1: «зламана» тривалість 200 с -- однаково не більше 60 с (жорстка межа): %r" % r.get("HARD"))
-    worst = max((t[4] + t[5]) for t in two) if two else 99
-    hang = [t for t in two if t[6] or t[7]]
-    want(two and len(two) == 81 and all(t[4] <= 1 and t[5] <= 1 for t in two) and not hang,
-         "В1: дві рації (81 поєднання: затримка 0/1/10 с × тривалість 1/30/60 с): кожна відповідає не більше разу, обмін затухає, ніхто не лишився в передачі: найгірше %d відгуків; %r" %
-         (worst, [t for t in two if t[4] > 1 or t[5] > 1][:3]))
     return ok
 
 
@@ -182,7 +156,7 @@ def main():
     m = re.search(r"CLAMPD (.*)", out)
     check(m and m.group(1).split() == ["1/0", "1/1", "10/10", "11/10", "60/10", "60/10", "60/10"], "Б3: тривалість 1..60 с, затримка 0..10 с: %r" % (str(m and m.group(1)),))
     m = re.search(r"BLOCK (\d) (\d+) (\d+) (\d+) (\d) size=(\d+) bytes=(\w+)", out)
-    check(m and m.groups() == ("2", "2450", "37", "7", "1", "8", "0225070192090000"), "Б4: блок 19 v2 -- 8 Б, [0]=2, [1] тривалість с, [2] затримка с, [3] біт 0 увімкнено, [4..5] частота LE: %r" % (str(m and m.groups()),))
+    check(m and m.groups() == ("3", "2450", "37", "7", "1", "8", "0325070192090300"), "Б4: блок 19 v3 -- 8 Б, [0]=3, [1] тривалість с, [2] затримка с, [3] біт 0 увімкнено, [4..5] частота LE, [6] поріг с: %r" % (str(m and m.groups()),))
     m = re.search(r"BADVER (\d) (\d+) (\d+) (\d+) (\d)", out)
     check(m and m.groups() == ("0", "1000", "10", "2", "0"), "Б5: невідома версія -- типові 1000 Гц / 10 с / 2 с, вимкнено: %r" % (str(m and m.groups()),))
 
@@ -190,13 +164,12 @@ def main():
     h = rd(HDR)
     check("#if defined(ENABLE_TONE_REPLY) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)\n#define TONE_REPLY_ENABLED 1" in h,
           "Г1: TONE_REPLY_ENABLED -- лише ENABLE_TONE_REPLY + українська + UV380")
-    check("#define TONE_REPLY_GUARD_MS      (((TONE_REPLY_DELAY_MAX_S + TONE_REPLY_DUR_MAX_S) * 1000U) + TONE_REPLY_THRESH_MS)" in h and
-          "#define TONE_REPLY_THRESH_MS     1000U" in h and "#define TONE_REPLY_DUR_MAX_S     60U" in h,
-          "Г2: поріг 1 с, жорстка межа 60 с, сторож = макс. затримка + макс. тривалість + поріг (з констант)")
+    check("GUARD" not in h and "#define TONE_REPLY_THRESH_DEF_S  1U" in h and "#define TONE_REPLY_THRESH_MAX_S  5U" in h and "#define TONE_REPLY_DUR_MAX_S     60U" in h,
+          "Г2: R102 -- сторожа в заголовку нема; поріг типово 1 с (0..5), жорстка межа тривалості 60 с")
     ld = src[src.index("void toneReplyLoad(void)"):]
     ld = ld[:ld.index("\n}\n")]
-    check("s_trSm.state = TR_ST_IDLE;" in ld and "trTxStart" not in ld and "TR_ACT_START" not in ld,
-          "Г3: на старті стан-машина -- ЧЕКАЮ, нічого не передається («увімкнено» з блоку 19 -- test_r100tone)")
+    check("s_trSm.state = TR_ST_WAITCLOSE;" in ld and "trTxStart" not in ld and "TR_ACT_START" not in ld,
+          "Г3: на старті стан-машина -- WAITCLOSE (відгук лише від сигналу, що відкрив шумодав після старту), нічого не передається")
     al = src[src.index("static bool trTxAllowed(void)"):]
     al = al[:al.index("\n}\n")]
     need = ["UI_CHANNEL_MODE", "UI_VFO_MODE", "RADIO_MODE_ANALOG", "txFreq == 0U", "CHANNEL_FLAG_RX_ONLY", "BIT_TX_INHIBIT", "trxCheckFrequencyInAmateurBand",
@@ -227,7 +200,8 @@ def main():
     ua = open(os.path.join(APP, "include", "user_interface", "languages", "tonereply_ua.h"), "rb").read().decode("cp1251")
     mm = dict(re.findall(r'#define\s+(TONEREPLY_\w+)\s+"([^"]*)"', ua))
     lines = [mm["TONEREPLY_MENU_ON"] + ":" + max(mm["TONEREPLY_ON"], mm["TONEREPLY_OFF"], key=len), mm["TONEREPLY_MENU_FREQ"] + ":3000",
-             mm["TONEREPLY_MENU_DUR"] + ":60" + mm["TONEREPLY_SEC"], mm["TONEREPLY_MENU_DELAY"] + ":10" + mm["TONEREPLY_SEC"]]
+             mm["TONEREPLY_MENU_DUR"] + ":60" + mm["TONEREPLY_SEC"], mm["TONEREPLY_MENU_DELAY"] + ":10" + mm["TONEREPLY_SEC"],
+             mm["TONEREPLY_MENU_THRESH"] + ":5" + mm["TONEREPLY_SEC"]]
     check(all(len(l) <= 16 for l in lines) and len(mm["TONEREPLY_HDR"]) == 2, "Г15: рядки меню <= 16 символів (найгірші значення), індикатор 2 символи: %r" % lines)
 
     # ---- Д: мутанти
@@ -242,8 +216,7 @@ def main():
         ok = core_checks(o2, " [m]")
         QUIET[0] = False; del FAILS[n0:]
         check(not ok, "Д (%s): ловиться" % name)
-    mut("без порогу", "if ((now - s->t) >= TONE_REPLY_THRESH_MS)", "if (1)")
-    mut("без сторожа", "if (((now - s->t) >= TONE_REPLY_GUARD_MS) && (rxOpen == false))", "if (rxOpen == false)")
+    mut("без порогу", "if ((now - s->t) >= ((uint32_t)cfg->threshS * 1000U))", "if (1)")
     mut("без скасування в тоні", "if (cancel || (txAllowed == false) || ((now - s->t) >= dur))", "if ((txAllowed == false) || ((now - s->t) >= dur))")
     mut("без межі тривалості", "dur = (uint32_t)((cfg->durS > TONE_REPLY_DUR_MAX_S) ? TONE_REPLY_DUR_MAX_S : cfg->durS) * 1000U;", "dur = (uint32_t)cfg->durS * 1000U;")
     return finish()

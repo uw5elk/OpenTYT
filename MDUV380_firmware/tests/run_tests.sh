@@ -417,6 +417,16 @@ if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
 	fi
 fi
 
+# R102: «Тон-відгук» без сторожа, поріг, свіже відкриття, блок 19 v3 (tools/test_r102tone.py: справжній tone_reply.c на хості, дві рації, мутанти). Без Tk, потрібен gcc.
+# Окремим блоком (а не в списку вище), щоб патчі R101 і R102 застосовувались у будь-якому порядку без конфлікту.
+if [ -z "$FILTER" ] || [[ "test_r102tone" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/test_r102tone.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_r102tone (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_r102tone (python)"; show_fail "$out"
+	fi
+fi
+
 # R80: README.md -- відносні посилання, якорі й зображення (docs/img, до 300 КБ), без слова «виправлено» (tools/check_readme_links.py, самоперевірка всередині).
 if [ -z "$FILTER" ] || [[ "check_readme_links" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/check_readme_links.py" 2>&1)"; then
