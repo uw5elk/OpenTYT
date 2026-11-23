@@ -64,6 +64,9 @@
 #include "functions/aprs_rx.h"        // R8: справжній фоновий приймач APRS (ENABLE_APRS_RX + українська)
 #include "functions/aprs_mode.h"      // R10: «Режим APRS» (PTT = маяк, тік режиму)
 #include "functions/aprs_fault.h"     // R10-fix4: обробник збою, сторож, звіт після перезавантаження (лише APRS_RX)
+#if defined(APRS_MSG1_UI)
+#include "functions/aprs_msg_store.h" // R101: список «Повідом. APRS» зберігається після вимкнення (власні сектори флешу)
+#endif
 #if defined(ENABLE_ROAM_RETRY)
 #include "functions/roam_cfg.h"       // R59: налаштування «Роумінгу» (custom-data блок №15)
 #endif
@@ -599,6 +602,9 @@ void applicationMainTask(void)
 #endif
 
 	menuSystemInit(getRtcTime_custom());
+#if defined(APRS_MSG1_UI)
+	aprsMsgStoreLoad();       // R101: збережений список «Повідом. APRS» -- ПІСЛЯ aprsMsgBgInit() і годинника (menuSystemInit)
+#endif
 
 #if defined(HAS_GPS)
 	gpsInit();
@@ -1771,6 +1777,9 @@ void applicationMainTask(void)
 		gpsTick();
 #if defined(APRS_RX)
 		aprsMsgBgTick();  // R11-fix2: фонова черга повідомлень/ACK APRS -- ПЕРЕД біконом: ACK іде першим, на будь-якому екрані
+#if defined(APRS_MSG1_UI)
+		aprsMsgStoreTick(); // R101: раз на секунду -- чи змінився список; відкладений запис у власні сектори флешу
+#endif
 #endif
 		aprsBeaconingTick(&ev);
 #if defined(TONE_REPLY_ENABLED)

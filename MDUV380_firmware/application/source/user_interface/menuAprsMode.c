@@ -102,11 +102,18 @@ static uint32_t msgClockTime(const aprsMsgEntry_t *e, uint32_t nowMs)
 	uint32_t clk = (uint32_t)uiDataGlobal.dateTimeSecs;
 	uint32_t age;
 
-	if ((e->noTime != 0U) || (clk < SMS_TIME_VALID_MIN) || (nowMs < e->ms))
+	/* R101: замість «now < ms» -- межа віку APRS_MSG_TIME_AGE_MAX_S (45 діб). У відновленого зі сховища запису (aprs_msg_store.c) момент прийому
+	 * раніший за старт рації, і ms «від'ємне» за модулем 2^32; вік (now - ms) за модулем 2^32 правильний до ~49,7 доби. Вік понад 45 діб (у т. ч.
+	 * переповнення тик-лічильника після запису) -- невідомий, як і раніше. */
+	if ((e->noTime != 0U) || (clk < SMS_TIME_VALID_MIN))
 	{
 		return 0U;
 	}
 	age = (nowMs - e->ms) / 1000U;
+	if (age > APRS_MSG_TIME_AGE_MAX_S)
+	{
+		return 0U;
+	}
 	if ((age > clk) || ((clk - age) < SMS_TIME_VALID_MIN))
 	{
 		return 0U;

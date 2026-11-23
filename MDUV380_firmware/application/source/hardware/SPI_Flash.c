@@ -252,6 +252,36 @@ bool SPI_Flash_writePage(uint32_t addr_start,uint8_t *dataBuf)
 	return !isBusy;
 }
 
+#if defined(APRS_MSG1_UI)
+/* R101-APRSMSG (aprs_msg_store.c): програмування len байт (1..256, не через межу сторінки) БЕЗ read-modify-write сектора -- та сама команда PAGE_PGM,
+ * що й SPI_Flash_writePage, але з повною адресою і довжиною. NOR: біти лише 1 -> 0, решта сторінки не змінюється. Без 256-Б буфера. */
+bool SPI_Flash_programBytes(uint32_t addr, const uint8_t *buf, int len)
+{
+	bool isBusy;
+	int waitCounter = 5;// Worst case is something like 3mS
+	uint8_t commandBuf[4] = { PAGE_PGM, addr >> 16, addr >> 8, addr };
+
+	if ((len <= 0) || ((int)(addr & 0xFFU) + len > 256))
+	{
+		return false;
+	}
+	spi_flash_setWriteEnable(true);
+	spi_flash_enable();
+	HAL_SPI_Transmit(&HANDLE_SPI, commandBuf, 4, HAL_MAX_DELAY);
+	HAL_SPI_Transmit(&HANDLE_SPI, (uint8_t *)buf, (uint16_t)len, HAL_MAX_DELAY);
+	spi_flash_disable();
+
+	do
+	{
+		osDelay(1);
+		APRS_FAULT_KICK();
+		isBusy = spi_flash_busy();
+	} while ((waitCounter-- > 0) && isBusy);
+
+	return !isBusy;
+}
+#endif
+
 // Returns true if erased and false if failed.
 bool SPI_Flash_eraseSector(uint32_t addr_start)
 {

@@ -517,7 +517,7 @@ def main():
             "", "resend", lambda r: r[1][-1]["text"] == "Тест ACK")
         mut("нема SK2+RED", "msgMarkAllRead(b);   /* R98-MSG1 (А)", "(void)b;   /* R98-MSG1 (А)", "markall", lambda r: r[1][1]["unread"] == "0")
         mut("видаляє обидва напрямки", "msgDeleteDir(b, mu->dirFilter);", "(void)aprsMsgDeleteAll(b);", "delall", lambda r: r[1][3]["out"] == "4")
-        mut("час після переповнення тик-лічильника", " || (nowMs < e->ms))", ")", "wrap",
+        mut("час після переповнення тик-лічильника", "if (age > APRS_MSG_TIME_AGE_MAX_S)", "if (0)", "wrap",
             lambda r: not any(re.match(r"^\d\d[:.]\d\d$", p[5]) and int(p[2]) == 64 + [x for x in ents(r[0][-1]) if x[1] == 0][0][0] * 16 + 4
                               for p in r[0][-1] if p[0] == "CORE" and p[1] == "124"))
     finally:

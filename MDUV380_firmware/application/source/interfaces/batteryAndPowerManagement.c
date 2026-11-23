@@ -42,6 +42,9 @@
 #include "interfaces/gps.h"
 #include "interfaces/settingsStorage.h"
 #include "functions/aprs_fault.h"   // R10-fix4: сторож вимикається перед сном/вимкненням (APRS_RX)
+#if defined(APRS_MSG1_UI)
+#include "functions/aprs_msg_store.h"   // R101: дозапис списку «Повідом. APRS» при штатному вимкненні
+#endif
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h" // не зупиняти "Переслухати" на час очікування низько-батарейного сигналу нижче
 #endif
@@ -303,6 +306,9 @@ void powerDown(bool doNotSavePowerOffState)
 	codeplugSaveLastUsedChannelInZone();
 #if defined(DUAL_CHANNEL_ENABLED)
 	dcFlushPending();   // R97: відкладений запис покажчика/B «Подвійного прийому» (якщо ще не минуло 3 с)
+#endif
+#if defined(APRS_MSG1_UI)
+	aprsMsgStoreFlush();   // R101: список «Повідом. APRS» -- якщо змінився після останнього відкладеного запису
 #endif
 
 #if defined(HAS_GPS)
@@ -799,6 +805,9 @@ void powerOffFinalStage(bool maintainRTC, bool forceSuspend)
 	codeplugSaveLastUsedChannelInZone();
 #if defined(DUAL_CHANNEL_ENABLED)
 	dcFlushPending();   // R97: відкладений запис покажчика/B «Подвійного прийому» (якщо ще не минуло 3 с)
+#endif
+#if defined(APRS_MSG1_UI)
+	aprsMsgStoreFlush();   // R101: список «Повідом. APRS» -- якщо змінився після останнього відкладеного запису
 #endif
 
 #if defined(LOG_GPS_DATA)
