@@ -33,6 +33,9 @@
 #if defined(ENABLE_ROAM_RETRY)
 #include "user_interface/roam_ui.h"   // R59: назва пункту «Роумінг» (ROAM_MENU_NAME) -- не з stringsTable_t
 #endif
+#if defined(TONE_REPLY_ENABLED)
+#include "user_interface/languages/tonereply_ua.h"   // R100: назва пункту «Тон-відгук» (TONEREPLY_MAIN) -- не з stringsTable_t
+#endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 #include "functions/dmr_rctl_cfg.h"
@@ -177,6 +180,15 @@ static void updateScreen(bool isFirstRun)
 					menuName = RXG_MENU_NAME;
 				}
 #endif
+#if defined(TONE_REPLY_ENABLED)
+				// R100: «Тон-відгук» -- текст не з мовної таблиці (tonereply_ua.h); голосової підказки нема, як і в «Роумінгу».
+				bool isToneItem = (menuDataGlobal.currentMenuList[mNum].menuNum == MENU_TONE_REPLY);
+
+				if (isToneItem)
+				{
+					menuName = TONEREPLY_MAIN;
+				}
+#endif
 				menuDisplayEntry(i, mNum, menuName, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
 
 				if (i == 0)
@@ -186,6 +198,10 @@ static void updateScreen(bool isFirstRun)
 						voicePromptsInit();
 					}
 
+#if defined(TONE_REPLY_ENABLED)
+					if (isToneItem == false)
+#endif
+					{
 #if defined(ENABLE_ROAM_RETRY)
 					if ((isRoamItem == false)
 #if defined(RXGROUP_UI_ENABLED)
@@ -203,6 +219,7 @@ static void updateScreen(bool isFirstRun)
 #else
 					voicePromptsAppendLanguageString(menuName);
 #endif
+					}
 					promptsPlayNotAfterTx();
 				}
 			}

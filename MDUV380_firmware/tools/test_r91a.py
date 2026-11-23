@@ -68,7 +68,7 @@ OLD_DISPLAY_ENUM = ['DISPLAY_TYPE_STYLE', 'DISPLAY_MENU_BRIGHTNESS', 'DISPLAY_ME
 
 def good_ua_main(new, old=OLD_MAIN_UA):
     exp = [x for x in old if x != "MENU_FIRMWARE_INFO"]
-    extra = [x for x in new[len(exp):] if x not in ("MENU_ROAM", "MENU_RXGROUPS")]   # R59/R65B додають пункти в кінець
+    extra = [x for x in new[len(exp):] if x not in ("MENU_ROAM", "MENU_RXGROUPS", "MENU_TONE_REPLY")]   # R59/R65B/R100 додають пункти в кінець
     return "MENU_FIRMWARE_INFO" not in new and new[:len(exp)] == exp and not extra
 
 

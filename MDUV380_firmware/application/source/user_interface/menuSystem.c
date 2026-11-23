@@ -133,6 +133,9 @@ menuDataGlobal_t menuDataGlobal =
 #if defined(RXGROUP_UI_ENABLED)
 				[MENU_RXGROUPS] = NULL,// R65B: головне меню -> «Списки прийому» (власної таблиці нема -- малює menuRxGroups); явний індекс, як і вище
 #endif
+#if defined(TONE_REPLY_ENABLED)
+				[MENU_TONE_REPLY] = NULL,// R100: головне меню -> «Тон-відгук» (власної таблиці нема -- малює menuToneReply); явний індекс, як і вище
+#endif
 		}
 };
 
@@ -213,6 +216,9 @@ static menuFunctionData_t menuFunctions[] =
 #endif
 #if defined(RXGROUP_UI_ENABLED)
 		{ menuRxGroups,             NULL, NULL, 0 },// R65B: головне меню -> «Списки прийому»
+#endif
+#if defined(TONE_REPLY_ENABLED)
+		{ menuToneReply,            NULL, NULL, 0 },// R100: головне меню -> «Тон-відгук»
 #endif
 };
 
@@ -781,6 +787,10 @@ const menuItemNewData_t mainMenuItems[] =
 #if defined(RXGROUP_UI_ENABLED)
 	// R65B: «Списки прийому» -- ОСТАННІЙ пункт після «Роумінгу» (наявні не зсуваються); назву малює menuDisplayMenuList.c за menuNum, stringOffset формальний, як у «Роумінгу».
 	{ 0, MENU_RXGROUPS },
+#endif
+#if defined(TONE_REPLY_ENABLED)
+	// R100: «Тон-відгук» -- ОСТАННІЙ пункт (наявні не зсуваються); назву малює menuDisplayMenuList.c за menuNum (TONEREPLY_MAIN, tonereply_ua.h), stringOffset формальний.
+	{ 0, MENU_TONE_REPLY },
 #endif
 };
 

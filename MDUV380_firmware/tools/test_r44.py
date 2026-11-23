@@ -101,9 +101,9 @@ def menu_problems(sys_c, sys_h, disp, zl, chm):
     for name, text in (("menuSystem.c", sys_c), ("menuSystem.h", sys_h), ("menuDisplayMenuList.c", disp), ("menuZoneList.c", zl)):
         if re.search(r"\bMENU_CODEPLUG\b|MENU_CODEPLUG_ZONES|menuDataCodeplug|codeplug_menu", text):
             p.append("у %s лишилась згадка розформованого розділу «Кодплаг» (MENU_CODEPLUG / MENU_CODEPLUG_ZONES / menuDataCodeplug / codeplug_menu)" % name)
-    if not re.search(r"MENU_COLOUR_PICKER,\s*\n#endif\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n\s*MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?(?:#if defined\(RXGROUP_UI_ENABLED\)\n[^\n]*MENU_RXGROUPS,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h) and \
-            not re.search(r"MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?(?:#if defined\(RXGROUP_UI_ENABLED\)\n[^\n]*MENU_RXGROUPS,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h):
-        p.append("нове ID меню не в самому кінці переліку (швидкі клавіші користувача зсунулись би; R59: після «Каналів» дозволено лише MENU_ROAM під ENABLE_ROAM_RETRY; R65B: далі MENU_RXGROUPS під RXGROUP_UI_ENABLED)")
+    if not re.search(r"MENU_COLOUR_PICKER,\s*\n#endif\s*\n#if defined\(CODEPLUG_MENU_ENABLED\)\n\s*MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?(?:#if defined\(RXGROUP_UI_ENABLED\)\n[^\n]*MENU_RXGROUPS,[^\n]*\n#endif\s*\n)?(?:#if defined\(TONE_REPLY_ENABLED\)\n[^\n]*MENU_TONE_REPLY,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h) and \
+            not re.search(r"MENU_CODEPLUG_CHANNELS,[^\n]*\n#endif\s*\n(?:#if defined\(ENABLE_ROAM_RETRY\)\n[^\n]*MENU_ROAM,[^\n]*\n#endif\s*\n)?(?:#if defined\(RXGROUP_UI_ENABLED\)\n[^\n]*MENU_RXGROUPS,[^\n]*\n#endif\s*\n)?(?:#if defined\(TONE_REPLY_ENABLED\)\n[^\n]*MENU_TONE_REPLY,[^\n]*\n#endif\s*\n)?\s*NUM_MENU_ENTRIES", sys_h):
+        p.append("нове ID меню не в самому кінці переліку (швидкі клавіші користувача зсунулись би; R59: після «Каналів» дозволено лише MENU_ROAM під ENABLE_ROAM_RETRY; R65B: далі MENU_RXGROUPS під RXGROUP_UI_ENABLED; R100: далі MENU_TONE_REPLY під TONE_REPLY_ENABLED)")
     if "menuCodeplugChannels,     NULL, NULL, 0 },// R46" not in sys_c:
         p.append("«Канали» не зареєстровані в menuFunctions[]")
     if not re.search(r"\[MENU_CODEPLUG_CHANNELS\] = NULL", sys_c):

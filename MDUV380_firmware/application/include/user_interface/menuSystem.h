@@ -35,6 +35,7 @@
 #include "functions/voicePrompts.h"
 #include "functions/aprs_rx_cfg.h"   /* R8-fix: APRS_RX -- MENU_APRS_HUB нижче */
 #include "user_interface/rxgroup_ui.h"   /* R65B: RXGROUP_UI_ENABLED -- MENU_RXGROUPS нижче */
+#include "functions/tone_reply.h"   /* R100: TONE_REPLY_ENABLED -- MENU_TONE_REPLY нижче */
 
 
 #if defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
@@ -448,6 +449,9 @@ enum MENU_SCREENS
 #if defined(RXGROUP_UI_ENABLED)
 	MENU_RXGROUPS,            // R65B: головне меню -> «Списки прийому» (останній пункт, після «Роумінгу»). ПІСЛЯ межі швидких клавіш: ID 0..31 не зсуваються; швидкої клавіші на нього нема
 #endif
+#if defined(TONE_REPLY_ENABLED)
+	MENU_TONE_REPLY,          // R100: головне меню -> «Тон-відгук» (останній пункт). ПІСЛЯ межі швидких клавіш: ID 0..31 не зсуваються; швидкої клавіші на нього нема
+#endif
 	NUM_MENU_ENTRIES
 };
 
@@ -614,6 +618,9 @@ menuStatus_t menuRoam(uiEvent_t *ev, bool isFirstRun);   /* R59: «Роумін�
 #endif
 #if defined(RXGROUP_UI_ENABLED)
 menuStatus_t menuRxGroups(uiEvent_t *ev, bool isFirstRun);   /* R65B: «Списки прийому» (menuRxGroups.c) */
+#endif
+#if defined(TONE_REPLY_ENABLED)
+menuStatus_t menuToneReply(uiEvent_t *ev, bool isFirstRun);   /* R100: «Тон-відгук» (menuToneReply.c) */
 #endif
 #if defined(HAS_COLOURS)
 menuStatus_t menuThemeOptions(uiEvent_t *ev, bool isFirstRun);

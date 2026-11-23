@@ -10,67 +10,88 @@
 
 void toneReplyCfgDefaults(toneReplyCfg_t *c)
 {
-	c->freqHz = TR_FREQ_DEF;
-	c->durDs = TR_DUR_DEF;
-	c->delayDs = TR_DELAY_DEF;
+	c->freqHz = TONE_REPLY_FREQ_DEF;
+	c->durS = TONE_REPLY_DUR_DEF_S;
+	c->delayS = TONE_REPLY_DELAY_DEF_S;
 }
 
 void toneReplyCfgClamp(toneReplyCfg_t *c)
 {
-	if (c->freqHz < TR_FREQ_MIN)
+	if (c->freqHz < TONE_REPLY_FREQ_MIN)
 	{
-		c->freqHz = TR_FREQ_MIN;
+		c->freqHz = TONE_REPLY_FREQ_MIN;
 	}
-	if (c->freqHz > TR_FREQ_MAX)
+	if (c->freqHz > TONE_REPLY_FREQ_MAX)
 	{
-		c->freqHz = TR_FREQ_MAX;
+		c->freqHz = TONE_REPLY_FREQ_MAX;
 	}
-	c->freqHz = (uint16_t)(((c->freqHz + (TR_FREQ_STEP / 2U)) / TR_FREQ_STEP) * TR_FREQ_STEP);
-	if (c->freqHz > TR_FREQ_MAX)
+	c->freqHz = (uint16_t)(((c->freqHz + (TONE_REPLY_FREQ_STEP / 2U)) / TONE_REPLY_FREQ_STEP) * TONE_REPLY_FREQ_STEP);
+	if (c->freqHz > TONE_REPLY_FREQ_MAX)
 	{
-		c->freqHz = TR_FREQ_MAX;
+		c->freqHz = TONE_REPLY_FREQ_MAX;
 	}
-	if (c->durDs < TR_DUR_MIN)
+	if (c->durS < TONE_REPLY_DUR_MIN_S)
 	{
-		c->durDs = TR_DUR_MIN;
+		c->durS = TONE_REPLY_DUR_MIN_S;
 	}
-	if (c->durDs > TR_DUR_MAX)
+	if (c->durS > TONE_REPLY_DUR_MAX_S)
 	{
-		c->durDs = TR_DUR_MAX;
+		c->durS = TONE_REPLY_DUR_MAX_S;
 	}
-	if (c->delayDs > TR_DELAY_MAX)
+	if (c->delayS < TONE_REPLY_DELAY_MIN_S)
 	{
-		c->delayDs = TR_DELAY_MAX;
+		c->delayS = TONE_REPLY_DELAY_MIN_S;
+	}
+	if (c->delayS > TONE_REPLY_DELAY_MAX_S)
+	{
+		c->delayS = TONE_REPLY_DELAY_MAX_S;
 	}
 }
 
-bool toneReplyCfgParse(const toneReplyOnFlash_t *raw, toneReplyCfg_t *c)
+/* v1 (×100 мс) -> секунди: округлення ВГОРУ (0,5 с -> 1 с), далі межі нових констант. */
+static uint8_t trDsToS(uint8_t ds)
+{
+	return (uint8_t)((ds + 9U) / 10U);
+}
+
+int toneReplyCfgParse(const toneReplyOnFlash_t *raw, toneReplyCfg_t *c, bool *enabled)
 {
 	toneReplyCfgDefaults(c);
-	if (raw->version != TR_CFG_VERSION)
+	*enabled = false;
+	if ((raw->version != TONE_REPLY_CFG_VERSION) && (raw->version != TONE_REPLY_CFG_V1))
 	{
-		return false;
+		return 0;   /* блоку нема / невідома версія / сміття -- типові, вимкнено */
 	}
 	c->freqHz = (uint16_t)(raw->freqLo | ((uint16_t)raw->freqHi << 8));
-	c->durDs = raw->durDs;
-	c->delayDs = raw->delayDs;
+	if (raw->version == TONE_REPLY_CFG_V1)
+	{
+		c->durS = trDsToS(raw->dur);      /* R99-TONE: «увімкнено» не зберігалось -- лишається 0 */
+		c->delayS = trDsToS(raw->delay);
+	}
+	else
+	{
+		c->durS = raw->dur;
+		c->delayS = raw->delay;
+		*enabled = ((raw->flags & TONE_REPLY_FLAG_ENABLED) != 0U);
+	}
 	toneReplyCfgClamp(c);
-	return true;
+	return (int)raw->version;
 }
 
-void toneReplyCfgBuild(toneReplyOnFlash_t *raw, const toneReplyCfg_t *c)
+void toneReplyCfgBuild(toneReplyOnFlash_t *raw, const toneReplyCfg_t *c, bool enabled)
 {
 	memset(raw, 0, sizeof(*raw));
-	raw->version = TR_CFG_VERSION;
-	raw->durDs = c->durDs;
-	raw->delayDs = c->delayDs;
+	raw->version = TONE_REPLY_CFG_VERSION;
+	raw->dur = c->durS;
+	raw->delay = c->delayS;
+	raw->flags = (enabled ? TONE_REPLY_FLAG_ENABLED : 0U);
 	raw->freqLo = (uint8_t)(c->freqHz & 0xFFU);
 	raw->freqHi = (uint8_t)(c->freqHz >> 8);
 }
 
 /*
- * Стан-машина: ЧЕКАЮ (IDLE) -> сигнал відкрив шумодав (RX) -> сигнал закрився, тривав >= TR_THRESH_MS (DELAY) -> минула затримка і передача
- * дозволена (TX: тон) -> тривалість, але не більше TR_DUR_MAX (жорстка межа) -> СТОРОЖ (GUARD) >= TR_GUARD_MS і тиша -> ЧЕКАЮ.
+ * Стан-машина: ЧЕКАЮ (IDLE) -> сигнал відкрив шумодав (RX) -> сигнал закрився, тривав >= TONE_REPLY_THRESH_MS (DELAY) -> минула затримка і передача
+ * дозволена (TX: тон) -> тривалість, але не більше TONE_REPLY_DUR_MAX_S (жорстка межа) -> СТОРОЖ (GUARD) >= TONE_REPLY_GUARD_MS і тиша -> ЧЕКАЮ.
  * Короткий сигнал (< порогу) -- назад у ЧЕКАЮ без відгуку. Новий сигнал під час затримки -- знову RX (відгук після нього).
  * Скасування (PTT, клавіша, зміна каналу): у затримці -- ЧЕКАЮ; у тоні -- зупинка і СТОРОЖ. Вимкнення функції -- зупинка і ЧЕКАЮ.
  */
@@ -100,7 +121,7 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 		case TR_ST_RX:
 			if (rxOpen == false)
 			{
-				if ((now - s->t) >= TR_THRESH_MS)
+				if ((now - s->t) >= TONE_REPLY_THRESH_MS)
 				{
 					s->state = TR_ST_DELAY;
 				}
@@ -123,7 +144,7 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 				s->state = TR_ST_RX;   /* знову сигнал -- відгук після нього */
 				s->t = now;
 			}
-			else if ((now - s->t) >= ((uint32_t)cfg->delayDs * 100U))
+			else if ((now - s->t) >= ((uint32_t)cfg->delayS * 1000U))
 			{
 				s->t = now;
 				if (txAllowed)
@@ -136,7 +157,7 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 			break;
 
 		case TR_ST_TX:
-			dur = (uint32_t)((cfg->durDs > TR_DUR_MAX) ? TR_DUR_MAX : cfg->durDs) * 100U;
+			dur = (uint32_t)((cfg->durS > TONE_REPLY_DUR_MAX_S) ? TONE_REPLY_DUR_MAX_S : cfg->durS) * 1000U;   /* жорстка межа навіть при пошкодженому значенні */
 			if (cancel || (txAllowed == false) || ((now - s->t) >= dur))
 			{
 				s->state = TR_ST_GUARD;
@@ -147,7 +168,7 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 
 		case TR_ST_GUARD:
 		default:
-			if (((now - s->t) >= TR_GUARD_MS) && (rxOpen == false))
+			if (((now - s->t) >= TONE_REPLY_GUARD_MS) && (rxOpen == false))
 			{
 				s->state = TR_ST_IDLE;
 				s->t = now;
@@ -186,8 +207,9 @@ static toneReplySm_t  s_trSm;
 static toneReplyCfg_t s_trCfg;     /* поточні (меню редагує їх) */
 static toneReplyCfg_t s_trSaved;   /* те, що в блоці 19 (порівняння перед записом і «скасувати» в меню) */
 static uint32_t       s_trTxFreq;  /* частота передачі на старті тону: інша -- канал змінено, тон зупиняється */
-static uint8_t        s_trEnabled; /* НЕ зберігається: після старту -- 0 */
-static uint8_t        s_trEnabledMenu;
+static uint8_t        s_trEnabled;        /* R100: зберігається в блоці 19 ([3] біт 0) */
+static uint8_t        s_trEnabledSaved;   /* те, що в блоці 19; TR_SAVED_V1 -- у флеші ще v1 (GREEN у меню запише v2 навіть без змін) */
+#define TR_SAVED_V1           0xFFU
 
 void toneReplyLoad(void)
 {
@@ -198,10 +220,15 @@ void toneReplyLoad(void)
 	{
 		memset(&raw, 0, sizeof(raw));   /* блоку нема -- типові значення */
 	}
-	(void)toneReplyCfgParse(&raw, &s_trCfg);
-	s_trSaved = s_trCfg;
-	s_trEnabled = 0U;
-	s_trEnabledMenu = 0U;
+	{
+		bool en = false;
+
+		int ver = toneReplyCfgParse(&raw, &s_trCfg, &en);   /* v1 -- мігровані значення, у флеші лишається v1 до збереження користувачем */
+
+		s_trEnabled = (en ? 1U : 0U);
+		s_trSaved = s_trCfg;
+		s_trEnabledSaved = ((ver == (int)TONE_REPLY_CFG_V1) ? TR_SAVED_V1 : s_trEnabled);   /* стан-машина -- ЧЕКАЮ: на старті нічого не передається */
+	}
 	s_trSm.state = TR_ST_IDLE;
 	s_trSm.t = 0U;
 	s_trTxFreq = 0U;
@@ -232,28 +259,24 @@ bool toneReplySave(void)
 	toneReplyOnFlash_t raw;
 
 	toneReplyCfgClamp(&s_trCfg);
-	if ((s_trCfg.freqHz == s_trSaved.freqHz) && (s_trCfg.durDs == s_trSaved.durDs) && (s_trCfg.delayDs == s_trSaved.delayDs))
+	if ((s_trCfg.freqHz == s_trSaved.freqHz) && (s_trCfg.durS == s_trSaved.durS) && (s_trCfg.delayS == s_trSaved.delayS) && (s_trEnabled == s_trEnabledSaved))
 	{
-		return true;
+		return true;   /* нічого не змінилось -- флеш не чіпаємо (v1 лишається v1) */
 	}
-	toneReplyCfgBuild(&raw, &s_trCfg);
+	toneReplyCfgBuild(&raw, &s_trCfg, (s_trEnabled != 0U));
 	if (codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_TONE_REPLY_CFG, (uint8_t *)&raw, (int)sizeof(raw)))
 	{
 		s_trSaved = s_trCfg;
+		s_trEnabledSaved = s_trEnabled;
 		return true;
 	}
 	return false;
 }
 
-void toneReplyMenuBegin(void)
-{
-	s_trEnabledMenu = s_trEnabled;
-}
-
 void toneReplyMenuCancel(void)
 {
 	s_trCfg = s_trSaved;
-	s_trEnabled = s_trEnabledMenu;
+	s_trEnabled = ((s_trEnabledSaved == 1U) ? 1U : 0U);   /* TR_SAVED_V1 -- вимкнено (v1 «увімкнено» не зберігав) */
 }
 
 /* Чи можна передати тон зараз. Лише екран каналу/VFO, FM-канал з частотою TX, без «лише прийом», TX inhibit, межі діапазону, hotspot,

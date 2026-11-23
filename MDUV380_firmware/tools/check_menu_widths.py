@@ -554,15 +554,23 @@ for name, t, n, lim in set_over:
 print(f'  разом: {len(set_over)}')
 fails += set_over
 
-print('\n=== 10. «Тон-відгук» (languages/tonereply_ua.h, R99-TONE): пункт «підпис:значення» <= 16, найгірші значення ===')
+print('\n=== 10. «Тон-відгук» (languages/tonereply_ua.h; R99-TONE, R100: підменю головного меню): «підпис:значення» <= 16, найгірші значення з констант tone_reply.h ===')
 tr_over = []
 tr_path = os.path.join(LANG, 'tonereply_ua.h')
+tr_hdr = os.path.join(os.path.dirname(LANG), '..', 'functions', 'tone_reply.h')
 if os.path.exists(tr_path):
     tm = {m.group(1): m.group(2) for m in re.finditer(r'#define\s+(TONEREPLY_\w+)\s+"((?:[^"\\]|\\.)*)"', open(tr_path, 'rb').read().decode('cp1251'))}
-    for t in (tm['TONEREPLY_MENU_ON'] + ':' + max(tm['TONEREPLY_ON'], tm['TONEREPLY_OFF'], key=len), tm['TONEREPLY_MENU_FREQ'] + ':3000',
-              tm['TONEREPLY_MENU_DUR'] + ':5.0' + tm['TONEREPLY_SEC'], tm['TONEREPLY_MENU_DELAY'] + ':5.0' + tm['TONEREPLY_SEC']):
+    tk = {m.group(1): int(m.group(2)) for m in re.finditer(r'#define\s+(TONE_REPLY_(?:FREQ|DUR|DELAY)_\w+)\s+(\d+)U', open(tr_hdr, encoding='utf-8').read())}
+    # найдовше значення -- найбільше число в межах (більше цифр); R100: «Частота:3000», «Тривал:60с», «Затрим:10с»
+    for t in (tm['TONEREPLY_MENU_ON'] + ':' + max(tm['TONEREPLY_ON'], tm['TONEREPLY_OFF'], key=len),
+              tm['TONEREPLY_MENU_FREQ'] + ':' + str(tk['TONE_REPLY_FREQ_MAX']),
+              tm['TONEREPLY_MENU_DUR'] + ':' + str(tk['TONE_REPLY_DUR_MAX_S']) + tm['TONEREPLY_SEC'],
+              tm['TONEREPLY_MENU_DELAY'] + ':' + str(tk['TONE_REPLY_DELAY_MAX_S']) + tm['TONEREPLY_SEC']):
+        print(f'  "{t}" = {len(t)}')
         if len(t) > 16:
             tr_over.append(('Тон-відгук', t, len(t), 16))
+    if len(tm.get('TONEREPLY_MAIN', '')) > 16:   # назва пункту головного меню й заголовок підменю
+        tr_over.append(('TONEREPLY_MAIN', tm['TONEREPLY_MAIN'], len(tm['TONEREPLY_MAIN']), 16))
     if len(tm.get('TONEREPLY_HDR', '')) > 2:
         tr_over.append(('TONEREPLY_HDR', tm['TONEREPLY_HDR'], len(tm['TONEREPLY_HDR']), 2))   # місце CC у шапці -- 2 символи
 for name, t, n, lim in tr_over:
