@@ -40,6 +40,10 @@
 #if defined(VOLUME_PROBE)
 #include "user_interface/languages/volprobe_ua.h"
 #endif
+#include "functions/tone_reply.h"   /* R99-TONE: «Тон-відгук» (лише ENABLE_TONE_REPLY, українська UV380) */
+#if defined(TONE_REPLY_ENABLED)
+#include "user_interface/languages/tonereply_ua.h"
+#endif
 #include "user_interface/menuTaDiag.h"   /* R88: «TA diag» (лише ENABLE_TA_DIAG; у звичайних збірках файл порожній) */
 
 static void updateScreen(bool isFirstRun);
@@ -76,6 +80,12 @@ enum
 #if defined(TA_DIAG)
 	RADIO_OPTIONS_MENU_TA_DIAG,          /* R88: діагностика Talker Alias / GPS-блока LC -- найостаннішим */
 #endif
+#if defined(TONE_REPLY_ENABLED)
+	RADIO_OPTIONS_MENU_TONE_REPLY,       /* R99-TONE: «Тон-відгук» -- в КІНЦІ, номери швидких клавіш попередніх пунктів не зсуваються */
+	RADIO_OPTIONS_MENU_TONE_FREQ,
+	RADIO_OPTIONS_MENU_TONE_DUR,
+	RADIO_OPTIONS_MENU_TONE_DELAY,
+#endif
 	NUM_RADIO_OPTIONS_MENU_ITEMS
 };
 
@@ -92,6 +102,9 @@ menuStatus_t menuRadioOptions(uiEvent_t *ev, bool isFirstRun)
 		{
 			// Store original settings, used on cancel event.
 			memcpy(&originalNonVolatileSettings, &nonVolatileSettings, sizeof(settingsStruct_t));
+#if defined(TONE_REPLY_ENABLED)
+			toneReplyMenuBegin();   // R99-TONE: те саме для «Тон-відгук» (скасування -- exitCallback)
+#endif
 		}
 
 		voicePromptsInit();
@@ -168,7 +181,7 @@ static void updateScreen(bool isFirstRun)
 
 			buf[0] = 0;
 			buf[2] = 0;
-#if defined(VOLUME_PROBE) || defined(TA_DIAG)
+#if defined(VOLUME_PROBE) || defined(TA_DIAG) || defined(TONE_REPLY_ENABLED)
 			bool volProbeNoPrompt = false;   /* R77A: підпис -- макрос українського заголовка, не рядок currentLanguage: без голосової підказки */
 #endif
 			leftSide = NULL;
@@ -281,6 +294,29 @@ static void updateScreen(bool isFirstRun)
 					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", VOLPROBE_MENU_ENTER);
 					break;
 #endif
+#if defined(TONE_REPLY_ENABLED)
+				// R99-TONE: «Тон-відгук» -- підписи макросами (без голосової підказки, як діагностичні пункти)
+				case RADIO_OPTIONS_MENU_TONE_REPLY:
+					leftSide = TONEREPLY_MENU_ON;
+					volProbeNoPrompt = true;
+					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%s", (toneReplyIsEnabled() ? TONEREPLY_ON : TONEREPLY_OFF));
+					break;
+				case RADIO_OPTIONS_MENU_TONE_FREQ:
+					leftSide = TONEREPLY_MENU_FREQ;
+					volProbeNoPrompt = true;
+					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u", (unsigned)toneReplyCfg()->freqHz);
+					break;
+				case RADIO_OPTIONS_MENU_TONE_DUR:
+					leftSide = TONEREPLY_MENU_DUR;
+					volProbeNoPrompt = true;
+					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u.%u%s", (unsigned)(toneReplyCfg()->durDs / 10U), (unsigned)(toneReplyCfg()->durDs % 10U), TONEREPLY_SEC);
+					break;
+				case RADIO_OPTIONS_MENU_TONE_DELAY:
+					leftSide = TONEREPLY_MENU_DELAY;
+					volProbeNoPrompt = true;
+					snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "%u.%u%s", (unsigned)(toneReplyCfg()->delayDs / 10U), (unsigned)(toneReplyCfg()->delayDs % 10U), TONEREPLY_SEC);
+					break;
+#endif
 			}
 
 			snprintf(buf, SCREEN_LINE_BUFFER_SIZE, "%s:%s", leftSide, (rightSideVar[0] ? rightSideVar : (rightSideConst ? rightSideConst : "")));
@@ -296,7 +332,7 @@ static void updateScreen(bool isFirstRun)
 
 				if (!wasPlaying || (menuDataGlobal.newOptionSelected || (menuDataGlobal.menuOptionsTimeout > 0)))
 				{
-#if defined(VOLUME_PROBE) || defined(TA_DIAG)
+#if defined(VOLUME_PROBE) || defined(TA_DIAG) || defined(TONE_REPLY_ENABLED)
 					if (volProbeNoPrompt == false)   /* R77A, R88 */
 #endif
 					voicePromptsAppendLanguageString(leftSide);
@@ -350,6 +386,34 @@ static void updateScreen(bool isFirstRun)
 
 	displayRender();
 }
+
+#if defined(TONE_REPLY_ENABLED)
+// R99-TONE: ←/→ на пунктах «Тон-відгук»: увімкнути/вимкнути; частота -- крок 50 Гц; тривалість і затримка -- крок 0,1 с (межі -- toneReplyCfgClamp).
+// Зберігається (блок 19) лише по GREEN (applySettings), RED/вихід -- повернення (exitCallback); «увімкнено» не зберігається взагалі.
+static void toneReplyMenuChange(int item, int dir)
+{
+	toneReplyCfg_t *c = toneReplyCfg();
+
+	switch (item)
+	{
+		case RADIO_OPTIONS_MENU_TONE_REPLY:
+			toneReplySetEnabled(dir > 0);
+			break;
+		case RADIO_OPTIONS_MENU_TONE_FREQ:
+			c->freqHz = (uint16_t)((dir > 0) ? (c->freqHz + TR_FREQ_STEP) : ((c->freqHz > (TR_FREQ_MIN + TR_FREQ_STEP)) ? (c->freqHz - TR_FREQ_STEP) : TR_FREQ_MIN));
+			break;
+		case RADIO_OPTIONS_MENU_TONE_DUR:
+			c->durDs = (uint8_t)((dir > 0) ? (c->durDs + 1U) : ((c->durDs > TR_DUR_MIN) ? (c->durDs - 1U) : TR_DUR_MIN));
+			break;
+		case RADIO_OPTIONS_MENU_TONE_DELAY:
+			c->delayDs = (uint8_t)((dir > 0) ? (c->delayDs + 1U) : ((c->delayDs > 0U) ? (c->delayDs - 1U) : 0U));
+			break;
+		default:
+			break;
+	}
+	toneReplyCfgClamp(c);
+}
+#endif
 
 static void handleEvent(uiEvent_t *ev)
 {
@@ -566,6 +630,14 @@ static void handleEvent(uiEvent_t *ev)
 					menuVolumeProbeEnter();   /* R77A: вправо -- відкрити екран; він сам малює й веде клавіші */
 					return;
 #endif
+#if defined(TONE_REPLY_ENABLED)
+				case RADIO_OPTIONS_MENU_TONE_REPLY:
+				case RADIO_OPTIONS_MENU_TONE_FREQ:
+				case RADIO_OPTIONS_MENU_TONE_DUR:
+				case RADIO_OPTIONS_MENU_TONE_DELAY:
+					toneReplyMenuChange(menuDataGlobal.currentItemIndex, 1);
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -696,6 +768,14 @@ static void handleEvent(uiEvent_t *ev)
 				case RADIO_OPTIONS_MENU_VOL_PROBE:
 					break;   /* вліво -- нічого */
 #endif
+#if defined(TONE_REPLY_ENABLED)
+				case RADIO_OPTIONS_MENU_TONE_REPLY:
+				case RADIO_OPTIONS_MENU_TONE_FREQ:
+				case RADIO_OPTIONS_MENU_TONE_DUR:
+				case RADIO_OPTIONS_MENU_TONE_DELAY:
+					toneReplyMenuChange(menuDataGlobal.currentItemIndex, -1);
+					break;
+#endif
 			}
 		}
 		else if ((ev->keys.event & KEY_MOD_PRESS) && (menuDataGlobal.menuOptionsTimeout > 0))
@@ -721,6 +801,10 @@ static void handleEvent(uiEvent_t *ev)
 
 static void applySettings(void)
 {
+#if defined(TONE_REPLY_ENABLED)
+	(void)toneReplySave();   // R99-TONE: частота/тривалість/затримка -- у custom-data блок 19 (лише якщо змінились)
+	toneReplyMenuBegin();    // прийняте -- нова точка «скасувати»
+#endif
 	settingsSaveIfNeeded(true);
 	resetOriginalSettingsData();
 }
@@ -735,6 +819,9 @@ static void exitCallback(void *data)
 #endif
 	if (originalNonVolatileSettings.magicNumber != 0xDEADBEEF)
 	{
+#if defined(TONE_REPLY_ENABLED)
+		toneReplyMenuCancel();   // R99-TONE: RED / вихід без GREEN -- «Тон-відгук» як до входу в меню
+#endif
 		// Restore original settings.
 		memcpy(&nonVolatileSettings, &originalNonVolatileSettings, sizeof(settingsStruct_t));
 #if defined(PLATFORM_RD5R)

@@ -68,6 +68,7 @@
 #include "functions/roam_cfg.h"       // R59: налаштування «Роумінгу» (custom-data блок №15)
 #endif
 #if defined(ENABLE_DUAL_CHANNEL)
+#include "functions/tone_reply.h"     // R99-TONE: «Тон-відгук» (custom-data блок №19)
 #include "functions/dual_channel.h"   // R97: «Подвійний прийом» (custom-data блок №18)
 #endif
 #if defined(ENABLE_AES)
@@ -512,6 +513,9 @@ void applicationMainTask(void)
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 	roamCfgLoad();            // R59: «Роумінг» -- увімкнено/макс. стрибків із custom-data блоку (немає блоку -- вимкнено, 2)
+#endif
+#if defined(TONE_REPLY_ENABLED)
+	toneReplyLoad();          // R99-TONE: «Тон-відгук» -- частота/тривалість/затримка з блоку 19; після старту ВИМКНЕНО
 #endif
 #if defined(DUAL_CHANNEL_ENABLED)
 	dcLoad();                 // R97: «Подвійний прийом» -- увімкнено/покажчик/канал B із custom-data блоку 18 (немає блоку -- вимкнено)
@@ -1276,6 +1280,9 @@ void applicationMainTask(void)
 				// PTT власного оператора має її НЕГАЙНО обірвати — його передача головніша,
 				// і це аварійний вихід, якщо монітор увімкнули помилково.
 				dmrRctlMonitorCancel();
+#if defined(TONE_REPLY_ENABLED)
+				toneReplyAbort();   // R99-TONE: PTT оператора -- негайно зупинити тон/затримку «Тон-відгуку» (до відкриття екрана передачі)
+#endif
 
 				int currentMenu = menuSystemGetCurrentMenuNumber();
 
@@ -1766,6 +1773,9 @@ void applicationMainTask(void)
 		aprsMsgBgTick();  // R11-fix2: фонова черга повідомлень/ACK APRS -- ПЕРЕД біконом: ACK іде першим, на будь-якому екрані
 #endif
 		aprsBeaconingTick(&ev);
+#if defined(TONE_REPLY_ENABLED)
+		toneReplyTick(&ev); // R99-TONE: «Тон-відгук» -- стан-машина (шумодав FM -> затримка -> тон), скасування клавішею, заборони TX
+#endif
 #if defined(APRS_RX)
 		aprsRxTick();     // R8: фоновий приймач APRS -- працює незалежно від відкритого екрана
 		aprsModeTick();   // R10: «Режим APRS» (маяк, збереження налаштувань, вихід при зміні екрана)

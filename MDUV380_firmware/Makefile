@@ -209,6 +209,12 @@ ifeq ($(ENABLE_DUAL_CHANNEL),1)
 DEFS += -DENABLE_DUAL_CHANNEL
 endif
 
+# R99-TONE: «Тон-відгук» -- після закриття шумодава FM рація відповідає тоном (частота/тривалість/затримка -- custom-data блок 19). Лише українська
+# збірка UV380 (код сам вимикається в інших). У CI ввімкнено в основній українській збірці. Типова збірка без прапорця -- байт-у-байт без змін.
+ifeq ($(ENABLE_TONE_REPLY),1)
+DEFS += -DENABLE_TONE_REPLY
+endif
+
 ifeq ($(ENABLE_VOLUME_PROBE),1)
 DEFS += -DENABLE_VOLUME_PROBE
 endif

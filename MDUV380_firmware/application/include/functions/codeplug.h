@@ -398,6 +398,10 @@ typedef enum
 	CODEPLUG_CUSTOM_DATA_TYPE_DUAL_CHANNEL_CFG = 18, /* R97: «Подвійний прийом» -- увімкнено, покажчик A/B, номер каналу B. 8 Б, пишеться прямо з рації.
 	                                        * Формат -- dual_channel.h. Номер = 18 ЯВНО (нумерація не залежить від дефайнів). */
 #endif
+#if defined(ENABLE_TONE_REPLY) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = TONE_REPLY_ENABLED (tone_reply.h) */
+	CODEPLUG_CUSTOM_DATA_TYPE_TONE_REPLY_CFG = 19, /* R99-TONE: «Тон-відгук» -- частота, тривалість, затримка тону (8 Б; «увімкнено» НЕ зберігається).
+	                                        * Формат -- tone_reply.h. Номер = 19 ЯВНО (нумерація не залежить від дефайнів). */
+#endif
 } CodeplugCustomDataType_t;
 
 

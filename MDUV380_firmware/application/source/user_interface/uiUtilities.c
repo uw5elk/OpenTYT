@@ -51,6 +51,10 @@
 #include "crypto/dmr_aes.h"   // DMR_AES_MAX_KEYS (межа діапазону слота ключа на каналі)
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h" // callReplayToggleOnSK1() нижче -- гаряча клавіша "Переслухати" (2026-09-19, задача п.6)
+#include "functions/tone_reply.h"   // R99-TONE: індикатор «Тон-відгук» у шапці
+#if defined(TONE_REPLY_ENABLED)
+#include "user_interface/languages/tonereply_ua.h"
+#endif
 #endif
 
 #if defined(ENABLE_AES)
@@ -2699,6 +2703,20 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 
 		displayPrintCore(ccXPos, DISPLAY_Y_POS_HEADER, buffer, FONT_SIZE_1, TEXT_ALIGN_LEFT, isNotFilteringCC);
 	}
+#if defined(TONE_REPLY_ENABLED)
+	else if ((radioMode == RADIO_MODE_ANALOG) && toneReplyIsEnabled() && (isVFODualWatchScanning == false) && (isVFOSweepScanning == false))
+	{
+		// R99-TONE: «Тон-відгук» увімкнено -- «ТВ» на місці CC (в FM CC не показується, місце вільне); під час тону -- інверсно
+		bool trTx = toneReplyIsTransmitting();
+		int16_t trXPos = (int16_t)((COLOR_CODE_X_CENTER + (itemOffset * 3)) - ((int16_t)(strlen(TONEREPLY_HDR) * 6) >> 1));
+
+		if (trTx)
+		{
+			displayFillRect((trXPos - 1), DISPLAY_Y_POS_HEADER - 1, (int16_t)((strlen(TONEREPLY_HDR) * 6) + 1), 9, false);
+		}
+		displayPrintCore(trXPos, DISPLAY_Y_POS_HEADER, TONEREPLY_HDR, FONT_SIZE_1, TEXT_ALIGN_LEFT, trTx);
+	}
+#endif
 #if defined(DUAL_CHANNEL_ENABLED)
 	}   // R98-FIX5 Б1: кінець частини, якої в шапці режиму нема (режим, тони/TS, APRS, потужність, CC)
 #endif
