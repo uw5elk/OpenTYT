@@ -200,8 +200,8 @@ static void updateScreen(bool isFirstRun)
 
 #if defined(TONE_REPLY_ENABLED)
 					if (isToneItem == false)
-#endif
 					{
+#endif
 #if defined(ENABLE_ROAM_RETRY)
 					if ((isRoamItem == false)
 #if defined(RXGROUP_UI_ENABLED)
@@ -219,7 +219,9 @@ static void updateScreen(bool isFirstRun)
 #else
 					voicePromptsAppendLanguageString(menuName);
 #endif
+#if defined(TONE_REPLY_ENABLED)
 					}
+#endif
 					promptsPlayNotAfterTx();
 				}
 			}

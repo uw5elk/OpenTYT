@@ -120,7 +120,7 @@ def test_gui():
                 check(tree.parent(key) == parent, "дерево: %s лежить у %r" % (key, parent))
         all_items = list(tree.get_children()) + [c for g in tree.get_children() for c in tree.get_children(g)]
         check(len(all_items) == len(EXPECTED), "дерево: рівно %d пунктів (є %d)" % (len(EXPECTED), len(all_items)))
-        check(sum(len(s[2]) for s in SECTIONS) == 23, "SECTIONS: 23 панелі (R59: +Роумінг, R28: +теми екрана, R30: +усі налаштування, R31: +база позивних, R35: +заставка, мелодія, супутники; R49: -підказки, -самоперевірка)")
+        check(sum(len(s[2]) for s in SECTIONS) == 24, "SECTIONS: 24 панелі (R100: +Тон-відгук, R59: +Роумінг, R28: +теми екрана, R30: +усі налаштування, R31: +база позивних, R35: +заставка, мелодія, супутники; R49: -підказки, -самоперевірка)")
 
         # --- стан 1: рації нема ---
         app.conn.mark_absent()

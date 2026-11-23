@@ -244,7 +244,7 @@ def main():
     mm = sc[sc.index("mainMenuItems"):]
     mm = mm[:mm.index("};")]
     check(re.search(r"#if defined\(TONE_REPLY_ENABLED\)\n(?:\s*//[^\n]*\n)*\s*\{ 0, MENU_TONE_REPLY \},\n#endif\n$", mm) is not None, "Д4: «Тон-відгук» -- останній пункт головного меню")
-    check("menuName = TONEREPLY_MAIN;" in dl and re.search(r"#if defined\(TONE_REPLY_ENABLED\)\n\t+if \(isToneItem == false\)\n#endif", dl) is not None,
+    check("menuName = TONEREPLY_MAIN;" in dl and re.search(r"#if defined\(TONE_REPLY_ENABLED\)\n\t+if \(isToneItem == false\)\n\t+\{\n#endif", dl) is not None,
           "Д5: назва пункту -- TONEREPLY_MAIN, голосової підказки за вказівником на таблицю нема")
     check("#if defined(TONE_REPLY_ENABLED)" in menu and "TRM_ROWS };" in menu and "enum { TRM_ON = 0, TRM_FREQ, TRM_DUR, TRM_DELAY, TRM_ROWS };" in menu,
           "Д6: підменю -- 4 рядки, лише під TONE_REPLY_ENABLED")

@@ -5,14 +5,14 @@
  * Будь-який інший вихід з екрана (без GREEN) -- теж повернення збереженого (exit-callback), як у «Опціях рації».
  * Лише під TONE_REPLY_ENABLED (ENABLE_TONE_REPLY + українська + UV380). Рядки -- languages/tonereply_ua.h (cp1251).
  */
+#include "functions/tone_reply.h"   /* лише він -- до #if: без прапорця файл порожній (токени збірок без ENABLE_TONE_REPLY як у базі; test_r46/test_r97) */
+
+#if defined(TONE_REPLY_ENABLED)
+
 #include "user_interface/uiGlobals.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
-#include "functions/tone_reply.h"
-
-#if defined(TONE_REPLY_ENABLED)
-
 #include <stdio.h>
 #include <string.h>
 #include "user_interface/languages/tonereply_ua.h"
