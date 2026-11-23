@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Розділ «Дані → Тон-відгук» (R100): налаштування custom-data блоку 19 (tools/tone_reply_cfg.py) -- частина ДОКУМЕНТА, як «Роумінг» (R75):
+"""Розділ «Дані → Тон-відгук» (R100, R102): налаштування custom-data блоку 19 (tools/tone_reply_cfg.py) -- частина ДОКУМЕНТА, як «Роумінг» (R75):
 поля читаються з документа, «Застосувати до документа» вносить правку, у рацію все йде однією дією «Записати в рацію» над розділами (страхова
 копія області, sector-safe запис, звірка читанням -- doc_actions). Блок 19 -- налаштування (custom_region: kind = setting), тож він і в бекапі/знімку,
 і у файлі «Усі налаштування», і в типовому виборі відновлення.
 
 Межі й типові значення -- з application/include/functions/tone_reply.h (у .exe -- дзеркало, звірене тестом). Старий формат R99 (v1, ×100 мс)
-показується мігрованим (секунди вгору, вимкнено) і записується як v2. Попередження (не блокують): увімкнено; увімкнено і тривалість > 10 с.
+показується мігрованим (секунди вгору, вимкнено, поріг типовий), формат R100 (v2) -- з типовим порогом 1 с; записується завжди v3 (R102: поле «Поріг сигналу»).
+Попередження (не блокують): увімкнено; увімкнено і поріг 0; увімкнено -- захисту від зациклення двох рацій НЕМАЄ; увімкнено і тривалість > 10 с.
 Діє лише в прошивці зі збіркою «тон-відгук» (ENABLE_TONE_REPLY, build-ukrainian); в інших збірках блок ігнорується."""
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -38,10 +39,10 @@ class ToneReplyPanel(Panel):
 
     def _build_ui(self):
         self.header("Тон-відгук", purpose="перевірка покриття й антени: рація у FM після почутого сигналу сама відповідає тоном заданої частоти й тривалості.")
-        ttk.Label(self, text=("Лише FM і лише в прошивці зі збіркою «тон-відгук». Відгук -- після сигналу, що тривав щонайменше 1 с, коли шумодав закрився і минула "
-                              "затримка. Позивного у відповіді нема. Після відгуку рація %d с не відповідає (сторож = найбільша затримка %d с + найбільша тривалість "
-                              "%d с + 1 с), тож дві рації з цією функцією не «перегукуються». На рації: головне меню → «Тон-відгук»."
-                              % (trc.GUARD_S, trc.DELAY_MAX, trc.DUR_MAX)),
+        ttk.Label(self, text=("Лише FM і лише в прошивці зі збіркою «тон-відгук». Відгук -- на КОЖЕН сигнал, що тривав щонайменше порогу (%d..%d с), коли шумодав "
+                              "закрився і минула затримка. Позивного у відповіді нема. Паузи після відгуку й захисту від зациклення немає: дві рації з "
+                              "увімкненою функцією відповідатимуть одна одній без кінця -- вмикайте лише на одній. На рації: головне меню → «Тон-відгук»."
+                              % (trc.THRESH_MIN, trc.THRESH_MAX)),
                   wraplength=620, justify="left", foreground=gt.P["muted"]).pack(anchor="w", padx=12, pady=(0, 6))
         box = ttk.LabelFrame(self, text="Налаштування тон-відгуку -- частина документа")
         box.pack(fill="x", padx=12, pady=4)
@@ -49,6 +50,7 @@ class ToneReplyPanel(Panel):
         self.v_freq = tk.StringVar(value=str(trc.FREQ_DEF))
         self.v_dur = tk.StringVar(value=str(trc.DUR_DEF))
         self.v_delay = tk.StringVar(value=str(trc.DELAY_DEF))
+        self.v_thresh = tk.StringVar(value=str(trc.THRESH_DEF))
         self.cb_enabled = ttk.Checkbutton(box, text="Тон-відгук увімкнено", variable=self.v_enabled, command=self.refresh_warnings)
         self.cb_enabled.pack(anchor="w", padx=8, pady=(4, 2))
         self.sp_freq = self._row(box, "Частота тону, Гц (%d..%d, крок %d)" % (trc.FREQ_MIN, trc.FREQ_MAX, trc.FREQ_STEP),
@@ -58,7 +60,11 @@ class ToneReplyPanel(Panel):
                                                       command=self.refresh_warnings))
         self.sp_delay = self._row(box, "Затримка перед тоном, с (%d..%d)" % (trc.DELAY_MIN, trc.DELAY_MAX),
                                   lambda f: ttk.Spinbox(f, from_=trc.DELAY_MIN, to=trc.DELAY_MAX, increment=trc.STEP_S, textvariable=self.v_delay, width=7))
+        self.sp_thresh = self._row(box, "Поріг сигналу, с (%d..%d; 0 -- будь-яке відкриття)" % (trc.THRESH_MIN, trc.THRESH_MAX),
+                                   lambda f: ttk.Spinbox(f, from_=trc.THRESH_MIN, to=trc.THRESH_MAX, increment=trc.STEP_S, textvariable=self.v_thresh, width=7,
+                                                         command=self.refresh_warnings))
         self.v_dur.trace_add("write", lambda *_: self.refresh_warnings())
+        self.v_thresh.trace_add("write", lambda *_: self.refresh_warnings())
         btn = ttk.Frame(box)
         btn.pack(fill="x", padx=8, pady=6)
         self.apply_btn = ttk.Button(btn, text="Застосувати до документа", command=self._on_apply)
@@ -89,11 +95,15 @@ class ToneReplyPanel(Panel):
             self.v_freq.set(str(st["freq"]))
             self.v_dur.set(str(st["dur"]))
             self.v_delay.set(str(st["delay"]))
+            self.v_thresh.set(str(st["thresh"]))
             if raw is None:
                 text, fg = "У документі блока тон-відгуку немає -- %s." % trc.describe(st).split(" -- ", 1)[1], gt.P["muted"]
             elif st["version"] == trc.VERSION_V1:
                 text, fg = ("У документі старий формат R99 (×100 мс): показано в секундах (округлено вгору), «увімкнено» -- вимкнено. "
-                            "«Застосувати до документа» запише новий формат."), gt.P["warn"]
+                            "Поріг сигналу -- типовий (%d с). «Застосувати до документа» запише новий формат (v3)." % trc.THRESH_DEF), gt.P["warn"]
+            elif st["version"] == trc.VERSION_V2:
+                text, fg = ("У документі формат R100 (без порогу сигналу): поріг показано типовим (%d с), решта -- як є. «Застосувати до документа» запише новий "
+                            "формат (v3)." % trc.THRESH_DEF), gt.P["warn"]
             elif st["version"] == 0:
                 text, fg = "Блок тон-відгуку недійсний (прошивка читає його як типові значення, вимкнено).", gt.P["warn"]
             else:
@@ -119,7 +129,11 @@ class ToneReplyPanel(Panel):
             dur = int(str(self.v_dur.get()).strip())
         except ValueError:
             dur = 0
-        return trc.warnings(bool(self.v_enabled.get()), dur)
+        try:
+            th = int(str(self.v_thresh.get()).strip())
+        except ValueError:
+            th = trc.THRESH_DEF
+        return trc.warnings(bool(self.v_enabled.get()), dur, th)
 
     def refresh_warnings(self):
         w = self.warnings()
@@ -128,9 +142,9 @@ class ToneReplyPanel(Panel):
     # ------------------------------------------------------------------ застосування
 
     def _collect(self):
-        """Поля форми -> (enabled, freq, dur, delay). ToneCfgError -- погане значення."""
+        """Поля форми -> (enabled, freq, dur, delay, thresh). ToneCfgError -- погане значення."""
         vals = []
-        for name, var in (("частота", self.v_freq), ("тривалість", self.v_dur), ("затримка", self.v_delay)):
+        for name, var in (("частота", self.v_freq), ("тривалість", self.v_dur), ("затримка", self.v_delay), ("поріг сигналу", self.v_thresh)):
             try:
                 vals.append(int(str(var.get()).strip()))
             except ValueError:
@@ -143,9 +157,9 @@ class ToneReplyPanel(Panel):
         if not self._region_ok() or self.shell.busy:
             return
         try:
-            en, f, du, dl = self._collect()
+            en, f, du, dl, th = self._collect()
             scratch = d.scratch_region()
-            trc.write_state(None, en, f, du, dl, store=scratch)
+            trc.write_state(None, en, f, du, dl, th, store=scratch)
             changed = d.apply_region(scratch, {trc.TYPE_TONE_REPLY_CFG: "Тон-відгук"})
         except (trc.ToneCfgError, RuntimeError, D.DocumentError) as e:
             messagebox.showerror("Тон-відгук", str(e), parent=self.shell)
