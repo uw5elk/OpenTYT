@@ -224,7 +224,7 @@ ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1`.
 | `ENABLE_RODATA_AFTER_CODEC` | `.rodata` після кодека (інший лінкер-скрипт) | без прапорця `.bin` той самий | так |
 | `ENABLE_APRS_IWDG` | апаратний сторож для «Режиму APRS» | лише лабораторна перевірка; типово вимкнено | ні |
 | `ENABLE_SMS_DIAG`, `ENABLE_WAKE_DIAG`, `ENABLE_MEM_DIAG`, `ENABLE_APRS_RX_PROBE`, `ENABLE_VOLUME_PROBE`, `DMR_AES_DIAG_*` | діагностика (екрани «Діагностика», журнал пробудження, проби) | `ENABLE_SMS_DIAG` і `ENABLE_WAKE_DIAG` потребують `ENABLE_AES` + `ENABLE_DMR_DATA`; не для користувацьких збірок | ні (окремі джоби) |
-| `ENABLE_KEY_INJECTION`, `ENABLE_SPECTRUM`, `ENABLE_SCAN_PROFILER`, `ENABLE_FAST_SCAN` | розробницькі інструменти / швидке аналогове сканування | `ENABLE_SCAN_PROFILER` потребує `ENABLE_SPECTRUM`; `ENABLE_KEY_INJECTION` і `ENABLE_SPECTRUM` — лише dev, у релізах не вмикати | ні |
+| `ENABLE_KEY_INJECTION`, `ENABLE_SPECTRUM`, `ENABLE_SCAN_PROFILER`, `ENABLE_FAST_SCAN` | розробницькі інструменти / швидке аналогове сканування | `ENABLE_SCAN_PROFILER` потребує `ENABLE_SPECTRUM` і **на цій базі НЕ збирається** (відомо з аудиту R104, Д4; не вмикати); `ENABLE_KEY_INJECTION` і `ENABLE_SPECTRUM` — лише dev, у релізах не вмикати | ні |
 
 Числа пам'яті (RAM/CCM/флеш, запас до кодека) змінюються від коміту до коміту й **не наводяться тут**:
 їх друкує CI (`tools/mem_report.py`), останні виміряні значення для релізу — у `RELEASE_NOTES.md` і `STATUS.md`.
@@ -277,6 +277,8 @@ ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1`.
 використання вихідного коду чи бінарних релізів у комерційних цілях суворо заборонене). Повний текст —
 [`license.txt`](license.txt) (Copyright (C) 2019-2024 OpenGD77 firmware developers). Усі файли й заголовки
 авторських прав апстріму збережені. Кодек AMBE+2 — власність DVSI, у прошивці його нема.
+
+Перелік сторонніх компонентів і їхніх ліцензій — [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Подяки
 
