@@ -399,7 +399,7 @@ typedef enum
 	                                        * Формат -- dual_channel.h. Номер = 18 ЯВНО (нумерація не залежить від дефайнів). */
 #endif
 #if defined(ENABLE_TONE_REPLY) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)   /* = TONE_REPLY_ENABLED (tone_reply.h) */
-	CODEPLUG_CUSTOM_DATA_TYPE_TONE_REPLY_CFG = 19, /* R99-TONE/R100: «Тон-відгук» -- частота, тривалість і затримка (с), «увімкнено» (8 Б, v2; v1 R99 мігрується).
+	CODEPLUG_CUSTOM_DATA_TYPE_TONE_REPLY_CFG = 19, /* R99-TONE/R100/R102: «Тон-відгук» -- частота, тривалість і затримка (с), «увімкнено», поріг сигналу (8 Б, v3 з R102; v1 R99 і v2 R100 мігруються при читанні).
 	                                        * Формат -- tone_reply.h. Номер = 19 ЯВНО (нумерація не залежить від дефайнів). */
 #endif
 } CodeplugCustomDataType_t;
