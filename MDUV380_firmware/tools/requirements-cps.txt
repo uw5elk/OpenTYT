@@ -1,0 +1,15 @@
+# R105-RELDOCS (В6, лише інструменти): ЗАКРІПЛЕНІ версії залежностей збірки CPS (.exe "TYT MD-UV390UKR", PyInstaller).
+# Це набір, який дає крок CI `pip install pyinstaller pyusb pyserial libusb cryptography` (build.yml, job build-gui-flasher, Python 3.12).
+# Версії визначено `pip install` у ЧИСТОМУ venv (Python 3.12.3, Linux) 2026-11-24; логів CI (зеленої Windows-збірки) в цій сесії
+# не було (доступ до Actions закритий), тож зіставити з Windows-образом CI не вдалось -- перед використанням у build.yml
+# звірити з логом останньої зеленої збірки (`pip freeze` на windows-latest). build.yml цим патчем НЕ змінено.
+# Використання: pip install -r MDUV380_firmware/tools/requirements-cps.txt
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
+pyusb==1.3.1
+pyserial==3.5
+libusb==1.0.30.post2
+cryptography==50.0.2
+# Для довідки -- решта, що встановив pip у цьому venv (транзитивні, окремо не закріплюються):
+#   altgraph==0.17.5 build==1.6.1 cffi==2.1.1 chardet==7.7.0 packaging==26.4 pkg_about==2.5.1 py-utlx==2.5.4 pycparser==3.12
+#   pyproject_hooks==1.3.3 setuptools==84.2.1 typing_extensions==4.16.0
