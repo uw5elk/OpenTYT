@@ -396,6 +396,8 @@ def test_g7_wiring():
     check("test_r56" in sh and "test_r56_ui" in sh, "G7: test_r56 і test_r56_ui підключено до tests/run_tests.sh")
     with open(os.path.join(os.path.dirname(FW), "TESTING.md"), encoding="utf-8") as f:
         tm = f.read()
+    with open(os.path.join(os.path.dirname(FW), "docs", "archive", "TESTING-history.md"), encoding="utf-8") as f:
+        tm += f.read()  # R105: старі блоки в архіві
     check(all(("| DE%d |" % k) in tm for k in range(1, 6)), "G7: у TESTING.md є кроки DE1..DE5")
 
 

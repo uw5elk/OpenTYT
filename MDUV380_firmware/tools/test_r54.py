@@ -389,7 +389,7 @@ def test_p10_wiring():
     rt = read(FW, "tests", "run_tests.sh")
     check("test_r54 " in rt or "test_r54;" in rt or re.search(r"\btest_r54\b", rt) is not None, "P10: test_r54 у tests/run_tests.sh")
     check(re.search(r"\btest_r54_ui\b", rt) is not None, "P10: test_r54_ui у tests/run_tests.sh")
-    tt = read(os.path.dirname(FW), "TESTING.md")
+    tt = read(os.path.dirname(FW), "TESTING.md") + read(os.path.dirname(FW), "docs", "archive", "TESTING-history.md")  # R105: старі блоки в архіві
     for n in ("DC1", "DC2", "DC3", "DC4", "DC5"):
         check(re.search(r"\b%s\b" % n, tt) is not None, "P10: у TESTING.md є крок %s" % n)
     ps = read(HERE, "cps_ui", "p_satellites.py")

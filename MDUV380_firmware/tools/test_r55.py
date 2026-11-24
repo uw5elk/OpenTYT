@@ -224,7 +224,7 @@ def test_e6_table_date():
 def test_e7_wiring():
     rt = read(FW, "tests", "run_tests.sh")
     check(re.search(r"\btest_r55\b", rt) is not None and re.search(r"\btest_r55_ui\b", rt) is not None, "E7: test_r55 і test_r55_ui у tests/run_tests.sh")
-    tt = read(os.path.dirname(FW), "TESTING.md")
+    tt = read(os.path.dirname(FW), "TESTING.md") + read(os.path.dirname(FW), "docs", "archive", "TESTING-history.md")  # R105: старі блоки в архіві
     for n in ("DD1", "DD2", "DD3", "DD4"):
         check(re.search(r"\b%s\b" % n, tt) is not None, "E7: у TESTING.md є крок %s" % n)
 
