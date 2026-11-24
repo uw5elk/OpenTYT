@@ -27,6 +27,7 @@
 #include "functions/sound.h"             /* soundSetMelody: audible RX alert */
 #include "functions/sms_format.h"        /* ui6: SMS_TIME_VALID_MIN -- годинник не виставлено */
 #include "user_interface/uiUtilities.h"  /* ui6: getRtcTime_custom() -- час запису */
+#include "functions/sms_flash_store.h"   /* R106-SMSSTORE: SMS_STORE_FLASH -- сховище у власному кільці секторів флешу */
 #include <string.h>
 /* R98-FIX2 Д: читання/запис слова peerId сховища. З режимом «Подвійний прийом» (DUAL_CHANNEL_ENABLED) читачі отримують чистий 24-бітний ID
  * (dmrSmsPeerClean знімає біт картки й увесь старший байт), а у сховище йде ID + біт «прийнято на B». Без режиму біт ніколи не пишеться,
@@ -86,6 +87,43 @@ static dmrSmsStore_t   s_store   DMR_AES_CCM;
 static uint8_t         s_loaded  DMR_AES_CCM;  /* CCM is not zeroed at boot -> guard init */
 static dmrSmsMessage_t s_scratch;                /* copy-out buffer for dmrSmsGet (main RAM, not CCM) */
 
+#if defined(SMS_STORE_FLASH)
+#include <stddef.h>
+/* R106-SMSSTORE: стан відкладеного запису -- БЕЗ нових змінних (рішення 4, В1):
+ *   s_loaded     біт 0 -- сховище завантажене; біт 1 -- «термінове» (нове SMS: записати при першій нагоді);
+ *                біти 2..7 -- секунди від ПЕРШОЇ незаписаної зміни (0 -- змін нема, 1..63);
+ *   s_store.rsvd -- молодший байт номера секунди останнього відліку. Прошивка rsvd ніде більше не читає; у флеш образ іде з rsvd = 0
+ *                   (smsfWriteNow), при завантаженні він 0.
+ * Біти 1..7 ставляться лише разом із бітом 0, тож наявна перевірка «!s_loaded» (store_ensure) і далі означає «не завантажено». */
+#define SMSF_ST_LOADED     0x01U
+#define SMSF_ST_URGENT     0x02U
+#define SMSF_ST_AGE_SHIFT  2U
+#define SMSF_ST_AGE_MAX    63U
+#define SMSF_ST_AGE(v)     ((uint8_t)((v) >> SMSF_ST_AGE_SHIFT))
+_Static_assert(sizeof(dmrSmsStore_t) == SMSF_IMG_MAX, "SMS image = dmrSmsStore_t (1352 B, block 7 length)");
+_Static_assert(offsetof(dmrSmsStore_t, data) == SMSF_IMG_MIN, "image header = 10 B");
+_Static_assert(SMSF_DEFER_S < SMSF_ST_AGE_MAX, "defer must fit the 6-bit age");
+
+/* Зміна сховища: позначити незаписаною. urgent -- нове SMS (записати при першій нагоді), інакше -- через SMSF_DEFER_S
+ * від ПЕРШОЇ незаписаної зміни (наступні зміни відлік не подовжують). */
+static void store_mark(int urgent)
+{
+	if ((s_loaded & SMSF_ST_LOADED) == 0U)
+	{
+		return;
+	}
+	if (urgent)
+	{
+		s_loaded |= SMSF_ST_URGENT;
+	}
+	if (SMSF_ST_AGE(s_loaded) == 0U)
+	{
+		s_loaded |= (uint8_t)(1U << SMSF_ST_AGE_SHIFT);
+		s_store.rsvd = (uint8_t)(ticksGetMillis() / 1000U);   /* відлік -- з поточної секунди: запис через 59..60 с */
+	}
+}
+#endif
+
 static void runtimeReset(void);
 static void cfg_invalidate(void);
 
@@ -126,6 +164,7 @@ static int chain_valid_hdr(int hdr)
 }
 static int store_chain_valid(void) { return chain_valid_hdr(SMS_ENTRY_HDR); }
 
+#if !defined(SMS_STORE_FLASH)   /* R106: зі сховищем у кільці блок 7 не завантажується (старі SMS не переносяться) */
 /* ui6: сховище v2 (заголовок запису 8 Б) -> v3 (12 Б, [8..11] = час, тут 0 = невідомо) на місці,
  * без допоміжних масивів. Кожен запис росте на 4 Б; якщо все не влазить у DMR_SMS_STORE_DATA --
  * спершу відкидаємо найстаріші (найменший seq), як store_add(). Потім розсуваємо з ОСТАННЬОГО
@@ -167,6 +206,53 @@ static void store_upgrade_v2(void)
 	/* У флеш не пишемо: v3 збережеться з першою зміною (нове SMS, видалення, «прочитано»).
 	 * До того на флеші лишається v2 -- і стара прошивка, якщо до неї повернутись, його прочитає. */
 }
+#endif
+
+#if defined(SMS_STORE_FLASH)
+/* R106-SMSSTORE, рішення 2 (варіант «б»): старі SMS із блока 7 НЕ переносяться. Блок 7 (якщо є) один раз переписується порожнім образом
+ * тієї самої довжини -- щоб відкритий текст не лишався в області custom-data і в бекапах CPS і щоб після відкату на стару прошивку
+ * видалені SMS не «воскресали». Порожній блок (заголовок як у store_blank) не чіпається -- звичайний старт нічого в custom-data не пише.
+ * Викликається до завантаження кільця: s_store тут -- просто порожній зразок. */
+static void smsfLegacyBlank(void)
+{
+	uint8_t head[SMSF_IMG_MIN];
+
+	store_blank();
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_MESSAGES, head, (int)sizeof head) &&
+			(memcmp(head, &s_store, sizeof head) != 0))
+	{
+		(void)codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_MESSAGES, (uint8_t *)&s_store, (int)sizeof s_store);
+	}
+}
+
+/* Найновіший цілий слот кільця -> s_store; нема або зміст не той -- порожнє сховище. */
+static void smsfLoadRing(void)
+{
+	int n = smsfLoadCore((uint8_t *)&s_store, (uint32_t)sizeof s_store);
+
+	if ((n < 0) || (memcmp(s_store.magic, "MSGV", 4) != 0) || (s_store.version != SMS_STORE_VERSION) ||
+			(s_store.used > DMR_SMS_STORE_DATA) || (n != (int)(SMSF_IMG_MIN + s_store.used)) || (store_chain_valid() == 0))
+	{
+		store_blank();
+	}
+	s_store.rsvd = 0U;
+}
+
+/* Записати s_store у кільце зараз (якщо найновіший слот уже такий -- нічого не писати). Успіх -- зміни записані;
+ * збій -- повторити через SMSF_DEFER_S (без «термінового», щоб не стирати сектор на кожному проході циклу). */
+static bool smsfWriteNow(void)
+{
+	uint8_t keepSec = s_store.rsvd;
+	uint32_t len = SMSF_IMG_MIN + s_store.used;
+	bool ok;
+
+	s_store.rsvd = 0U;
+	ok = smsfSameCore((const uint8_t *)&s_store, len) || smsfSaveCore((const uint8_t *)&s_store, len);
+	s_store.rsvd = keepSec;
+	s_loaded = ok ? (uint8_t)SMSF_ST_LOADED : (uint8_t)(SMSF_ST_LOADED | (1U << SMSF_ST_AGE_SHIFT));
+	return ok;
+}
+#endif
 
 void dmrSmsRuntimeInit(void)
 {
@@ -186,6 +272,19 @@ void dmrSmsInit(void)
  * (s_txPendingDst), лічильник N(S), дедуп, незібраний PDU і всі лічильники діагностики. */
 void dmrSmsReloadStore(void)
 {
+#if defined(SMS_STORE_FLASH)
+	cfg_invalidate();   /* пресети/отримувач із CPS -- перечитати, як і раніше при вході в меню */
+	dmrAesLoadKeys();   /* ensure the key store is populated for RX decrypt */
+	/* R106-SMSSTORE: сховище читається з флешу ЛИШЕ раз після старту (s_loaded == 0). Меню «Повідомлення» більше не перечитує
+	 * його: інакше ще не записане (відкладене) «прочитано»/видалення повернулося б зі старого слота. Блок 7 CPS тепер не стосується SMS. */
+	if (s_loaded == 0U)
+	{
+		s_loaded = SMSF_ST_LOADED;
+		smsfLegacyBlank();
+		smsfLoadRing();
+	}
+}
+#else
 	uint8_t *blk = (uint8_t *)&s_store;
 	cfg_invalidate();   /* пресети/отримувач із CPS -- перечитати, як і раніше при вході в меню */
 	s_loaded = 1;
@@ -210,14 +309,19 @@ void dmrSmsReloadStore(void)
 	}
 	store_blank();      /* fresh, corrupted, or an old "MSGS" v1 block -> start empty */
 }
+#endif
 
 static void store_ensure(void) { if (!s_loaded) { dmrSmsInit(); } }
 
 static void store_save(void)
 {
+#if defined(SMS_STORE_FLASH)
+	store_mark(0);   /* R106: «прочитано», видалення, «доставлено» -- відкладений запис у кільце (dmrSmsStoreTick) */
+#else
 	dmrAesEnsureCustomDataRegion();   /* OpenGD77 magic must exist for the block chain */
 	codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_MESSAGES,
 			(uint8_t *)&s_store, (int)sizeof s_store);
+#endif
 }
 
 /* Byte offset of the idx-th newest entry of a folder (newest = idx 0), or -1. Selection
@@ -471,7 +575,11 @@ static void store_add(uint8_t flags, uint32_t peerId, const char *text, int text
 	}
 	memcpy(&s_store.data[o + SMS_ENTRY_HDR], text, (size_t)textLen);
 	s_store.used = (uint16_t)(o + need);
+#if defined(SMS_STORE_FLASH)
+	store_mark(1);   /* R106: нове SMS -- у кільце при першій нагоді (після вікна квитанції, у тиші) */
+#else
 	store_save();
+#endif
 }
 
 /* ============================ config (MSGC block) ======================= */
@@ -2244,5 +2352,66 @@ static void runtimeReset(void)
 #endif
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
+
+#if defined(SMS_STORE_FLASH)
+/* R106-SMSSTORE: чи можна зараз стерти сектор (UI-задача стоїть до ~0,4 с). Не під час передачі й квитанції (вікно ~45-60 мс після кінця
+ * передачі відправника -- див. rev 5), не поки в каналі йдуть data-burst-и або зібраний PDU ще не розібрано, не поки є відкладені
+ * «Надіслані»/«Вхідні» (вони самі дадуть «термінове»), не в режимі CPS. */
+static bool smsfWriteAllowed(void)
+{
+	return (trxTransmissionEnabled == false) && (trxIsTransmitting == false) && (dmrDataTxBusy() == 0) &&
+			(s_ackPending == 0U) && (SMS_ACK_AWAIT() == 0) && (s_rxReady == 0U) && (s_pendSent == 0U) && (s_pendInbox == 0U) &&
+			((uint32_t)(ticksGetMillis() - s_lastRxBurstMs) >= SMSF_QUIET_MS) &&
+			(menuSystemGetCurrentMenuNumber() != UI_CPS);
+}
+
+void dmrSmsStoreTick(void)
+{
+	uint8_t age = SMSF_ST_AGE(s_loaded);
+	uint8_t sec;
+
+	if (((s_loaded & SMSF_ST_LOADED) == 0U) || (age == 0U))
+	{
+		return;   /* не завантажено або змін нема -- нічого (і флеш не читається) */
+	}
+	sec = (uint8_t)(ticksGetMillis() / 1000U);
+	if (sec != s_store.rsvd)
+	{
+		s_store.rsvd = sec;
+		if (age < SMSF_ST_AGE_MAX)
+		{
+			age++;
+			s_loaded = (uint8_t)((s_loaded & (SMSF_ST_LOADED | SMSF_ST_URGENT)) | (age << SMSF_ST_AGE_SHIFT));
+		}
+	}
+	if ((((s_loaded & SMSF_ST_URGENT) != 0U) || (age > SMSF_DEFER_S)) && smsfWriteAllowed())
+	{
+		(void)smsfWriteNow();
+	}
+}
+
+void dmrSmsStoreFlush(void)
+{
+	if ((s_loaded & SMSF_ST_LOADED) == 0U)
+	{
+		return;
+	}
+	/* відкладені записи тек (чекали кінця передачі/квитанції) -- інакше вимкнення в ці секунди їх губило */
+	if (s_pendSent)
+	{
+		store_add(s_pendFlags, s_pendPeer, s_pendText, s_pendTextLen);
+		s_pendSent = 0;
+	}
+	if (s_pendInbox)
+	{
+		store_add(s_pendInboxFlags, s_pendInboxPeer, s_pendInboxText, s_pendInboxLen);
+		s_pendInbox = 0;
+	}
+	if (SMSF_ST_AGE(s_loaded) != 0U)
+	{
+		(void)smsfWriteNow();
+	}
+}
+#endif /* SMS_STORE_FLASH */
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */

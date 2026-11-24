@@ -66,6 +66,7 @@
 #include "functions/aprs_fault.h"     // R10-fix4: обробник збою, сторож, звіт після перезавантаження (лише APRS_RX)
 #if defined(APRS_MSG1_UI)
 #include "functions/aprs_msg_store.h" // R101: список «Повідом. APRS» зберігається після вимкнення (власні сектори флешу)
+#include "functions/sms_flash_store.h" // R106-SMSSTORE: сховище SMS DMR -- власне кільце секторів флешу (SMS_STORE_FLASH)
 #endif
 #if defined(ENABLE_ROAM_RETRY)
 #include "functions/roam_cfg.h"       // R59: налаштування «Роумінгу» (custom-data блок №15)
@@ -1792,6 +1793,9 @@ void applicationMainTask(void)
 		settingsSaveIfNeeded(false);
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
 		dmrSmsRxTick();   // decrypt + store + notify any received encrypted SMS
+#if defined(SMS_STORE_FLASH)
+		dmrSmsStoreTick(); // R106: відкладений запис сховища SMS у власне кільце секторів (у тиші, не під час передачі/квитанції)
+#endif
 		dmrRctlTick();    // RCTL: allowlist/replay-gate + auto-CHECK_ACK (Фаза 1, PLANS.md §3)
 #endif
 

@@ -65,6 +65,13 @@ void dmrSmsRuntimeInit(void);
 /* Лише перечитати сховище й MSGC-конфіг (вхід у меню «Повідомлення»). НЕ скидає стан
  * прийому, відкладену квитанцію, N(S) і лічильники -- на відміну від dmrSmsInit(). */
 void dmrSmsReloadStore(void);
+#if defined(ENABLE_SMS_STORE_FLASH)
+/* R106-SMSSTORE (functions/sms_flash_store.h, SMS_STORE_FLASH): сховище -- у власному кільці секторів SPI-флешу, а не в блоці 7.
+ * dmrSmsStoreTick() -- головний цикл (після dmrSmsRxTick): відкладений запис, коли можна; dmrSmsStoreFlush() -- штатне вимкнення:
+ * дописати відкладені «Надіслані»/«Вхідні» і незаписані зміни. Сховище після старту з флешу більше не перечитується (меню теж). */
+void dmrSmsStoreTick(void);
+void dmrSmsStoreFlush(void);
+#endif
 
 /* ---- store query (UI) -------------------------------------------------- */
 /* Count of messages for a folder: outgoing!=0 -> Sent, ==0 -> Inbox. */

@@ -30,6 +30,7 @@
 #include <string.h>
 #include "main.h"
 #include "functions/aprs_fault.h"   // R10-fix4: kick сторожа в довгих очікуваннях (APRS_RX)
+#include "functions/sms_flash_store.h"   // R106-SMSSTORE: SMS_STORE_FLASH -- SPI_Flash_programBytes потрібна й сховищу SMS
 
 // private functions
 static bool spi_flash_busy(void);
@@ -252,8 +253,8 @@ bool SPI_Flash_writePage(uint32_t addr_start,uint8_t *dataBuf)
 	return !isBusy;
 }
 
-#if defined(APRS_MSG1_UI)
-/* R101-APRSMSG (aprs_msg_store.c): програмування len байт (1..256, не через межу сторінки) БЕЗ read-modify-write сектора -- та сама команда PAGE_PGM,
+#if defined(APRS_MSG1_UI) || defined(SMS_STORE_FLASH)
+/* R101-APRSMSG (aprs_msg_store.c; з R106 -- і sms_flash_store.c): програмування len байт (1..256, не через межу сторінки) БЕЗ read-modify-write сектора -- та сама команда PAGE_PGM,
  * що й SPI_Flash_writePage, але з повною адресою і довжиною. NOR: біти лише 1 -> 0, решта сторінки не змінюється. Без 256-Б буфера. */
 bool SPI_Flash_programBytes(uint32_t addr, const uint8_t *buf, int len)
 {

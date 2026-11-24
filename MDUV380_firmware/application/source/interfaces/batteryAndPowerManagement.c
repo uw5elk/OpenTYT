@@ -44,6 +44,8 @@
 #include "functions/aprs_fault.h"   // R10-fix4: сторож вимикається перед сном/вимкненням (APRS_RX)
 #if defined(APRS_MSG1_UI)
 #include "functions/aprs_msg_store.h"   // R101: дозапис списку «Повідом. APRS» при штатному вимкненні
+#include "functions/sms_flash_store.h"  // R106-SMSSTORE: дозапис сховища SMS DMR при штатному вимкненні
+#include "functions/dmr_sms.h"
 #endif
 #if defined(ENABLE_CALL_REPLAY)
 #include "functions/callReplay.h" // не зупиняти "Переслухати" на час очікування низько-батарейного сигналу нижче
@@ -309,6 +311,9 @@ void powerDown(bool doNotSavePowerOffState)
 #endif
 #if defined(APRS_MSG1_UI)
 	aprsMsgStoreFlush();   // R101: список «Повідом. APRS» -- якщо змінився після останнього відкладеного запису
+#endif
+#if defined(SMS_STORE_FLASH)
+	dmrSmsStoreFlush();    // R106: сховище SMS -- відкладені «Надіслані»/«Вхідні» і незаписані зміни
 #endif
 
 #if defined(HAS_GPS)
@@ -808,6 +813,9 @@ void powerOffFinalStage(bool maintainRTC, bool forceSuspend)
 #endif
 #if defined(APRS_MSG1_UI)
 	aprsMsgStoreFlush();   // R101: список «Повідом. APRS» -- якщо змінився після останнього відкладеного запису
+#endif
+#if defined(SMS_STORE_FLASH)
+	dmrSmsStoreFlush();    // R106: сховище SMS -- відкладені «Надіслані»/«Вхідні» і незаписані зміни
 #endif
 
 #if defined(LOG_GPS_DATA)

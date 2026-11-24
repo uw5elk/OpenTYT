@@ -215,6 +215,12 @@ ifeq ($(ENABLE_TONE_REPLY),1)
 DEFS += -DENABLE_TONE_REPLY
 endif
 
+# R106-SMSSTORE: сховище SMS DMR у власному кільці секторів SPI-флешу (0x48000..0x4FFFF) замість custom-data блока 7. Діє лише разом з
+# ENABLE_AES і ENABLE_DMR_DATA (functions/sms_flash_store.h). У CI ввімкнено в основній українській збірці. Без прапорця -- байт-у-байт без змін.
+ifeq ($(ENABLE_SMS_STORE_FLASH),1)
+DEFS += -DENABLE_SMS_STORE_FLASH
+endif
+
 ifeq ($(ENABLE_VOLUME_PROBE),1)
 DEFS += -DENABLE_VOLUME_PROBE
 endif
