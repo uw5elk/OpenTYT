@@ -374,8 +374,9 @@ def main():
     check(len(re.findall(r"dcFlushPending\(\);[^\n]*\n#endif\n#if defined\(APRS_MSG1_UI\)\n\taprsMsgStoreFlush\(\);", bp)) == 2, "Ж4: дозапис в ОБОХ шляхах вимкнення")
     pb = sp[sp.index("bool SPI_Flash_programBytes"):]
     pb = pb[:pb.index("\n}\n")]
-    check("#if defined(APRS_MSG1_UI)\n/* R101" in sp and "sectorbuffer" not in pb and "0x100" not in pb and "PAGE_PGM, addr >> 16, addr >> 8, addr" in pb,
-          "Ж5: програмування без RMW, без SPI_Flash_sectorbuffer і без 256-Б буфера, лише під APRS_MSG1_UI")
+    # R106-SMSSTORE: та сама функція потрібна й сховищу SMS (SMS_STORE_FLASH) -- умова розширена, без прапорців її, як і раніше, нема
+    check("#if defined(APRS_MSG1_UI) || defined(SMS_STORE_FLASH)\n/* R101" in sp and "sectorbuffer" not in pb and "0x100" not in pb and "PAGE_PGM, addr >> 16, addr >> 8, addr" in pb,
+          "Ж5: програмування без RMW, без SPI_Flash_sectorbuffer і без 256-Б буфера, лише під APRS_MSG1_UI (або SMS_STORE_FLASH, R106)")
     st = rd(SRC)
     check("sectorbuffer" not in st and "SPI_Flash_write(" not in st, "Ж6: модуль не використовує SPI_Flash_write (RMW) і SPI_Flash_sectorbuffer")
     check("#if defined(APRS_MSG1_UI) || defined(APRS_MSG_STORE_HOST_TEST)\n\t/* R101" in msg_h and "_Static_assert(sizeof(aprsMsgBox_t) == 1336U" in st,

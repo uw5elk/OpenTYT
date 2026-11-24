@@ -50,6 +50,7 @@ declare -A SRCS=(
 	[test_dmr_sms_shift]="$APP/source/functions/dmr_sms_text.c $APP/source/functions/dmr_sms_pdu.c $APP/source/functions/dmr_sms_fix.c $APP/source/crypto/dmr_aes.c"   # ui5: кирилиця від Z3DMR (зсув старших байтів UTF-16)
 	[test_dmr_sms_store]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # ui6: сховище v3 і перетворення v2 -> v3
 	[test_dmr_sms_peerb]="$APP/source/functions/dmr_sms.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # R98-FIX2 Д: біт 31 peerId (картка B), СПРАВЖНІЙ збирач і сховище
+	[test_dmr_sms_flash]="$APP/source/functions/dmr_sms.c $APP/source/functions/sms_flash_store.c $APP/source/functions/dmr_sms_fix.c $APP/source/functions/dmr_sms_pdu.c $APP/source/crypto/dmr_aes.c $APP/source/functions/dmr_sms_text.c"   # R106-SMSSTORE: СПРАВЖНІ збирач, сховище і кільце секторів флешу (модель NOR)
 	[test_channel_vox]=""   # ui8: умова VOX на APRS-каналі (лише заголовок)
 	[test_sms_format]="$APP/source/functions/sms_format.c"   # ui6: перенесення за словами, форма слова, час
 	[test_sms_multitap]="$APP/source/functions/sms_multitap.c"   # ui4: розкладки й логіка multitap набору SMS
@@ -135,6 +136,7 @@ declare -A XFLAGS=(
 	[test_aes_retune]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_DUAL_CHANNEL -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined"
 	[test_dmr_sms_store]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
 	[test_dmr_sms_peerb]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_DUAL_CHANNEL -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"
+	[test_dmr_sms_flash]="$FW_INCS -DUSE_HAL_DRIVER -DSTM32F405xx -DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG -DLANGUAGE_BUILD_UKRAINIAN -DENABLE_SMS_STORE_FLASH -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -Wno-unused-variable"   # R106: з прапорцем сховища у флеші
 )
 
 # cleanup1 (2026-10-05): тести, які ще раз збираються з -DENABLE_SMS_DIAG (окремий бінарник
@@ -455,6 +457,17 @@ if [ -z "$FILTER" ] || [[ "test_r103tone" == *"$FILTER"* ]]; then
 		pass=$((pass + 1)); echo "ok            test_r103tone (python)"; note_skips "test_r103tone" "$out"
 	else
 		fail=$((fail + 1)); echo "ПРОВАЛ        test_r103tone (python)"; show_fail "$out"
+	fi
+fi
+
+# R106-SMSSTORE: сховище SMS у власному кільці секторів флешу (tools/test_r106smsstore.py: справжній sms_flash_store.c з моделлю NOR -- обриви,
+# пошкодження, знос, мутанти; справжній dmr_sms.c через tests/test_dmr_sms_flash.c -- міграція, політика запису, мутанти). Без Tk, потрібен gcc.
+# Окремим блоком (як R101..R103), щоб патчі застосовувались у будь-якому порядку без конфлікту.
+if [ -z "$FILTER" ] || [[ "test_r106smsstore" == *"$FILTER"* ]]; then
+	if out="$(python3 -B "$TESTS_DIR/../tools/test_r106smsstore.py" 2>&1)"; then
+		pass=$((pass + 1)); echo "ok            test_r106smsstore (python)"
+	else
+		fail=$((fail + 1)); echo "ПРОВАЛ        test_r106smsstore (python)"; show_fail "$out"
 	fi
 fi
 
