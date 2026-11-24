@@ -254,57 +254,6 @@ def test_part_d(incs, cf):
         check(tok not in allsrc, "Д2: «%s» прибрано (лічильників у RAM нема)" % tok)
     dcc = T.rd(os.path.join(FN, "dual_channel.c"))
     check(not re.findall(r"^static [a-z_0-9]+ ([a-zA-Z_0-9]+)\[", dcc, re.M), "Д2: у dual_channel.c нових масивів нема")
-    # --- Д3: індикатори на картці
-    ucm = T.rd(os.path.join(UI, "uiChannelMode.c"))
-    env = {}
-    for m in re.finditer(r"^#define\s+(DW_\w+)\s+(.*?)\s*(?://.*)?$", ucm, re.M):
-        env[m.group(1)] = m.group(2).strip()
-    env["DISPLAY_Y_POS_BAR"] = "10"
-
-    def C(n):
-        return eval_const(ucm, n, env)
-    if "DW_SQ_X" not in env:
-        print("ПРОПУСК: Д3 -- розкладку карток (квадрат 24x51, «D» у квадраті) замінено в R98-FIX5 Б2; координати й накладання перевіряє tools/test_r98fix5.py")
-        return
-    DISP_X = 160
-    card = (0, 0, C("DW_CARD_X") + C("DW_CARD_W") + 1, C("DW_CARD_H"))
-    r = {
-        "квадрат A/B": (C("DW_SQ_X"), C("DW_SQ_DY"), C("DW_SQ_W"), C("DW_SQ_H")),
-        "літера A/B": (C("DW_LETTER_X"), C("DW_LETTER_DY"), 16, 32),
-        "▸": (C("DW_SQ_X") + C("DW_SQ_W") // 2 - 2, C("DW_ARROW_DY"), 5, 5),
-        "D: літера+конверт+число": (C("DW_UN_LETTER_X"), C("DW_UN_DY"), C("DW_UN_NUM_X") + 6 - C("DW_UN_LETTER_X"), 8),
-        "APRS A: бокс": (C("DW_AP_X"), C("DW_AP_DY"), C("DW_AP_W"), C("DW_AP_H")),
-        "рядок 1": (C("DW_TXT_X"), C("DW_LINE1_DY"), C("DW_L1_MAX_AP") * 6, 8),
-        "рядок 2": (C("DW_TXT_X"), C("DW_LINE2_DY"), 16 * 8, 16),
-        "рядок 3": (C("DW_TXT_X"), C("DW_LINE3_DY"), C("DW_LINE3_MAX") * 6, 8),
-        "замок AES": (C("DW_LOCK_X"), C("DW_LOCK_DY"), 10, 9),
-        "смуга активності": (C("DW_TXT_X"), C("DW_METER_DY"), C("DW_METER_X") + C("DW_METER_SEGS") * C("DW_METER_STEP") - 2 - C("DW_TXT_X"), C("DW_METER_H")),
-    }
-    # D -- у межах квадрата; решта -- між собою без накладань (квадрат містить літеру, ▸ і D навмисно)
-    sq = r["квадрат A/B"]
-    inside = lambda a, b: a[0] >= b[0] and a[1] >= b[1] and a[0] + a[2] <= b[0] + b[2] and a[1] + a[3] <= b[1] + b[3]
-    check(inside(r["D: літера+конверт+число"], sq) and inside(r["літера A/B"], sq) and inside(r["▸"], sq), "Д3: літера, ▸ і індикатор «D» -- у квадраті картки: %s" % (r["D: літера+конверт+число"],))
-    pairs_inner = [("літера A/B", "▸"), ("літера A/B", "D: літера+конверт+число"), ("▸", "D: літера+конверт+число")]
-    for a, b in pairs_inner:
-        check(not rects_overlap(r[a], r[b]), "Д3: у квадраті «%s» і «%s» не накладаються" % (a, b))
-    outer = [k for k in r if k not in ("літера A/B", "▸", "D: літера+конверт+число")]
-    for i in range(len(outer)):
-        for j in range(i + 1, len(outer)):
-            a, b = outer[i], outer[j]
-            check(not rects_overlap(r[a], r[b]), "Д3: «%s» і «%s» не накладаються: %s %s" % (a, b, r[a], r[b]))
-    for k, v in r.items():
-        check(v[0] >= 0 and v[0] + v[2] <= C("DW_CARD_X") + C("DW_CARD_W") and v[1] >= 0 and v[1] + v[3] <= C("DW_CARD_H"), "Д3: «%s» у межах картки: %s" % (k, v))
-    # APRS і D -- одночасно, APRS не залежить від D
-    row = ucm[ucm.find("static void dualRenderRow("):]
-    row = row[:row.find("\n}\n")]
-    check("unsigned aprsUn = (isB ? uiUnreadCount('A') : 0U);" in row and "unsigned un = uiUnreadCountCard(isB);" in row, "Д3: «D» (uiUnreadCountCard) і APRS «A» (uiUnreadCount('A')) обчислюються незалежно")
-    check(not re.search(r"if\s*\(isB\s*&&\s*\(un\s*==\s*0", row), "Д3: APRS не ховається, коли є «D» (немає умови «un == 0»)")
-    ai = row.find("if (aprsUn > 0U)\n\t{\n\t\tchar ap[3];")
-    check(ai > 0 and "if (un > 0U)" not in row[ai - 120:ai], "Д3: маркер APRS малюється за власною умовою aprsUn > 0")
-    check("l1[DW_L1_MAX_AP] = 0;" in row and row.find("l1[DW_L1_MAX_AP] = 0;") < row.find("displayPrintCore(DW_TXT_X, (y + DW_LINE1_DY), l1"), "Д3: рядок 1 скорочується до 18 символів лише коли є маркер APRS (до виводу)")
-    # мутант: APRS знову «лише коли нема D»
-    mutrow = row.replace("unsigned aprsUn = (isB ? uiUnreadCount('A') : 0U);", "unsigned aprsUn = (isB ? uiUnreadCount('A') : 0U);\n\tif (isB && (uiUnreadCountCard(isB) > 0U)) { aprsUn = 0U; }")
-    check(mutrow != row and not re.search(r"aprsUn\s*=\s*0U;\s*\}", row), "Д3 (мутант): приховування APRS при наявності «D» -- ловиться статичною перевіркою")
 
 
 # ------------------------------------------------------------------------------------------------ К
@@ -418,28 +367,6 @@ def test_part_k(incs, cf):
     check(("dualFmToneLine(l3, sizeof(l3), rec->rxTone, rec->txTone," in uc) or ("dualFmToneLine((l3 + nn), (sizeof(l3) - nn), rec->rxTone, rec->txTone," in uc),   # R98-FIX9: перед тонами -- префікс «номер »
            "К2: рядок 3 FM будується з rxTone/txTone запису (канал і VFO -- один шлях rec)")
     check("CTCSS %d.%d" not in uc[uc.find("static void dualRenderRow("):uc.find("static void dualRenderRow(") + 6000], "К2: старий показ лише RX-тону прибрано")
-    # --- К1 відстань
-    if "static void dualAppendDistance(" not in uc:
-        print("ПРОПУСК: К1 -- відстань перенесено з рядка 3 у рядок 4 картки (R98-FIX5 Б2, dualRow4Text, зі стрілкою); умови й мутанти перевіряє tools/test_r98fix5.py")
-        return
-    f3 = T.carve_fn(tc or "", "void dualAppendDistance(char *l3)")
-    check(f3 is not None, "К1: dualAppendDistance знайдено (під LC_DISTANCE)")
-    if f3:
-        out = run_in(DIST_HARNESS.replace("@@FN@@", f3))
-        o = kv(out)
-        exp = {"ok": "TS1 CC1 TG91 123m", "km": "TS1 CC1 TG91 532km", "noown": "TS1 CC1 TG91", "nocoord": "TS1 CC1 TG91", "bad": "TS1 CC1 TG91", "full": "TS1 CC1 TG 1234567", "exact": "TS1 CC1 TG 123 123m"}
-        check(all(o.get(k) == v for k, v in exp.items()), "К1: відстань додається лише за умов шапки виклику і лише якщо влазить у 19 символів: %s" % o)
-        for what, m in (("без перевірки своєї позиції", f3.replace("settingsLocationIsValid() &&", "1 &&")), ("без перевірки координат цього виклику", f3.replace("(LinkHead->locationLat <= 90) &&", "")),
-                        ("без перевірки «влазить»", re.sub(r"&&\s*\(\(n \+ 1U \+ strlen\(label\)\) <= \d+\)", "", f3))):
-            mo = run_in(DIST_HARNESS.replace("@@FN@@", m)) if m != f3 else None
-            check(m != f3 and mo is not None and mo != out, "К1 (мутант): %s -- ловиться" % what)
-    uu = T.rd(os.path.join(UI, "uiUtilities.c"))
-    qi = uu.find("static bool qsoShowNameWithDistance(")
-    qb = uu[qi:qi + 1200]
-    for pred in ("LinkHead->locationLat <= 90", "settingsLocationIsValid()", "lcDistLabel("):
-        check(pred in qb and pred in uc[uc.find("static void dualAppendDistance("):uc.find("static void dualAppendDistance(") + 900], "К1: та сама умова, що й підпис «[відстань]» шапки: %s" % pred)
-    check(re.search(r"#if defined\(LC_DISTANCE\)\n\t\t\tif \(callerHere\)\n\t\t\t\{\n\t\t\t\tdualAppendDistance\(l3\);", uc) is not None, "К1: відстань лише на картці активного виклику (callerHere), під LC_DISTANCE")
-    check("lcDistArrowGeom" not in uc[uc.find("static void dualRenderRow("):uc.find("static void dualRenderRow(") + 9000], "К1: стрілка не малюється (немає вільної комірки 10x10 -- таблиця координат у результаті)")
 
 
 # ------------------------------------------------------------------------------------------------ Е
@@ -706,23 +633,6 @@ def test_part_l():
                 elif idx < 0 and int(o["hlcount"]) != 0:
                     okall = False; bad.append((mp, idx, "hl%s" % o["hlcount"]))
         check(okall, "Л: підказка (11 клавіш x усі позиції): x у 2..160, y у 116..124, рівно одне виділення (або жодного при idx=-1): %s" % bad[:3])
-        # регресія: стара функція (база) і нова віддають те саме для SMS-розкладок
-        if base_available():
-            old = base_file("application/source/user_interface/uiSmsKeys.c")
-            ofn = T.carve_fn(old or "", "void uiSmsKeyHint(uint8_t mode, char key, uint8_t idx, int16_t x, int16_t y)")
-            check(ofn is not None, "Л: стара uiSmsKeyHint знайдено в базі для порівняння")
-            if ofn:
-                oldw = ("static const char *g_map;\nstatic const char *smsMtKeyMap(uint8_t m, char k) { (void)m; (void)k; return g_map; }\n" + ofn +
-                        "\nvoid uiSmsKeyHintMap(const char *map, int idx, int16_t x, int16_t y) { g_map = map; uiSmsKeyHint(0, '1', (uint8_t)idx, x, y); }\n")
-                diff = []
-                for mp in maps + ["1.,?!'-@:;/()&#+=_<>2", "abc", " 0"]:
-                    for idx in range(0, len(mp)):
-                        a1 = run_trace(fn, mp, idx); a2 = run_trace(oldw, mp, idx)
-                        if a1 is None or a1 != a2:
-                            diff.append((mp, idx))
-                check(not diff, "Л: нова спільна uiSmsKeyHintMap малює ТЕ САМЕ, що стара uiSmsKeyHint (бази %s), для всіх клавіш і позицій: %s" % (BASE, diff[:3]))
-        else:
-            print("ПРОПУСК: база недоступна (CI/клон без історії)")
     check(ks.count("uiSmsKeyHintMap(smsMtKeyMap(mode, key), (int)idx, x, y);") == 1, "Л: uiSmsKeyHint (повідомлення/APRS) тепер лише викликає спільну uiSmsKeyHintMap")
     mc = T.rd(os.path.join(UI, "menuChannelDetails.c"))
     check("abc2" not in mc and "abc2" not in ks and "ABC2" not in mc, "Л: таблиць літер у menuChannelDetails.c/uiSmsKeys.c не продубльовано")

@@ -8,13 +8,11 @@
   5  меню: у UA-збірках пункти беруть нові поля, у не-UA -- стокові (gcc -E); значення «Пріор.» -- 4 нових рядки з мовних полів; масив contactOrders у не-UA лишився;
   6  tools/check_menu_widths.py без переповнень;
   7  мутанти.
-Порівняння з комітом бази (R95_BASE) стійке до його відсутності: без коміта -- ПРОПУСК з повідомленням.
 Запуск: python3 tools/test_r95.py"""
 import os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); FW = os.path.dirname(HERE); sys.path.insert(0, HERE)
 import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages"); UI = "application/source/user_interface/"
-BASE = os.environ.get("R95_BASE", "2bf7a41")
 FAILS = []; N = [0]; Q = [False]
 WANT = {"key_long": "Довгий нат.", "key_repeat": "Повт. клав.", "dmr_filter_timeout": "Утрим. слота", "private_call_handling": "Прив. викл.", "tx_inhibit": "Заборона TX",
         "priority_order": "Джерело", "info": "Позначки", "talker_beep": "Біп абон.", "contact_lines": "Рядки",
@@ -70,15 +68,7 @@ def main():
         txt = "".join(rd(os.path.join(wf, f)) for f in sorted(os.listdir(wf)) if f.endswith((".yml", ".yaml")))
         check("ubuntu-latest" not in txt and "ubuntu-24.04" in txt, "CI: ubuntu-latest замінено на ubuntu-24.04")
     else:
-        print("ПРОПУСК: .github/workflows відсутній")
-    # база
-    if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode == 0:
-        b = subprocess.run(["git", "-C", FW, "show", "%s:MDUV380_firmware/application/include/user_interface/languages/ukrainian.h" % BASE], capture_output=True)
-        old = fields(b.stdout.decode("cp1251")); new = fields(ua)
-        d = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
-        check(d == sorted(list(OLD) + NEW_TAIL + ["temperature_calibration", "battery_calibration"]), "ukrainian.h: змінено рівно очікувані поля: %r" % d)
-    else:
-        print("ПРОПУСК: база недоступна (CI/клон без історії): ukrainian.h «змінено рівно очікувані поля» -- не перевірено (база %s)" % BASE)
+        check(False, ".github/workflows відсутній (каталог є в кожному клоні репозиторію)")
     # мутанти
     def mut(n, u): Q[0] = True; o = texts_ok(u); Q[0] = False; check(bool(o), "мутант «%s» ловиться" % n)
     mut("забули key_long", ua.replace('"Довгий нат."', '"Довге нат."'))

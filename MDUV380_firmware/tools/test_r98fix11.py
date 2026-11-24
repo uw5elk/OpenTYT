@@ -501,7 +501,7 @@ STATES = [("1", "s1a", "s1b", "чергування: A «R2 Робочий» (к
 def before_frames():
     """«До» -- той самий гарнес і сценарії на коді бази (R98-FIX10)."""
     if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode != 0:
-        print("ПРОПУСК: база %s недоступна -- PNG лише «після»" % BASE); return None, None
+        print("ІНФО: коміт-база %s недоступний -- PNG «до» не малюється (ілюстрація, не перевірка)" % BASE); return None, None
     old = subprocess.run(["git", "-C", FW, "show", BASE + ":MDUV380_firmware/" + REL_CM], capture_output=True)
     if old.returncode != 0:
         return None, None

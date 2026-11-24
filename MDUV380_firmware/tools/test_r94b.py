@@ -10,7 +10,6 @@ import os, re, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); FW = os.path.dirname(HERE); sys.path.insert(0, HERE)
 import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); UI = "application/source/user_interface/"
-BASE = os.environ.get("R94B_BASE", "accf134")
 FAILS = []; N = [0]
 def check(c, m):
     N[0] += 1
@@ -51,15 +50,6 @@ def main():
     for n in ("AES0", "AES1"):
         t = pp(incs, cf[n], UI + "uiUtilities.c")
         check(t is not None and "(uint8_t)GPS_MODE_OFF" not in t and "gpsModeAndBaudsIndex & 0x0F) >= GPS_MODE_ON" in t, n + " (не-UA): значок як у стоку")
-    # Порівняння з комітом бази: у CI (checkout без історії) і в клоні, куди патчі застосовано через `git am`, хеш бази сеансу відсутній --
-    # тоді пропуск З ПОВІДОМЛЕННЯМ, а не провал (правило: порівняння з комітом бази мусить бути стійким до його відсутності).
-    have_base = subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode == 0
-    for f in ("application/source/interfaces/gps.c", "application/source/usb/usb_com.c", UI + "uiHotspot.c", UI + "menuGPS.c"):
-        if not have_base:
-            print("ПРОПУСК: база недоступна (CI/клон без історії): %s не змінено -- не перевірено (база %s)" % (f, BASE))
-            continue
-        r = subprocess.run(["git", "-C", FW, "diff", "--quiet", BASE, "--", f])
-        check(r.returncode == 0, f + " не змінено")
     # мутант: макрос без UA-гілки
     sh = open(os.path.join(APP, "include/functions/settings.h"), encoding="utf-8").read()
     check("#define SETTINGS_GPS_MODE_EFFECTIVE(x) SETTINGS_GPS_MODE_GET(x)" in sh and "(uint8_t)GPS_MODE_OFF" in sh, "settings.h: обидві гілки макроса")

@@ -403,28 +403,12 @@ def test_static():
     vs = vs[:vs.find("\n}\n")]
     check("(screenOperationMode[nonVolatileSettings.currentVFONumber] != VFO_SCREEN_OPERATION_NORMAL) || uiDataGlobal.Scan.active" in vs and "MELODY_ERROR_BEEP" in vs,
           "Б15: поки стоковий Dual Watch / сканування / розгортка VFO активні -- наш режим не вмикається (звук помилки)")
-    if base_available():
-        b = base_file("application/source/user_interface/uiVFOMode.c") or ""
-        def blk(x):
-            i = x.find("case VFO_SCREEN_QUICK_MENU_DUAL_SCAN:\n\t\t\t\t\tuiDataGlobal.Scan.active = true;")
-            return x[i:x.find("break;", i)] if i >= 0 else None
-        check(blk(vm) is not None and blk(vm) == blk(b), "Б15: стоковий пункт «Dual Watch» (VFO_SCREEN_QUICK_MENU_DUAL_SCAN) -- без змін відносно бази %s" % BASE)
-        bm = base_file("application/include/user_interface/menuSystem.h") or ""
-        be = bm[bm.find("enum VFO_SCREEN_QUICK_MENU_ITEMS"):]
-        be = be[:be.find("NUM_VFO_SCREEN_QUICK_MENU_ITEMS")]
-        check(en.startswith(be.rstrip()), "Б2: стокові пункти швидкого меню VFO й їхній порядок -- як у базі")
-    else:
-        print("ПРОПУСК: база недоступна (CI/клон без історії): порівняння стокового Dual Watch з базою не виконано")
     # Б13: пауза APRS-прийому й автопереходу роумінгу -- за станом режиму, не за екраном
     ax = T.rd(os.path.join(FN, "aprs_rx.c")); wh = T.rd(os.path.join(FN, "wake_hop.c"))
     i = ax.find("dcIsEnabled()")
     ctx = ax[max(0, i - 400):i + 400]
     check(i > 0 and "UI_CHANNEL_MODE" not in ctx and "menuSystemGetCurrentMenuNumber" not in ctx, "Б13: aprs_rx.c призупиняє приймач за dcIsEnabled(), без прив'язки до екрана (DW з екрана VFO -- так само)")
     # роумінг: стокова умова «лише в режимі каналів» (екран режиму -- завжди екран каналів, і з VFO теж) + окремий доданок «режим вимкнено»
-    if "roamDwOnB" in wh:
-        print("ПРОПУСК: Б13 (роумінг вимкнено в режимі) -- R98-FIX8 В вмикає роумінг у DW (рішення власника 2026-11-20), див. tools/test_r98fix8.py")
-    else:
-        check("(dcIsEnabled() == false) &&" in wh and "(menuSystemGetRootMenuNumber() == UI_CHANNEL_MODE) &&" in wh, "Б13: wake_hop.c -- автоперехід роумінгу вимкнено, поки режим ввімкнено (окремий доданок; екран режиму -- екран каналів і при вмиканні з VFO)")
     mut = ax.replace("if (dcIsEnabled())", "if (dcIsEnabled() && (menuSystemGetCurrentMenuNumber() == UI_CHANNEL_MODE))", 1)
     i = mut.find("dcIsEnabled()")
     check(mut != ax and "UI_CHANNEL_MODE" in mut[max(0, i - 400):i + 400], "Б13 (мутант): пауза APRS лише з екрана каналів -- статична перевірка ловить")

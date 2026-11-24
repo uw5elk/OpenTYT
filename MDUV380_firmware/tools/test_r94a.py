@@ -11,7 +11,6 @@ HERE = os.path.dirname(os.path.abspath(__file__)); FW = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages"); UI = os.path.join(APP, "source", "user_interface")
-BASE = os.environ.get("R94A_BASE", "42fd131")
 FAILS = []; N = [0]; Q = [False]
 def check(c, m):
     if not Q[0]: N[0] += 1
@@ -52,12 +51,6 @@ def main():
     th = pp(incs, cf["AES0"], "application/include/user_interface/languages/uiLanguage.h"); check(th and "talkaround_menu" not in th, "не-UA: stringsTable_t без нового поля")
     r = subprocess.run([sys.executable, os.path.join(HERE, "check_menu_widths.py")], capture_output=True, text=True); check(r.returncode == 0 and "Переповнень не знайдено" in r.stdout, "check_menu_widths")
     r = subprocess.run([sys.executable, os.path.join(HERE, "check_string_encoding.py")], capture_output=True, text=True); check(r.returncode == 0, "check_string_encoding")
-    b = subprocess.run(["git", "-C", FW, "show", "%s:MDUV380_firmware/application/include/user_interface/languages/ukrainian.h" % BASE], capture_output=True)
-    if b.returncode == 0:
-        old = fields(b.stdout.decode("cp1251")); new = fields(ua)
-        d = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k)); check("talkaround_menu" in d and not {"talkaround", "roaming", "aes_keys"} & set(d), "ukrainian.h: talkaround_menu змінено, спільні talkaround/roaming/aes_keys ні (інші зміни -- пізніші R95): %r" % d)
-    else:
-        print("ПРОПУСК: база недоступна (CI/клон без історії): ukrainian.h «змінено лише talkaround_menu» -- не перевірено (база %s)" % BASE)
     # мутанти
     def mut(n, ua2): Q[0] = True; e = texts_ok(ua2); Q[0] = False; check(bool(e), "мутант «%s»" % n)
     mut("забули підпис", ua.replace('"Без репітера"', '"Talkaround"'))

@@ -8,13 +8,11 @@
   А5  швидкі клавіші: quickkeyIsEmpty() і диспетчер applicationMain.c скомпільовано хостовим gcc зі справжнього тексту (gcc -E) і прогнано на 0xFFFF, 0x8000, 0, контакті, меню;
       у не-UA збірці поведінка 0xFFFF стокова;
   А6  «Джерело».
-Порівняння з комітом бази (R96_BASE) стійке до його відсутності: без коміта -- ПРОПУСК з повідомленням.
 Запуск: python3 tools/test_r96.py"""
 import os, re, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); FW = os.path.dirname(HERE); sys.path.insert(0, HERE)
 import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages"); SRC = "application/source/"
-BASE = os.environ.get("R96_BASE", "6b85587")
 FAILS = []; N = [0]
 def check(c, m):
     N[0] += 1
@@ -55,7 +53,8 @@ def main():
     # А3
     for n in ("FULLUSER", "UA"):
         t = pp(incs, cf[n], SRC + "user_interface/menuAESKeys.c")
-        if t is None: print("ПРОПУСК А3 %s: menuAESKeys.c не препроцесується в цій конфігурації" % n); continue
+        check(t is not None, "А3 %s: menuAESKeys.c препроцесується" % n)
+        if t is None: continue
         check("uiDrawTickMark(" in t and "keyIsSet" in t and '"Key %d:%s"' not in t and "Ключ %d:" in t, "А3 %s: «Ключ %%d:» + галочка, без «Key %%d:%%s»" % n)
     t = pp(incs, cf["AES1"], SRC + "user_interface/menuAESKeys.c")
     check(t and '"Key %d:%s"' in t and "keyIsSet" not in t and "AESK_LIST_FMT" not in t, "А3 AES1 (не-UA): «Key %d:%s» як було, без галочки")
@@ -76,7 +75,8 @@ def main():
     # А5
     for n, ukr in (("FULLUSER", True), ("UA", True), ("AES0", False), ("AES1", False)):
         cp = pp(incs, cf[n], SRC + "functions/codeplug.c")
-        if cp is None: print("ПРОПУСК А5 %s: codeplug.c не препроцесується" % n); continue
+        check(cp is not None, "А5 %s: codeplug.c препроцесується" % n)
+        if cp is None: continue
         fn = carve(cp, "static _Bool quickkeyIsEmpty", "\n}\n")
         code = ("#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\nstatic uint16_t slot;\nuint16_t codeplugGetQuickkeyFunctionID(char k){(void)k;return slot;}\n" + fn +
                 '\nint main(void){uint16_t s[]={0xFFFF,0x8000,0,5,0x8000|(7<<10),0x0400};for(int i=0;i<6;i++){slot=s[i];printf("%d ",quickkeyIsEmpty(\'1\',0x1234));}'
@@ -88,7 +88,8 @@ def main():
         e = exp_ua if ukr else exp_st
         check(out is not None and out[:6] == e[:6] and out[6] == e[6], "А5 %s: quickkeyIsEmpty {0xFFFF,0x8000,0,контакт5,меню,0x400,clear}=%s (є %s)" % (n, e, out))
         am = pp(incs, cf[n], SRC + "applicationMain.c")
-        if am is None: print("ПРОПУСК А5 %s: applicationMain.c не препроцесується" % n); continue
+        check(am is not None, "А5 %s: applicationMain.c препроцесується" % n)
+        if am is None: continue
         blk = carve(am, "keyFunction = codeplugGetQuickkeyFunctionID(keys.key);", "int menuFunction = ((keyFunction>>10) & 0x1f);") if "int menuFunction = ((keyFunction>>10) & 0x1f);" in am else None
         if blk is None:
             m = re.search(r"keyFunction = codeplugGetQuickkeyFunctionID\(keys\.key\);.*?int menuFunction = [^;]*;", am, re.S); blk = m.group(0) if m else None
@@ -105,12 +106,5 @@ def main():
     check(strip_r96(b"a if ((data == 0x8000) || (0) || (x)) b") == strip_r96(b"a if ((data == 0x8000) || (x)) b"), "фільтр: не-UA `|| (0)` вирізається")
     check(strip_r96(b"if (((keyFunction) == 0xFFFF)) { keyFunction = 0; } int m;").strip() == b"int m;", "фільтр: диспетчер UA вирізається")
     check(strip_r96(b"if ((a == 0xFFFF)) { b = 0; }") == b"if ((a == 0xFFFF)) { b = 0; }", "фільтр (мутант): чужий код не вирізається")
-    # база
-    if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode == 0:
-        b = subprocess.run(["git", "-C", FW, "show", "%s:MDUV380_firmware/application/include/user_interface/languages/ukrainian.h" % BASE], capture_output=True)
-        old = fields(b.stdout.decode("cp1251")); dd = sorted(k for k in set(old) | set(f) if old.get(k) != f.get(k))
-        check(dd == ["battery_calibration", "priority_order", "temperature_calibration"], "ukrainian.h проти бази: змінено лише 3 поля: %r" % dd)
-    else:
-        print("ПРОПУСК: база недоступна (CI/клон без історії): порівняння ukrainian.h з комітом %s не виконано" % BASE)
     print("test_r96: ПРОВАЛІВ: %d (з %d перевірок)" % (len(FAILS), N[0])); return 1 if FAILS else 0
 if __name__ == "__main__": sys.exit(main())

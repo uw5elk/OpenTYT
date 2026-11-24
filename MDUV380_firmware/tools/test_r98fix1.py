@@ -119,12 +119,6 @@ def test_part_a(incs, cf):
             "CH_SCREEN_QUICK_MENU_AUDIO_MUTE", "CH_SCREEN_QUICK_MENU_DELETE", "CH_SCREEN_QUICK_MENU_ZONE_REMOVE", "CH_SCREEN_QUICK_MENU_DUAL_CHANNEL",
             "NUM_CH_SCREEN_QUICK_MENU_ITEMS"]
     check(items == want, "А1: пункти швидкого меню каналу -- без SET_B, порядок решти той самий, «Подв. прийом» ОСТАННІЙ: %r" % items)
-    if base_available():
-        old = subprocess.run(["git", "show", BASE + ":MDUV380_firmware/application/include/user_interface/menuSystem.h"], cwd=FW, capture_output=True).stdout.decode()
-        oi = enum_items(old, "CHANNEL_SCREEN_QUICK_MENU_ITEMS")
-        check(oi[:len(want) - 1] == want[:-1] and oi[len(want) - 1] == "CH_SCREEN_QUICK_MENU_SET_B", "А1: у базі SET_B стояв ПІСЛЯ «Подв. прийом» -- нумерація решти пунктів (швидкі клавіші) не зсунулась")
-    else:
-        print("ПРОПУСК: база недоступна (CI/клон без історії) -- порівняння нумерації з базою")
     src = T.rd(os.path.join(UI, "uiChannelMode.c"))
     check(re.search(r"QUICK_MENU_SET_B\b", src) is None and re.search(r"QUICK_MENU_SET_B\b", hdr) is None, "А1: статично -- у коді екрана каналу й заголовку меню нема SET_B")
     check("dual_set_b" not in src and "dual_b_saved" not in src, "А1: поля мови dual_set_b/dual_b_saved у коді не використовуються")

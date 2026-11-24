@@ -23,7 +23,7 @@ T.COMPAT_FIX6 = False
 T.COMPAT_FIX7 = False   # бачимо поточні функції (R98-FIX8)
 cmt = T.cmt
 FAILS = []; N = [0]
-BASE = "e1ca1ad"   # HEAD після R98-FIX7 у дереві розробки (у клоні власника хеш інший -- тоді ПРОПУСК)
+BASE = "e1ca1ad"   # R105: лише для test_tokens() (не викликається)
 
 
 def check(c, m):
@@ -243,88 +243,6 @@ def letter_pads(D, d, y0):
     return (min(xs) - (L + 1), (L + W - 2) - max(xs), min(ys) - (TY + 1), (TY + H - 2) - max(ys)), frame
 
 
-def test_layout(t, src, png_dir):
-    if "#define DW_ROW1_MAX" in src:
-        print("ПРОПУСК: Б -- розкладку FIX8 (номер і значки в рядку 1, S-метр на всю ширину) замінено в R98-FIX9 А/Б (повна назва в рядку 1, номер у рядку 3, значки в рядку 4); перевіряє tools/test_r98fix9.py")
-        return
-    D = F5.consts(src)
-    need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_SEL_X", "DW_SEL_W", "DW_IN_L", "DW_IN_R", "DW_ROW1_DY", "DW_ROW2_DY", "DW_ROW3_DY",
-            "DW_ROW4_DY", "DW_TRI_X", "DW_TRI_W", "DW_TRI_CY", "DW_LET_L", "DW_LET_W", "DW_LET_H", "DW_LET_GX", "DW_ROW1_TX", "DW_ICON_DY", "DW_UN_W", "DW_AP_W", "DW_AP_H",
-            "DW_ROW3_MAX", "DW_ARROW_DY", "DW_ARROW_CELL", "DW_METER_H", "DW_TAG_W", "DW_METER_SEG_W", "DW_METER_STEP", "DW_METER_SEGS", "DW_METER_X", "DW_METER_HOT"]
-    check(all(k in D for k in need), "Б: константи розкладки DW_* знайдено: нема %s" % [k for k in need if k not in D])
-    if not all(k in D for k in need):
-        return
-    g = type("G", (), D)
-    check(g.DW_SEL_X == g.DW_CARD_X + 1 and g.DW_SEL_W == 4 and g.DW_IN_L == g.DW_SEL_X + g.DW_SEL_W + 1, "Б2: смуга 4 px одразу за рамкою, вміст -- з x=%d (зазор 1 px)" % g.DW_IN_L)
-    check(g.DW_LET_W % 2 == 1 and g.DW_LET_H % 2 == 1 and g.DW_LET_L == g.DW_TRI_X + g.DW_TRI_W + 1 and g.DW_LET_GX == g.DW_LET_L + 2 and g.DW_TRI_CY == g.DW_ROW1_DY + g.DW_LET_H // 2,
-          "Б1: рамка літери непарна (%dx%d), клітинка літери на 2 px від лівого краю рамки, ▶ по центру рамки" % (g.DW_LET_W, g.DW_LET_H))
-    check(g.DW_ROW3_MAX == (g.DW_IN_R + 1 - g.DW_IN_L) // 6 and g.DW_IN_L + g.DW_TAG_W < g.DW_METER_X and g.DW_METER_X + (g.DW_METER_SEGS - 1) * g.DW_METER_STEP + g.DW_METER_SEG_W - 1 == g.DW_IN_R
-          and g.DW_METER_SEGS == 11 and g.DW_METER_HOT == 2, "Б2: рядок 3 -- %d символів; S-метр: мітка RX x=%d..%d, 11 сегментів x=%d..%d, два останні червоні" % (g.DW_ROW3_MAX, g.DW_IN_L, g.DW_IN_L + g.DW_TAG_W - 1, g.DW_METER_X, g.DW_IN_R))
-    fns = [T.carve_fn(t, s) for s in F6.ROW_SIGS]
-    tl = T.pp(FW, INCS, CF["DUALCH"], "application/source/functions/lc_distance.c") or ""
-    fa = T.carve_fn(tl, "void lcDistArrowAfter(lcDistArrow_t *a, const lcDistSpan_t *tail, const lcDistSpan_t *above, int16_t screenW, uint16_t bearingDeg)")
-    check(all(fns) and fa is not None, "Б: функції картки знайдено")
-    if not (all(fns) and fa):
-        return
-    code = lambda f: F6.ROW_HARNESS.replace("@@FNS@@", fa + "\n" + "\n".join(f))
-    out = run_c(code(fns))
-    check(out is not None, "Б: хостова збірка карток")
-    o = kv(out)
-    keys = ("s1a", "s1b", "s2a", "s2b", "s3a", "s3b", "s4a", "s4b", "s5a", "s5b", "s6b", "s7a")
-    R = {}
-    for k in keys:
-        R[k] = analyse(D, o.get(k))
-        ps, el, boxes, bad, ov, outz, txt = R[k]
-        check(o.get(k) is not None and not bad and not ov and not outz, "Б4 (%s): кожен примітив -- у своєму елементі, без перетинів, у полі вмісту: нерозпізнані %s, перетини %s, поза полем %s" % (k, bad[:2], ov, outz))
-    sel = {"s1a": 1, "s1b": 0, "s2a": 1, "s2b": 0, "s3a": 0, "s3b": 1, "s4a": 0, "s4b": 1, "s5a": 0, "s5b": 1, "s6b": 0, "s7a": 1}
-    for k in keys:
-        el = R[k][1]
-        has = ("stripe" in el, "tri" in el)
-        ok = (has == (True, True)) if sel[k] else (has == (False, False))
-        check(ok, "Б2 (%s): смуга і ▶ %s (є: смуга %s, ▶ %s)" % (k, "є в обраній" if sel[k] else "нема в необраній", has[0], has[1]))
-        if sel[k] and ok:
-            st = el["stripe"][0]; tr = el["tri"]
-            check(st["fg"] == "BG_MENU_ITEM_SELECTED" and st["y"] == 1 and st["h"] == g.DW_CARD_H - 2 and all(p["fg"] == "BG_MENU_ITEM_SELECTED" for p in tr)
-                  and sorted(p["h"] for p in tr) == [1, 3, 5, 7], "Б2 (%s): смуга x=%d..%d уздовж усього лівого краю, ▶ 4x7 -- колір виділення теми" % (k, g.DW_SEL_X, g.DW_SEL_X + 3))
-        fr = el.get("frame", [])
-        check(len(fr) == 1 and fr[0]["fg"] == "FG_DECORATION", "Б2 (%s): рамка картки однакова -- 1 px кольором декору" % k)
-    # вміст не «стрибає»: картка A (канал 39) обрана (s1a) і необрана (s3a) -- ті самі x
-    xs = lambda k: sorted((n, x) for n, v in R[k][6].items() for (_t, x) in v)
-    check(xs("s1a") == xs("s3a"), "Б2/Б6: вміст картки однаковий за x, обрана вона чи ні: %s / %s" % (xs("s1a"), xs("s3a")))
-    # модель кадрового буфера: смуга/▶ у пікселях; літери симетричні
-    pairs = (("1", "s1a", "s1b"), ("2", "s2a", "s2b"), ("3", "s3a", "s3b"), ("4", "s4a", "s4b"), ("5", "s5a", "s5b"))
-    for n, ka, kb in pairs:
-        d = render(D, o, ka, kb)
-        for key, y0 in ((ka, g.DW_CARD_A_Y), (kb, g.DW_CARD_B_Y)):
-            sp = card_pixels(D, d, y0, g.DW_SEL_X, g.DW_SEL_X + g.DW_SEL_W - 1, 1, g.DW_CARD_H - 2, "BG_MENU_ITEM_SELECTED")
-            tp = card_pixels(D, d, y0, g.DW_TRI_X, g.DW_TRI_X + g.DW_TRI_W - 1, g.DW_ROW1_DY, g.DW_ROW1_DY + g.DW_LET_H - 1, "BG_MENU_ITEM_SELECTED")
-            want = (g.DW_SEL_W * (g.DW_CARD_H - 2), 16) if sel[key] else (0, 0)
-            check((len(sp), len(tp)) == want, "Б4 (кадр %s, %s): пікселів смуги/▶ %s, очікувано %s" % (n, key, (len(sp), len(tp)), want))
-            pads, frame = letter_pads(D, d, y0)
-            check(frame and pads is not None and pads[0] == pads[1] and pads[2] == pads[3], "Б1 (кадр %s, %s): літера в рамці -- лівий == правий, верхній == нижній: %s, рамка ціла %s" % (n, key, pads, frame))
-    # мутанти
-    rr = fns[-1]
-    m1 = rr.replace(" if (selected)\n {\n  displayThemeApply(THEME_ITEM_BG_MENU_ITEM_SELECTED", " if (1)\n {\n  displayThemeApply(THEME_ITEM_BG_MENU_ITEM_SELECTED", 1)
-    m2 = rr.replace(" if (selected)\n {\n  displayThemeApply(THEME_ITEM_BG_MENU_ITEM_SELECTED", " if (isB == 0)\n {\n  displayThemeApply(THEME_ITEM_BG_MENU_ITEM_SELECTED", 1)
-    m3 = rr.replace("displayPrintCore(((((1 + 1) + 4 + 1) + 4 + 1) + 2), (y + 3), letter", "displayPrintCore(((((1 + 1) + 4 + 1) + 4 + 1) + 1), (y + 3), letter", 1)
-    for what, m, test in (("смуга й ▶ в обох картках", m1, lambda r: "stripe" in r["s1b"][1]),
-                          ("смуга не переходить при зміні покажчика (лишається на A)", m2, lambda r: "stripe" in r["s3a"][1] or "stripe" not in r["s3b"][1]),
-                          ("літера зсунута на 1 px (несиметрично)", m3, None)):
-        f2 = list(fns); f2[-1] = m
-        mo = kv(run_c(code(f2))) if m != rr else {}
-        if test is not None:
-            r2 = {k: analyse(D, mo.get(k)) for k in ("s1b", "s3a", "s3b")} if mo else {}
-            check(m != rr and r2 and test(r2), "Б4 (мутант): %s -- ловиться" % what)
-        else:
-            caught = False
-            if mo:
-                d = render(D, mo, "s1a", "s1b"); pads, _f = letter_pads(D, d, g.DW_CARD_A_Y)
-                caught = pads is None or pads[0] != pads[1]
-            check(m != rr and caught, "Б1 (мутант): %s -- ловиться" % what)
-    if png_dir:
-        snapshots(D, o, png_dir)
-
-
 def snapshots(D, o, png_dir):
     """Б5: PNG -- модель кадрового буфера (справжні шрифти прошивки з HX8353E_charset_UA.h, стокова денна тема). Шапка -- як uiUtilityRenderHeaderDw;
     замок AES -- спрощений контур (у моделі нема бітмапи uiDrawAesIconAt); стрілка відстані -- справжня геометрія, азимут сценарію 45°."""
@@ -465,7 +383,8 @@ def test_roam(tw, t, src):
 
 
 def test_tokens():
-    """Збірки без DW (ROAM, UA, AES1): токени wake_hop.c і uiChannelMode.c -- як у базі."""
+    """R105: НЕ ВИКЛИКАЄТЬСЯ (порівняння зі старою базою; хеша бази нема в клоні/CI, пропуск був мовчазним). Лишено як довідку;
+    цілісність типової збірки -- tools/check_default_build.sh. Збірки без DW (ROAM, UA, AES1): токени -- як у базі."""
     if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode != 0:
         print("ПРОПУСК: база недоступна (CI/клон без історії): порівняння токенів збірок без DW з %s не виконано" % BASE)
         return
@@ -506,9 +425,7 @@ def main():
     tw = T.pp(FW, INCS, CF["DUALCH"], "application/source/functions/wake_hop.c") or ""
     check(t != "" and tw != "", "препроцесування uiChannelMode.c / wake_hop.c (DUALCH)")
     test_a(t)
-    test_layout(t, src, png)
     test_roam(tw, t, src)
-    test_tokens()
     print("test_r98fix8: ПРОВАЛІВ: %d (з %d перевірок)" % (len(FAILS), N[0]))
     return 1 if FAILS else 0
 

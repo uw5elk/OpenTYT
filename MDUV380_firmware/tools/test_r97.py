@@ -5,10 +5,7 @@
      вибір каналу для PTT (dcTxOnB), крок по каналах зони для валкодера (dcStepPos/dcFindPos);
   2  рушій: dualScanning() і uiChannelModeDualPrepareTx() вирізано зі справжнього тексту uiChannelMode.c (gcc -E, конфігурація DUALCH) і прогнано
      хостовим gcc: чергування A<->B, утримання «Затр. скан.» (HOLD), відновлення чергування, вибір каналу PTT за станом; «Тип скану» не читається;
-  3  звичайне сканування не змінилось: scanning() (без вставки R97), scanStart, scanSearchForNextChannel, scanApplyNextChannel, scanStop,
-     uiChannelModeStopScanning (без вставки) -- токени як у базі (R97_BASE);
-  4  збірки без прапорця: токени ВСІХ application/source/**/*.c для AES0 (без дефайнів), ENDATA (англійська) і UA -- як у базі;
-     прапорець в англійській збірці (DUALCHEN) -- мертвий;
+  3, 4  (ПРИБРАНО в R105: порівняння токенів зі старою базою -- бази в клоні/CI нема; цілісність типової збірки тепер -- tools/check_default_build.sh)
   5  мовні поля: в ukrainian.h/english.h/uiLanguage.h, останні, під ENABLE_DUAL_CHANNEL, ширина;
   7  R97-FIX: у швидкому меню пункт читається ДО menuSystemPopPreviousMenu() (статично + мутант), dualQuickMenuApply() хостово (setB -> dcSetChannelB(dualChannelA()), інакше On/Off);
   8  R97-FIX2: шапка за станом (dualRenderScreen хостово + мутант), гаряча клавіша -- довге ▼ (dualSetMode/dualHotkeyToggle хостово, статично: без автоповтору, SK2/SK1, набір номера), вибір A/B у «Всіх каналах» (-1) на справжніх codeplug*LastUsed*;
@@ -19,7 +16,6 @@ import json, os, re, shutil, struct, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); FW = os.path.dirname(HERE); sys.path.insert(0, HERE)
 import check_menu_tables as cmt  # noqa
 APP = os.path.join(FW, "application"); LANG = os.path.join(APP, "include", "user_interface", "languages")
-BASE = os.environ.get("R97_BASE", "7fa5fe8")
 FAILS = []; N = [0]
 DUAL_FIELDS = ["dual_rx", "dual_set_b", "dual_title", "dual_b_saved", "dual_err_no_b", "dual_err_b_gone", "dual_err_b_is_a", "dual_on", "dual_off", "dual_zone_all", "dual_rx_on", "dual_wait"]
 
@@ -362,54 +358,6 @@ def strip_dual(fn):
     fn = re.sub(r"if \(dualIsRunning\(\)\)\s*\{\s*dualSuspend\(\);\s*return;\s*\}", "", fn)
     fn = re.sub(r"if \(dcIsEnabled\(\) && dcIsOnB\(\)\)\s*\{\s*uiChannelModeLoadChannelData\(1, 1\);\s*\}\s*else", "", fn)   # R98-FIX1 В3: вставка в uiChannelModeStopScanning
     return fn.split()
-
-
-def test_vs_base(incs, cfgs):
-    cf = dict(cfgs)
-    if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode != 0:
-        print("ПРОПУСК: база недоступна (CI/клон без історії): порівняння звичайного сканування й збірок без прапорця з %s не виконано" % BASE)
-        return
-    root = tempfile.mkdtemp(prefix="r97_base_")
-    try:
-        tar = subprocess.run(["git", "-C", FW, "archive", BASE, "application"], capture_output=True)
-        subprocess.run(["tar", "-x", "-C", root], input=tar.stdout, check=True)
-        for e in os.listdir(FW):
-            if e != "application" and not os.path.exists(os.path.join(root, e)):
-                os.symlink(os.path.join(FW, e), os.path.join(root, e))
-        # 3: звичайне сканування в конфігурації з прапорцем
-        a = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
-        b = pp(root, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
-        for s in SCAN_FNS:
-            fa, fb = carve_fn(a or "", s), carve_fn(b or "", s)
-            check(fa is not None and fb is not None and strip_dual(fa) == fb.split(), "звичайне сканування не змінилось (DUALCH, крім вставки R97): %s" % s.split("(")[0])
-        # 4: усі .c без прапорця
-        empty = os.path.join(root, "r97_empty.c"); open(empty, "w").write("\n")   # новий файл у базі відсутній: без прапорця він має давати порожню одиницю трансляції
-        files = sorted(os.path.relpath(os.path.join(d, f), FW) for d, _s, fs in os.walk(os.path.join(APP, "source")) for f in fs if f.endswith(".c"))
-        # R98-FIX2 Л: підказка літер у назві каналу -- окрема українська можливість (не режим), її файли перевіряє tools/test_r98fix2.py;
-        # прототипи keypadAlphaPreviewMap/uiSmsKeyHintMap у заголовках вирізаються тим самим фільтром, що й R96-вставки (r96_tokfilter.py).
-        from r96_tokfilter import strip_r96
-        # R98-FIX7 В: volume_low.c -- окрема можливість ENABLE_VOLUME_LOW (коліно K = 32 замість 16), її перевіряють tools/test_r78.py і tests/test_volume_low.c.
-        l_files = ("application/source/io/keyboard.c", "application/source/user_interface/uiSmsKeys.c", "application/source/user_interface/menuChannelDetails.c",
-                   "application/source/functions/volume_low.c",
-                   "application/source/user_interface/menuMessages.c")   # R98-MSG1: лічильники «Вхідні n/m» SMS DMR -- окрема зміна (не режим), її перевіряє tools/test_r98msg1.py
-        for name in ("AES0", "ENDATA", "UA"):
-            bad = []
-            for rel in files:
-                if rel in l_files:
-                    continue
-                ta, tb = pp(FW, incs, cf[name], rel), pp(root, incs, cf[name], (rel if os.path.exists(os.path.join(root, rel)) else empty))
-                if strip_r96((ta or "").encode()).split() != strip_r96((tb or "").encode()).split():
-                    bad.append(rel)
-            check(bad == [], "%s: токени всіх %d файлів .c як у базі %s (без прапорця R97 нічого не змінилось): %r" % (name, len(files), BASE, bad[:5]))
-        # DUALCHEN: прапорець в англійській збірці мертвий
-        bad = []
-        for rel in ("application/source/user_interface/uiChannelMode.c", "application/source/applicationMain.c", "application/source/functions/dual_channel.c",
-                    "application/source/functions/rxPowerSaving.c", "application/source/functions/wake_hop.c"):
-            if strip_r96((pp(FW, incs, cf["DUALCHEN"], rel) or "").encode()).split() != strip_r96((pp(root, incs, cf["DUALCHEN"], (rel if os.path.exists(os.path.join(root, rel)) else empty)) or "").encode()).split():
-                bad.append(rel)
-        check(bad == [], "DUALCHEN (англійська з прапорцем): код режиму мертвий, токени як у базі: %r" % bad)
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
 
 
 # ------------------------------------------------------------------------------------------------ 5
@@ -1459,131 +1407,6 @@ def test_fix7_a1():
     check(cs is not None, "FIX7 А1: ядро шапки чистить рівно DISPLAY_Y_POS_BAR рядків (y=0..%d)" % (barY - 1))
 
 
-def test_fix5_z2(incs, cf):
-    src = rd(os.path.join(APP, "source", "user_interface", "uiChannelMode.c"))
-    t = pp(FW, incs, cf["DUALCH"], "application/source/user_interface/uiChannelMode.c")
-    check(t is not None, "FIX6 З2/З3: uiChannelMode.c препроцесується в DUALCH")
-    if t is None:
-        return
-    if "#define DW_SQ_X" not in src:
-        print("ПРОПУСК: FIX6 З2/З3 -- розкладку карток R97-FIX6 (квадрат з літерою 16x32, 3 рядки) замінено (R98-FIX5 Б2 -- 5 рядків, R98-FIX6 Г -- 4 рядки); показ і координати перевіряє tools/test_r98fix6.py")
-        return
-    # ---- геометрія з макросів (кожна константа -- з коду) ----
-    D = {"DISPLAY_Y_POS_BAR": 10}
-    for m in re.finditer(r"^#define (DW_\w+)\s+(.+?)(?:\s*//.*)?$", src, re.M):
-        try:
-            D[m.group(1)] = int(eval(re.sub(r"\b(DW_\w+|DISPLAY_Y_POS_BAR)", lambda x: str(D[x.group(1)]), m.group(2).strip())))
-        except Exception:
-            pass
-    need = ["DW_UN_DY", "DW_UN_LETTER_X", "DW_UN_ENV_X", "DW_UN_NUM_X", "DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_SQ_X", "DW_SQ_W", "DW_SQ_DY", "DW_SQ_H", "DW_LETTER_X", "DW_LETTER_DY", "DW_ARROW_DY", "DW_TXT_X",
-            "DW_LINE1_DY", "DW_LINE2_DY", "DW_LINE3_DY", "DW_LINE3_MAX", "DW_LOCK_X", "DW_LOCK_DY", "DW_METER_DY", "DW_METER_H", "DW_TAG_W", "DW_METER_X", "DW_METER_SEG_W", "DW_METER_STEP", "DW_METER_SEGS"]
-    check(all(k in D for k in need), "FIX6 З2: усі геометричні константи DW_* знайдено й обчислено")
-    if not all(k in D for k in need):
-        return
-    g = type("G", (), D)
-    cardR = g.DW_CARD_X + g.DW_CARD_W - 1
-    check(g.DW_CARD_A_Y == 11 and g.DW_CARD_A_Y > 9, "FIX6 З2: картки починаються одразу під шапкою (текст шапки y=0..9 = DISPLAY_Y_POS_BAR-1)")
-    check(g.DW_CARD_B_Y >= g.DW_CARD_A_Y + g.DW_CARD_H + 1 and g.DW_CARD_B_Y + g.DW_CARD_H == 128, "FIX6 З2: картки без накладання; B закінчується на останньому рядку екрана (y=127)")
-    check(g.DW_SQ_X >= g.DW_CARD_X + 1 and g.DW_SQ_X + g.DW_SQ_W <= g.DW_TXT_X and g.DW_SQ_DY >= 1 and g.DW_SQ_DY + g.DW_SQ_H <= g.DW_CARD_H - 1,
-          "FIX6 З2: квадрат з літерою всередині картки й лівіше тексту")
-    check(g.DW_LETTER_X >= g.DW_SQ_X and g.DW_LETTER_X + 16 <= g.DW_SQ_X + g.DW_SQ_W and g.DW_LETTER_DY + 32 <= g.DW_ARROW_DY and g.DW_ARROW_DY + 5 <= g.DW_SQ_DY + g.DW_SQ_H,
-          "FIX6 З2: літера 16x32 у квадраті, ▸ (5 px) під літерою й у квадраті")
-    check(g.DW_TXT_X + 21 * 6 - 1 <= cardR - 1, "FIX6 З3: рядок 1 -- номер (до 4 цифр) + пробіл + 16 символів назви = 21 символ FONT_SIZE_1 -- вміщується в картку")
-    check(g.DW_TXT_X + 16 * 8 - 1 <= cardR - 1, "FIX6 З3: рядок 2 -- 16 символів FONT_SIZE_3 вміщується в картку")
-    check(g.DW_TXT_X + g.DW_LINE3_MAX * 6 <= g.DW_LOCK_X, "FIX6 З3: рядок 3 (до 19 символів FONT_SIZE_1) не заходить на замок AES")
-    check(g.DW_LOCK_X + 10 <= cardR and g.DW_LOCK_DY + 9 <= g.DW_METER_DY and g.DW_LOCK_DY >= g.DW_LINE3_DY - 1, "FIX6 З2: замок AES (10x9) у картці, у рядку 3, над смугою активності")
-    check(g.DW_LINE1_DY + 8 <= g.DW_LINE2_DY and g.DW_LINE2_DY + 16 <= g.DW_LINE3_DY and g.DW_LINE3_DY + 8 <= g.DW_METER_DY and g.DW_METER_DY + g.DW_METER_H <= g.DW_CARD_H - 1,
-          "FIX6 З3: рядки 1 (8), 2 (16), 3 (8) і смуга активності (10) не перетинаються й лишаються в картці")
-    check(g.DW_TXT_X + g.DW_TAG_W <= g.DW_METER_X and g.DW_METER_X + (g.DW_METER_SEGS - 1) * g.DW_METER_STEP + g.DW_METER_SEG_W - 1 <= cardR - 1 and g.DW_METER_SEG_W <= g.DW_METER_STEP,
-          "FIX6 З2: мітка RX і 9 сегментів S-метра в межах картки без накладання")
-    check("DW_SEP_Y" not in src and "dualRenderStatus" not in src and "dual_rx_on" not in src.replace("// ", "") .split("static void dualCallerText")[0] + "x" and
-          "currentLanguage->dual_rx_on" not in src and "currentLanguage->dual_wait" not in src,
-          "FIX6 З2: нижній рядок і роздільник прибрано (dual_rx_on/dual_wait у коді не використовуються)")
-    check("uiDrawAesEnabledIcon();" not in src[src.find("static void dualRenderScreen(void)\n{"):], "FIX6 З2: замок AES шапки (x=147,y=14) у dualRenderScreen не малюється -- він у картці")
-    # ---- хост: справжні dualRenderRow / dualMeterRow / dualCallerText ----
-    fn = [carve_fn(t, s_) for s_ in ("static Channel_t dualChanOf(const CodeplugChannel_t *ch)", "static void dualCallerText(char *text17)", "static void dualMeterRow(int16_t y)", "static uint32_t dualDestination(const CodeplugChannel_t *ch, char *out, _Bool *numOnly, uint8_t *tsFlags)", "static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags)",
-                                     "static size_t dualToneOne(char *dst, size_t size, const char *mark, uint16_t tone)", "static void dualFmToneLine(char *l3, size_t size, uint16_t rxTone, uint16_t txTone, _Bool bw25)",   # R98-FIX2 К2
-                                     "static void dualRenderRow(int16_t y, _Bool isB, uint16_t ch, uint8_t vfoType, _Bool selected, _Bool active, _Bool callerHere)")]
-    fda = carve_fn(t, "static void dualAppendDistance(char *l3)")   # R98-FIX2 К1 (лише з LC_DISTANCE)
-    if fda:
-        fn.insert(-1, fda)
-    check(all(fn), "FIX6 З3: знайдено dualCallerText / dualMeterRow / dualDestination / dualRenderRow")
-    if not all(fn):
-        return
-    defs = "".join(l + "\n" for l in (src[src.find("#define DW_CARD_X"):src.find("// Текст абонента")]).splitlines() if l.startswith("#define"))
-    defs = defs.replace("DISPLAY_Y_POS_BAR", "10")
-    out = run_c(ROW_HARNESS % {"fns": defs + "\n".join(fn)})
-    check(out is not None, "FIX6 З3: хостова збірка карток")
-    if out is None:
-        return
-    o = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
-    f = lambda k: o.get(k, "").split("|")
-    r1 = f("r1")
-    check(r1[0].split(",")[:3] == ["0", "1", "5"] and r1[1] == "1024 " + "W" * 16 and r1[2] == "FM 446.12500" and r1[3] == "67.0 25k" and r1[4] == "RX",
-          "FIX6 З3 (r1): A=1024, 16-символьна назва, FM: ряд 1 «1024 WWWW…», ряд 2 «FM 446.12500», ряд 3 «67.0 25k» (R98-FIX2 К2: однакові RX/TX -- один тон), мітка RX, ▸ є, нічого не виходить за картку: %s" % o.get("r1"))
-    r2 = f("r2")
-    check(r2[0].split(",")[:3] == ["0", "0", "4"] and r2[1] == "5 " + "W" * 16 and r2[2] == "TG Ukraine 255" and r2[3] == "TS2 CC15 TG255",
-          "FIX6 З3 (r2): неактивна DMR-картка -- контакт каналу, «TS2 CC15 ТГ255», без ▸ і RX: %s" % o.get("r2"))
-    r3 = f("r3")
-    check(r3[0].split(",")[:2] == ["0", "5"] and r3[1] == "ABCDEFGHIJKLMNOP" and r3[2] == "TS2 CC15 TG 9123456",
-          "FIX6 З3 (r3): виклик -- 16-символьний абонент у рядку 2; рядок 3 -- «TS2 CC15 ТГ виклику», обрізаний до 19 символів: %s" % o.get("r3"))
-    r4 = f("r4")
-    check(r4[0] == "0" and r4[1] == "1025" and r4[2] == "" and r4[3] == "", "FIX7 А3: неіснуючий канал -- лише номер, рядки 2-3 порожні, без «---»: %s" % o.get("r4"))
-    check(f("r5") == ["0", "TG 9"], "FIX7 А2: DMR, контакт каналу недійсний -- рація передає на ТГ 9 (запасний контакт codeplugContactGetDataForIndex), так і показано: %s" % o.get("r5"))
-    check(f("r6") == ["0", "TG 91"], "FIX7 А2: DMR, ім'я контакту порожнє -- «TG 91»: %s" % o.get("r6"))
-    check(f("r7") == ["0", "PC 1234"], "FIX7 А2: DMR, контакт приватний без імені -- «PC 1234»: %s" % o.get("r7"))
-    check(f("r8") == ["0", "TG 9", "TS1 CC1 TG9"], "FIX7 А2/А3: DMR, контакт не заданий -- «TG 9» (реальне призначення), рядок 3 «TS1 CC1 TG9», без «--»: %s" % o.get("r8"))
-    check(f("r9") == ["0", "FM 145.50000", "D023N 12.5k"], "FIX6 З3 (r9): FM DCS -- «D023N 12.5k» (R98-FIX2 К2): %s" % o.get("r9"))
-    check(f("r10") == ["0", "12.5k"], "FIX7 А3: FM без тону -- лише смуга «12.5k», без прочерка: %s" % o.get("r10"))
-    check(f("g0") == ["0", "TG 91", "TS1 CC1"] and f("g1") == ["0", "TG Ukraine 255", "TS1 CC1 TG255"] and f("g9") == ["0", "TG 91"] and f("g2") == ["0", "TG Ukraine 255"],
-          "FIX7 А2: список прийому каналу -- контакт на позиції індексу ТГ (поза списком -> перший); порожній список -> контакт каналу: %s %s %s %s" % (o.get("g0"), o.get("g1"), o.get("g9"), o.get("g2")))
-    check(f("o1") == ["0", "TG Ukraine", "TS2 CC15 TG91"] and f("o2") == ["0", "TG Ukraine", "TS2 CC15 TG91"],
-          "R98 Д3: перекриття ТГ глобальне -- PTT з будь-якої картки піде з ним, тож обидві DMR-картки його показують: %s / %s" % (o.get("o1"), o.get("o2")))
-    check(f("o3") == ["0", "PC 2550213", "TS2 CC15"] and f("o4") == ["0", "All call", "TS2 CC15 TG16777215"],
-          "FIX7 А2: перекриття -- приватний без імені «PC 2550213» (без дубля числа), «All call» і число вміщується рівно в 19 символів: %s / %s" % (o.get("o3"), o.get("o4")))
-    check(o.get("ptt") == "0,72", "R98 Д3: показ збігається з реальним призначенням PTT (модель стокового завантаження каналу): канали з контактом/списком/без контакту x перекриття ТГ (немає/ТГ/ПК) x індекс ТГ: %s" % o.get("ptt"))
-    check(f("t1") == ["TS2 CC1 TG5"] and f("t2") == ["TS1 CC1 TG6"] and f("t3") == ["TS2 CC15 TG255"],
-          "R98 Д2: ефективний ТС -- контакт TS2 при каналі TS1, контакт TS1 при каналі TS2, NO_TS_OVERRIDE -> ТС каналу: %s %s %s" % (o.get("t1"), o.get("t2"), o.get("t3")))
-    check(f("t4") == ["TS1 CC15 TG255"] and f("t5") == ["TS1 CC1 TG5"] and f("t6") == ["TS2 CC1 TG5"] and f("t7") == ["TS1 CC1 TG91"],
-          "R98 Д2: ручне перекриття ТС (канал / контакт), прапор без значення, перекриття ТГ скасовує ТС контакту: %s %s %s %s" % (o.get("t4"), o.get("t5"), o.get("t6"), o.get("t7")))
-    check(o.get("u1") == "0,2,0,3" and o.get("u2") == "0,0" and o.get("u3") == "0,0,1" and o.get("u4") == "0,0",
-          "R98 Д1 / R98-FIX2 Д3: «D» -- у квадраті літери картки-джерела; APRS на B -- значок «A+» без конверта; в межах картки, без лічильника -- нічого; понад 9 -- «+»: %s %s %s %s" % (o.get("u1"), o.get("u2"), o.get("u3"), o.get("u4")))
-    check(g.DW_UN_LETTER_X >= g.DW_SQ_X + 1 and g.DW_UN_NUM_X + 6 - 1 <= g.DW_SQ_X + g.DW_SQ_W - 2 and g.DW_UN_ENV_X + 8 + 1 <= g.DW_UN_NUM_X and g.DW_UN_LETTER_X + 6 + 1 <= g.DW_UN_ENV_X
-          and g.DW_UN_DY > g.DW_ARROW_DY + 4 and g.DW_UN_DY + 8 <= g.DW_SQ_DY + g.DW_SQ_H - 1,
-          "R98 Д1: індикатор у квадраті: літера x=4..9, конверт 8x6 x=11..18, число x=20..25 (≤ x=25 -- внутрішня межа квадрата), під ▸ й над нижньою рамкою")
-    check(f("va") == ["0,0,0,0", "VFO A 430.12500", "TG Ukraine 255", "TS1 CC7 TG255"] and f("vb") == ["0", "TG 91", "TS1 CC7"],
-          "R98 В3: картка VFO A (DMR) -- рядок 1 «VFO A» + частота, ТГ за списком VFO (SETTINGS_VFO_A_MODE+VFO), ефективний ТС/CC, без читання кодплага, ТС питає CHANNEL_VFO_A, замка нема: %s / %s" % (o.get("va"), o.get("vb")))
-    check(f("vc") == ["0,-1", "VFO B", "FM 145.50000", "25k"] and f("vd") == ["0", "67.0 25k"] and o.get("ve") == "TS2 CC7 TG255",
-          "R98 В3: картка VFO B (FM) -- «VFO B», частота в рядку 2, смуга/CTCSS без прочерків; ручне перекриття ТС цього VFO враховано: %s / %s / %s" % (o.get("vc"), o.get("vd"), o.get("ve")))
-    check(o.get("k1") == "0,1,145,104" and o.get("k2") == "0", "FIX6 З2: замок AES -- лише на картці каналу з ключем, у (145, y+33), у межах картки: %s / %s" % (o.get("k1"), o.get("k2")))
-    exp = {"m0": "0,0,9", "m1": "0,0,9", "m2": "0,1,8", "m3": "0,5,4", "m4": "0,9,0", "m5": "0,9,0"}
-    for k in exp:
-        check(o.get(k, "").startswith(exp[k]) or ",".join(o.get(k, "").split(",")[:3]) == exp[k], "FIX6 З2 (%s): сегментований S-метр -- (виходів,залито,контурних) = %s: %s" % (k, exp[k], o.get(k)))
-    check(o.get("m9") == "0,0,0", "FIX6 З2: неактивна картка -- без смуги й S-метра: %s" % o.get("m9"))
-    # ---- мутанти ----
-    base = out
-    rr = fn[-1]   # R98-FIX2: між dualEffectiveTs і dualRenderRow -- функції тонів/відстані (fn[5:-1])
-    mid = fn[5:-1]
-    mutd = (("перекриття ТГ ігнорується", fn[3].replace("nonVolatileSettings.overrideTG != 0", "0"), fn[4]), ("список прийому ігнорується", fn[3].replace("if (ci == 0)", "if (1)"), fn[4]),
-            ("ТС контакту ігнорується", fn[3], re.sub(r"\(tsFlags & 0x01\)\s*==\s*0x00", "0", fn[4])),
-            ("ТС каналу замість ефективного", fn[3], "static uint8_t dualEffectiveTs(const CodeplugChannel_t *ch, uint8_t tsFlags) { (void)tsFlags; return (codeplugChannelGetFlag((CodeplugChannel_t *)ch, CHANNEL_FLAG_TIMESLOT_TWO) != 0) ? 2U : 1U; }"))
-    muts = (("VFO-тип ігнорується (картка VFO читається як канал)", re.sub(r"_Bool isVfo = \(vfoType != [^)]*\);", "_Bool isVfo = 0;", rr)),
-            ("замок AES завжди", rr.replace("uiChannelDataHasAes(&tmp)", "1")), ("конверт завжди", rr.replace("if (un > 0U)", "if (1)")),
-            ("S-метр завжди", re.sub(r"if \(active\)(\s*\{\s*dualMeterRow)", r"if (1)\1", rr, count=1)))
-    for what, mf in muts:
-        if mf == rr:
-            check(False, "FIX6 (мутант) %s: заміна не відбулась" % what); continue
-        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], fn[3], fn[4]] + mid + [mf])})
-        check(mo is not None and mo != base, "FIX6 (мутант): %s -- ловиться тестами" % what)
-    for what, md, me in mutd:
-        if md == fn[3] and me == fn[4]:
-            check(False, "R98 (мутант) %s: заміна не відбулась" % what); continue
-        mo = run_c(ROW_HARNESS % {"fns": defs + "\n".join([fn[0], fn[1], fn[2], md, me] + mid + [rr])})
-        check(mo is not None and mo != base, "R98 (мутант): %s -- ловиться тестами" % what)
-    # А3: у dual-коді не лишилось рядків-прочерків
-    blk = src[src.find("static uint32_t dualDestination"):src.find("bool uiChannelModeDualScreenShown")]
-    check(re.search(r'"-{2,}"', blk) is None and re.search(r'"-{2,}"', src[src.find("static void dualRenderScreen"):src.find("void uiChannelModeColdStart")]) is None, "FIX7 А3: у коді карток нема рядків-прочерків («--», «---»)")
-
 def main():
     if not shutil.which("gcc"):
         print("ПРОПУСК: gcc нема"); return 0
@@ -1593,11 +1416,9 @@ def main():
     test_quickmenu_fix(incs, dict(cfgs))
     test_fix2(incs, dict(cfgs))
     test_fix5_z1(incs, dict(cfgs))
-    test_fix5_z2(incs, dict(cfgs))
     test_fix7_a1()
     test_lang()
     test_cps()
-    test_vs_base(incs, cfgs)
     print("test_r97: ПРОВАЛІВ: %d (з %d перевірок)" % (len(FAILS), N[0]))
     return 1 if FAILS else 0
 

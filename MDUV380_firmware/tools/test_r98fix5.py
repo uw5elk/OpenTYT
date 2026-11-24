@@ -703,104 +703,6 @@ def analyse(D, line):
     return prims, z, bad, ov, txt, arrow
 
 
-def test_layout(t, src):
-    if "#define DW_ROW1_DY" in src:
-        print("ПРОПУСК: Б2/Б3 -- розкладку 5 рядків R98-FIX5 замінено в R98-FIX6 Г (4 рядки); зони, накладання й вміст перевіряє tools/test_r98fix6.py")
-        return None
-    D = consts(src)
-    need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_IN_R", "DW_LET_BOX_X", "DW_LET_BOX_DY", "DW_LET_BOX_W", "DW_LET_BOX_H", "DW_LET_X", "DW_LET_DY",
-            "DW_TXT_X", "DW_FULL_X", "DW_LINE1_DY", "DW_LINE2_DY", "DW_LINE3_DY", "DW_LINE3_MAX", "DW_LOCK_X", "DW_LOCK_DY", "DW_LINE4_DY", "DW_LINE4_MAX", "DW_ARROW_DY",
-            "DW_METER_DY", "DW_METER_H", "DW_TAG_W", "DW_METER_X", "DW_METER_SEG_W", "DW_METER_STEP", "DW_METER_SEGS", "DW_METER_HOT", "DW_UN_X", "DW_UN_ENV_X", "DW_UN_NUM_X", "DW_UN_W",
-            "DW_AP_W", "DW_AP_DY", "DW_AP_H", "DW_AP_X_ALONE", "DW_AP_X_WITH_D", "DW_AP_RES"]
-    check(all(k in D for k in need), "Б3: усі константи розкладки DW_* знайдено й обчислено: нема %s" % [k for k in need if k not in D])
-    if not all(k in D for k in need):
-        return
-    g = type("G", (), D)
-    check(g.DW_CARD_A_Y == 11 and g.DW_CARD_B_Y + g.DW_CARD_H == 128 and g.DW_CARD_B_Y >= g.DW_CARD_A_Y + g.DW_CARD_H, "Б2: дві рівні картки (57 px) під шапкою, без накладання, B до y=127")
-    check(g.DW_IN_R == g.DW_CARD_X + g.DW_CARD_W - 3, "Б3: остання внутрішня колонка -- на 1 px лівіше рамки")
-    check(g.DW_LET_X >= g.DW_LET_BOX_X + 1 and g.DW_LET_X + 8 <= g.DW_LET_BOX_X + g.DW_LET_BOX_W - 1 and g.DW_LET_DY + 16 <= g.DW_LET_BOX_DY + g.DW_LET_BOX_H - 1 and g.DW_LET_BOX_X + g.DW_LET_BOX_W < g.DW_TXT_X,
-          "Б2: мала літера 8x16 (половина 16x32) у рамці 10x18, лівіше рядків 1-2")
-    check(g.DW_LET_BOX_DY + g.DW_LET_BOX_H - 1 < g.DW_LINE3_DY, "Б2: рамка літери закінчується над рядком 3 (рядки 3-5 -- на всю ширину)")
-    check(g.DW_LINE1_DY + 8 <= g.DW_LINE2_DY and g.DW_LINE2_DY + 16 <= g.DW_LOCK_DY and g.DW_LINE2_DY + 16 <= g.DW_LINE3_DY and g.DW_LOCK_DY + 9 <= g.DW_ARROW_DY and g.DW_LINE3_DY + 8 <= g.DW_ARROW_DY and
-          g.DW_ARROW_DY + 10 <= g.DW_METER_DY and g.DW_LINE4_DY >= g.DW_ARROW_DY and g.DW_LINE4_DY + 8 <= g.DW_ARROW_DY + 10 and g.DW_METER_DY + g.DW_METER_H <= g.DW_CARD_H - 1 and g.DW_AP_DY >= 1,
-          "Б3: рядки 1 (8), 2 (16), 3 (8) / замок (9), 4 (8, стрілка 10), 5 (S-метр) по вертикалі не перетинаються й лишаються в картці")
-    check(g.DW_TXT_X + 16 * 8 - 1 <= g.DW_IN_R and g.DW_FULL_X + g.DW_LINE3_MAX * 6 <= g.DW_LOCK_X and g.DW_LOCK_X + 10 <= g.DW_IN_R + 1, "Б3: рядок 2 (16 символів 8x16) і рядок 3 (до 23 символів) не заходять на замок / за край")
-    last = g.DW_METER_X + (g.DW_METER_SEGS - 1) * g.DW_METER_STEP + g.DW_METER_SEG_W - 1
-    check(g.DW_FULL_X + g.DW_TAG_W <= g.DW_METER_X and last <= g.DW_IN_R and g.DW_METER_SEG_W <= g.DW_METER_STEP and g.DW_METER_SEGS == 11 and g.DW_METER_HOT == 2,
-          "Б2: S-метр на всю ширину картки: мітка RX x=%d..%d, 11 сегментів x=%d..%d (з них 2 останні червоні -- S9+10/S9+20)" % (g.DW_FULL_X, g.DW_FULL_X + g.DW_TAG_W - 1, g.DW_METER_X, last))
-    check(g.DW_UN_X + 6 < g.DW_UN_ENV_X and g.DW_UN_ENV_X + 8 < g.DW_UN_NUM_X and g.DW_UN_NUM_X + 6 - 1 == g.DW_IN_R and g.DW_AP_X_ALONE + g.DW_AP_W - 1 == g.DW_IN_R and
-          g.DW_AP_X_WITH_D + g.DW_AP_W < g.DW_UN_X and g.DW_IN_R + 1 - g.DW_UN_X < g.DW_UN_W and g.DW_AP_RES >= g.DW_AP_W + 2,
-          "Б2: значки праворуч у рядку 1: SMS «D» x=%d..%d; APRS сам x=%d..%d, поряд з «D» x=%d..%d -- без накладання" % (g.DW_UN_X, g.DW_IN_R, g.DW_AP_X_ALONE, g.DW_IN_R, g.DW_AP_X_WITH_D, g.DW_AP_X_WITH_D + g.DW_AP_W - 1))
-    fns = [T.carve_fn(t, s) for s in ROW_SIGS]
-    tl = T.pp(FW, INCS, CF["DUALCH"], "application/source/functions/lc_distance.c") or ""
-    fa = T.carve_fn(tl, "void lcDistArrowAfter(lcDistArrow_t *a, const lcDistSpan_t *tail, const lcDistSpan_t *above, int16_t screenW, uint16_t bearingDeg)")
-    check(all(fns) and fa is not None, "Б2: функції картки і lcDistArrowAfter знайдено: %s" % [s.split("(")[0] for s, f in zip(ROW_SIGS, fns) if not f])
-    if not (all(fns) and fa):
-        return
-    code = lambda f: ROW_HARNESS.replace("@@FNS@@", fa + "\n" + "\n".join(f))
-    out = run_c(code(fns))
-    check(out is not None, "Б2: хостова збірка карток")
-    o = kv(out)
-    res = {}
-    for k in ("a1", "b1", "b2", "b3", "b4", "a2", "a3", "a4"):
-        prims, z, bad, ov, txt, arrow = analyse(D, o.get(k))
-        res[k] = (prims, txt, arrow)
-        check(o.get(k) is not None and not bad and not ov, "Б3 (%s): кожен елемент -- у своїй зоні картки, зони не перетинаються: поза зонами %s, перетини %s" % (k, bad[:3], ov))
-    p, txt, arrow = res["a1"]
-    check(len(txt) >= 6 and txt[0] == "A" and txt[1].startswith("39 WWWW") and len(txt[1]) == (D["DW_IN_R"] + 1 - D["DW_TXT_X"] - D["DW_UN_W"]) // 6 and "D" in txt and "3" in txt,
-          "Б2 (a1): рядок 1 «номер назва» обрізаний перед значком «D» (%d символів), значок «D» з числом: %s" % ((D["DW_IN_R"] + 1 - D["DW_TXT_X"] - D["DW_UN_W"]) // 6, txt))
-    check("CALLSIGN NAME 16" in txt and any(x.startswith("TS") and "CC15" in x and "TG 91" in x for x in txt) and any(x == "DMR P4W 1234km" for x in txt) and arrow is not None,
-          "Б2 (a1): рядок 2 -- абонент, рядок 3 -- TS/CC/ТГ виклику, рядок 4 -- режим + потужність каналу (рівень 5 -> P4) + відстань, стрілка одразу після: %s" % txt)
-    lt = [x for x in p if x[4] == "T" and x[6] == "A"][0]
-    lb = [x for x in p if x[0] == D["DW_LET_BOX_X"] and x[2] == D["DW_LET_BOX_W"]]
-    check(lt[5] == 1 and lb and lb[0][4] == "f", "Б2 (a1): обрана картка -- рамка літери залита, літера інверсна")
-    check(any(x[4] == "k" for x in p) and any(x[4] == "T" and x[6] == "RX" for x in p), "Б2 (a1): замок AES і S-метр (активна)")
-    if arrow:
-        r4 = [x for x in p if x[4] == "T" and x[6].startswith("DMR")][0]
-        check(arrow[0] - (r4[0] + r4[2]) == 2 + 1 or arrow[0] - (r4[0] + r4[2]) in (2, 3), "Б2 (a1): стрілка -- одразу після тексту рядка 4 (зазор LC_ARROW_GAP): текст до x=%d, комірка від x=%d" % (r4[0] + r4[2] - 1, arrow[0]))
-    segs = [x for x in p if x[4] in "fr" and x[2] == D["DW_METER_SEG_W"] and x[3] == D["DW_METER_H"]]
-    check(len(segs) == D["DW_METER_SEGS"], "Б2 (a1): S-метр -- %d сегментів: %d" % (D["DW_METER_SEGS"], len(segs)))
-    p, txt, arrow = res["b1"]
-    lt = [x for x in p if x[4] == "T" and x[6] == "B"][0]
-    lb = [x for x in p if x[0] == D["DW_LET_BOX_X"] and x[2] == D["DW_LET_BOX_W"]]
-    check(lt[5] == 0 and lb and lb[0][4] == "r", "Б2 (b1): не обрана -- рамка літери контуром, літера звичайна")
-    check("A+" in txt and "D" in txt and "2" in txt and any(x.startswith("11 WWW") for x in txt) and not any(x[6] == "RX" for x in p),
-          "Б2 (b1): «D» (картка-джерело B) і APRS «A+» разом, рядок 1 обрізаний перед обома, неактивна -- без S-метра: %s" % txt)
-    check(any(x == "FM 145.50000" for x in txt) and any(x.startswith("RD023N T67.0 25k") for x in txt) and any(x == "FM P7W" for x in txt),
-          "Б2 (b1): FM -- частота в рядку 2, тони RX/TX + смуга в рядку 3, рядок 4 -- «FM» + загальна потужність (P7W): %s" % txt)
-    p, txt, arrow = res["b2"]
-    check(any(x.startswith("VFO B 430.12500") for x in txt) and "A1" in txt and any(x == "DMR P7W" for x in txt) and any(x[6] == "RX" for x in p),
-          "Б2 (b2): картка VFO B -- «VFO B частота», ТГ VFO, рядок 4 -- загальна потужність, S-метр: %s" % txt)
-    p, txt, arrow = res["b3"]
-    check("1234567890123456" in txt, "Б2 (b3): поле набору -- у рядку 2 картки з покажчиком: %s" % txt)
-    check("TG Four" in res["b4"][1] and "TG Two" not in res["b4"][1], "А2/Б2 (b4): картка B (рація на A) показує свій ТГ (s_dualTgIdxB), не ТГ A: %s" % res["b4"][1])
-    check("TG Ukraine 255" in res["a2"][1] and "TG Four" not in res["a2"][1], "А2/Б2 (a2): картка A (рація на A) -- ТГ з індексу налаштувань (0 -> перший у списку), не ТГ B: %s" % res["a2"][1])
-    check("DMR P2W" in res["a3"][1], "Б2 (a3): незбережена правка A (потужність у канальному буфері) -- видно на картці (DMR P2W): %s" % res["a3"][1])
-    check(res["a4"][2] is None and "DMR P4W 1234km" in res["a4"][1], "Б2 (a4): азимут не визначений -- відстань без стрілки: %s" % res["a4"][1])
-    # мутанти
-    rr = fns[-1]
-    muts = (("рядок 1 не обрізається перед значками", "b1", rr.replace("l1[l1max] = 0;", ";")),
-            ("APRS завжди праворуч (на місці «D»)", "b1", rr.replace("int16_t ax = ((un > 0U) ? 119 : 143);", "int16_t ax = 143;")),
-            ("ТГ B береться зі спільного індексу", "b4", None))
-    for what, key, m in muts:
-        f2 = list(fns)
-        if m is None:
-            f2[9] = re.sub(r"return \(isB \? \(int16_t\)s_dualTgIdxB : s_dualTgIdxA\);", "return nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE];", fns[9])
-            mo = kv(run_c(code(f2)))
-            check(f2[9] != fns[9] and "TG Four" not in (mo.get(key) or ""), "Б2 (мутант): %s -- ловиться" % what)
-            continue
-        f2[-1] = m
-        mo = kv(run_c(code(f2)))
-        _p, _z, bad, ov, _t, _a = analyse(D, mo.get(key))
-        check(m != rr and (bad or ov), "Б3 (мутант): %s -- накладання ловиться" % what)
-    mr = fns[2].replace("for (int i = 1; i <= 11; i++)", "for (int i = 1; i <= 12; i++)")
-    f2 = list(fns); f2[2] = mr
-    mo = kv(run_c(code(f2)))
-    _p, _z, bad, ov, _t, _a = analyse(D, mo.get("a1"))
-    check(mr != fns[2] and bad, "Б3 (мутант): 12-й сегмент S-метра за краєм картки -- ловиться")
-    return D
-
-
 def test_header(src, uu):
     hd = src[src.find("static void dualRenderHeader(bool force)\n{"):]
     hd = hd[:hd.find("\n}\n")]
@@ -841,25 +743,6 @@ def test_v(tv, tvn, vsrc, ms):
     check("VFO_SCREEN_OPERATION_NORMAL" in vd and "uiDataGlobal.Scan.active" in vd and "uiChannelModeDualEnableFromVfo(" in vd, "В1: vfoDualStart -- не під час сканування частот/розгортки (звук помилки), інакше вмикання з VFO")
 
 
-def test_tokens():
-    """Без прапорця -- токени змінених файлів як у базі 7205514 (з фільтром r96_tokfilter: channelTgStep/channelSquelchStep розгортаються)."""
-    if not base_available():
-        print("ПРОПУСК: база %s недоступна (CI/клон без історії): порівняння токенів з базою не виконано" % BASE)
-        return
-    from r96_tokfilter import strip_r96
-    root = tempfile.mkdtemp(prefix="r98f5b_")
-    try:
-        subprocess.run("git -C %s archive %s MDUV380_firmware | tar -x -C %s" % (os.path.dirname(FW), BASE, root), shell=True, check=True)
-        broot = os.path.join(root, "MDUV380_firmware")
-        files = ["application/source/user_interface/uiChannelMode.c", "application/source/user_interface/uiVFOMode.c", "application/source/user_interface/uiUtilities.c",
-                 "application/source/applicationMain.c", "application/source/user_interface/menuSystem.c"]
-        for name in ("AES0", "ENDATA", "UA"):
-            bad = [rel for rel in files if strip_r96((T.pp(FW, INCS, CF[name], rel) or "").encode()).split() != strip_r96((T.pp(broot, INCS, CF[name], rel) or "").encode()).split()]
-            check(bad == [], "В3/Б1: %s (без прапорця): токени як у базі %s: %r" % (name, BASE, bad))
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
 def test_static(src):
     ru = src[src.find("bool dwRunning = dualIsRunning();"):src.find("if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))")]
     check(re.search(r"if \(dcIsEnabled\(\)\)\s*\{\s*if \(dualHandleKey\(ev\)\)", ru) is not None and "bool toB = (dcPointerB() && (dualSingle() == false));" in ru,
@@ -893,10 +776,8 @@ def main():
     test_tg_copy(t)
     test_zone(t, tdc)
     test_vfo(tv, t)
-    test_layout(t, src)
     test_header(src, uu)
     test_v(tv, tvn, vsrc, ms)
-    test_tokens()
     print("test_r98fix5: ПРОВАЛІВ: %d (з %d перевірок)" % (len(FAILS), N[0]))
     return 1 if FAILS else 0
 

@@ -196,24 +196,6 @@ def test_part_a(t):
           "А4: набір перехоплюється ДО решти логіки режиму (до повернення рації на A для «чужих» клавіш)")
     au = uc[uc.find("static void dualAutoResume(void)\n{"):]
     check("(directChannelNumber != 0)" in au[:900], "А5: поки набір триває (директ-номер або -1 частоти) -- чергування не поновлюється; після -- dualAutoResume()")
-    # А0: доказ причини по тексту бази
-    if base_available():
-        b = base_file("application/source/user_interface/uiChannelMode.c") or ""
-        bh = b[b.find("static bool dualHandleKey(uiEvent_t *ev)\n{"):]
-        bh = bh[:bh.find("\n}\n")]
-        bhe = b[b.find("static void handleEventCore(uiEvent_t *ev)\n#else"):]
-        bhe = bhe[:bhe.find("if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))")]
-        brr = b[b.find("static void dualRenderRow("):]
-        brr = brr[:brr.find("\n}\n")]
-        ok = ("menuGetKeypadKeyValue" not in bh and "directChannelNumber" not in bh and
-              "if (dcIsOnB() && (ev->keys.key != KEY_GREEN)" in bhe and "dualTune(false);" in bhe and
-              "directChannelNumber = (directChannelNumber * 10) + keyval;" in b and "(directChannelNumber - 1) < currentZone.NOT_IN_CODEPLUGDATA_numChannelsInZone" in b and
-              "directChannelNumber" not in brr and "(directChannelNumber != 0)" in b[b.find("static void dualAutoResume(void)\n{"):][:900])
-        check(ok, "А0 (база %s): цифри режим не обробляв -> стоковий прямий номер (ПОЗИЦІЯ в зоні), перед ним рація -> A (обрана картка A), на картці набране не видно, чергування стоїть до зеленої/червоної" % BASE)
-        bdh = b[b.find("static bool dualHoldScreen(void)\n{"):][:1200]
-        check("(directChannelNumber != 0)" in bdh, "А0: під час невидимого набору екран режиму лишався (dualHoldScreen) -- ручка/▲▼ поза чергуванням ішли в стокові обробники (зміна каналу A, ТГ/шумодав)")
-    else:
-        print("ПРОПУСК: база недоступна (CI/клон без історії): А0 по тексту бази не перевірено")
 
 
 # ------------------------------------------------------------------------------------------------ Б
@@ -354,12 +336,6 @@ def test_part_b(t):
           "Б1: стокові ▲/▼ і режим -- одна функція кроку (без дубліката логіки)")
     cs = uc[uc.find("void channelSquelchStep(int dir)\n{"):]
     cs = cs[:cs.find("\n}\n")]
-    if base_available():
-        b = base_file("application/source/user_interface/uiChannelMode.c") or ""
-        check(uc.count("currentChannelData->sql++;") == b.count("currentChannelData->sql++;") and uc.count("currentChannelData->sql--;") == b.count("currentChannelData->sql--;") and
-              "currentChannelData->sql++;" in cs and "currentChannelData->sql--;" in cs, "Б1: крок шумодава екрана каналу перенесено в channelSquelchStep (не скопійовано): лічильник ++/-- як у базі")
-    else:
-        print("ПРОПУСК: база недоступна (CI/клон без історії): Б1 порівняння з базою не виконано")
     # s_dualSqlB скидається при КОЖНІЙ зміні B у режимі
     sets = [m.start() for m in re.finditer(r"dcSetChannelB\(|dcSetTypeB\(", uc)]
     lines = [uc.count("\n", 0, p) + 1 for p in sets]

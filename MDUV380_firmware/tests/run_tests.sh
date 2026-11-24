@@ -154,6 +154,23 @@ NOFIX_TOO=(test_aes_txphase)
 rm -rf "$BUILD" && mkdir -p "$BUILD"
 
 pass=0; fail=0; notk=0
+# R105: облік пропусків. Тест, що мовчки пропустив частину перевірок, -- НЕ «пройдено»: кожен рядок «ПРОПУСК…» з виводу python-тесту
+# (і «ПРОПУЩЕНО…» цього скрипта) рахується й друкується. Очікуваний пропуск -- лише через відсутність в оточенні gcc, Pillow/PIL,
+# numpy/scipy, tkinter/xvfb (перелік EXPECTED_SKIP_RE). Усе інше -- НЕОЧІКУВАНИЙ пропуск; у режимі CI (змінна CI=true, її ставить
+# GitHub Actions) він дорівнює провалу.
+skip_exp=0; skip_unexp=0
+EXPECTED_SKIP_RE='gcc нема|нема Pillow|PIL нема|Pillow|Tk/xvfb|numpy/scipy|tkinter|xvfb-run'
+note_skips() {   # $1 -- назва тесту, $2 -- його повний вивід
+	local name="$1" line
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		if printf '%s' "$line" | grep -qE "$EXPECTED_SKIP_RE"; then
+			skip_exp=$((skip_exp + 1)); echo "  ПРОПУСК (очікуваний, оточення) [$name]: ${line:0:150}"
+		else
+			skip_unexp=$((skip_unexp + 1)); echo "  ПРОПУСК (НЕОЧІКУВАНИЙ) [$name]: ${line:0:150}"
+		fi
+	done < <(printf '%s\n' "$2" | grep -E '^ПРОПУСК')
+}
 # R76B: вивід невдалого тесту для логу CI: усі рядки з ПРОВАЛ/FAIL/Traceback/Error (до 40) і хвіст (до 40 рядків). Раніше було лише tail -10, а
 # його забивав шум (рядки «Супутники записані…»), тож причину падіння в CI було не видно. Формат рядків ok/ПРОВАЛ/ПРОПУЩЕНО не змінено.
 show_fail() {
@@ -168,6 +185,7 @@ for src in "$TESTS_DIR"/test_*.c; do
 
 	if [ -z "${SRCS[$name]+x}" ]; then
 		echo "ПРОПУЩЕНО $name -- немає запису в таблиці SRCS цього скрипта"
+		skip_unexp=$((skip_unexp + 1))
 		continue
 	fi
 	extra="${SRCS[$name]}"   # може бути порожнім -> самодостатній тест (лінкуємо лише сам файл)
@@ -388,13 +406,13 @@ for T in test_contact_edit test_gui_theme test_aprs_beacon_cfg test_cps_ui test_
 			TMO=240; [ "$T" = "test_r50fix" ] && TMO=900; [ "$T" = "test_r53_ui" ] && TMO=600; [ "$T" = "test_r98fix13" ] && TMO=900; [ "$T" = "test_r98fix15" ] && TMO=900; [ "$T" = "test_r100cps" ] && TMO=600
 			out="$(timeout "$TMO" xvfb-run -a "$PYTK" -B "$TESTS_DIR/../tools/$T.py" 2>&1)"; rc=$?
 			if [ "$rc" -eq 0 ]; then
-				pass=$((pass + 1)); echo "ok            $T (python + Tk під xvfb)"
+				pass=$((pass + 1)); echo "ok            $T (python + Tk під xvfb)"; note_skips "$T" "$out"
 			else
 				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python + Tk під xvfb)"; [ "$rc" -eq 124 ] && echo "  (перевищено ліміт часу ${TMO} с)"; show_fail "$out"
 			fi
 		else
 			if out="$(python3 -B "$TESTS_DIR/../tools/$T.py" 2>&1)"; then
-				pass=$((pass + 1)); notk=$((notk + 1)); echo "ok            $T (python; частину з Tk пропущено -- нема tkinter або xvfb-run)"
+				pass=$((pass + 1)); notk=$((notk + 1)); echo "ok            $T (python; частину з Tk пропущено -- нема tkinter або xvfb-run)"; note_skips "$T" "$out"
 			else
 				fail=$((fail + 1)); echo "ПРОВАЛ        $T (python)"; show_fail "$out"
 			fi
@@ -407,13 +425,14 @@ done
 if [ -z "$FILTER" ] || [[ "test_dmr_data_rx" == *"$FILTER"* ]]; then
 	if python3 -c "import numpy, scipy" 2>/dev/null; then
 		if out="$(python3 "$TESTS_DIR/../tools/test_dmr_data_rx.py" 2>&1)"; then
-			pass=$((pass + 1)); echo "ok            test_dmr_data_rx (python)"
+			pass=$((pass + 1)); echo "ok            test_dmr_data_rx (python)"; note_skips "test_dmr_data_rx" "$out"
 		else
 			fail=$((fail + 1)); echo "ПРОВАЛ        test_dmr_data_rx (python)"
 			printf '%s\n' "$out" | tail -20
 		fi
 	else
 		echo "ПРОПУЩЕНО     test_dmr_data_rx (python) -- немає numpy/scipy"
+		skip_exp=$((skip_exp + 1))
 	fi
 fi
 
@@ -421,7 +440,7 @@ fi
 # Окремим блоком (а не в списку вище), щоб патчі R101 і R102 застосовувались у будь-якому порядку без конфлікту.
 if [ -z "$FILTER" ] || [[ "test_r102tone" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_r102tone.py" 2>&1)"; then
-		pass=$((pass + 1)); echo "ok            test_r102tone (python)"
+		pass=$((pass + 1)); echo "ok            test_r102tone (python)"; note_skips "test_r102tone" "$out"
 	else
 		fail=$((fail + 1)); echo "ПРОВАЛ        test_r102tone (python)"; show_fail "$out"
 	fi
@@ -431,7 +450,7 @@ fi
 # Окремим блоком (а не в списку вище) -- як R101/R102, щоб патчі застосовувались у будь-якому порядку без конфлікту. Без Tk, потрібен gcc.
 if [ -z "$FILTER" ] || [[ "test_r103tone" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/test_r103tone.py" 2>&1)"; then
-		pass=$((pass + 1)); echo "ok            test_r103tone (python)"
+		pass=$((pass + 1)); echo "ok            test_r103tone (python)"; note_skips "test_r103tone" "$out"
 	else
 		fail=$((fail + 1)); echo "ПРОВАЛ        test_r103tone (python)"; show_fail "$out"
 	fi
@@ -440,13 +459,24 @@ fi
 # R80: README.md -- відносні посилання, якорі й зображення (docs/img, до 300 КБ), без слова «виправлено» (tools/check_readme_links.py, самоперевірка всередині).
 if [ -z "$FILTER" ] || [[ "check_readme_links" == *"$FILTER"* ]]; then
 	if out="$(python3 -B "$TESTS_DIR/../tools/check_readme_links.py" 2>&1)"; then
-		pass=$((pass + 1)); echo "ok            check_readme_links (python)"
+		pass=$((pass + 1)); echo "ok            check_readme_links (python)"; note_skips "check_readme_links" "$out"
 	else
 		fail=$((fail + 1)); echo "ПРОВАЛ        check_readme_links (python)"; show_fail "$out"
 	fi
 fi
 
 echo
+# R105: підсумок пропусків; у CI неочікуваний пропуск -- провал (тест, що мовчки пропустився, не «пройдено»)
+echo "Пропущено перевірок: очікуваних (немає gcc/Pillow/numpy/Tk у оточенні) $skip_exp, неочікуваних $skip_unexp"
+if [ "$skip_unexp" -gt 0 ]; then
+	if [ "${CI:-}" = "true" ]; then
+		echo "ПРОВАЛ        режим CI: неочікуваних пропусків $skip_unexp -- кожен пропуск має бути прибраний або пояснений (див. рядки «ПРОПУСК (НЕОЧІКУВАНИЙ)» вище)"
+		fail=$((fail + 1))
+	else
+		echo "УВАГА: неочікуваних пропусків $skip_unexp (у CI це був би провал)"
+	fi
+fi
+if [ "$skip_exp" -gt 0 ]; then echo "УВАГА: очікуваних пропусків $skip_exp -- у оточенні бракує інструмента; це не прогін як у CI"; fi
 echo "Тестів пройдено: $pass, провалено: $fail"
 # R98-FIX14: мовчазний пропуск Tk-частини -- видно в підсумку (CI має xvfb і tkinter; без них частину перевірок не виконано)
 if [ "$notk" -gt 0 ]; then echo "УВАГА: у $notk тестах Tk-частину пропущено (нема tkinter або xvfb-run) -- це не прогін як у CI"; fi

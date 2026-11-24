@@ -323,93 +323,6 @@ def analyse(D, line):
     return ps, el, boxes, bad, ov, out, txt
 
 
-def test_layout(t, src, png_dir):
-    if "#define DW_SEL_X" in src:
-        print("ПРОПУСК: В/Г -- розкладку FIX6 (рамка обраної 2 px, літера 10x16) замінено в R98-FIX8 Б (смуга + ▶, літера 11x15); перевіряє tools/test_r98fix8.py")
-        return None
-    D = F5.consts(src)
-    need = ["DW_CARD_X", "DW_CARD_W", "DW_CARD_H", "DW_CARD_A_Y", "DW_CARD_B_Y", "DW_FRAME_SEL", "DW_IN_L", "DW_IN_R", "DW_ROW1_DY", "DW_ROW2_DY", "DW_ROW3_DY", "DW_ROW4_DY",
-            "DW_LET_W", "DW_LET_X", "DW_ROW1_TX", "DW_ICON_DY", "DW_ICON_GAP", "DW_LOCK_W", "DW_UN_W", "DW_AP_W", "DW_AP_H", "DW_ROW3_MAX", "DW_ARROW_DY", "DW_ARROW_CELL",
-            "DW_METER_H", "DW_TAG_W", "DW_METER_SEG_W", "DW_METER_STEP", "DW_METER_SEGS", "DW_METER_X", "DW_METER_HOT"]
-    check(all(k in D for k in need), "Г1: усі константи розкладки DW_* знайдено й обчислено: нема %s" % [k for k in need if k not in D])
-    if not all(k in D for k in need):
-        return
-    g = type("G", (), D)
-    frameR = g.DW_CARD_X + g.DW_CARD_W - 1
-    check(g.DW_IN_L - (g.DW_CARD_X + g.DW_FRAME_SEL) == (frameR - g.DW_FRAME_SEL) - g.DW_IN_R, "Г1: однакові поля ліворуч і праворуч від рамки обраної картки (%d px)" % (g.DW_IN_L - (g.DW_CARD_X + g.DW_FRAME_SEL)))
-    check(g.DW_ROW1_DY == g.DW_FRAME_SEL + 1 and g.DW_ROW4_DY + g.DW_METER_H - 1 == g.DW_CARD_H - 1 - g.DW_FRAME_SEL - 1, "Г1: однакові поля зверху й знизу (1 px від рамки обраної)")
-    gaps = [g.DW_ROW2_DY - (g.DW_ROW1_DY + 16), g.DW_ROW3_DY - (g.DW_ROW2_DY + 16), g.DW_ROW4_DY - (g.DW_ROW3_DY + 8)]
-    check(len(set(gaps)) == 1 and gaps[0] >= 1, "Г1: однакові інтервали між рядками: %s" % gaps)
-    check(g.DW_ARROW_DY >= g.DW_ROW2_DY + 16 and g.DW_ARROW_DY + g.DW_ARROW_CELL <= g.DW_ROW4_DY and g.DW_ARROW_DY <= g.DW_ROW3_DY, "Г1: комірка стрілки 10x10 між рядками 2 і 4 (по центру рядка 3)")
-    last = g.DW_METER_X + (g.DW_METER_SEGS - 1) * g.DW_METER_STEP + g.DW_METER_SEG_W - 1
-    check(last == g.DW_IN_R and g.DW_IN_L + g.DW_TAG_W < g.DW_METER_X and g.DW_METER_HOT == 2, "Г3: S-метр: мітка RX ліворуч, %d сегментів вирівняні до правого краю вмісту (x=%d..%d), два останні червоні" % (g.DW_METER_SEGS, g.DW_METER_X, last))
-    check(g.DW_CARD_A_Y == 11 and g.DW_CARD_B_Y + g.DW_CARD_H == 128, "Г1: дві рівні картки під шапкою, B до y=127")
-    fns = [T.carve_fn(t, s) for s in ROW_SIGS]
-    tl = T.pp(FW, INCS, CF["DUALCH"], "application/source/functions/lc_distance.c") or ""
-    fa = T.carve_fn(tl, "void lcDistArrowAfter(lcDistArrow_t *a, const lcDistSpan_t *tail, const lcDistSpan_t *above, int16_t screenW, uint16_t bearingDeg)")
-    check(all(fns) and fa is not None, "Г: функції картки і lcDistArrowAfter знайдено: %s" % [s.split("(")[0] for s, f in zip(ROW_SIGS, fns) if not f])
-    if not (all(fns) and fa):
-        return
-    code = lambda f: ROW_HARNESS.replace("@@FNS@@", fa + "\n" + "\n".join(f))
-    out = run_c(code(fns))
-    check(out is not None, "Г: хостова збірка карток")
-    o = kv(out)
-    keys = ("s1a", "s1b", "s2a", "s2b", "s3a", "s3b", "s4a", "s4b", "s5a", "s5b", "s6b", "s7a")
-    R = {}
-    for k in keys:
-        R[k] = analyse(D, o.get(k))
-        ps, el, boxes, bad, ov, outz, txt = R[k]
-        check(o.get(k) is not None and not bad and not ov and not outz, "Г5 (%s): кожен примітив -- у своєму елементі, елементи не перетинаються, усе в полі вмісту: нерозпізнані %s, перетини %s, поза полем %s" % (k, bad[:2], ov, outz))
-    # В: рамка обраної / необраної
-    fr_sel = [p for p in R["s1a"][1].get("frame", [])]
-    fr_un = [p for p in R["s1b"][1].get("frame", [])]
-    check(len(fr_sel) == g.DW_FRAME_SEL and all(p["fg"] == "BG_MENU_ITEM_SELECTED" for p in fr_sel) and [p["x"] for p in fr_sel] == [g.DW_CARD_X + i for i in range(g.DW_FRAME_SEL)],
-          "В1/В3: рамка обраної картки -- %d px кольором виділення теми (BG_MENU_ITEM_SELECTED): %s" % (g.DW_FRAME_SEL, [(p["x"], p["fg"]) for p in fr_sel]))
-    check(len(fr_un) == 1 and fr_un[0]["fg"] == "FG_DECORATION", "В1/В3: рамка необраної -- 1 px кольором декору: %s" % [(p["x"], p["fg"]) for p in fr_un])
-    la = [p for p in R["s1a"][1]["letter"] if p["k"] in "fr"]; lb = [p for p in R["s1b"][1]["letter"] if p["k"] in "fr"]
-    check(la and la[0]["k"] == "f" and lb and lb[0]["k"] == "r", "В1: літера обраної -- залита, необраної -- контур")
-    fr3a = R["s3a"][1].get("frame", []); fr3b = R["s3b"][1].get("frame", [])
-    check(len(fr3a) == 1 and len(fr3b) == g.DW_FRAME_SEL, "В3: перемикання обраної (▲/▼ або активність) міняє рамку: A тонка, B -- виділена")
-    # Г: вміст
-    tx = R["s2a"][6]
-    check(tx.get("row1") == ["39 R2 Kyiv 145.7"] and tx.get("row2") == ["UR5EQF Bogdan"] and tx.get("row3R") == ["1234km"] and "arrow" in R["s2a"][2] and R["s2a"][2]["arrow"][2] == g.DW_IN_R,
-          "Г (s2a): рядок 1 «номер назва» 8x16, рядок 2 -- абонент, праворуч у рядку 3 -- відстань, стрілка біля правого краю: %s" % tx)
-    check(tx.get("row3L", [""])[0].startswith("TS") and "TG 91" in tx.get("row3L", [""])[0], "Г (s2a): ліворуч у рядку 3 -- TS/CC/ТГ виклику: %s" % tx.get("row3L"))
-    r3r = [p for p in R["s1a"][1].get("row3R", [])]
-    check(R["s1a"][6].get("row3R") == ["DMR P4W"] and r3r and r3r[0]["x"] + r3r[0]["w"] - 1 == g.DW_IN_R, "Г (s1a): режим і потужність -- праворуч у рядку 3, вирівняні до правого краю: %s" % R["s1a"][6].get("row3R"))
-    check(R["s1b"][6].get("row2") == ["FM 145.60000"] and R["s1b"][6].get("row3L") == ["88.5 25k"] and R["s1b"][6].get("row3R") == ["FM P7W"], "Г (s1b): FM -- частота в рядку 2, тон і смуга ліворуч, «FM P7W» праворуч: %s" % R["s1b"][6])
-    check("meter" not in R["s1a"][1] and "meter" in R["s3b"][1], "В2/Г: S-метр лише на активній картці; неактивна -- рядок 4 порожній")
-    segs = [p for p in R["s3b"][1]["meter"] if p["k"] in "fr" and p["w"] == g.DW_METER_SEG_W]
-    hot = [p for p in segs if p["fg"] == "FG_RSSI_BAR_S9P"]
-    check(len(segs) == g.DW_METER_SEGS and len(hot) == 2 and min(p["x"] for p in hot) > max(p["x"] for p in segs if p["fg"] != "FG_RSSI_BAR_S9P"),
-          "Г3 (s3b): %d сегментів, сильний сигнал -- два останні червоні (FG_RSSI_BAR_S9P)" % g.DW_METER_SEGS)
-    t4a = R["s4a"][6]; t4b = R["s4b"][6]
-    check("lock" in R["s4a"][2] and R["s4a"][2]["lock"][2] == g.DW_IN_R and "D" in R["s4a"][2] and t4a.get("row1", [""])[0].startswith("13 Long") and len(t4a["row1"][0]) < len("13 Long name 16 chr"),
-          "Г (s4a): замок біля правого краю, ліворуч від нього -- значок «D»; довга назва обрізана перед значками: %s" % t4a.get("row1"))
-    check(t4b.get("row1", [""])[0].startswith("VFOB 430.1") and "aprs" in R["s4b"][2] and "D" in R["s4b"][2] and R["s4b"][2]["aprs"][2] == g.DW_IN_R, "Г (s4b): B = VFO -- «VFOB частота», APRS «A» біля правого краю, ліворуч -- «D»: %s" % t4b)
-    check(R["s5b"][6].get("row2") == ["1234567890123456"], "Г (s5b): поле набору -- у рядку 2 картки з покажчиком")
-    s6 = R["s6b"][2]
-    check(all(k in s6 for k in ("lock", "aprs", "D", "row1")) and s6["lock"][2] == g.DW_IN_R, "Г2 (s6b): найгірший рядок 1 -- назва + замок + APRS + D, без накладань: %s" % R["s6b"][6].get("row1"))
-    check("arrow" not in R["s7a"][2] and R["s7a"][6].get("row3R") == ["1234km"], "Г (s7a): азимут не визначений -- відстань без стрілки")
-    # мутанти
-    rr = fns[-1]
-    muts = (("рядок 1 не обрізається перед значками", "s6b", rr.replace("l1[l1max] = 0;", ";")),
-            ("рядок 3 ліворуч не обрізається перед правим текстом", "s2a", rr.replace("l3[l3max] = 0;", ";").replace("size_t l3max = (size_t)(((rx - 6) - 4) / 6);", "size_t l3max = 0;")),
-            ("рамка обраної -- 1 px (виділення не видно)", "s1a", rr.replace("k < 2; k++", "k < 1; k++")))
-    for what, key, m in muts:
-        f2 = list(fns); f2[-1] = m
-        mo = kv(run_c(code(f2)))
-        if "рамка" in what:
-            r = analyse(D, mo.get(key))
-            check(m != rr and len(r[1].get("frame", [])) != g.DW_FRAME_SEL, "В3 (мутант): %s -- ловиться" % what)
-            continue
-        r = analyse(D, mo.get(key))
-        check(m != rr and (r[3] or r[4] or r[5]), "Г5 (мутант): %s -- накладання ловиться" % what)
-    if png_dir:
-        snapshots(D, o, png_dir)
-    return D
-
-
 def snapshots(D, o, png_dir):
     """Г4: PNG через screen_sim (справжні шрифти прошивки з HX8353E_charset_UA.h, стокова денна тема). Шапка -- як uiUtilityRenderHeaderDw («DW», заряд, час);
     замок AES -- спрощений контур 10x9 (справжній значок малює uiDrawAesIconAt, у моделі його бітмапа нема)."""
@@ -516,7 +429,6 @@ def main():
     check(t != "" and tu != "", "препроцесування uiChannelMode.c / uiUtilities.c (DUALCH)")
     test_header(t, tu, src, am)
     test_transitions(t)
-    test_layout(t, src, png)
     test_cps()
     test_audit(src)
     print("test_r98fix6: ПРОВАЛІВ: %d (з %d перевірок)" % (len(FAILS), N[0]))

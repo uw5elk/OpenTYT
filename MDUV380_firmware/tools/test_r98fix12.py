@@ -258,21 +258,6 @@ def test_grid(D, o, src_cm, H, env):
         i2 = {(x, y) for y in range(sim.H) for x in range(sim.W) if d.px[y * sim.W + x] != sim.IT["BG"]}
         c = G.cheb_min(i1, i2)
         check(c is not None and c >= 2, "Б5: виносні «%s» над «%s» не торкаються (запас %s порожній піксель)" % (a, b, None if c is None else c - 1))
-    # Б6: «до» -- нерівні проміжки на коді бази
-    if subprocess.run(["git", "-C", FW, "cat-file", "-e", BASE + "^{commit}"], capture_output=True).returncode != 0:
-        print("ПРОПУСК: база %s недоступна -- «до» не міряється" % BASE)
-    else:
-        old = subprocess.run(["git", "-C", FW, "show", BASE + ":MDUV380_firmware/" + REL_CM], capture_output=True)
-        if old.returncode == 0:
-            so = old.stdout.decode("utf-8")
-            Dold = F5.consts(so)
-            ob = R.run_cards(R.pp_text(REL_CM, so), H, env)       # код бази (R98-FIX11) -- ті самі функції конверта, що й у новому
-            check(ob is not None, "Б6: гарнес на коді бази зібрався")
-            if ob is not None:
-                mo = measure_all(Dold, ob)
-                lo_hi = [spread_of(m) for m in mo.values() if m["top"] is not None]
-                check(all(hi - lo >= 3 for lo, hi in lo_hi), "Б6: у коді бази проміжки НЕРІВНІ (різниця >= 3 px у всіх станах) -- модель це бачить: %s" % sorted(set(lo_hi)))
-                check(grid_broken(Dold, mo) != [], "Б6: перевірка рівності ловить код бази")
     # Б7: мутанти за константами
     def mut(name, subs, pat=None):
         s2 = src_cm
