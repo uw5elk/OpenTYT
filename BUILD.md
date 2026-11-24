@@ -73,7 +73,7 @@ python3 MDUV380_firmware/tools/verify_codec_donor.py <donor.bin>     # виво�
 ## Ручна збірка
 ```sh
 cd MDUV380_firmware
-make -j$(nproc)                 # стокова; або: make ENABLE_AES=1
+make -j$(nproc)                 # типова (базовий образ форку); або: make ENABLE_AES=1
 # -> build/openuv380-10w.bin  (~806 КБ: код + зарезервована область кодека)
 ```
 `Makefile` дублює конфігурацію релізу CubeIDE `MDUV380_10W_PLUS_FW` (-Os, `-mcpu=cortex-m4
@@ -100,7 +100,9 @@ CI (`.github/workflows/build.yml`) робить те саме для `ENABLE_AES
 ## AES-збірка
 `ENABLE_AES=1` вбудовує DMRA (сумісне з Motorola/Hytera) шифрування голосу AES-256 — і
 **передачу, і прийом**, сумісне зі стоковою TYT MD-UV390 ("Universal" AES256). Типова збірка
-побайтово ідентична стоковому OpenGD77 (без символів AES). Криптографія лежить у
+(без прапорців) -- базовий образ форку з безумовними виправленнями інтерфейсу й хуками кодека, а НЕ стоковий
+OpenGD77 (без символів AES); додавання функцій під прапорцями її не змінює, контрольну суму див. у
+`tools/default_build.sha256`. Криптографія лежить у
 `application/source/crypto/` (протестована юніт-тестами на хості: FIPS-197 AES, LFSR128d,
 потік ключа OFB, Golay(24,12) late-entry MI, EMB BPTC single block); хуки HR-C6000 і кодека — в
 `HR-C6000.c` і `dmr_codec/codec_interface.c`. Опційна діагностика, вимкнена за замовчуванням,

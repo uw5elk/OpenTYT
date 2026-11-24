@@ -1,0 +1,5 @@
+# Контрольна сума ТИПОВОЇ збірки (make GITVERSION=x, без прапорців, SOURCE_DATE_EPOCH=1700000000): build/openuv380-10w.bin.
+# Формат: sha256  розмір_байт  версія_arm-none-eabi-gcc (як друкує tools/check_default_build.sh --update). Звіряє tools/check_default_build.sh.
+# Типова збірка = базовий образ форку (не стоковий OpenGD77). Еталон міняти лише коли змінено БЕЗУМОВНИЙ код і це записано в STATUS.md.
+# Еталон для компілятора CI (14.2.Rel1) не виміряно -- додати з першого CI-запуску (--update), не вигадувати.
+c9f0f4adebac888cdb616cfd715008cdb6ef10670ef3a9be067b127765396d55  789368  13.2.1 20231009
