@@ -526,7 +526,7 @@ def test_header(src_uu, tu_uu):
     # ліва/права межі
     ps = R.env_prims(r["a99_d99"])
     xs = [p["x"] for p in ps if p["k"] == "r"]
-    check(len(xs) == 2 and xs[0] + 7 >= 16 + 7 and xs[1] + 13 + 2 + 12 <= 97, "В: найширші «A ✉ 99» (з x=16) і «D ✉ 99» (до x=96) -- слоти шапки: корпуси з x=%s" % xs)
+    check(len(xs) == 2 and xs[0] == 22 + 7 and xs[1] + 13 + 2 + 12 <= 97, "В: найширші «A ✉ 99» (з x=22, R111-DWHEAD) і «D ✉ 99» (до x=96) -- слоти шапки: корпуси з x=%s" % xs)
     # зі збірки без APRS_RX -- коду APRS нема; без AES/DMR-даних -- коду D нема
     import test_r97 as T97
     tb = R.pp_text(REL_UU) and T.pp(FW, R.INCS, R.CF["DUALCHBARE"], "application/source/user_interface/uiUtilities.c")
