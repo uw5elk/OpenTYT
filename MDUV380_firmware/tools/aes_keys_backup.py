@@ -180,7 +180,17 @@ def apply_plan(link, plan, log=print, progress=None):
     """R73: слоти ОДНОГО сектора пишуться одним записом (X 1, X 2 на кожен слот, X 3 -- одне стирання), а не слот за слотом (усі слоти 1..15 лежать у секторі 0xDA000,
     тож було до 15 стирань замість 1). Далі звірка читанням: усі слоти групи за один прохід. Групи (сектори) йдуть по черзі; перший збій групи зупиняє решту.
     Збій ЗАПИСУ групи: жоден слот групи не вважається записаним, у повідомленні перелічено слоти групи (стан невідомий -- перевір). Розбіжність звірки: слоти, що збіглися,
-    -- записані; перший, що не збігся, -- помилка. Повертає {written, failed, untouched}; за збій запису винятків не кидає."""
+    -- записані; перший, що не збігся, -- помилка. Повертає {written, failed, untouched}; за збій запису винятків не кидає.
+    R108-FLUSHFIX: запис -- на екрані CPS ('C' 0 до першого запису, 'C' 5 у finally, якщо перезавантаження не було; вкладені виклики не шлють 'C' 0 вдруге):
+    інакше фонові записи прошивки (SMS, RCTL, APRS, DW) могли б зайняти спільний буфер сектора між командами X 1/2/3."""
+    if plan.writes():
+        import cps_restore
+        with cps_restore.cps_screen(link):
+            return _apply_plan_core(link, plan, log, progress)
+    return _apply_plan_core(link, plan, log, progress)
+
+
+def _apply_plan_core(link, plan, log=print, progress=None):
     import phase_timing
     res = {"written": [], "failed": None, "untouched": []}
     todo = plan.writes()
@@ -291,17 +301,19 @@ def restore_keys(link, source, confirm, progress=None, log=print, now=None, post
         log("Скасовано користувачем; ключі в рації не змінено.")
         return {"absent": False, "cancelled": True, "nothingToDo": False, "text": "Скасовано; ключі в рації не змінено.", "plan": plan,
                 "safetyCopy": safety}
-    res = apply_plan(link, plan, log, lambda p, t: prog(10 + 0.85 * p, t))
-    text = result_text(res, plan)
-    matches = None
-    if not res["failed"]:
-        matches = read_radio_keys(link) == expected_table(cur, plan)
-        if not matches:
-            text += "\nУВАГА: після запису таблиця в рації не збігається з очікуваною (поза записаними слотами щось відрізняється). Страхова копія: %s" % safety
-    if post_reset and res["written"]:
-        import cps_restore
-        prog(97, "Перезавантажую рацію...")
-        cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
+    import cps_restore
+    # R108-FLUSHFIX: екран CPS від першого запису до перезавантаження (або 'C' 5 на виході, якщо перезавантаження нема / виняток) -- як custom_region.restore_region
+    with cps_restore.cps_screen(link, open_now=False):
+        res = apply_plan(link, plan, log, lambda p, t: prog(10 + 0.85 * p, t))
+        text = result_text(res, plan)
+        matches = None
+        if not res["failed"]:
+            matches = read_radio_keys(link) == expected_table(cur, plan)
+            if not matches:
+                text += "\nУВАГА: після запису таблиця в рації не збігається з очікуваною (поза записаними слотами щось відрізняється). Страхова копія: %s" % safety
+        if post_reset and res["written"]:
+            prog(97, "Перезавантажую рацію...")
+            cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
     prog(100, "Готово")
     return {"absent": False, "cancelled": False, "nothingToDo": False, "text": text, "plan": plan, "result": res, "safetyCopy": safety,
             "tableMatchesExpected": matches}
