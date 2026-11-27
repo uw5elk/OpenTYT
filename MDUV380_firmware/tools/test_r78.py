@@ -210,6 +210,19 @@ def main():
                 print("test_r78: git archive не вдався -- пункт 9 пропущено")
             else:
                 subprocess.run(["tar", "-x", "-C", root], input=tar.stdout, check=True)
+                # R112-STOCKFIX: Д1 і Д3 СВІДОМО змінили codeplug.c (безумовно, рішення власника). Щоб пункт 9 і далі ловив ЧУЖІ зміни, ті самі дві правки
+                # накладаються на базу; якщо в базі нема стокових шаблонів -- провал (правки R112 мали б бути знайдені рівно один раз).
+                bcp = os.path.join(root, "application", "source", "functions", "codeplug.c")
+                btxt = open(bcp, encoding="utf-8").read()
+                import test_r112stockfix as t112
+                d1_anchor = "\t\t\tdataHeaderAddress += sizeof(codeplugCustomDataBlockHeader_t) + blockHeader->dataLength;"
+                d3_old = ("\t\tSPI_Flash_write(FLASH_ADDRESS_OFFSET + dataHeaderAddress, (uint8_t *)&blockHeader, sizeof(codeplugCustomDataBlockHeader_t));\n"
+                          "\t\tSPI_Flash_write(FLASH_ADDRESS_OFFSET + dataHeaderAddress + sizeof(codeplugCustomDataBlockHeader_t), dataBuf, len);\n\t\treturn true;")
+                cur = open(os.path.join(FW, "application", "source", "functions", "codeplug.c"), encoding="utf-8").read()
+                d3_new = cur[cur.index("\t\t// R112 Д3:"):cur.index("\t\treturn (okHeader && okData);") + len("\t\treturn (okHeader && okData);")]
+                check(btxt.count(d1_anchor) == 1 and btxt.count(d3_old) == 1, "R112: у базі знайдено стокові місця Д1/Д3 для накладання")
+                btxt = btxt.replace(d1_anchor, t112.D1_BLOCK + d1_anchor).replace(d3_old, d3_new)
+                open(bcp, "w", encoding="utf-8").write(btxt)
                 for entry in os.listdir(FW):
                     if entry != "application" and not os.path.exists(os.path.join(root, entry)):
                         os.symlink(os.path.join(FW, entry), os.path.join(root, entry))
