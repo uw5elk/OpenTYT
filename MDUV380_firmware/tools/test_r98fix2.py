@@ -212,7 +212,7 @@ def test_part_d(incs, cf):
     pyd = os.path.join(FW, "tools")
     bad = []
     for f in os.listdir(pyd):
-        if f.endswith(".py") and f not in ("test_r98fix2.py",):
+        if f.endswith(".py") and f not in ("test_r98fix2.py", "test_r106smsstore.py"):   # R106: хост-тест кільця будує синтетичний образ «MSGV», а не розбирає сховище рації
             t = T.rd(os.path.join(pyd, f))
             if "MSGV" in t or "SMS_ENTRY_HDR" in t:
                 bad.append(f)

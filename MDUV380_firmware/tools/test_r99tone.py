@@ -196,7 +196,8 @@ def main():
     runs = [l for l in yml.splitlines() if "run: make" in l and "ENABLE_TONE_REPLY=1" in l]
     check(len(runs) == 1 and "ENABLE_DUAL_CHANNEL=1" in runs[0], "Г13: ENABLE_TONE_REPLY=1 лише в build-ukrainian (її вбудовує прошивальник): %d" % len(runs))
     sc = rd(os.path.join(FW, "tools", "syntax_check.sh"))
-    check(re.search(r"CONFIGS=\([^)]* TONE TONEEN TONEBARE\)", sc) is not None, "Г14: syntax_check -- конфігурації TONE/TONEEN/TONEBARE")
+    # R106: після TONE* у списку йдуть SMSF SMSFEN SMSFBARE
+    check(re.search(r"CONFIGS=\([^)]* TONE TONEEN TONEBARE[ )]", sc) is not None, "Г14: syntax_check -- конфігурації TONE/TONEEN/TONEBARE")
     ua = open(os.path.join(APP, "include", "user_interface", "languages", "tonereply_ua.h"), "rb").read().decode("cp1251")
     mm = dict(re.findall(r'#define\s+(TONEREPLY_\w+)\s+"([^"]*)"', ua))
     lines = [mm["TONEREPLY_MENU_ON"] + ":" + max(mm["TONEREPLY_ON"], mm["TONEREPLY_OFF"], key=len), mm["TONEREPLY_MENU_FREQ"] + ":3000",
