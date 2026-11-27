@@ -318,7 +318,7 @@ def main():
         runs = [l for l in yml.splitlines() if "run: make" in l and "ENABLE_SMS_STORE_FLASH=1" in l]
         check(len(runs) == 1 and "ENABLE_TONE_REPLY=1" in runs[0], "Ж2: ENABLE_SMS_STORE_FLASH=1 лише в build-ukrainian: %d" % len(runs))
         sc = rd(os.path.join(HERE, "syntax_check.sh"))
-        check(" SMSF SMSFEN SMSFBARE)" in sc and 'DEFS_SMSF=("${DEFS_TONE[@]}" -DENABLE_SMS_STORE_FLASH)' in sc, "Ж3: конфігурації SMSF/SMSFEN/SMSFBARE у syntax_check")
+        check(re.search(r" SMSF SMSFEN SMSFBARE[ )]", sc) is not None and 'DEFS_SMSF=("${DEFS_TONE[@]}" -DENABLE_SMS_STORE_FLASH)' in sc, "Ж3: конфігурації SMSF/SMSFEN/SMSFBARE у syntax_check")
         h = rd(os.path.join(APP, "include", "functions", "sms_flash_store.h"))
         check("#if defined(ENABLE_SMS_STORE_FLASH) && defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)\n#define SMS_STORE_FLASH 1" in h, "Ж4: SMS_STORE_FLASH лише з AES і DMR_DATA")
         check("#define SMSF_REGION_ADDR    0x48000UL" in h and "#define SMSF_SLOTS          8U" in h and "#define SMSF_DEFER_S        60U" in h,

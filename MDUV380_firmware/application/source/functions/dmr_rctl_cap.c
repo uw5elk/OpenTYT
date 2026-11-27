@@ -3,7 +3,7 @@
  * хості (tests/test_dmr_rctl_cap.c) так само, як dmr_rctl_pdu.c. */
 #include "functions/dmr_rctl_cap.h"
 
-#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES) && !defined(USB_DIAG_OFF)
 
 #include "crypto/dmr_aes.h"   /* DMR_AES_CCM: тримати стан у CCM, не зсувати .bss основної RAM */
 #include <string.h>
@@ -107,4 +107,12 @@ int dmrRctlCapDump(uint8_t *out, int maxLen)
 	return n;
 }
 
+#elif defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+/* R107-CPSUSB (В4): користувацька збірка (USB_DIAG_OFF) -- захоплення нема: USB-команд 0x98-0x9A немає, кільце в CCM не займає місця.
+ * Заглушки лишаються, бо їх викликають HR-C6000.c (ISR: dmrRctlCapArmed() == 0 -> зайвого читання нема) і applicationMain.c. */
+void dmrRctlCapArm(int on) { (void)on; }
+int dmrRctlCapArmed(void) { return 0; }
+void dmrRctlCapReset(void) { }
+void dmrRctlCapBurst(int type, const uint8_t *p12) { (void)type; (void)p12; }
+int dmrRctlCapDump(uint8_t *out, int maxLen) { (void)out; (void)maxLen; return 0; }
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */

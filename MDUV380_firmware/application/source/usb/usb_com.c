@@ -1656,6 +1656,9 @@ static void cpsHandleCommand(void)
 			hasToReply = true;
 			replyLength = 1;
 			break;
+#if !defined(USB_DIAG_OFF)
+		// R107-CPSUSB (В4): діагностичні команди 0x86/0x8A/0x8B/0x92 -- не в користувацькій збірці (Makefile ENABLE_USB_DIAG=0 ->
+		// -DUSB_DIAG_OFF). Без них ці коди отримують звичайну відповідь '-' (default нижче), як будь-яка невідома команда.
 		case 0x86: // SUB load AES key into RAM only (bench): [2]=keyId, [3..34]=32-byte key
 			dmrAesSetKeyRam(com_requestbuffer[2], (uint8_t *)&com_requestbuffer[3]);
 			usbComSendBuf[0] = com_requestbuffer[0];
@@ -1704,6 +1707,7 @@ static void cpsHandleCommand(void)
 				replyLength = 2 + ((tn > 0) ? tn : 0);
 			}
 			break;
+#endif // !USB_DIAG_OFF
 		case 0x82: // SUB set per-channel AES key: [2..3]=channel index (LE, 1-based), [4]=encrypt
 			{          // encrypt: 0=inherit global TX key, 1..15=AES key slot, 0xFF=force clear
 				int chIdx = com_requestbuffer[2] | (com_requestbuffer[3] << 8);
@@ -1808,12 +1812,14 @@ static void cpsHandleCommand(void)
 			hasToReply = true;
 			replyLength = 1;
 			break;
+#if !defined(USB_DIAG_OFF)
 		case 0x91: // SUB queue + key a DMR data call: [2]=burst count, [3..]=count x (1 type byte + DMR_DATA_BURST_LEN=18 payload; R21: було 12)
 			dmrDataTxLoad((const uint8_t *)&com_requestbuffer[3], com_requestbuffer[2]);
 			usbComSendBuf[0] = com_requestbuffer[0];
 			hasToReply = true;
 			replyLength = 1;
 			break;
+#endif // !USB_DIAG_OFF (0x91)
 #if defined(ENABLE_AES)
 #if defined(ENABLE_SMS_DIAG)
 		// cleanup1 (2026-10-05): SMS-діагностика по USB (tools/sms_diag.py) -- 0x93/0xB3/0xB2/0x94/
@@ -1923,6 +1929,7 @@ static void cpsHandleCommand(void)
 				return; // bypass the trailing generic '-' reply
 			}
 #endif // ENABLE_SMS_DIAG
+#if !defined(USB_DIAG_OFF)
 		case 0x98: // DIAG: arm/disarm сирого захоплення data-burst для реверсу стокового
 			   // протоколу керування (RCTL_COMPAT.md). [2]=1 arm / 0 disarm. Reply:[cmd,armed]
 			dmrRctlCapArm(com_requestbuffer[2] & 0x01);
@@ -1948,6 +1955,7 @@ static void cpsHandleCommand(void)
 			hasToReply = true;
 			replyLength = 1;
 			break;
+#endif // !USB_DIAG_OFF (0x98-0x9A)
 #if defined(ENABLE_WAKE_DIAG)
 		case 0xB7: // R58 DIAG: журнал пробудження ретранслятора (tools/wake_diag.py). [2] біт0=1 -> скинути журнал (відповідь: [cmd]);
 			   //  інакше Reply: [cmd, len_hi, len_lo, ver, макс.сеансів, кількість, 0, directTx u16, 0 u16,
@@ -1970,6 +1978,7 @@ static void cpsHandleCommand(void)
 				return; // bypass the trailing generic '-' reply
 			}
 #endif
+#if !defined(USB_DIAG_OFF)
 		case 0x9B: // DIAG: лічильники прийому СТОКОВИХ команд (форк як ціль).
 			   //  [2] біт0=1 -> скинути лічильники; біт1=1 -> зняти блокування кабелем (recovery).
 			   //  Reply: [cmd, len_hi, len_lo, 23x uint32 LE: seen,lastSrc,Check,Monitor,Enable,Disable,
@@ -1994,6 +2003,24 @@ static void cpsHandleCommand(void)
 				replyLength = n + 3;
 				return; // bypass the trailing generic '-' reply
 			}
+#else
+		case 0x9B: // R107-CPSUSB: користувацька збірка -- лише кабельне розблокування RCTL (біт1, recovery після стокової Disable),
+			   //  без лічильників. Reply: [cmd, 0, 4, inhibited uint32 LE] (tools/rctl_capture.py розпізнає коротку відповідь).
+			if (com_requestbuffer[2] & 0x02) { dmrRctlSetInhibited(0); } // кабельне розблокування
+			{
+				uint32_t inh = (uint32_t)dmrRctlIsInhibited();
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = 0;
+				usbComSendBuf[2] = 4;
+				usbComSendBuf[3] = (uint8_t)(inh);
+				usbComSendBuf[4] = (uint8_t)(inh >> 8);
+				usbComSendBuf[5] = (uint8_t)(inh >> 16);
+				usbComSendBuf[6] = (uint8_t)(inh >> 24);
+				hasToReply = true;
+				replyLength = 7;
+				return; // bypass the trailing generic '-' reply
+			}
+#endif // !USB_DIAG_OFF (0x9B)
 		case 0x9C: // RCTL config (дозволи) через USB -- відновлення після прошивки без меню.
 			   //  [2]=0x00 -> лише прочитати; [2]=0x01 -> записати ([3]=ІГНОРУЄТЬСЯ, [4]=allow-маска).
 			   //  2026-09-18: enabled більше не окремий елемент -- він похідний від маски

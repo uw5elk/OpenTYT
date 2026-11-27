@@ -6,6 +6,9 @@ which does the BPTC/Trellis FEC. So the DMR data framing is built HERE on the PC
 iterated against a HackRF capture + DSD-FME, with no firmware reflash. Requires an
 ENABLE_DMR_DATA firmware build + pyserial. Radio enumerates as USB CDC 1FC9:0094.
 
+R107-CPSUSB: потрібна діагностична збірка (ENABLE_USB_DIAG; типово ввімкнено, немає лише в користувацькій
+openuv380-10w-ukrainian -- там 0x91 отримує відповідь '-', як невідома команда).
+
 Each burst = 1 data-type byte (HR-C6000 reg 0x50: slot-type<<4 | data | hdr | LCSS)
   0x60 = data header, 0x70 = rate-1/2 data, 0x20 = terminator
 followed by 12 payload bytes (the 96 info bits the chip FEC-encodes).

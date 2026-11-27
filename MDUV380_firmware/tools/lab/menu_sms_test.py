@@ -7,6 +7,9 @@ dmrDataTxLoad) fails for every send after the first, while the raw 0x91 burst pa
 flag to skip the store_add() Sent-folder flash write, so the two halves can be isolated
 without pushing radio buttons.
 
+R107-CPSUSB: 0x97 -- лише з ENABLE_SMS_DIAG; порівняльний шлях 0x91 (dmr_data_tx.py) потребує діагностичної збірки
+(ENABLE_USB_DIAG; немає лише в користувацькій openuv380-10w-ukrainian).
+
   python3 menu_sms_test.py "text" [--dst 9661] [--private] [--skip-store] [--port COMx]
 
 Reply byte 2 is dmrSmsSend's int8 result: 0 ok, -1 bad text, -2 TX busy, -3 no key,

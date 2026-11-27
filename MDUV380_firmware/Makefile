@@ -36,6 +36,15 @@ ifeq ($(ENABLE_SMS_DIAG),1)
 DEFS += -DENABLE_SMS_DIAG
 endif
 
+# R107-CPSUSB (В4): діагностичні USB-команди (usb_com.c 0x86, 0x8A, 0x8B, 0x91, 0x92, 0x98-0x9A, лічильники 0x9B) і кільце захоплення
+# dmr_rctl_cap.c. Типово УВІМКНЕНО (ENABLE_USB_DIAG ?= 1) -- усі збірки, крім користувацької, лишаються байт-у-байт як були.
+# Користувацька збірка CI (build-ukrainian) передає ENABLE_USB_DIAG=0 -> -DUSB_DIAG_OFF: ці коди отримують звичайну відповідь '-',
+# а з 0x9B лишається тільки кабельне розблокування RCTL (рішення власника, claude/r107-cpsusb-decisions.md). CPS цих команд не вживає.
+ENABLE_USB_DIAG ?= 1
+ifeq ($(ENABLE_USB_DIAG),0)
+DEFS += -DUSB_DIAG_OFF
+endif
+
 # R58: діагностика пробудження ретранслятора -- журнал сеансів (час до AWAKEN/FAILED, кількість пакетів WAKE_1),
 # пункт «Журнал пробудж.» і USB-команда 0xB7 (tools/wake_diag.py). Лише діагностична збірка; у користувацьких НЕ вмикати.
 # Потребує ENABLE_AES=1 ENABLE_DMR_DATA=1. З R59 пункт живе в меню «Роумінг» (menuRoam.c; раніше -- «Повідомлення»), тож без
