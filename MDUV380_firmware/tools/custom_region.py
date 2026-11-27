@@ -403,6 +403,14 @@ def apply_plan(link, plan, log=print, progress=None):
     жодних винятків за збій запису."""
     if plan.cur_data is None or len(plan.cur_data) != REGION_LEN:
         return _apply_plan_per_block(link, plan, log, progress)
+    if not plan.writes():
+        return _apply_plan_grouped(link, plan, log, progress)
+    import cps_restore
+    with cps_restore.cps_screen(link):          # R107 (В2): рація на екрані CPS, поки пишемо сектори (див. cps_restore.cps_screen)
+        return _apply_plan_grouped(link, plan, log, progress)
+
+
+def _apply_plan_grouped(link, plan, log=print, progress=None):
     import custom_data as cd
     import flash_guard as fg
     import phase_timing
@@ -494,6 +502,14 @@ def apply_plan(link, plan, log=print, progress=None):
 def _apply_plan_per_block(link, plan, log=print, progress=None):
     """Виконати план: (за потреби) заголовок області, далі кожен блок окремо через custom_data.write_block + звірка читанням.
     Збій зупиняє решту. Повертає словник {written, unchanged, failed, untouched, headerWritten}; жодних винятків за збій запису."""
+    if plan.writes():
+        import cps_restore
+        with cps_restore.cps_screen(link):      # R107 (В2): як у apply_plan
+            return _apply_plan_per_block_core(link, plan, log, progress)
+    return _apply_plan_per_block_core(link, plan, log, progress)
+
+
+def _apply_plan_per_block_core(link, plan, log=print, progress=None):
     import custom_data as cd
     ser = link.ser
     res = {"written": [], "unchanged": [i.block for i in plan.items if i.status == ST_SAME], "failed": None, "untouched": [], "headerWritten": False,
@@ -611,18 +627,20 @@ def restore_region(link, source, confirm, selected=None, include_state=False, pr
         log("Скасовано користувачем; область рації не змінено.")
         return {"absent": False, "cancelled": True, "nothingToDo": False, "text": "Скасовано; область рації не змінено.", "plan": plan,
                 "safetyCopy": safety}
-    res = apply_plan(link, plan, log, lambda p, t: prog(10 + 0.85 * p, t))
-    text = result_text(res)
-    matches = None
-    if not res["failed"]:
-        after = read_radio_region(link)
-        matches = after == expected_region(cur, plan)
-        if not matches:
-            text += "\nУВАГА: після запису область у рації не збігається з очікуваною (поза записаними блоками щось відрізняється). Страхова копія: %s" % safety
-    if post_reset and res["written"]:
-        import cps_restore
-        prog(97, "Перезавантажую рацію...")
-        cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
+    import cps_restore
+    # R107 (В2): екран CPS від першого запису до перезавантаження (або 'C' 5 на виході, якщо перезавантаження нема / виняток)
+    with cps_restore.cps_screen(link, open_now=False):
+        res = apply_plan(link, plan, log, lambda p, t: prog(10 + 0.85 * p, t))
+        text = result_text(res)
+        matches = None
+        if not res["failed"]:
+            after = read_radio_region(link)
+            matches = after == expected_region(cur, plan)
+            if not matches:
+                text += "\nУВАГА: після запису область у рації не збігається з очікуваною (поза записаними блоками щось відрізняється). Страхова копія: %s" % safety
+        if post_reset and res["written"]:
+            prog(97, "Перезавантажую рацію...")
+            cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
     prog(100, "Готово")
     return {"absent": False, "cancelled": False, "nothingToDo": False, "text": text, "plan": plan, "result": res, "safetyCopy": safety,
             "regionMatchesExpected": matches}
@@ -737,15 +755,16 @@ def apply_settings(link, blocks, selected, include_state=False, confirm=None, pr
         return {"cancelled": False, "nothingToDo": True, "text": text, "plan": plan}
     if confirm is not None and not confirm(confirm_text(plan, "файла налаштувань", include_state), plan):
         return {"cancelled": True, "nothingToDo": False, "text": "Скасовано; область рації не змінено.", "plan": plan}
-    res = apply_plan(link, plan, log, progress)
-    text = result_text(res)
-    matches = None
-    if not res["failed"]:
-        matches = read_radio_region(link) == expected_region(cur, plan)
-        if not matches:
-            text += "\nУВАГА: після запису область у рації не збігається з очікуваною."
-    if post_reset and res["written"]:
-        import cps_restore
-        cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
-        text += "\nРація перезавантажується."
+    import cps_restore
+    with cps_restore.cps_screen(link, open_now=False):      # R107 (В2): див. restore_region
+        res = apply_plan(link, plan, log, progress)
+        text = result_text(res)
+        matches = None
+        if not res["failed"]:
+            matches = read_radio_region(link) == expected_region(cur, plan)
+            if not matches:
+                text += "\nУВАГА: після запису область у рації не збігається з очікуваною."
+        if post_reset and res["written"]:
+            cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
+            text += "\nРація перезавантажується."
     return {"cancelled": False, "nothingToDo": False, "text": text, "plan": plan, "result": res, "regionMatchesExpected": matches}

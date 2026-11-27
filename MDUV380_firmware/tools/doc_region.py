@@ -184,15 +184,18 @@ def write_region(link, plan, radio_region, safety=None, out_dir=None, log=print,
     if safety is None:
         safety = save_safety(radio_region, out_dir or os.getcwd(), now)
     log("Страхова копія області налаштувань: %s" % safety)
-    res = cr.apply_plan(link, plan, log, progress)
-    text = cr.result_text(res)
-    matches = None
-    if not res["failed"]:
-        matches = cr.read_radio_region(link) == cr.expected_region(radio_region, plan)
-        if not matches:
-            text += "\nУВАГА: після запису область у рації не збігається з очікуваною (поза записаними блоками щось відрізняється)."
-    if post_reset and res["written"]:
-        import cps_restore
-        cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
+    import cps_restore
+    # R107 (В2): екран CPS від першого запису до перезавантаження; без перезавантаження (post_reset=False) екран закриває
+    # зовнішній cps_screen викликача (doc_write) або цей блок ('C' 5), якщо зовнішнього нема
+    with cps_restore.cps_screen(link, open_now=False):
+        res = cr.apply_plan(link, plan, log, progress)
+        text = cr.result_text(res)
+        matches = None
+        if not res["failed"]:
+            matches = cr.read_radio_region(link) == cr.expected_region(radio_region, plan)
+            if not matches:
+                text += "\nУВАГА: після запису область у рації не збігається з очікуваною (поза записаними блоками щось відрізняється)."
+        if post_reset and res["written"]:
+            cps_restore._send_c(link, 6, cps_restore.POST_RESTORE_SUB)
     return {"written": res["written"], "text": text, "safetyCopy": safety, "failed": res["failed"], "regionMatchesExpected": matches,
             "result": res}

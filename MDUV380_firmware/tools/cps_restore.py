@@ -326,7 +326,10 @@ def write_sector(link, raw_addr, data, log=print):
 
 
 def _send_c(link, *args, wait=0.3):
-    """Команда 'C' + аргументи (відповідь не важлива -- як у aes_key_store.show_cps)."""
+    """Команда 'C' + аргументи (відповідь не важлива -- як у aes_key_store.show_cps).
+    R107: 'C' 6 0 / 'C' 6 1 перезавантажують рацію -- екран CPS після цього вже не відкритий (позначка на link скидається)."""
+    if tuple(args[:2]) in ((6, 0), (6, 1)):
+        _mark_screen(link, False)
     ser = link.ser
     old = _set_timeout(ser, wait)
     try:
@@ -341,6 +344,66 @@ def _send_c(link, *args, wait=0.3):
     finally:
         if old is not None:
             _set_timeout(ser, old)
+
+
+# R107-CPSUSB (В2): екран CPS навколо запису.
+# 'C' 0 (usb_com.c, handleCPSRequest): menuSystemPushNewMenu(UI_CPS); uiCPS() при першому запуску запам'ятовує режим радіо
+# (static radioMode) і ставить RADIO_MODE_NONE -- рація не приймає (нових SMS/RCTL/APRS нема), а відкладені записи
+# R101 (aprsMsgStoreTick) і R106 (smsfWriteAllowed) самі чекають, поки поточне меню UI_CPS (не скидаються, не губляться --
+# виконаються після виходу). 'C' 5 (CPS2UI_COMMAND_END) повертає режим радіо й робить menuSystemPopPreviousMenu() БЕЗУМОВНО.
+# Звідси два правила:
+#   * 'C' 0 не можна надсилати двічі поспіль: друге відкриття запам'ятало б RADIO_MODE_NONE як «попередній режим», і після
+#     виходу радіо лишилось би вимкненим -- тому відкриття ідемпотентне (позначка _cps_screen_open на link);
+#   * 'C' 5 не можна надсилати, якщо екран не відкривали -- він закрив би чуже меню; тому закриває лише найзовнішній
+#     cps_screen і лише коли екран справді відкритий (після 'C' 6 0/1 позначка скинута -- рація й так перезавантажується).
+
+def _mark_screen(link, state):
+    try:
+        setattr(link, "_cps_screen_open", bool(state))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def screen_is_open(link):
+    return bool(getattr(link, "_cps_screen_open", False))
+
+
+def screen_open(link):
+    """Показати екран CPS ('C' 0), якщо він ще не відкритий через цей link."""
+    if not screen_is_open(link):
+        _send_c(link, 0)
+        _mark_screen(link, True)
+
+
+class cps_screen:
+    """with cps_screen(link): ... -- екран CPS на час запису. open_now=False: не відкривати на вході (відкриє перший запис),
+    але закрити на виході, якщо хтось відкрив. Вкладені блоки нічого не надсилають; найзовнішній на виході (і при винятку)
+    надсилає 'C' 5, якщо екран ще відкритий (тобто не було перезавантаження 'C' 6 1)."""
+
+    def __init__(self, link, open_now=True):
+        self.link = link
+        self.open_now = open_now
+
+    def __enter__(self):
+        d = getattr(self.link, "_cps_screen_depth", 0)
+        try:
+            setattr(self.link, "_cps_screen_depth", d + 1)
+        except Exception:  # noqa: BLE001
+            pass
+        if self.open_now:
+            screen_open(self.link)
+        return self
+
+    def __exit__(self, *exc):
+        d = getattr(self.link, "_cps_screen_depth", 1) - 1
+        try:
+            setattr(self.link, "_cps_screen_depth", d)
+        except Exception:  # noqa: BLE001
+            pass
+        if d <= 0 and screen_is_open(self.link):
+            _send_c(self.link, 5)
+            _mark_screen(self.link, False)
+        return False
 
 
 # =========================================================================================
@@ -469,7 +532,7 @@ def restore_codeplug(link, zip_path, confirm, progress=None, log=print, clock=ti
         return {"cancelled": True, "safetyCopy": safety, "seconds": round(clock() - t0, 1), "phases": ph.as_list()}
 
     # --- запис (W1.7: лише сектори з плану, тобто лише в межах eeprom/flash із маніфесту) ---
-    _send_c(link, 0)       # показати на рації екран CPS (як робить справжній CPS перед записом)
+    screen_open(link)      # показати на рації екран CPS (як робить справжній CPS перед записом); R107: не вдруге, якщо вже відкритий
     t_write = clock()
     n = len(plan.sectors)
     with ph.phase("запис секторів") as wrec:
