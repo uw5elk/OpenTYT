@@ -1,7 +1,7 @@
 /*
  * R91C (форк): відстань і азимут від власної позиції до позиції кореспондента, прийнятої в GPS-блоці LC 0x08 (decodeGPSPosition(), uiUtilities.c).
  *
- * ENABLE_LC_DISTANCE -- окремий прапорець (типова збірка байт-у-байт стокова). Діє лише разом з APRS-приймачем (APRS_RX, functions/aprs_rx_cfg.h): формат відстані
+ * ENABLE_LC_DISTANCE -- окремий прапорець (типова збірка без змін). Діє лише разом з APRS-приймачем (APRS_RX, functions/aprs_rx_cfg.h): формат відстані
  * береться з aprsRxFormatGeo() (км і м, без миль), тож окремого форматера нема. Геометрія -- наявні distanceBetweenTwoCoords() і courseTo() (uiUtilities.c).
  *
  * Нових налаштувань, масивів і статиків нема: використовуються лише локальні змінні й наявні поля LinkItem_t.locationLat/locationLon.

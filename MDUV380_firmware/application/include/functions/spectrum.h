@@ -14,7 +14,7 @@
  *
  * Everything here is behind ENABLE_SPECTRUM, a DEV-ONLY build flag that must never be
  * set for a release build. It is deliberately independent of ENABLE_AES, ENABLE_DMR_DATA
- * and ENABLE_KEY_INJECTION; stock builds stay byte-identical.
+ * and ENABLE_KEY_INJECTION; builds without it stay unchanged.
  *
  * Driven from the host over USB CPS 'C' subcommands 0xA0 (sweep) and 0xA1 (settle
  * probe); see usb_com.c and tools/sweep.py.

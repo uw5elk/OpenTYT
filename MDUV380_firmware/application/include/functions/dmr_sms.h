@@ -8,7 +8,7 @@
  *   - hardware/HR-C6000.c  : the RX interrupt hands each BPTC-decoded, CRC-checked data
  *                            burst (page 0x02) to dmrSmsRxBurst() for software reassembly.
  *
- * The whole module is behind ENABLE_AES + ENABLE_DMR_DATA, so stock builds are byte-identical.
+ * The whole module is behind ENABLE_AES + ENABLE_DMR_DATA, so builds without these flags are unchanged.
  * Message store lives in the OpenGD77 custom-data MESSAGES block (SPI flash) so it survives a
  * power-cycle; a CCM-RAM working copy is the live store (no net-new main RAM -> AMBE codec
  * buffer addresses don't shift). See dmr_sms.c.

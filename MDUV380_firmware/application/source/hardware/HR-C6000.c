@@ -2599,7 +2599,7 @@ static void hrc6000TriggerPrivateCallQSODataDisplay(void)
 #if defined(ENABLE_AES) && defined(DMR_AES_DIAG_RX)
 /* AES-fix3 C2: «чиста копія» hrc6000SendPcOrTgLCHeader для зрізу в дампі (0x84): ті самі 12 байтів, що пішли б на page 0x02:0x00 у шифрованому
  * виклику, але БЕЗ запису в SPI і без залежності від dmrAesTxActive() (у момент дампу передачі нема). Це ДУБЛЬ, а не рефакторинг: спільну
- * функцію не чіпаємо, щоб типова збірка лишалась байт-у-байт стоковою. Змінюєш hrc6000SendPcOrTgLCHeader -- міняй і тут. */
+ * функцію не чіпаємо, щоб типова збірка лишалась без змін. Змінюєш hrc6000SendPcOrTgLCHeader -- міняй і тут. */
 void hrc6000DiagOursLC(uint8_t lc12[12])
 {
 	lc12[0] = (trxTalkGroupOrPcId >> 24) & 0xFF;

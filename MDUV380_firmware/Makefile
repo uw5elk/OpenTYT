@@ -118,7 +118,7 @@ endif
 # "Scan dwell time" setting, selectable on the radio and via CHIRP. Digital scanning is
 # unchanged (it takes the larger of this and its own DMR timeslot minimum). Unlike
 # ENABLE_SPECTRUM this is a user-facing feature flag, not a dev one -- but it is still a
-# flag so that a build without it stays byte-identical to stock.
+# flag so that a build without it is not changed by it (the default build is the fork's base image, not stock OpenGD77).
 ifeq ($(ENABLE_FAST_SCAN),1)
 DEFS += -DENABLE_FAST_SCAN
 endif
@@ -147,20 +147,20 @@ endif
 # memcpy у задачі hrc6000TaskFunction (не в перериванні), відтворення -- тим самим
 # кодек-шляхом, що й голосові підказки. Незалежний від ENABLE_AES/ENABLE_DMR_DATA --
 # сама фіча про AES не знає нічого, крім "пропустити кадри активного дешифрування".
-# Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
+# Типово вимкнено -- звичайна збірка без змін.
 ifeq ($(ENABLE_CALL_REPLAY),1)
 DEFS += -DENABLE_CALL_REPLAY
 endif
 
 # R41: «Видалити канал» у швидкому меню каналу (SK1 + зелена на екрані каналу). Діє лише разом з LANGUAGE_UKRAINIAN=1 (рядки меню живуть у
-# українському мовному блоці). Незалежний від ENABLE_AES/ENABLE_DMR_DATA. Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
+# українському мовному блоці). Незалежний від ENABLE_AES/ENABLE_DMR_DATA. Типово вимкнено -- звичайна збірка без змін.
 ifeq ($(ENABLE_CHANNEL_DELETE),1)
 DEFS += -DENABLE_CHANNEL_DELETE
 endif
 
 # R42: затримка відкриття шумодава FM (Опції рації) і перейменування зони (список «Зони», клавіша «#»). Діють лише разом з LANGUAGE_UKRAINIAN=1; перейменування зони
 # -- ще й з ENABLE_APRS_RX (редактор назви й правила хвоста 0x00 живуть у збірці APRS_R21_NAMES). Незалежні одне від одного й від ENABLE_AES/ENABLE_DMR_DATA.
-# Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
+# Типово вимкнено -- звичайна збірка без змін.
 ifeq ($(ENABLE_SQL_OPEN_DELAY),1)
 DEFS += -DENABLE_SQL_OPEN_DELAY
 endif
@@ -169,14 +169,14 @@ DEFS += -DENABLE_ZONE_RENAME
 endif
 
 # R43: редагування зон з рації -- «Додати канал», «Вийняти із зони», «Нова зона», «Видалити зону» (без ENABLE_CODEPLUG_MENU -- у швидкому меню каналу й списку «Зони»; з ним -- у розділі «Кодплаг»). Потребує ENABLE_ZONE_RENAME (назва нової зони
-# набирається тим самим редактором) і тому діє лише в українській збірці з ENABLE_APRS_RX. Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
+# набирається тим самим редактором) і тому діє лише в українській збірці з ENABLE_APRS_RX. Типово вимкнено -- звичайна збірка без змін.
 ifeq ($(ENABLE_ZONE_EDIT),1)
 DEFS += -DENABLE_ZONE_EDIT
 endif
 
 # R44: єдиний розділ «Кодплаг» у головному меню (Канали / Зони / Контакти) замість окремих входів R41-R43 (швидке меню каналу, «#» і «Нова зона» у списку зон). Потребує ВСІХ трьох
 # прапорців вище (ENABLE_CHANNEL_DELETE, ENABLE_ZONE_RENAME, ENABLE_ZONE_EDIT) -- без якогось із них розділу нема, а R41-R43 лишаються як були. Додає й каскад видалення контакту
-# (канали з цим контактом -> «Немає»). Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
+# (канали з цим контактом -> «Немає»). Типово вимкнено -- звичайна збірка без змін.
 ifeq ($(ENABLE_CODEPLUG_MENU),1)
 DEFS += -DENABLE_CODEPLUG_MENU
 endif

@@ -6,7 +6,7 @@
  * ENABLE_FAST_SCAN (the shipped feature) or ENABLE_SPECTRUM (the dev tooling that
  * measured it) without dragging the spectrum module in behind it.
  *
- * Compiles to nothing with neither flag, so a stock build stays byte-identical.
+ * Compiles to nothing with neither flag, so the default build stays unchanged.
  */
 #include "functions/scanreject.h"
 

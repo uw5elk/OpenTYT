@@ -3,7 +3,7 @@
  * патерн, що uiPowerOff.c: нема списку, лише ЗЕЛЕНА старт/стоп і ЧЕРВОНА вихід),
  * а не список-меню (menuDisplayMenuList) -- тут нема чого гортати. Уся логіка
  * запису/відтворення -- у functions/callReplay.c; цей файл лише малює й
- * реагує на кнопки. Увесь файл під ENABLE_CALL_REPLAY -- на byte-identical
+ * реагує на кнопки. Увесь файл під ENABLE_CALL_REPLAY -- на
  * типову збірку не впливає (порожній translation unit без прапорця).
  */
 #include "user_interface/uiGlobals.h"

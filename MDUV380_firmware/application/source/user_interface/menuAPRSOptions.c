@@ -130,7 +130,7 @@ static aprsSmartBeaconingSettings_t smartPresets[SMART_BEACONING_PRESETS_MAX] =
 
 #if defined(APRS_R21_PRESETS)
 /* R21 З5: пресети розумного маяка (цифри 0..6 у стоковому екрані) потрібні й єдиному екрану «APRS -> Налаштування» (menuAprsSettings.c) -- беруться звідси,
- * таблиця одна. Поза APRS_R21_PRESETS функції немає: типова збірка байт-у-байт стокова. NULL -- номер поза таблицею. */
+ * таблиця одна. Поза APRS_R21_PRESETS функції немає: типова збірка без змін. NULL -- номер поза таблицею. */
 const aprsSmartBeaconingSettings_t *aprsSmartPresetGet(unsigned i, const char **name)
 {
 	if (i >= SMART_BEACONING_PRESETS_MAX)
@@ -148,7 +148,7 @@ const aprsSmartBeaconingSettings_t *aprsSmartPresetGet(unsigned i, const char **
 #if defined(APRS_R21_MENU)
 /* APRS-unify L6: одне меню налаштувань APRS. У збірках із хабом «APRS» стоковий екран «Опції -> APRS» вирізано (він дублював «APRS -> Налаштування» й
  * писав ті самі параметри іншим шляхом): MENU_APRS у menuFunctions[] і ця функція ЛИШИЛИСЬ, щоб стара прив'язка швидкої клавіші відкривала те саме
- * єдине меню -- хаб, одразу «Налаштування». Збірки без хаба (типова, ua, uacr) лишаються байт-у-байт стоковими. */
+ * єдине меню -- хаб, одразу «Налаштування». Збірки без хаба (типова, ua, uacr) лишаються без змін. */
 menuStatus_t menuAPRSOptions(uiEvent_t *ev, bool isFirstRun)
 {
 	(void)ev;

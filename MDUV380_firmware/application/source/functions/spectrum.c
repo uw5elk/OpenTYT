@@ -1,7 +1,7 @@
 /*
  * spectrum.c — dev-only swept-RSSI receiver. See spectrum.h.
  *
- * Compiles to nothing unless built -DENABLE_SPECTRUM (stock stays byte-identical).
+ * Compiles to nothing unless built -DENABLE_SPECTRUM (default build stays unchanged).
  *
  * Both entry points run from cpsHandleCommand(), i.e. already inside the CPS
  * taskENTER_CRITICAL() section. That is deliberate: a swept measurement needs

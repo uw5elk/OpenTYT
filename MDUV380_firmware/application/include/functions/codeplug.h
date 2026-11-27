@@ -511,7 +511,7 @@ void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len);
 #define APRS_R21_NAMES 1
 #endif
 /* R21 З3: те саме, але для ПОКАЗУ: ім'я в UTF-8 (кирилиця з CPS) перекодовується в cp1251 шрифта (aprsNameToDisplay). Кодплаг не переписується. Потоки
- * редагування й запису (codeplugUtilConvertStringToBuf) беруть сирі байти -- їх не чіпати. Лише користувацька українська збірка (APRS_R21_NAMES); інакше -- псевдонім (байт-у-байт стоковий, diag теж). */
+ * редагування й запису (codeplugUtilConvertStringToBuf) беруть сирі байти -- їх не чіпати. Лише користувацька українська збірка (APRS_R21_NAMES); інакше -- псевдонім (без змін, diag теж). */
 /* R34: назви з маленькою «я» (0xFF у cp1251). Читання відкидає лише ХВОСТОВІ 0xFF (потім хвостові 0x00) і не змінює вхідний буфер (codeplug.c).
  * CODEPLUG_NAME_ZERO_TAIL -- запис назви, що закінчується на 0xFF, з хвостом 0x00 (інакше кінцева «я» читалась би як дописка). R36: УВІМКНЕНО -- на залізі
  * 2026-10-25 стокова TYT CPS нормально читає канал, записаний з хвостом 0x00 (крок CK3). Діє лише разом з APRS_R21_NAMES (користувацька українська збірка);
@@ -545,7 +545,7 @@ void codeplugAllChannelsIndexSetUsed(int index);
 bool codeplugChannelSaveDataForIndex(int index, CodeplugChannel_t *channelBuf);
 
 /* R41: видалення каналу з меню рації. Усе -- лише під ENABLE_CHANNEL_DELETE і лише в українській збірці (рядки меню живуть у її мовному
- * блоці). Без цього прапорця типова збірка байт-у-байт стокова. */
+ * блоці). Без цього прапорця типова збірка без змін. */
 #if defined(ENABLE_CHANNEL_DELETE) && defined(LANGUAGE_BUILD_UKRAINIAN)
 #define CHANNEL_DELETE_ENABLED 1
 typedef enum
@@ -563,7 +563,7 @@ CodeplugChannelDeleteResult_t codeplugChannelDelete(int channelIndex);
 #endif
 
 /* R42: перейменування зони зі списку «Зони». Лише під ENABLE_ZONE_RENAME, лише в українській збірці з APRS_R21_NAMES (там живуть правила назв R34/R36:
- * читання без втрати кінцевої «я», запис з хвостом 0x00). Без прапорця типова збірка байт-у-байт стокова. */
+ * читання без втрати кінцевої «я», запис з хвостом 0x00). Без прапорця типова збірка без змін. */
 #if defined(ENABLE_ZONE_RENAME) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(APRS_R21_NAMES)
 #define ZONE_RENAME_ENABLED 1
 typedef enum
@@ -610,7 +610,7 @@ int codeplugZoneEditNthChannel(int n);                                          
 #endif
 
 /* R44/R46: редагування кодплага з рації -- пункти головного меню «Зона», «Канали», «Контакти» (R44 збирав їх в одному розділі «Кодплаг»; R46 розформував). Лише під ENABLE_CODEPLUG_MENU
- * і лише там, де є ВСІ три логіки R41-R43 (видалення каналу, перейменування й редагування зон): входи з швидкого меню каналу тоді зникають. Без прапорця -- R41-R43 як були, типова збірка байт-у-байт стокова.
+ * і лише там, де є ВСІ три логіки R41-R43 (видалення каналу, перейменування й редагування зон): входи з швидкого меню каналу тоді зникають. Без прапорця -- R41-R43 як були, типова збірка без змін.
  * Контакти: стокове видалення НЕ перевіряло канали, що посилаються на контакт (канал читав зі стертого слота ім'я 0xFF, TG 0, тип 0xFF), тож тут -- каскад. */
 #if defined(ENABLE_CODEPLUG_MENU) && defined(CHANNEL_DELETE_ENABLED) && defined(ZONE_EDIT_ENABLED)
 #define CODEPLUG_MENU_ENABLED 1

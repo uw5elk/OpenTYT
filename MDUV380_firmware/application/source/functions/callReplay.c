@@ -9,7 +9,7 @@
  * між двома файлами.
  *
  * Увесь файл під ENABLE_CALL_REPLAY (типово вимкнено), як і
- * crypto/dmr_aes_hook.c під ENABLE_AES -- на byte-identical типову збірку не
+ * crypto/dmr_aes_hook.c під ENABLE_AES -- на типову збірку не
  * впливає жодним байтом (порожній translation unit).
  */
 #ifdef ENABLE_CALL_REPLAY
@@ -40,7 +40,7 @@ typedef struct
 #if defined(ENABLE_APRS_RX)
 /* R10-fix: кільце позичає «Режим APRS» під aprsModeMem_t (u32/double/структурні копії -> LDM/STM/LDRD, які на
  * НЕвирівняній адресі дають UsageFault, а обробник -- while(1)). Без вирівнювання лінкер ставив кільце на 0x1000ab5f
- * (виміряно nm у збірці R10). Без ENABLE_APRS_RX атрибута нема -- збірка байт-у-байт стокова. */
+ * (виміряно nm у збірці R10). Без ENABLE_APRS_RX атрибута нема -- збірка без змін. */
 static __attribute__((section(".ccmram"), aligned(8))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];   /* CCM-OK(вміст дійсний лише в межах callReplayCap.count, який скидає callReplayInit()) */
 #else
 static __attribute__((section(".ccmram"))) uint8_t callReplayRing[CALL_REPLAY_GROUPS][CALL_REPLAY_GROUP_BYTES];   /* CCM-OK(вміст дійсний лише в межах callReplayCap.count, який скидає callReplayInit()) */

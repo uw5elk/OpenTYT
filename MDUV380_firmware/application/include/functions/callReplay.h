@@ -207,7 +207,7 @@ uint32_t callReplayPlayedMs(void);
 uint32_t callReplayPlayTotalMs(void);
 
 #else // !ENABLE_CALL_REPLAY -- заглушки на випадок пропущеного #if у виклику;
-      // на byte-identical збірку не впливають (у типовій збірці ЖОДЕН виклик
+      // на збірку не впливають (у типовій збірці ЖОДЕН виклик
       // нижче не існує в жодному .c -- дивись коментар вище файлу).
 static inline void     callReplayInit(void) { }
 static inline bool     callReplayIsRecordingEnabled(void) { return true; }

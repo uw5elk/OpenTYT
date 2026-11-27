@@ -515,7 +515,7 @@ double settingsLocationGetLatitude(void);
 double settingsLocationGetLongitude(void);
 
 /* R42: затримка відкриття шумодава FM (меню «Опції рації»). Лише під ENABLE_SQL_OPEN_DELAY і лише в українській збірці (рядки меню живуть у її мовному блоці;
- * без цього прапорця типова збірка байт-у-байт стокова). Значення зберігається в nonVolatileSettings.UNUSED_1 -- розкладка структури не змінюється (на RD5R/MD9600
+ * без цього прапорця типова збірка без змін). Значення зберігається в nonVolatileSettings.UNUSED_1 -- розкладка структури не змінюється (на RD5R/MD9600
  * цього поля нема -- там функція не вмикається). Логіка й формат слова -- functions/sql_open_delay.h. */
 #if defined(ENABLE_SQL_OPEN_DELAY) && defined(LANGUAGE_BUILD_UKRAINIAN) && !defined(PLATFORM_RD5R) && !defined(PLATFORM_MD9600)
 #define SQL_OPEN_DELAY_ENABLED 1

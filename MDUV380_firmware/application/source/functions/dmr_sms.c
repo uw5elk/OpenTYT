@@ -1,7 +1,7 @@
 /*
  * dmr_sms.c — on-radio encrypted DMR SMS service. See dmr_sms.h.
  *
- * Compiles to nothing unless built -DENABLE_AES -DENABLE_DMR_DATA (stock = byte-identical).
+ * Compiles to nothing unless built -DENABLE_AES -DENABLE_DMR_DATA (default build unchanged).
  *
  * Cipher + framing are the RE'd, on-air-validated stock-TYT scheme (a factory radio decrypts
  * our TX): AES-256-ECB over an IPv4/UDP/TMS plaintext (each 16-byte block independent, no IV),
