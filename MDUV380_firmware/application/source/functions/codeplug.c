@@ -2504,6 +2504,13 @@ static uint32_t codeplugGetOpenGD77CustomDataStartAddressForType(CodeplugCustomD
 				return 0;
 			}
 
+			// R112 Д1: довжина блока більша за всю область custom-data (MAX_BLOCK_ADDRESS) -- ланцюг пошкоджений: обхід завершується як «блока нема».
+			// Без цього адреса нижче «загортається» по модулю 2^32 (напр. dataLength = 0xFFFFFFF8 -> та сама адреса), і цикл на старті міг бути нескінченним.
+			if ((uint32_t)blockHeader->dataLength > MAX_BLOCK_ADDRESS)
+			{
+				return 0;
+			}
+
 			dataHeaderAddress += sizeof(codeplugCustomDataBlockHeader_t) + blockHeader->dataLength;
 
 		} while (dataHeaderAddress < MAX_BLOCK_ADDRESS);
