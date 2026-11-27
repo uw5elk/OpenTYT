@@ -2580,9 +2580,10 @@ bool codeplugSetOpenGD77CustomData(CodeplugCustomDataType_t dataType, uint8_t *d
 
 	if (blockHeader.dataLength == len) // it's not permitted to change the block size, it has to be equal.
 	{
-		SPI_Flash_write(FLASH_ADDRESS_OFFSET + dataHeaderAddress, (uint8_t *)&blockHeader, sizeof(codeplugCustomDataBlockHeader_t));
-		SPI_Flash_write(FLASH_ADDRESS_OFFSET + dataHeaderAddress + sizeof(codeplugCustomDataBlockHeader_t), dataBuf, len);
-		return true;
+		// R112 Д3: результат обох записів передається викликачу (раніше завжди true). Обидва записи виконуються, як і раніше.
+		bool okHeader = SPI_Flash_write(FLASH_ADDRESS_OFFSET + dataHeaderAddress, (uint8_t *)&blockHeader, sizeof(codeplugCustomDataBlockHeader_t));
+		bool okData = SPI_Flash_write(FLASH_ADDRESS_OFFSET + dataHeaderAddress + sizeof(codeplugCustomDataBlockHeader_t), dataBuf, len);
+		return (okHeader && okData);
 	}
 
 	return false;
