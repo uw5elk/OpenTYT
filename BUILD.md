@@ -101,6 +101,25 @@ python3 tools/opengd77_stm32_firmware_loader.py -s <donor.bin> -f build/openuv38
 CI (`.github/workflows/build.yml`) робить те саме для `ENABLE_AES` 0 і 1 і перевіряє розмір,
 готовий до злиття.
 
+## Збірки CI і реліз за тегом
+
+**На кожен пуш** CI збирає лише три набори прошивки: основну `build-ukrainian`, контрольну без прапорців (`build`, `ENABLE_AES=0`) і мовну перевірку
+(`build`, `ENABLE_AES=1`: англійська з AES — ловить поломку полів, що мусять стояти під `LANGUAGE_BUILD_UKRAINIAN`), плюс перевірки й тести (`checks`)
+і `.exe` CPS (`build-gui-flasher`, лише для `main` і тегів). **Діагностичні набори** (`aes-mi`, `aes-diag`, `ukrainian-diag`, `volprobe`, `tadiag`,
+`roam-diag`, `roam`) збираються лише вручну: GitHub → Actions → «Build MD-UV390 10W firmware» → Run workflow (запускати з гілки `main`) → поле `diag`
+(`all` — усі). У реліз вони не потрапляють.
+
+**Реліз за тегом.** Тег `v<M>.<m>.<p>` (наприклад `v1.0.0`) — стабільний реліз; `v<M>.<m>.<p>-rc<N>` (наприклад `v1.0.0-rc1`) — кандидат, позначається
+prerelease. Інші форми `v*` job `release` відхиляє. Тег ставте на коміт `main` із зеленим CI:
+
+```
+cd ~/OpenGD77-AES256 && git checkout main && git pull --ff-only && git tag v1.0.0-rc1 && git push origin v1.0.0-rc1
+```
+
+У релізі лише: `openuv380-10w-ukrainian-<тег>.bin`, `TYT.MD-UV390UKR.exe`, `RELEASE_NOTES.md`, `THIRD_PARTY_NOTICES.md`. Версія з тегу потрапляє в «Про прошивку»
+(`GITVERSION`: `v1.0.0` → `1.0.0`, `v1.0.0-rc1` → `1.0.0r1`; екран показує 7 символів) і у вікно та властивості `.exe` (повний тег). Без тегу версія — коротка sha,
+як і раніше. Проміжний реліз `ci-<тег>` (prerelease) створюється самим CI й чиститься автоматично (лишається 5 найновіших `ci-*`).
+
 ## AES-збірка
 `ENABLE_AES=1` вбудовує DMRA (сумісне з Motorola/Hytera) шифрування голосу AES-256 — і
 **передачу, і прийом**, сумісне зі стоковою TYT MD-UV390 ("Universal" AES256). Типова збірка
