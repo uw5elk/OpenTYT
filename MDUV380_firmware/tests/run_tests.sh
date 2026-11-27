@@ -163,7 +163,7 @@ pass=0; fail=0; notk=0
 # Рахуються лише рядки, що ПОЧИНАЮТЬСЯ з «ПРОПУСК». Старіші тести (R41-R47, R44fix, R64_editor та ін.) повідомляють про пропуск словом
 # «пропущено» посеред рядка -- їх цей облік НЕ бачить (R105 їх не чіпав; список -- у claude/r105-result.md).
 skip_exp=0; skip_unexp=0
-EXPECTED_SKIP_RE='gcc нема|нема Pillow|PIL нема|Pillow|Tk/xvfb|numpy/scipy|tkinter|xvfb-run'
+EXPECTED_SKIP_RE='gcc нема|нема Pillow|PIL нема|Pillow|Tk/xvfb|numpy/scipy|tkinter|xvfb-run|немає PyYAML'
 note_skips() {   # $1 -- назва тесту, $2 -- його повний вивід
 	local name="$1" line
 	while IFS= read -r line; do

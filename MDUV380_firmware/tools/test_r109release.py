@@ -21,7 +21,15 @@ import subprocess
 import sys
 import tempfile
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    # R109-FIX: без PyYAML -- у CI це ПРОВАЛ (тест не має мовчати), локально -- очікуваний пропуск (облік у tests/run_tests.sh).
+    if os.environ.get("CI", "").lower() == "true":
+        print("ПРОВАЛ test_r109release: немає PyYAML (у CI має бути встановлений: job checks, pip install pyyaml)")
+        sys.exit(1)
+    print("ПРОПУСК: немає PyYAML -- test_r109release не виконано (pip install pyyaml)")
+    sys.exit(0)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FW = os.path.normpath(os.path.join(HERE, ".."))

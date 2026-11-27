@@ -57,8 +57,8 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Залежності python (Pillow для рендерера екрана + tools/requirements.txt)
-        run: pip install pillow numpy -r MDUV380_firmware/tools/requirements.txt
+      - name: Залежності python (Pillow для рендерера екрана, PyYAML для test_r109release + tools/requirements.txt)
+        run: pip install pillow numpy pyyaml -r MDUV380_firmware/tools/requirements.txt
       - name: Синтаксична перевірка хостовим gcc
         run: ./MDUV380_firmware/tools/syntax_check.sh
       - name: Ширина підписів меню
