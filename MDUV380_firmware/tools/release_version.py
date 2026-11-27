@@ -67,7 +67,18 @@ def build_info(tag, sha, date):
     return "версія %s, коміт %s, зібрано %s\n" % (tag, sha, date)
 
 
+def _utf8_streams():
+    """R109-FIX2: на Windows-раннері stdout/stderr за замовчуванням cp1252 -- друк кирилиці падав з UnicodeEncodeError ('charmap' codec).
+    Примусово UTF-8 (errors=replace -- діагностика ніколи не має валити скрипт)."""
+    for st in (sys.stdout, sys.stderr):
+        try:
+            st.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv):
+    _utf8_streams()
     if len(argv) < 3:
         print(__doc__)
         return 2

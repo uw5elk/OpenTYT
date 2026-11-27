@@ -844,6 +844,10 @@ jobs:
     # contents: write -- щоб додати .exe до релізу ci-<sha>, який створив build-ukrainian.
     permissions:
       contents: write
+    # R109-FIX2: windows-latest -- кодування за замовчуванням cp1252; без цього друк кирилиці з python-кроків падав (UnicodeEncodeError 'charmap').
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
     steps:
       - name: Завантажити код (checkout)
         uses: actions/checkout@v7

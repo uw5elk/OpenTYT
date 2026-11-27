@@ -234,6 +234,48 @@ def main():
         check(False, "Р8: повторна вставка має відхилятись")
     except ValueError:
         check(True, "")
+    # Р10 (R109-FIX2): Windows-раннер -- кодування за замовчуванням cp1252 (і для open(), і для stdout). Відтворення під Linux: у підпроцесі
+    # PYTHONUTF8=0, PYTHONIOENCODING=cp1252 (stdout/stderr) і io.open/builtins.open з підміненим кодуванням за замовчуванням cp1252 (драйвер
+    # нижче), скрипт запускається через runpy як __main__. Справжній Windows цим не замінено -- лише той самий клас помилки.
+    driver = ("import builtins, io, runpy, sys\n"
+              "_o = io.open\n"
+              "def _open(f, mode='r', buffering=-1, encoding=None, *a, **k):\n"
+              "    if encoding is None and 'b' not in mode:\n"
+              "        encoding = 'cp1252'\n"
+              "    return _o(f, mode, buffering, encoding, *a, **k)\n"
+              "builtins.open = _open\n"
+              "sys.argv = sys.argv[1:]\n"
+              "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+    vi10 = open(os.path.join(HERE, "version_info.txt"), encoding="utf-8").read()
+    def run_cp1252(script, argv):
+        env = dict(os.environ, PYTHONUTF8="0", PYTHONIOENCODING="cp1252")
+        r = subprocess.run([sys.executable, "-c", driver, script] + argv, capture_output=True, env=env)
+        return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+    def cp1252_ok(src):
+        with tempfile.TemporaryDirectory() as t:
+            sp = os.path.join(t, "release_version.py")
+            open(sp, "w", encoding="utf-8").write(src)
+            vip, bip = os.path.join(t, "version_info.txt"), os.path.join(t, "build_info.txt")
+            open(vip, "w", encoding="utf-8").write(vi10)
+            rc, out, err = run_cp1252(sp, ["apply-cps", "v1.0.0-rc1", vip, bip, "abc1234", "2026-12-01"])
+            ok = (rc == 0 and open(bip, "rb").read().decode("utf-8") == "версія v1.0.0-rc1, коміт abc1234, зібрано 2026-12-01\n"
+                  and "1.0.0-rc1" in open(vip, "rb").read().decode("utf-8"))
+            # шлях помилки: «ПОМИЛКА: …» (кирилиця в stderr) не має падати з UnicodeEncodeError
+            rc2, out2, err2 = run_cp1252(sp, ["fw", "v1.0"])
+            ok2 = (rc2 == 1 and "ПОМИЛКА" in err2 and "UnicodeEncodeError" not in err2)
+            return ok, ok2, (rc, out[-120:], err[-200:], rc2, err2[-200:])
+    rv_src = open(os.path.join(HERE, "release_version.py"), encoding="utf-8").read()
+    ok, ok2, dbg = cp1252_ok(rv_src)
+    check(ok, "Р10: apply-cps під cp1252 (stdout + open за замовчуванням): %r" % (dbg,))
+    check(ok2, "Р10: «ПОМИЛКА: …» (кирилиця в stderr) під cp1252: %r" % (dbg,))
+    for name, src2 in (("без reconfigure stdout/stderr", rv_src.replace("reconfigure(", "reconfigure_off(")),
+                       ("без encoding utf-8 в open", rv_src.replace('open(bi, "w", encoding="utf-8")', 'open(bi, "w")'))):
+        check(src2 != rv_src, "Р10: мутант «%s» застосовано" % name)
+        o1, o2, _ = cp1252_ok(src2)
+        check(not (o1 and o2), "Р10: мутант «%s» не спіймано" % name)
+    gf10 = job_text(text, "build-gui-flasher") or ""
+    check('PYTHONUTF8: "1"' in gf10 and "PYTHONIOENCODING: utf-8" in gf10, "Р10: build-gui-flasher -- env PYTHONUTF8=1 і PYTHONIOENCODING=utf-8")
+    check('PYTHONUTF8: "1"' not in text.replace('      PYTHONUTF8: "1"\n', ""), "Р10: PYTHONUTF8 лише в job build-gui-flasher (мутант-контроль)")
     # Р9: мутанти
     def mutant(name, text2):
         check(text2 != text, "Р9: мутант «%s» застосовано" % name)
