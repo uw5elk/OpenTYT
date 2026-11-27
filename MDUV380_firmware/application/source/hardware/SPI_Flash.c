@@ -120,8 +120,16 @@ bool SPI_Flash_write(uint32_t addr, uint8_t *dataBuf, int size)
 	int flashEndSector;
 	int bytesToWriteInCurrentSector = size;
 
+	// R112 Д2: нічого писати -- флеш не чіпаємо (раніше size == 0 стирав і переписував поточний сектор без змін).
+	if (size <= 0)
+	{
+		return (size == 0);
+	}
+
 	flashSector	= flashWritePos / 4096;
-	flashEndSector = (flashWritePos + size) / 4096;
+	// R112 Д2: останній ЗАЙНЯТИЙ сектор. Раніше (pos + size) / 4096 -- запис, що закінчується рівно на межі сектора (або 4096 Б з межі),
+	// зайвий раз стирав і переписував без змін НАСТУПНИЙ сектор (знос і вікно втрати при обриві живлення).
+	flashEndSector = (flashWritePos + size - 1) / 4096;
 
 	if (flashSector != flashEndSector)
 	{
