@@ -904,7 +904,7 @@ job — дивись `.github/workflows/build.yml`; звичайна `build`-м�
 
 - FS1. `cd ~/OpenGD77-AES256 && git log -1 --format=%s | grep -q '^R105-RELDOCS'` — тема останнього коміту починається з «R105-RELDOCS».
 - FS2. `cd ~/OpenGD77-AES256 && bash MDUV380_firmware/tools/check_default_build.sh` — на машині з ARM-тулчейном (не в Termux): збірка без прапорців з `GITVERSION=x`, `SOURCE_DATE_EPOCH=1700000000` дає sha256 із `MDUV380_firmware/tools/default_build.sha256`, якщо версія компілятора та сама (інша версія компілятора — інший sha256, це не помилка прошивки, див. файл).
-- FS3. `cd ~/OpenGD77-AES256 && git diff --stat HEAD~7 -- MDUV380_firmware/application MDUV380_firmware/Core MDUV380_firmware/USB_DEVICE | tail -3` — єдина зміна в `application/` — коментар блока 19 у `codeplug.h` (кількість коміт-діапазону залежить від того, скільки комітів R105 застосовано; дивіться лише на перелік файлів).
+- FS3. `cd ~/OpenGD77-AES256 && git diff --stat "$(git log --format=%H --grep='^R105-RELDOCS' | tail -1)~1" HEAD -- MDUV380_firmware/application MDUV380_firmware/Core MDUV380_firmware/USB_DEVICE | tail -3` — єдина зміна в `application/` — коментар блока 19 у `codeplug.h` (в `Core/` і `USB_DEVICE/` змін нема).
 - FS4. `cd ~/OpenGD77-AES256/MDUV380_firmware && bash tests/run_tests.sh 2>&1 | tail -8` — в кінці рядок «пропущено N»; у CI (`CI=true`) неочікуваний пропуск тесту є провалом, очікувані (немає gcc або Pillow) перелічені окремо.
 - FS5. Прочитати `USAGE.md` (розд. «Переслухати», «Видалити канал», зони, APRS «Станції»/«Маяк»/«Режим APRS», Call Alert, тон супутників), `RELEASE_NOTES.md`, `THIRD_PARTY_NOTICES.md`: чи відповідає описане тому, що ви бачите в меню рації. Розбіжність — у звіт.
 
