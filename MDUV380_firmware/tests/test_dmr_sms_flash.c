@@ -330,6 +330,32 @@ int main(void)
 		CHECK(s_erases == e0, "7: вимкнення без змін -- без запису");
 	}
 
+	/* 7b. R108-FLUSHFIX: перезавантаження з CPS ('C' 6 0/6 1) викликає dmrSmsStoreFlush() у режимі CPS (UI_CPS): відкладене вхідне має потрапити у
+	 * кільце, хоч звичайний тік у CPS мовчить (крок 6). Гейту «не UI_CPS» у Flush нема. */
+	{
+		attempt();
+		int e0 = s_erases;
+		int bad0 = s_badErase;
+		CHECK(dmrSmsCount(0) == 2 && dmrSmsUnreadCount() == 1, "7b: нове вхідне ще відкладене (у списку %d, непрочитаних %d)", dmrSmsCount(0), dmrSmsUnreadCount());
+		s_menu = UI_CPS;
+		mainLoopFor(120000);
+		CHECK(s_erases == e0, "7b: у режимі CPS звичайний тік не пише (%d)", s_erases - e0);
+		dmrSmsStoreFlush();   /* те саме, що cpsFlushDeferredStores() перед NVIC_SystemReset */
+		s_menu = 0;
+		s_badErase = bad0;    /* стирання в CPS тут -- саме те, що треба (як у кроці 7 для вимкнення) */
+		CHECK(s_erases == e0 + 1, "7b: Flush у CPS -- один запис (%d)", s_erases - e0);
+		reboot();
+		CHECK(dmrSmsCount(0) == 3, "7b: після перезавантаження з CPS -- відкладене вхідне збережено (%d)", dmrSmsCount(0));
+		mainLoopFor(5000);
+		dmrSmsMarkAllRead();
+		s_menu = UI_CPS;
+		dmrSmsStoreFlush();
+		s_menu = 0;
+		s_badErase = bad0;
+		reboot();
+		CHECK(dmrSmsUnreadCount() == 0, "7b: «прочитано» (до ~60 с відкладення) дописано з CPS");
+	}
+
 	/* 8. кільце по колу */
 	{
 		memset(s_slotErases, 0, sizeof s_slotErases);
@@ -340,7 +366,7 @@ int main(void)
 		CHECK(okw, "8: кожен слот -- 2..3 стирання (%ld %ld %ld %ld %ld %ld %ld %ld)", s_slotErases[0], s_slotErases[1], s_slotErases[2],
 				s_slotErases[3], s_slotErases[4], s_slotErases[5], s_slotErases[6], s_slotErases[7]);
 		reboot();
-		CHECK(dmrSmsCount(0) == 22 && dmrSmsUnreadCount() == 20, "8: перезапуск -- 22 вхідні, 20 непрочитаних (%d/%d)", dmrSmsCount(0), dmrSmsUnreadCount());
+		CHECK(dmrSmsCount(0) == 23 && dmrSmsUnreadCount() == 20, "8: перезапуск -- 23 вхідні (22 + одне з кроку 7b), 20 непрочитаних (%d/%d)", dmrSmsCount(0), dmrSmsUnreadCount());
 		CHECK(s_cdWrites == 0, "8: custom-data за весь час не писалась (%d)", s_cdWrites);
 		CHECK(s_outside == 0 && s_badErase == 0, "8: поза ділянкою -- %d, стирань у недозволений час -- %d", s_outside, s_badErase);
 	}

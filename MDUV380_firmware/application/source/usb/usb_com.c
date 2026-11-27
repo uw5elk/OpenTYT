@@ -92,6 +92,8 @@ enum CPS_ACCESS_AREA
 #include "crypto/dmr_aes_hook.h"
 #include "functions/dmr_data.h"
 #include "functions/dmr_sms.h"
+#include "functions/sms_flash_store.h"   // R108: SMS_STORE_FLASH -- дозапис сховища перед перезавантаженням з CPS
+#include "functions/aprs_msg_store.h"   // R108: APRS_MSG1_UI -- дозапис списку «Повідом. APRS» перед перезавантаженням з CPS
 #include "functions/dmr_rctl_cap.h"
 #include "functions/dmr_rctl_tx.h"   // dmrRctlStockRxDiag/Reset (лічильники прийому стокових команд)
 #include "functions/dmr_rctl_cfg.h"  // dmrRctlSetInhibited (кабельне зняття блокування -- recovery)
@@ -99,6 +101,9 @@ enum CPS_ACCESS_AREA
 #include "functions/wake_diag.h"   // R58: журнал пробудження (USB 0xB7)
 #endif
 static void handleCPSRequest(void);
+#if defined(APRS_MSG1_UI) || defined(SMS_STORE_FLASH)
+static void cpsFlushDeferredStores(void);   // R108-FLUSHFIX
+#endif
 
 volatile int com_request = 0;
 volatile uint8_t com_requestbuffer[COM_REQUESTBUFFER_SIZE];
@@ -2231,6 +2236,9 @@ static void cpsHandleCommand(void)
 							codeplugSaveLastUsedChannelInZone();
 							TASK_LOCK_WRITE();
 						}
+#if defined(APRS_MSG1_UI) || defined(SMS_STORE_FLASH)
+						cpsFlushDeferredStores();   // R108: відкладені SMS/APRS -- у флеш до перезавантаження
+#endif
 
 						// Give it a bit of time before pulling the plug as DM-1801 EEPROM looks slower
 						// than GD-77 to write, then quickly power cycling triggers settings reset.
@@ -2254,6 +2262,9 @@ static void cpsHandleCommand(void)
 						{
 							nonVolatileSettings.gpsModeAndBaudsIndex = SETTINGS_GPS_MODE_SET(nonVolatileSettings, previousGPSState);
 						}
+#endif
+#if defined(APRS_MSG1_UI) || defined(SMS_STORE_FLASH)
+						cpsFlushDeferredStores();   // R108: відкладені SMS/APRS -- у флеш до перезавантаження
 #endif
 						addTimerCallback(NVIC_SystemReset, 500, MENU_ANY, false);
 						break;
@@ -2368,6 +2379,25 @@ static void cpsHandleCommand(void)
 	hasToReply = true;
 	replyLength = 1;
 }
+
+#if defined(APRS_MSG1_UI) || defined(SMS_STORE_FLASH)
+/* R108-FLUSHFIX: 'C' 6 0 / 'C' 6 1 перезавантажують рацію (NVIC_SystemReset), минаючи powerDown/powerOffFinalStage, де відкладені записи
+ * дописуються у флеш. З R101/R106 «Повідом. APRS» і SMS DMR пишуться з відкладенням (термінове -- секунди, «прочитано» -- до ~60 с), тож
+ * повідомлення, прийняте перед записом з CPS, губилося. Тут -- ті самі Flush і в тому самому порядку, що в batteryAndPowerManagement.c
+ * (спершу APRS, потім SMS), під тими самими #if. Flush не має гейтів (ні UI_CPS, ні передачі): гейт «не UI_CPS» -- лише в звичайному тіку.
+ * Запис у флеш чекає (osDelay), тож його не можна виконувати всередині критичної секції CPS -- як 'X' 3 і 0x80: UNLOCK/LOCK. */
+static void cpsFlushDeferredStores(void)
+{
+	TASK_UNLOCK_WRITE();
+#if defined(APRS_MSG1_UI)
+	aprsMsgStoreFlush();
+#endif
+#if defined(SMS_STORE_FLASH)
+	dmrSmsStoreFlush();
+#endif
+	TASK_LOCK_WRITE();
+}
+#endif
 
 static void handleCPSRequest(void)
 {
