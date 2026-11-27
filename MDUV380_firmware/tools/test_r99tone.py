@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """test_r99tone.py -- R99-TONE: «Тон-відгук» (FM). R100: одиниці -- секунди (тривалість 1..60 с, затримка 0..10 с), пункт перенесено в головне меню
 (деталі меню, міграції й «увімкнено» -- tools/test_r100tone.py). R102: сторожа НЕМАЄ (відгук на кожен сигнал >= порогу; повна модель -- tools/test_r102tone.py),
-блок 19 v3 з порогом; тут лишилась одна рація, межі, блок і проводка.
+блок 19 v4 (R110: поріг у десятих с) з порогом; тут лишилась одна рація, межі, блок і проводка.
 
 Хост: СПРАВЖНІЙ application/source/functions/tone_reply.c (-DTONE_REPLY_HOST_TEST) -- стан-машина, межі, блок 19.
   А  одна рація: сигнал >= порогу -> після затримки тон заданої тривалості; короткий сигнал (< порогу) -- без відгуку; новий сигнал у затримці --
      відгук після нього; другий сигнал після відгуку -- другий відгук (без паузи); заборона TX -- мовчить; скасування (PTT/клавіша) у затримці й у тоні;
      вимкнення під час тону
-  Б  межі: частота 300..3000 крок 50, тривалість 1..60 с (жорстка межа навіть при «зламаному» значенні), затримка 0..10 с, поріг 0..5 с; блок 19 v3
+  Б  межі: частота 300..3000 крок 50, тривалість 1..60 с (жорстка межа навіть при «зламаному» значенні), затримка 0..10 с, поріг 0..5,0 с (R110: крок 0,1 с); блок 19 v3
      туди-назад, невідома версія -- типові значення
   В  (R102: прибрано -- дві рації з функцією відповідають одна одній без кінця; це документує tools/test_r102tone.py)
   Г  проводка на рації (за текстом коду): PTT скасовує, тік у головному циклі, на старті нічого не передається, заборони TX, блок 19, меню,
@@ -43,7 +43,7 @@ HARNESS = r'''
 #include <string.h>
 #include "functions/tone_reply.h"
 
-static toneReplyCfg_t cfgOf(int f, int d, int dl) { toneReplyCfg_t c; c.freqHz = (uint16_t)f; c.durS = (uint8_t)d; c.delayS = (uint8_t)dl; c.threshS = 1; return c; }
+static toneReplyCfg_t cfgOf(int f, int d, int dl) { toneReplyCfg_t c; c.freqHz = (uint16_t)f; c.durS = (uint8_t)d; c.delayS = (uint8_t)dl; c.threshDs = 10; return c; }   /* R110: поріг 1,0 с = 10 десятих */
 
 /* одна рація: сигнал [0, sig) мс, далі тиша; повертає моменти START/STOP */
 static void one(const char *tag, uint32_t sig, toneReplyCfg_t c, int allowed, uint32_t cancelAt, uint32_t disableAt, uint32_t sig2From, uint32_t sig2To)
@@ -84,7 +84,7 @@ int main(void)
 	printf("\n");
 	/* блок */
 	{
-		toneReplyOnFlash_t raw; toneReplyCfg_t k = cfgOf(2450, 37, 7), r; bool en = false; k.threshS = 3;
+		toneReplyOnFlash_t raw; toneReplyCfg_t k = cfgOf(2450, 37, 7), r; bool en = false; k.threshDs = 30;
 		toneReplyCfgBuild(&raw, &k, true);
 		int ok = toneReplyCfgParse(&raw, &r, &en);
 		const uint8_t *p = (const uint8_t *)&raw;
@@ -156,7 +156,7 @@ def main():
     m = re.search(r"CLAMPD (.*)", out)
     check(m and m.group(1).split() == ["1/0", "1/1", "10/10", "11/10", "60/10", "60/10", "60/10"], "Б3: тривалість 1..60 с, затримка 0..10 с: %r" % (str(m and m.group(1)),))
     m = re.search(r"BLOCK (\d) (\d+) (\d+) (\d+) (\d) size=(\d+) bytes=(\w+)", out)
-    check(m and m.groups() == ("3", "2450", "37", "7", "1", "8", "0325070192090300"), "Б4: блок 19 v3 -- 8 Б, [0]=3, [1] тривалість с, [2] затримка с, [3] біт 0 увімкнено, [4..5] частота LE, [6] поріг с: %r" % (str(m and m.groups()),))
+    check(m and m.groups() == ("4", "2450", "37", "7", "1", "8", "0425070192091e00"), "Б4: блок 19 v4 (R110) -- 8 Б, [0]=4, [1] тривалість с, [2] затримка с, [3] біт 0 увімкнено, [4..5] частота LE, [6] поріг у десятих с: %r" % (str(m and m.groups()),))
     m = re.search(r"BADVER (\d) (\d+) (\d+) (\d+) (\d)", out)
     check(m and m.groups() == ("0", "1000", "10", "2", "0"), "Б5: невідома версія -- типові 1000 Гц / 10 с / 2 с, вимкнено: %r" % (str(m and m.groups()),))
 
@@ -164,8 +164,8 @@ def main():
     h = rd(HDR)
     check("#if defined(ENABLE_TONE_REPLY) && defined(LANGUAGE_BUILD_UKRAINIAN) && defined(PLATFORM_MDUV380)\n#define TONE_REPLY_ENABLED 1" in h,
           "Г1: TONE_REPLY_ENABLED -- лише ENABLE_TONE_REPLY + українська + UV380")
-    check("GUARD" not in h and "#define TONE_REPLY_THRESH_DEF_S  1U" in h and "#define TONE_REPLY_THRESH_MAX_S  5U" in h and "#define TONE_REPLY_DUR_MAX_S     60U" in h,
-          "Г2: R102 -- сторожа в заголовку нема; поріг типово 1 с (0..5), жорстка межа тривалості 60 с")
+    check("GUARD" not in h and "#define TONE_REPLY_THRESH_DEF_DS  10U" in h and "#define TONE_REPLY_THRESH_MAX_DS  50U" in h and "#define TONE_REPLY_DUR_MAX_S     60U" in h,
+          "Г2: R102 -- сторожа в заголовку нема; R110 -- поріг типово 1,0 с (0..5,0 у десятих), жорстка межа тривалості 60 с")
     ld = src[src.index("void toneReplyLoad(void)"):]
     ld = ld[:ld.index("\n}\n")]
     check("s_trSm.state = TR_ST_WAITCLOSE;" in ld and "trTxStart" not in ld and "TR_ACT_START" not in ld,
@@ -202,7 +202,7 @@ def main():
     mm = dict(re.findall(r'#define\s+(TONEREPLY_\w+)\s+"([^"]*)"', ua))
     lines = [mm["TONEREPLY_MENU_ON"] + ":" + max(mm["TONEREPLY_ON"], mm["TONEREPLY_OFF"], key=len), mm["TONEREPLY_MENU_FREQ"] + ":3000",
              mm["TONEREPLY_MENU_DUR"] + ":60" + mm["TONEREPLY_SEC"], mm["TONEREPLY_MENU_DELAY"] + ":10" + mm["TONEREPLY_SEC"],
-             mm["TONEREPLY_MENU_THRESH"] + ":5" + mm["TONEREPLY_SEC"]]
+             mm["TONEREPLY_MENU_THRESH"] + ":5.0" + mm["TONEREPLY_SEC"]]   # R110: «Поріг:5.0с»
     check(all(len(l) <= 16 for l in lines) and len(mm["TONEREPLY_HDR"]) == 2, "Г15: рядки меню <= 16 символів (найгірші значення), індикатор 2 символи: %r" % lines)
 
     # ---- Д: мутанти
@@ -217,7 +217,7 @@ def main():
         ok = core_checks(o2, " [m]")
         QUIET[0] = False; del FAILS[n0:]
         check(not ok, "Д (%s): ловиться" % name)
-    mut("без порогу", "if ((now - s->t) >= ((uint32_t)cfg->threshS * 1000U))", "if (1)")
+    mut("без порогу", "if ((now - s->t) >= ((uint32_t)cfg->threshDs * TONE_REPLY_THRESH_UNIT_MS))", "if (1)")
     mut("без скасування в тоні", "if (cancel || (txAllowed == false) || ((now - s->t) >= dur))", "if ((txAllowed == false) || ((now - s->t) >= dur))")
     mut("без межі тривалості", "dur = (uint32_t)((cfg->durS > TONE_REPLY_DUR_MAX_S) ? TONE_REPLY_DUR_MAX_S : cfg->durS) * 1000U;", "dur = (uint32_t)cfg->durS * 1000U;")
     return finish()

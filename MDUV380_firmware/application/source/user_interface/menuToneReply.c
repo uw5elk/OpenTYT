@@ -1,8 +1,8 @@
 /*
  * menuToneReply.c -- R100-TONE / R102-TONE: головне меню -> «Тон-відгук». П'ять рядків «підпис:значення» (як «Опції рації»):
  *   «Тон-відгук:Увімк/Вимк», «Частота:1000» (TONE_REPLY_FREQ_MIN..MAX, крок TONE_REPLY_FREQ_STEP), «Тривал:10с» (с), «Затрим:2с» (с),
- *   «Поріг:1с» (TONE_REPLY_THRESH_MIN_S..MAX_S, крок TONE_REPLY_STEP_S; 0 -- будь-яке відкриття шумодава).
- * ↑/↓ -- рядок, ←/→ -- значення; GREEN -- запис блоку 19 (v3; якщо змінилось або у флеші ще v1/v2) і вихід; RED -- повернення збереженого і вихід.
+ *   «Поріг:1.0с» (R110: TONE_REPLY_THRESH_MIN_DS..MAX_DS у 0,1 с, крок TONE_REPLY_THRESH_STEP_DS; 0 -- будь-яке відкриття шумодава).
+ * ↑/↓ -- рядок, ←/→ -- значення; GREEN -- запис блоку 19 (v4; якщо змінилось або у флеші ще v1/v2/v3) і вихід; RED -- повернення збереженого і вихід.
  * Будь-який інший вихід з екрана (без GREEN) -- теж повернення збереженого (exit-callback), як у «Опціях рації».
  * Лише під TONE_REPLY_ENABLED (ENABLE_TONE_REPLY + українська + UV380). Рядки -- languages/tonereply_ua.h (cp1251).
  */
@@ -49,7 +49,7 @@ static void trmRowText(int row, char *buf, size_t cap, int *opt)
 			break;
 		default:
 			l = TONEREPLY_MENU_THRESH;
-			snprintf(buf, cap, "%s:%u%s", l, (unsigned)c->threshS, TONEREPLY_SEC);
+			snprintf(buf, cap, "%s:%u.%u%s", l, (unsigned)(c->threshDs / 10U), (unsigned)(c->threshDs % 10U), TONEREPLY_SEC);   /* «Поріг:1.0с» */
 			break;
 	}
 	*opt = (int)strlen(l) + 1;
@@ -103,8 +103,8 @@ static void trmChange(int row, int dir)
 					((c->delayS > (TONE_REPLY_DELAY_MIN_S + TONE_REPLY_STEP_S)) ? (c->delayS - TONE_REPLY_STEP_S) : TONE_REPLY_DELAY_MIN_S));
 			break;
 		default:
-			c->threshS = (uint8_t)((dir > 0) ? (c->threshS + TONE_REPLY_STEP_S) :
-					((c->threshS > (TONE_REPLY_THRESH_MIN_S + TONE_REPLY_STEP_S)) ? (c->threshS - TONE_REPLY_STEP_S) : TONE_REPLY_THRESH_MIN_S));
+			c->threshDs = (uint8_t)((dir > 0) ? (c->threshDs + TONE_REPLY_THRESH_STEP_DS) :
+					((c->threshDs > (TONE_REPLY_THRESH_MIN_DS + TONE_REPLY_THRESH_STEP_DS)) ? (c->threshDs - TONE_REPLY_THRESH_STEP_DS) : TONE_REPLY_THRESH_MIN_DS));
 			break;
 	}
 	toneReplyCfgClamp(c);
@@ -160,7 +160,7 @@ menuStatus_t menuToneReply(uiEvent_t *ev, bool isFirstRun)
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
-		(void)toneReplySave();   /* блок 19 (v3) -- якщо змінилось або у флеші ще v1/v2; «увімкнено» теж зберігається */
+		(void)toneReplySave();   /* блок 19 (v4) -- якщо змінилось або у флеші ще v1/v2/v3; «увімкнено» теж зберігається */
 		menuSystemPopPreviousMenu();
 		return MENU_STATUS_SUCCESS;
 	}

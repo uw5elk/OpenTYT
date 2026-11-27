@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""test_r102tone.py -- R102-TONE: «Тон-відгук» без сторожа; регульований поріг сигналу; умова «свіже відкриття»; блок 19 v3.
+"""test_r102tone.py -- R102-TONE: «Тон-відгук» без сторожа; регульований поріг сигналу; умова «свіже відкриття»; блок 19 v3 (R110: v4, поріг у десятих с).
 
 Хост: СПРАВЖНІЙ application/source/functions/tone_reply.c (-DTONE_REPLY_HOST_TEST) -- стан-машина toneReplyStep і блок 19 (toneReplyCfgParse/Build).
   А  КОЖЕН сигнал >= порогу дає рівно один відгук; серія з 10 сигналів поспіль -- 10 відгуків, без пауз (крім затримки й тривалості тону);
@@ -45,7 +45,7 @@ HARNESS = r'''
 #define BASE 100000U
 typedef struct { uint32_t a, b; } iv_t;
 static int inIv(const iv_t *v, int n, uint32_t t) { for (int i = 0; i < n; i++) if ((t >= v[i].a) && (t < v[i].b)) return 1; return 0; }
-static toneReplyCfg_t cfgOf(int d, int dl, int th) { toneReplyCfg_t c; c.freqHz = 1000; c.durS = (uint8_t)d; c.delayS = (uint8_t)dl; c.threshS = (uint8_t)th; return c; }
+static toneReplyCfg_t cfgOf(int d, int dl, int th) { toneReplyCfg_t c; c.freqHz = 1000; c.durS = (uint8_t)d; c.delayS = (uint8_t)dl; c.threshDs = (uint8_t)(th * 10); return c; }   /* th -- цілі секунди (сценарії R102); R110: поле в десятих */
 
 /* Одна рація. sig -- інтервали, коли в ефірі сигнал (чути, якщо рація сама не передає); na -- коли передача ЗАБОРОНЕНА; dis -- функцію вимкнено;
  * cn -- моменти скасування (клавіша/PTT, один крок). Початковий стан -- WAITCLOSE, як після toneReplyLoad(); cold=0 -- перед сценарієм один крок із
@@ -199,19 +199,19 @@ int main(void)
 		k.freqHz = 2450;
 		toneReplyCfgBuild(&raw, &k, true);
 		v = toneReplyCfgParse(&raw, &r, &en);
-		printf("V3 %d %u %u %u %u %d size=%u %02x%02x%02x%02x%02x%02x%02x%02x\n", v, r.freqHz, r.durS, r.delayS, r.threshS, (int)en, (unsigned)sizeof raw, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+		printf("V3 %d %u %u %u %u %d size=%u %02x%02x%02x%02x%02x%02x%02x%02x\n", v, r.freqHz, r.durS, r.delayS, r.threshDs, (int)en, (unsigned)sizeof raw, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
 		{ const uint8_t b2[8] = { 2, 30, 5, 1, 0xB0, 0x04, 0, 0 }; memcpy(&raw, b2, 8); v = toneReplyCfgParse(&raw, &r, &en);
-		  printf("V2 %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshS, (int)en); }
+		  printf("V2 %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshDs, (int)en); }
 		{ const uint8_t b2[8] = { 2, 30, 5, 0, 0xB0, 0x04, 4, 9 }; memcpy(&raw, b2, 8); v = toneReplyCfgParse(&raw, &r, &en);
-		  printf("V2B %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshS, (int)en); }
+		  printf("V2B %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshDs, (int)en); }
 		{ const uint8_t b1[8] = { 1, 5, 25, 1, 0xD6, 0x06, 0, 0 }; memcpy(&raw, b1, 8); v = toneReplyCfgParse(&raw, &r, &en);
-		  printf("V1 %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshS, (int)en); }
+		  printf("V1 %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshDs, (int)en); }
 		{ const uint8_t bj[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }; memcpy(&raw, bj, 8); v = toneReplyCfgParse(&raw, &r, &en);
-		  printf("JUNK %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshS, (int)en); }
+		  printf("JUNK %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshDs, (int)en); }
 		{ const uint8_t b3[8] = { 3, 30, 5, 1, 0xB0, 0x04, 99, 0 }; memcpy(&raw, b3, 8); v = toneReplyCfgParse(&raw, &r, &en);
-		  printf("V3BIG %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshS, (int)en); }
-		{ int tt[] = { 0, 1, 2, 3, 4, 5 }; printf("V3EACH"); for (int i = 0; i < 6; i++) { toneReplyCfg_t q = cfgOf(10, 2, tt[i]); q.freqHz = 1000; toneReplyCfgBuild(&raw, &q, false); toneReplyCfgParse(&raw, &r, &en); printf(" %u", r.threshS); } printf("\n"); }
-		{ toneReplyCfg_t q = cfgOf(10, 2, 200); toneReplyCfgClamp(&q); printf("CLAMPT %u\n", q.threshS); }
+		  printf("V3BIG %d %u %u %u %u %d\n", v, r.freqHz, r.durS, r.delayS, r.threshDs, (int)en); }
+		{ int tt[] = { 0, 1, 2, 3, 4, 5 }; printf("V3EACH"); for (int i = 0; i < 6; i++) { toneReplyCfg_t q = cfgOf(10, 2, tt[i]); q.freqHz = 1000; toneReplyCfgBuild(&raw, &q, false); toneReplyCfgParse(&raw, &r, &en); printf(" %u", r.threshDs); } printf("\n"); }
+		{ toneReplyCfg_t q = cfgOf(10, 2, 0); q.threshDs = 200; toneReplyCfgClamp(&q); printf("CLAMPT %u\n", q.threshDs); }
 	}
 	return 0;
 }
@@ -317,13 +317,13 @@ def core_checks(out, tag=""):
     want(len(g) == 3 and int(g[0]) == 81 and int(g[1]) >= 1 and int(g[1]) + int(g[2]) == 81,
          "Д5: таблиця 81 поєднання (затримка 0/1/10 с × тривалість 1/30/60 с): безкінечний обмін у %s, затихає у %s -- ВІДОМА властивість, захисту нема: %r" % (g[1] if len(g) == 3 else "?", g[2] if len(g) == 3 else "?", g))
     # Е
-    want(L.get("V3") == "3 2450 37 7 3 1 size=8 0325070192090300", "Е1: блок 19 v3 -- запис/читання (частота, тривалість, затримка, поріг, «увімкнено»), 8 Б: %r" % L.get("V3"))
-    want(L.get("V2") == "2 1200 30 5 1 1", "Е2: v2 -> v3: поріг типовий 1 с, «увімкнено» і решта збережені: %r" % L.get("V2"))
-    want(L.get("V2B") == "2 1200 30 5 1 0", "Е2: у v2 байти [6..7] ігноруються (поріг 1 с): %r" % L.get("V2B"))
-    want(L.get("V1") == "1 1750 1 3 1 0", "Е3: v1 -> мігровано (секунди вгору), вимкнено, поріг 1 с: %r" % L.get("V1"))
-    want(L.get("JUNK") == "0 1000 10 2 1 0", "Е4: сміття -- типові (1000 Гц, 10 с, 2 с, поріг 1 с), вимкнено: %r" % L.get("JUNK"))
-    want(L.get("V3BIG") == "3 1200 30 5 5 1", "Е5: v3 з порогом 99 -- обрізано до 5 с: %r" % L.get("V3BIG"))
-    want(L.get("V3EACH") == "0 1 2 3 4 5" and L.get("CLAMPT") == "5", "Е6: всі значення порога 0..5 проходять збирання/розбір; 200 -> 5: %r %r" % (L.get("V3EACH"), L.get("CLAMPT")))
+    want(L.get("V3") == "4 2450 37 7 30 1 size=8 0425070192091e00", "Е1: блок 19 v4 (R110: поріг 3 с = 30 десятих) -- запис/читання (частота, тривалість, затримка, поріг, «увімкнено»), 8 Б: %r" % L.get("V3"))
+    want(L.get("V2") == "2 1200 30 5 10 1", "Е2: v2 -> v4: поріг типовий 1,0 с, «увімкнено» і решта збережені: %r" % L.get("V2"))
+    want(L.get("V2B") == "2 1200 30 5 10 0", "Е2: у v2 байти [6..7] ігноруються (поріг 1,0 с): %r" % L.get("V2B"))
+    want(L.get("V1") == "1 1750 1 3 10 0", "Е3: v1 -> мігровано (секунди вгору), вимкнено, поріг 1,0 с: %r" % L.get("V1"))
+    want(L.get("JUNK") == "0 1000 10 2 10 0", "Е4: сміття -- типові (1000 Гц, 10 с, 2 с, поріг 1,0 с), вимкнено: %r" % L.get("JUNK"))
+    want(L.get("V3BIG") == "3 1200 30 5 50 1", "Е5: v3 з порогом 99 с -- обрізано до 5,0 с (50): %r" % L.get("V3BIG"))
+    want(L.get("V3EACH") == "0 10 20 30 40 50" and L.get("CLAMPT") == "50", "Е6: всі значення порога 0..5 с (у десятих) проходять збирання/розбір; 200 -> 50: %r %r" % (L.get("V3EACH"), L.get("CLAMPT")))
     return ok[0]
 
 
@@ -342,8 +342,8 @@ def main():
     check(not re.search(r"GUARD", src) and not re.search(r"GUARD", hdr) and "THRESH_MS" not in src and "THRESH_MS" not in hdr, "Ж1: сторожа (GUARD, THRESH_MS) у коді й заголовку нема")
     check("TR_ST_WAITCLOSE" in hdr and "умова коректності" in hdr and "НЕ пауза" in hdr, "Ж2: стан WAITCLOSE описано як умову коректності, а не паузу (заголовок)")
     check("НЕ пауза" in src and "свіже відкриття" in src and "Захисту від зациклення двох рацій з увімкненою функцією НЕМАЄ" in src, "Ж2: те саме в коді; про відсутність захисту від зациклення -- сказано")
-    check("TONE_REPLY_THRESH_MIN_S  0U" in hdr and "TONE_REPLY_THRESH_MAX_S  5U" in hdr and "TONE_REPLY_THRESH_DEF_S  1U" in hdr and "TONE_REPLY_CFG_VERSION   3U" in hdr and "TONE_REPLY_CFG_LEN       8" in hdr,
-          "Ж3: константи: поріг 0..5 с, типово 1 с; версія блока 3; довжина блока 8 (не змінилась)")
+    check("TONE_REPLY_THRESH_MIN_DS  0U" in hdr and "TONE_REPLY_THRESH_MAX_DS  50U" in hdr and "TONE_REPLY_THRESH_DEF_DS  10U" in hdr and "TONE_REPLY_CFG_VERSION   4U" in hdr and "TONE_REPLY_CFG_LEN       8" in hdr,
+          "Ж3: константи (R110): поріг 0..50 десятих с, типово 10; версія блока 4; довжина блока 8 (не змінилась)")
     am = rd(os.path.join(APP, "source", "functions", "tone_reply.c"))
     ld = am[am.index("void toneReplyLoad(void)"):]
     ld = ld[:ld.index("\n}\n")]
@@ -381,12 +381,12 @@ def main():
     mut("є пауза 71 с після відгуку", "if ((rxOpen == false) && txAllowed)", "if ((now - s->t) >= 71000U && (rxOpen == false) && txAllowed && (cancel == false))")
     mut("нема умови свіжого закриття", "if ((rxOpen == false) && txAllowed)", "if (1)")
     mut("закриття без перевірки дозволу передачі", "if ((rxOpen == false) && txAllowed)", "if ((rxOpen == false) && (cancel == false))")
-    mut("поріг ігнорується", "if ((now - s->t) >= ((uint32_t)cfg->threshS * 1000U))", "if ((now - s->t) >= 1000U)")
-    mut("поріг без «>=» (суворо більше)", "if ((now - s->t) >= ((uint32_t)cfg->threshS * 1000U))", "if ((now - s->t) > ((uint32_t)cfg->threshS * 1000U))")
-    mut("поріг не зберігається", "raw->thresh = c->threshS;", "raw->thresh = 1U;")
-    mut("поріг v3 не читається", "c->threshS = raw->thresh;", "(void)raw->thresh;")
-    mut("v2 бере поріг з байта [6]", "if (raw->version == TONE_REPLY_CFG_VERSION)\n\t\t{\n\t\t\tc->threshS = raw->thresh;", "if (1)\n\t\t{\n\t\t\tc->threshS = raw->thresh;")
-    mut("без межі порогу", "if (c->threshS > TONE_REPLY_THRESH_MAX_S)\n\t{\n\t\tc->threshS = TONE_REPLY_THRESH_MAX_S;\n\t}", "")
+    mut("поріг ігнорується", "if ((now - s->t) >= ((uint32_t)cfg->threshDs * TONE_REPLY_THRESH_UNIT_MS))", "if ((now - s->t) >= 1000U)")
+    mut("поріг без «>=» (суворо більше)", "if ((now - s->t) >= ((uint32_t)cfg->threshDs * TONE_REPLY_THRESH_UNIT_MS))", "if ((now - s->t) > ((uint32_t)cfg->threshDs * TONE_REPLY_THRESH_UNIT_MS))")
+    mut("поріг не зберігається", "raw->thresh = c->threshDs;", "raw->thresh = 10U;")
+    mut("поріг v4 не читається", "c->threshDs = raw->thresh;", "(void)raw->thresh;")
+    mut("v2 бере поріг з байта [6]", "if (raw->version == TONE_REPLY_CFG_VERSION)\n\t\t{\n\t\t\tc->threshDs = raw->thresh;", "if (1)\n\t\t{\n\t\t\tc->threshDs = raw->thresh;")
+    mut("без межі порогу", "if (c->threshDs > TONE_REPLY_THRESH_MAX_DS)\n\t{\n\t\tc->threshDs = TONE_REPLY_THRESH_MAX_DS;\n\t}", "")
     mut("без жорсткої межі тривалості", "dur = (uint32_t)((cfg->durS > TONE_REPLY_DUR_MAX_S) ? TONE_REPLY_DUR_MAX_S : cfg->durS) * 1000U;", "dur = (uint32_t)cfg->durS * 1000U;")
     mut("без скасування в тоні", "if (cancel || (txAllowed == false) || ((now - s->t) >= dur))", "if ((txAllowed == false) || ((now - s->t) >= dur))")
     mut("заборона в RX не відкидає цикл", "if (txAllowed == false)\n\t\t\t{\n\t\t\t\ts->state = TR_ST_WAITCLOSE;   /* під час сигналу заборонено передачу -- цикл відкинуто */\n\t\t\t\ts->t = now;\n\t\t\t}\n\t\t\telse if (rxOpen == false)",

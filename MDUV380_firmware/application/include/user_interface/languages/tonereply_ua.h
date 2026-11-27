@@ -13,7 +13,7 @@
 #define TONEREPLY_MENU_FREQ    "Частота"         /* «Частота:1000» */
 #define TONEREPLY_MENU_DUR     "Тривал"          /* «Тривал:10с» */
 #define TONEREPLY_MENU_DELAY   "Затрим"          /* «Затрим:2с» */
-#define TONEREPLY_MENU_THRESH  "Поріг"           /* «Поріг:1с» (R102) */
+#define TONEREPLY_MENU_THRESH  "Поріг"           /* «Поріг:1.0с» (R110: крок 0,1 с; найдовше «Поріг:5.0с» -- 10 символів) */
 #define TONEREPLY_ON           "Увімк"
 #define TONEREPLY_OFF          "Вимк"
 #define TONEREPLY_SEC          "с"               /* секунди: «10с» */

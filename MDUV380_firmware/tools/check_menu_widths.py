@@ -554,7 +554,7 @@ for name, t, n, lim in set_over:
 print(f'  разом: {len(set_over)}')
 fails += set_over
 
-print('\n=== 10. «Тон-відгук» (languages/tonereply_ua.h; R99-TONE, R100: підменю головного меню, R102: рядок «Поріг»): «підпис:значення» <= 16, найгірші значення з констант tone_reply.h ===')
+print('\n=== 10. «Тон-відгук» (languages/tonereply_ua.h; R99-TONE, R100: підменю головного меню, R102: рядок «Поріг», R110: крок 0,1 с): «підпис:значення» <= 16, найгірші значення з констант tone_reply.h ===')
 tr_over = []
 tr_path = os.path.join(LANG, 'tonereply_ua.h')
 tr_hdr = os.path.join(os.path.dirname(LANG), '..', 'functions', 'tone_reply.h')
@@ -566,7 +566,8 @@ if os.path.exists(tr_path):
               tm['TONEREPLY_MENU_FREQ'] + ':' + str(tk['TONE_REPLY_FREQ_MAX']),
               tm['TONEREPLY_MENU_DUR'] + ':' + str(tk['TONE_REPLY_DUR_MAX_S']) + tm['TONEREPLY_SEC'],
               tm['TONEREPLY_MENU_DELAY'] + ':' + str(tk['TONE_REPLY_DELAY_MAX_S']) + tm['TONEREPLY_SEC'],
-              tm['TONEREPLY_MENU_THRESH'] + ':' + str(tk['TONE_REPLY_THRESH_MAX_S']) + tm['TONEREPLY_SEC']):
+              # R110: поріг у десятих частках секунди -> «Поріг:5.0с» (ціла частина, крапка, одна десяткова -- як snprintf у menuToneReply.c)
+              tm['TONEREPLY_MENU_THRESH'] + ':' + '%d.%d' % divmod(tk['TONE_REPLY_THRESH_MAX_DS'], 10) + tm['TONEREPLY_SEC']):
         print(f'  "{t}" = {len(t)}')
         if len(t) > 16:
             tr_over.append(('Тон-відгук', t, len(t), 16))

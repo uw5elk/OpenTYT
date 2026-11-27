@@ -13,7 +13,7 @@ void toneReplyCfgDefaults(toneReplyCfg_t *c)
 	c->freqHz = TONE_REPLY_FREQ_DEF;
 	c->durS = TONE_REPLY_DUR_DEF_S;
 	c->delayS = TONE_REPLY_DELAY_DEF_S;
-	c->threshS = TONE_REPLY_THRESH_DEF_S;
+	c->threshDs = TONE_REPLY_THRESH_DEF_DS;
 }
 
 void toneReplyCfgClamp(toneReplyCfg_t *c)
@@ -47,13 +47,13 @@ void toneReplyCfgClamp(toneReplyCfg_t *c)
 	{
 		c->delayS = TONE_REPLY_DELAY_MAX_S;
 	}
-	if (c->threshS < TONE_REPLY_THRESH_MIN_S)
+	if (c->threshDs < TONE_REPLY_THRESH_MIN_DS)
 	{
-		c->threshS = TONE_REPLY_THRESH_MIN_S;
+		c->threshDs = TONE_REPLY_THRESH_MIN_DS;
 	}
-	if (c->threshS > TONE_REPLY_THRESH_MAX_S)
+	if (c->threshDs > TONE_REPLY_THRESH_MAX_DS)
 	{
-		c->threshS = TONE_REPLY_THRESH_MAX_S;
+		c->threshDs = TONE_REPLY_THRESH_MAX_DS;
 	}
 }
 
@@ -67,7 +67,7 @@ int toneReplyCfgParse(const toneReplyOnFlash_t *raw, toneReplyCfg_t *c, bool *en
 {
 	toneReplyCfgDefaults(c);
 	*enabled = false;
-	if ((raw->version != TONE_REPLY_CFG_VERSION) && (raw->version != TONE_REPLY_CFG_V2) && (raw->version != TONE_REPLY_CFG_V1))
+	if ((raw->version != TONE_REPLY_CFG_VERSION) && (raw->version != TONE_REPLY_CFG_V3) && (raw->version != TONE_REPLY_CFG_V2) && (raw->version != TONE_REPLY_CFG_V1))
 	{
 		return 0;   /* блоку нема / невідома версія / сміття -- типові, вимкнено */
 	}
@@ -84,8 +84,14 @@ int toneReplyCfgParse(const toneReplyOnFlash_t *raw, toneReplyCfg_t *c, bool *en
 		*enabled = ((raw->flags & TONE_REPLY_FLAG_ENABLED) != 0U);
 		if (raw->version == TONE_REPLY_CFG_VERSION)
 		{
-			c->threshS = raw->thresh;     /* v2: поріг був константою -- лишається типовий (TONE_REPLY_THRESH_DEF_S, з toneReplyCfgDefaults) */
+			c->threshDs = raw->thresh;    /* v4: десяті частки секунди (обрізання до MAX -- у toneReplyCfgClamp нижче) */
 		}
+		else if (raw->version == TONE_REPLY_CFG_V3)
+		{
+			/* v3 (R102): цілі секунди -> десяті; обрізання ДО множення, щоб сміття (до 255 с) не переповнило байт */
+			c->threshDs = (uint8_t)((raw->thresh >= (TONE_REPLY_THRESH_MAX_DS / 10U)) ? TONE_REPLY_THRESH_MAX_DS : (raw->thresh * 10U));
+		}
+		/* v2: поріг був константою -- лишається типовий (TONE_REPLY_THRESH_DEF_DS, з toneReplyCfgDefaults) */
 	}
 	toneReplyCfgClamp(c);
 	return (int)raw->version;
@@ -100,13 +106,13 @@ void toneReplyCfgBuild(toneReplyOnFlash_t *raw, const toneReplyCfg_t *c, bool en
 	raw->flags = (enabled ? TONE_REPLY_FLAG_ENABLED : 0U);
 	raw->freqLo = (uint8_t)(c->freqHz & 0xFFU);
 	raw->freqHi = (uint8_t)(c->freqHz >> 8);
-	raw->thresh = c->threshS;
+	raw->thresh = c->threshDs;
 }
 
 /*
  * Стан-машина (R102: без паузи-сторожа після відгуку):
  *   ЧЕКАЮ (IDLE) -- шумодав ВІДКРИВСЯ (спостережено закрито -> відкрито) і передача дозволена -> RX;
- *   RX -- сигнал закрився: тривав >= порогу (cfg->threshS, с) -> DELAY, інакше (короткий сплеск) -> ЧЕКАЮ без відгуку;
+ *   RX -- сигнал закрився: тривав >= порогу (cfg->threshDs × 100 мс; рівно поріг -- відгук) -> DELAY, інакше (короткий сплеск) -> ЧЕКАЮ без відгуку;
  *   DELAY -- минула затримка і передача дозволена -> TX (тон); новий сигнал під час затримки -> знову RX (відгук після нього);
  *   TX -- тривалість, але не більше TONE_REPLY_DUR_MAX_S (жорстка межа) -> WAITCLOSE (зупинка тону); скасування (PTT, клавіша, зміна частоти) або заборона TX -- так само.
  * WAITCLOSE -- НЕ пауза (часу не чекає), а умова коректності «свіже відкриття»: у ЧЕКАЮ машина переходить лише коли шумодав закритий і передача
@@ -158,7 +164,7 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 			}
 			else if (rxOpen == false)
 			{
-				if ((now - s->t) >= ((uint32_t)cfg->threshS * 1000U))
+				if ((now - s->t) >= ((uint32_t)cfg->threshDs * TONE_REPLY_THRESH_UNIT_MS))
 				{
 					s->state = TR_ST_DELAY;
 				}
@@ -241,7 +247,7 @@ static toneReplyCfg_t s_trCfg;     /* поточні (меню редагує ї
 static toneReplyCfg_t s_trSaved;   /* те, що в блоці 19 (порівняння перед записом і «скасувати» в меню) */
 static uint32_t       s_trTxFreq;  /* частота передачі на старті тону: інша -- канал змінено, тон зупиняється */
 static uint8_t        s_trEnabled;        /* R100: зберігається в блоці 19 ([3] біт 0) */
-static uint8_t        s_trEnabledSaved;   /* те, що в блоці 19: біт 0 -- «увімкнено»; TR_SAVED_OLD -- у флеші ще v1/v2 (GREEN у меню запише v3 навіть без змін) */
+static uint8_t        s_trEnabledSaved;   /* те, що в блоці 19: біт 0 -- «увімкнено»; TR_SAVED_OLD -- у флеші ще v1/v2/v3 (GREEN у меню запише v4 навіть без змін) */
 #define TR_SAVED_OLD          0x02U
 
 void toneReplyLoad(void)
@@ -260,7 +266,7 @@ void toneReplyLoad(void)
 
 		s_trEnabled = (en ? 1U : 0U);
 		s_trSaved = s_trCfg;
-		s_trEnabledSaved = (uint8_t)(s_trEnabled | (((ver == (int)TONE_REPLY_CFG_V1) || (ver == (int)TONE_REPLY_CFG_V2)) ? TR_SAVED_OLD : 0U));   /* v1/v2 -- у флеші лишається, доки користувач не збереже */
+		s_trEnabledSaved = (uint8_t)(s_trEnabled | (((ver == (int)TONE_REPLY_CFG_V1) || (ver == (int)TONE_REPLY_CFG_V2) || (ver == (int)TONE_REPLY_CFG_V3)) ? TR_SAVED_OLD : 0U));   /* v1/v2/v3 -- у флеші лишається, доки користувач не збереже */
 	}
 	s_trSm.state = TR_ST_WAITCLOSE;   /* на старті нічого не передається; відгук -- лише від сигналу, що відкрив шумодав ПІСЛЯ старту (свіже відкриття) */
 	s_trSm.t = 0U;
@@ -292,16 +298,16 @@ bool toneReplySave(void)
 	toneReplyOnFlash_t raw;
 
 	toneReplyCfgClamp(&s_trCfg);
-	if ((s_trCfg.freqHz == s_trSaved.freqHz) && (s_trCfg.durS == s_trSaved.durS) && (s_trCfg.delayS == s_trSaved.delayS) && (s_trCfg.threshS == s_trSaved.threshS) &&
+	if ((s_trCfg.freqHz == s_trSaved.freqHz) && (s_trCfg.durS == s_trSaved.durS) && (s_trCfg.delayS == s_trSaved.delayS) && (s_trCfg.threshDs == s_trSaved.threshDs) &&
 			(s_trEnabled == (s_trEnabledSaved & 1U)) && ((s_trEnabledSaved & TR_SAVED_OLD) == 0U))
 	{
-		return true;   /* нічого не змінилось і у флеші вже v3 -- флеш не чіпаємо (v1/v2 лишається, доки не збережено) */
+		return true;   /* нічого не змінилось і у флеші вже v4 -- флеш не чіпаємо (v1/v2/v3 лишається, доки не збережено) */
 	}
 	toneReplyCfgBuild(&raw, &s_trCfg, (s_trEnabled != 0U));
 	if (codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_TONE_REPLY_CFG, (uint8_t *)&raw, (int)sizeof(raw)))
 	{
 		s_trSaved = s_trCfg;
-		s_trEnabledSaved = s_trEnabled;   /* біт TR_SAVED_OLD знято: у флеші v3 */
+		s_trEnabledSaved = s_trEnabled;   /* біт TR_SAVED_OLD знято: у флеші v4 */
 		return true;
 	}
 	return false;
