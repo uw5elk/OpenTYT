@@ -92,7 +92,8 @@ def main():
         check("name: openuv380-10w-ukrainian-tadiag" in j, "build.yml: артефакт openuv380-10w-ukrainian-tadiag")
         check("ENABLE_ROAM_RETRY" not in j and "ENABLE_VOLUME_PROBE" not in j, "build.yml: у tadiag нема ENABLE_ROAM_RETRY/ENABLE_VOLUME_PROBE")
         check("mem_report.py" in j and "codec_margin.sh" in j, "build.yml: tadiag друкує звіт пам'яті й запас до кодека")
-    others = [j.split(":", 1)[0].strip() for j in jobs if "tadiag" in uncommented(j) and not j.startswith("build-ukrainian-tadiag:")]
+    # R109: вхід ручного запуску workflow_dispatch.inputs.diag (список наборів) згадує tadiag як варіант вибору -- це не задача
+    others = [j.split(":", 1)[0].strip() for j in jobs if "tadiag" in uncommented(j) and not j.startswith(("build-ukrainian-tadiag:", "workflow_dispatch:"))]
     check(not others, "build.yml: інші задачі не згадують tadiag: %r" % others)
 
     # 3: Makefile

@@ -1,9 +1,29 @@
 name: Build MD-UV390 10W firmware
 
+# R109-RELEASEPREP: на кожен пуш -- лише три набори прошивки: основний `build-ukrainian`, контрольний без прапорців
+# (`build`, ENABLE_AES=0) і мовна перевірка (`build`, ENABLE_AES=1: англійська, неукраїнський мовний файл з AES --
+# ловить поле/гілку, що мусили стояти під LANGUAGE_BUILD_UKRAINIAN). Діагностичні набори -- ТІЛЬКИ вручну
+# (Actions -> Run workflow -> «diag»), у реліз не потрапляють. Запускати з ГІЛКИ main (не з тегу).
+# Тег `v*` (v1.0.0 -- реліз, v1.0.0-rc1 -- кандидат, prerelease) запускає ті самі три набори, .exe і job `release`.
 on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      diag:
+        description: "Діагностичний набір (none -- лише основні; all -- усі)"
+        type: choice
+        default: none
+        options:
+          - none
+          - all
+          - ukrainian-diag
+          - volprobe
+          - tadiag
+          - roam-diag
+          - roam
+          - aes-diag
+          - aes-mi
 
 jobs:
   # Статичні перевірки. ОКРЕМА робота, а не крок усередині збірки, з двох причин:
@@ -151,6 +171,8 @@ jobs:
   # Приймач в обох однаковий (приймає MI з ефіру й сам вчить конвенцію). Звичайна збірка aes вище
   # (openuv380-10w-aes1) лишається без змін і збігається з aes-mi-next байт-у-байт за кодом.
   build-aes-mi:
+    # R109: лише ручний запуск з вибором набору (inputs.diag = aes-mi або all); на пуш/тег/PR не збирається.
+    if: github.event_name == 'workflow_dispatch' && (inputs.diag == 'all' || inputs.diag == 'aes-mi')
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -210,6 +232,8 @@ jobs:
   # Діагностика коштує CCM (кільця) -- ці збірки НЕ для користування. continue-on-error: переповнення CCMRAM тут не має
   # червонити коміт; звіт про пам'ять (крок нижче) покаже, скільки не вистачило.
   build-aes-diag:
+    # R109: лише ручний запуск з вибором набору (inputs.diag = aes-diag або all); на пуш/тег/PR не збирається.
+    if: github.event_name == 'workflow_dispatch' && (inputs.diag == 'all' || inputs.diag == 'aes-diag')
     runs-on: ubuntu-24.04
     continue-on-error: true
     strategy:
@@ -272,6 +296,15 @@ jobs:
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
           release: "14.2.Rel1"
+      # R109: за тегом v* версія з тегу потрапляє в «Про прошивку» (GITVERSION; tools/release_version.py: 1.0.0 або 1.0.0r1 для rc --
+      # екран показує лише 7 символів). Без тегу GITVERSION не передається -- Makefile бере коротку sha, як і раніше.
+      - name: Версія прошивки з тегу (лише тег v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          FWV=$(python3 MDUV380_firmware/tools/release_version.py fw "${GITHUB_REF_NAME}")
+          echo "GITVERSION_ARG=GITVERSION=${FWV}" >> "$GITHUB_ENV"
+          echo "Версія прошивки з тегу ${GITHUB_REF_NAME}: ${FWV}"
       - name: Build
         working-directory: MDUV380_firmware
         # ENABLE_APRS_RX=1 -- R8 (2026-10-11): справжній фоновий приймач APRS (Опції рації -> «APRS станції»,
@@ -280,7 +313,7 @@ jobs:
         # R99-TONE: ENABLE_TONE_REPLY=1 -- «Тон-відгук» (лише FM; custom-data блок 19). Лише ця збірка (її вбудовує прошивальник).
         # R106-SMSSTORE: ENABLE_SMS_STORE_FLASH=1 -- сховище SMS DMR у власному кільці секторів флешу (0x48000..0x4FFFF), не в custom-data блоці 7.
         # R107-CPSUSB: ENABLE_USB_DIAG=0 -- без діагностичних USB-команд (0x86/0x8A/0x8B/0x91/0x92/0x98-0x9A, лічильники 0x9B); лише ця робота.
-        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1 ENABLE_AES_KEY_NAMES=1 ENABLE_RXGROUP_EDIT=1 ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1 ENABLE_LC_DISTANCE=1 ENABLE_DUAL_CHANNEL=1 ENABLE_TONE_REPLY=1 ENABLE_SMS_STORE_FLASH=1 ENABLE_USB_DIAG=0
+        run: make -j$(nproc) LANGUAGE_UKRAINIAN=1 ENABLE_AES=1 ENABLE_DMR_DATA=1 ENABLE_CALL_REPLAY=1 ENABLE_APRS_RX=1 ENABLE_CHANNEL_DELETE=1 ENABLE_SQL_OPEN_DELAY=1 ENABLE_ZONE_RENAME=1 ENABLE_ZONE_EDIT=1 ENABLE_CODEPLUG_MENU=1 ENABLE_ROAM_RETRY=1 ENABLE_AES_KEY_NAMES=1 ENABLE_RXGROUP_EDIT=1 ENABLE_SAT_TONE_SYNC=1 ENABLE_VOLUME_LOW=1 ENABLE_RODATA_AFTER_CODEC=1 ENABLE_LC_DISTANCE=1 ENABLE_DUAL_CHANNEL=1 ENABLE_TONE_REPLY=1 ENABLE_SMS_STORE_FLASH=1 ENABLE_USB_DIAG=0 ${GITVERSION_ARG}
       # R62A: запас (або перевищення) до фіксованої адреси кодека 0x0807537C у байтах -- видно і коли лінкування не вдалось
       # (там нема ні .bin, ні повної .map). Додаткове лінкування з тимчасовою копією лінкер-скрипта у build/codec-margin.*,
       # яке одразу видаляється: .bin/.elf/.map збірки і сам лінкер-скрипт не чіпаються. Див. tools/codec_margin.sh.
@@ -295,6 +328,10 @@ jobs:
       - name: Звіт про пам'ять (RAM/CCMRAM/флеш, топ-20 об'єктів)
         working-directory: MDUV380_firmware
         run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20 --bin build/openuv380-10w.bin
+      - name: Символи RAM (.bss/.data/.ccmram) -- лише дослід, артефакти не змінює
+        continue-on-error: true
+        working-directory: MDUV380_firmware
+        run: python3 tools/ram_symbols.py build/openuv380-10w.elf
       # Артефакт вивантажуємо ДО перевірок: якщо якась із них колись спрацює хибно,
       # зібраний .bin все одно має лишитись доступним для завантаження.
       # .bin і .hex -- завжди; .elf і .map -- лише при ручному запуску (workflow_dispatch).
@@ -360,7 +397,7 @@ jobs:
       # того самого коміту лише перезаписує файл через --clobber). Лише push у main і ручний
       # запуск: для PR і інших гілок реліз не потрібен (і токен PR з форку -- лише читання).
       - name: Опублікувати .bin у GitHub Release (ci-<sha>)
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
         working-directory: MDUV380_firmware
         shell: bash
         env:
@@ -369,7 +406,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
-          TAG="ci-${SHORT}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           ASSET="openuv380-10w-ukrainian-${SHORT}.bin"
           cp build/openuv380-10w.bin "$ASSET"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
@@ -383,7 +421,7 @@ jobs:
       # шаблоном: openuv380-10w-ukrainian-<sha>.map / .elf. Без них адреси зі звіту про збій (HardFault PC/LR) розшифрувати нічим:
       # tools/fault_lookup.py читає .map, arm-none-eabi-addr2line -- .elf, а обидва мають бути від ТОГО САМОГО коміту й тулчейну.
       - name: Додати .map і .elf до релізу ci-<sha>
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
         working-directory: MDUV380_firmware
         shell: bash
         env:
@@ -392,7 +430,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
-          TAG="ci-${SHORT}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           cp build/openuv380-10w.map "openuv380-10w-ukrainian-${SHORT}.map"
           cp build/openuv380-10w.elf "openuv380-10w-ukrainian-${SHORT}.elf"
           gh release upload "$TAG" "openuv380-10w-ukrainian-${SHORT}.map" "openuv380-10w-ukrainian-${SHORT}.elf" --clobber
@@ -401,7 +440,7 @@ jobs:
       # Автоочистка: лишаємо 5 найновіших ci-* релізів, старіші видаляємо разом із тегом.
       # continue-on-error: невдале прибирання не повинно червонити збірку.
       - name: Прибрати старі ci-* релізи (лишити 5)
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
         continue-on-error: true
         shell: bash
         env:
@@ -422,6 +461,8 @@ jobs:
   # призупиняється). Окремий файл у тому самому релізі ci-<sha>; користувацька прошивка (build-ukrainian)
   # проби не містить. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-diag:
+    # R109: лише ручний запуск з вибором набору (inputs.diag = ukrainian-diag або all); на пуш/тег/PR не збирається.
+    if: github.event_name == 'workflow_dispatch' && (inputs.diag == 'all' || inputs.diag == 'ukrainian-diag')
     needs: build-ukrainian
     runs-on: ubuntu-24.04
     name: build (діагностична, APRS проба + приймач)
@@ -483,7 +524,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
-          TAG="ci-${SHORT}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           ASSET="openuv380-10w-ukrainian-diag-${SHORT}.bin"
           cp build/openuv380-10w.bin "$ASSET"
           gh release upload "$TAG" "$ASSET" --clobber
@@ -499,7 +541,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
-          TAG="ci-${SHORT}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           cp build/openuv380-10w.map "openuv380-10w-ukrainian-diag-${SHORT}.map"
           cp build/openuv380-10w.elf "openuv380-10w-ukrainian-diag-${SHORT}.elf"
           gh release upload "$TAG" "openuv380-10w-ukrainian-diag-${SHORT}.map" "openuv380-10w-ukrainian-diag-${SHORT}.elf" --clobber
@@ -510,6 +553,8 @@ jobs:
   # звуку нижче мінімуму потенціометра, DMR -- множник перед I2S, FM -- AT1846S 0x44; нічого не зберігається). ЛИШЕ для досліду TESTING.md, блок DW;
   # у користувацьку прошивку (build-ukrainian) не потрапляє. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-volprobe:
+    # R109: лише ручний запуск з вибором набору (inputs.diag = volprobe або all); на пуш/тег/PR не збирається.
+    if: github.event_name == 'workflow_dispatch' && (inputs.diag == 'all' || inputs.diag == 'volprobe')
     needs: build-ukrainian
     runs-on: ubuntu-24.04
     name: build (діагностична, «Гучн. проба» R77A)
@@ -570,7 +615,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
-          TAG="ci-${SHORT}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           ASSET="openuv380-10w-ukrainian-volprobe-${SHORT}.bin"
           cp build/openuv380-10w.bin "$ASSET"
           gh release upload "$TAG" "$ASSET" --clobber
@@ -581,6 +627,8 @@ jobs:
   # гістограма FLCO. Нічого не пише у кодплаг/флеш, прийом/передачу не змінює. ЛИШЕ для досліду TESTING.md, блок DX; у користувацьку прошивку (build-ukrainian)
   # не потрапляє. Файл у релізі ci-<sha>: openuv380-10w-ukrainian-tadiag-<sha>.bin. Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-tadiag:
+    # R109: лише ручний запуск з вибором набору (inputs.diag = tadiag або all); на пуш/тег/PR не збирається.
+    if: github.event_name == 'workflow_dispatch' && (inputs.diag == 'all' || inputs.diag == 'tadiag')
     needs: build-ukrainian
     runs-on: ubuntu-24.04
     name: build (діагностична, «TA diag» R88)
@@ -641,7 +689,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
-          TAG="ci-${SHORT}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           ASSET="openuv380-10w-ukrainian-tadiag-${SHORT}.bin"
           cp build/openuv380-10w.bin "$ASSET"
           gh release upload "$TAG" "$ASSET" --clobber
@@ -657,6 +706,8 @@ jobs:
   # (виміряно R58 локально: запас ~1,7 КБ), а журнал + роумінг додають кілька КБ -- ld не злінкує.
   # Залежить від build-ukrainian: реліз ci-<sha> створює вона.
   build-ukrainian-roam-diag:
+    # R109: лише ручний запуск з вибором набору (inputs.diag = roam-diag або all); на пуш/тег/PR не збирається.
+    if: github.event_name == 'workflow_dispatch' && (inputs.diag == 'all' || inputs.diag == 'roam-diag')
     needs: build-ukrainian
     runs-on: ubuntu-24.04
     name: build (діагностична, роумінг + журнал пробудження)
@@ -724,7 +775,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
-          TAG="ci-${SHORT}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           ASSET="openuv380-10w-ukrainian-roam-diag-${SHORT}.bin"
           cp build/openuv380-10w.bin "$ASSET"
           gh release upload "$TAG" "$ASSET" --clobber
@@ -739,6 +791,8 @@ jobs:
   # (tools/mem_report.py). Артефакт і реліз НЕ створює -- у звичайну користувацьку збірку роумінг не вмикається, доки цифри не розглянуто.
   # Без журналу в меню нема пункту «Журнал пробудж.».
   build-ukrainian-roam:
+    # R109: лише ручний запуск з вибором набору (inputs.diag = roam або all); на пуш/тег/PR не збирається.
+    if: github.event_name == 'workflow_dispatch' && (inputs.diag == 'all' || inputs.diag == 'roam')
     runs-on: ubuntu-24.04
     name: build (українська користувацька + роумінг, без журналу -- лише виміри)
     steps:
@@ -783,7 +837,7 @@ jobs:
   # GitHub (Actions -> run -> Artifacts, або Releases -> ci-<sha>). Квоту тримає в межах
   # retention-days: 2 нижче; .exe також лежить у релізі ci-<sha>, який до квоти не входить.
   build-gui-flasher:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
     needs: build-ukrainian
     runs-on: windows-latest
     name: build (GUI-прошивальник, Windows .exe)
@@ -803,17 +857,24 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="${GITHUB_SHA::7}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
           mkdir -p firmware
-          gh release download "ci-${SHORT}" --pattern "openuv380-10w-ukrainian-${SHORT}.bin" -D firmware --clobber
+          gh release download "${CI_TAG}" --pattern "openuv380-10w-ukrainian-${SHORT}.bin" -D firmware --clobber
           mv "firmware/openuv380-10w-ukrainian-${SHORT}.bin" firmware/openuv380-10w.bin
           ls -l firmware
       - name: Встановити Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install Python-залежності
+      # R109 (пункт 3): версії закріплено в tools/requirements-cps.txt (R105). pip freeze нижче друкує ФАКТИЧНИЙ набір на windows-latest --
+      # за ним звіряють файл (див. claude/r109-result.md: сам файл визначено на Linux-venv, на Windows-образі не перевірявся).
+      - name: Install Python-залежності (закріплені, tools/requirements-cps.txt)
         shell: bash
-        run: pip install pyinstaller pyusb pyserial libusb cryptography
+        run: |
+          set -euo pipefail
+          pip install -r MDUV380_firmware/tools/requirements-cps.txt
+          echo "=== pip freeze (windows-latest) ==="
+          pip freeze
       - name: Підготувати файли для вбудовування (прошивка, libusb dll, підпис збірки)
         shell: bash
         working-directory: MDUV380_firmware/tools
@@ -833,7 +894,13 @@ jobs:
           print('libusb-1.0.dll <-', cands[0])
           "
 
-          echo "коміт $(git rev-parse --short HEAD), зібрано $(date -u +%Y-%m-%d)" > build_info.txt
+          # R109: за тегом v* версія з тегу іде у FileVersion/ProductVersion .exe (version_info.txt) і в підпис збірки у вікні CPS
+          # (build_info.txt); без тегу -- як було (коміт і дата). Правиться лише копія в робочому дереві CI.
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            python release_version.py apply-cps "${GITHUB_REF_NAME}" version_info.txt build_info.txt "$(git rev-parse --short HEAD)" "$(date -u +%Y-%m-%d)"
+          else
+            echo "коміт $(git rev-parse --short HEAD), зібрано $(date -u +%Y-%m-%d)" > build_info.txt
+          fi
           cat build_info.txt
       # CPS-shell: gui_flasher.py -- тонкий запуск, уся оболонка лежить у пакеті tools/cps_ui/. Статичні імпорти PyInstaller і так
       # знаходить; --paths . + --collect-submodules cps_ui -- страховка на випадок, якщо розділ додадуть імпортом за іменем.
@@ -869,6 +936,57 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG="ci-${GITHUB_SHA::7}"
+          SHORT="${GITHUB_SHA::7}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then CI_TAG="ci-${GITHUB_REF_NAME}"; else CI_TAG="ci-${SHORT}"; fi
+          TAG="${CI_TAG}"
           gh release upload "$TAG" "MDUV380_firmware/tools/dist/TYT MD-UV390UKR.exe" --clobber
           echo "OK: .exe -> реліз $TAG"
+
+  # R109-RELEASEPREP: СТАБІЛЬНИЙ РЕЛІЗ за тегом `v*` (v1.0.0 -- реліз; v1.0.0-rc1 -- кандидат, prerelease). Запускається лише на пуш тегу,
+  # лише після зелених перевірок, обох контрольних збірок (`build`: без прапорців і мовна перевірка), основної прошивки і .exe.
+  # Артефакти релізу -- ТІЛЬКИ: користувацький .bin, TYT.MD-UV390UKR.exe, RELEASE_NOTES.md, THIRD_PARTY_NOTICES.md.
+  # Діагностичні .bin, .map/.elf у реліз не додаються. .bin і .exe беруться з проміжного релізу ci-<тег>, який створюють
+  # build-ukrainian і build-gui-flasher для цього ж коміту (він же -- prerelease і прибирається автоочисткою ci-*).
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, build, build-ukrainian, build-gui-flasher]
+    runs-on: ubuntu-24.04
+    name: реліз (за тегом v*)
+    permissions:
+      contents: write
+    steps:
+      - name: Завантажити код (checkout)
+        uses: actions/checkout@v7
+      - name: Зібрати файли релізу з ci-<тег>
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          CI_TAG="ci-${GITHUB_REF_NAME}"
+          PRE=$(python3 MDUV380_firmware/tools/release_version.py prerelease "${GITHUB_REF_NAME}")
+          mkdir -p out
+          gh release download "${CI_TAG}" --pattern "openuv380-10w-ukrainian-${SHORT}.bin" --pattern "*.exe" -D out --clobber
+          mv "out/openuv380-10w-ukrainian-${SHORT}.bin" "out/openuv380-10w-ukrainian-${GITHUB_REF_NAME}.bin"
+          EXE=$(ls out/*.exe | head -1)
+          [ "$EXE" = "out/TYT.MD-UV390UKR.exe" ] || mv "$EXE" "out/TYT.MD-UV390UKR.exe"
+          cp RELEASE_NOTES.md THIRD_PARTY_NOTICES.md out/
+          echo "PRERELEASE=${PRE}" >> "$GITHUB_ENV"
+          ls -l out
+      - name: Опублікувати реліз ${{ github.ref_name }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          FLAGS=()
+          if [ "${PRERELEASE}" = "true" ]; then FLAGS+=(--prerelease); fi
+          gh release create "${GITHUB_REF_NAME}" "${FLAGS[@]}" --verify-tag \
+            --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md \
+            "out/openuv380-10w-ukrainian-${GITHUB_REF_NAME}.bin" "out/TYT.MD-UV390UKR.exe" \
+            out/RELEASE_NOTES.md out/THIRD_PARTY_NOTICES.md
+          echo "OK: реліз ${GITHUB_REF_NAME} (prerelease=${PRERELEASE}); активи:"
+          gh release view "${GITHUB_REF_NAME}" --json assets -q '.assets[].name'
