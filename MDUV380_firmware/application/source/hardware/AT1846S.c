@@ -464,6 +464,30 @@ void I2C_AT1846_set_register_with_mask(uint8_t reg, uint16_t mask, uint16_t valu
 	taskEXIT_CRITICAL();
 }
 
+#if defined(ENABLE_TONE_REPLY)
+bool AT1846sToneDevSave(uint16_t *dev)
+{
+	uint8_t valh;
+	uint8_t vall;
+	bool ok;
+
+	taskENTER_CRITICAL();
+	ok = radioReadReg2byte(0x59, &valh, &vall);
+	taskEXIT_CRITICAL();
+
+	if (ok)
+	{
+		*dev = (uint16_t)((((uint16_t)valh << 8) | vall) >> 6);   /* xmitter_dev, біти 15:6 */
+	}
+	return ok;
+}
+
+void AT1846sToneDevRestore(uint16_t dev)
+{
+	I2C_AT1846_set_register_with_mask(0x59, 0x003f, dev, 6);   /* так само, як у AT1846sSelectVoiceChannel */
+}
+#endif
+
 void I2C_AT1846S_send_Settings(const uint8_t settings[][AT1846_BYTES_PER_COMMAND], int numSettings)
 {
 	taskENTER_CRITICAL();

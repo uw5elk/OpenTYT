@@ -82,6 +82,8 @@ static void trxSetTxCSS(int t) { (void)t; }
 static void trxSetRxCSS(int d, int t) { (void)d; (void)t; }
 static void trxSetTX(void) { trxTransmissionEnabled = true; trxIsTransmitting = true; }
 static void trxSetTone1(int f) { g_tone = f; }
+static bool AT1846sToneDevSave(uint16_t *d) { *d = 0x2E; return true; }   /* R113: девіація каналу */
+static void AT1846sToneDevRestore(uint16_t d) { (void)d; }
 static void trxActivateRx(bool b) { (void)b; }
 static uint32_t ticksGetMillis(void) { return g_now; }
 static int trxGetMode(void) { return RADIO_MODE_ANALOG; }

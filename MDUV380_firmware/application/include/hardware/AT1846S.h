@@ -48,6 +48,13 @@ bool radioSetClearReg2byteWithMask(uint8_t reg, uint8_t mask1, uint8_t mask2, ui
 void I2C_AT1846S_send_Settings(const uint8_t settings[][AT1846_BYTES_PER_COMMAND], int numSettings);
 void I2C_AT1846_set_register_with_mask(uint8_t reg, uint16_t mask, uint16_t value, uint8_t shift);
 
+#if defined(ENABLE_TONE_REPLY)
+/* R113-TONEDEV: девіація (0x59, біти 15:6) для «Тон-відгуку». AT1846sSelectVoiceChannel(TONE1) жорстко ставить 0x40 (понад таблицю смуги) --
+ * тон перемодульований. Зберегти/повернути значення на час тону. Save: false -- 0x59 не прочитано (тоді нічого не писати). */
+bool AT1846sToneDevSave(uint16_t *dev);
+void AT1846sToneDevRestore(uint16_t dev);
+#endif
+
 #if defined(ENABLE_FAST_SCAN) || defined(ENABLE_SPECTRUM)
 /* Register 0x5A is a power-of-two averager, one field per detection quantity. Bits
  * [11:9] are rssi_ct_u, which sets the tracking bandwidth of the RSSI byte in 0x1B to

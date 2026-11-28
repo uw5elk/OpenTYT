@@ -230,6 +230,7 @@ int toneReplyStep(toneReplySm_t *s, uint32_t now, bool enabled, bool rxOpen, boo
 #include "functions/aprs.h"
 #include "functions/dual_channel.h"
 #include "hardware/HR-C6000.h"
+#include "hardware/AT1846S.h"
 #include "io/LEDs.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiGlobals.h"
@@ -365,6 +366,10 @@ static bool trTxAllowed(void)
 }
 
 /* Передача тону -- як маяк APRS (aprs.c) і стокова передача FM (uiTxScreen.c): тон CTCSS/DCS каналу, передавач, генератор тону AT1846S. */
+/* R113-TONEDEV: девіація каналу (0x59[15:6]) -- стан між trTxStart і trTxStop (3 Б у .bss). */
+static uint16_t s_trDev;
+static bool     s_trDevOk;
+
 static void trTxStart(void)
 {
 	s_trTxFreq = currentChannelData->txFreq;
@@ -380,12 +385,24 @@ static void trTxStart(void)
 	HRC6000ClearIsWakingState();
 	trxSetTxCSS(currentChannelData->txTone);
 	trxSetTX();
+	/* R113-TONEDEV: радіо-шар для тону ставить девіацію 0x40 (понад таблицю смуги, ≈0x2E) -- тон перемодульований, приймач не відкривається.
+	 * Зберегти девіацію каналу ДО тону й повернути ПІСЛЯ trxSetTone1. Читання не вдалося -- як було (нічого не пишемо). */
+	s_trDevOk = AT1846sToneDevSave(&s_trDev);
 	trxSetTone1((int)s_trCfg.freqHz);   /* мікрофон вимкнено на час тону (radioSetTone1) */
+	if (s_trDevOk)
+	{
+		AT1846sToneDevRestore(s_trDev);
+	}
 }
 
 static void trTxStop(void)
 {
 	trxSetTone1(0);                     /* тон вимкнено, мікрофон повернуто */
+	if (s_trDevOk)
+	{
+		/* R113-TONEDEV: гілка MIC у AT1846sSelectVoiceChannel «відновлює» збережену (але вже перезаписану на 0x40) девіацію -- повертаємо справжню */
+		AT1846sToneDevRestore(s_trDev);
+	}
 	trxTransmissionEnabled = false;
 	LedWrite(LED_RED, 0);
 #if defined(HAS_GPS)
